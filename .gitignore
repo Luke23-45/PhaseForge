@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ML / Data
+*.h5
+*.hdf5
+*.pth
+*.pt
+*.ckpt
+*.onnx
+wandb/
+runs/
+lightning_logs/
+data/raw/
+data/processed/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+outputs/
+logs/
+docs/notes
+docs/implemention
+docs/legder

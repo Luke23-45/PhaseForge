@@ -1,0 +1,36 @@
+# config/train/stage2.yaml — Stage 2: Bootstrapped MoE specialization
+
+stage: 2
+epochs: 200
+grad_clip_norm: 1.0
+lambda_phase: 0.0         # Phase loss not used in Stage 2
+balance_coeff: 0.01       # Weight on the auxiliary load-balancing loss
+log_every_n_steps: 50
+
+# REQUIRED: path to the Stage 1 best checkpoint
+# Set via CLI: train.stage1_ckpt_path=outputs/.../checkpoint_best.pt
+stage1_ckpt_path: null
+
+freeze_encoder: true      # Freeze encoder loaded from Stage 1 (ablation: false)
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4              # Lower LR for fine-tuning
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 200              # Matches epochs
+  eta_min: 1.0e-7
+
+checkpoint:
+  every_n_epochs: 20
+  monitor: "val/loss_action"
+  mode: "min"
+  save_top_k: 1
+
+# Routing metric logging
+routing_log_every_n_steps: 10
+routing_heatmap_every_n_epochs: 10

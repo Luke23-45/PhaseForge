@@ -1,0 +1,43 @@
+# config/eval/metrics.yaml — Evaluation metric configuration
+
+mechanism:
+  routing_entropy:
+    enabled: true
+    log_every_n_steps: 10
+
+  routing_entropy_variance:
+    enabled: true
+    window_size: 100
+
+  time_to_stable_routing:
+    enabled: true
+    variance_threshold: 0.001
+    consecutive_windows: 5
+
+  expert_utilization:
+    enabled: true
+    log_every_n_steps: 50
+
+  collapse_rate:
+    enabled: true
+    threshold_factor: 5.0     # Expert is collapsed if usage < 1/(factor * E)
+
+  phase_expert_nmi:
+    enabled: true
+    log_every_n_steps: 50
+
+task:
+  success_rate:
+    enabled: true
+    l2_threshold: 0.05        # Max L2 error for offline success proxy
+
+  completion_rate:
+    enabled: true
+
+  boundary_smoothness:
+    enabled: true
+    boundary_window: 3        # Timesteps around boundary
+
+  sample_efficiency:
+    enabled: false            # Expensive; enable only for dedicated ablation runs
+    fractions: [0.25, 0.50, 0.75, 1.00]

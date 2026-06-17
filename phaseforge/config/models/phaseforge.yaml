@@ -1,0 +1,39 @@
+# config/models/phaseforge.yaml — Phase-Bootstrapped MoE (proposed method)
+
+_target_: phaseforge.models.phase_moe.PhaseBootstrappedMoE
+
+encoder:
+  _target_: phaseforge.models.components.encoder.StateEncoder
+  input_dim: 23           # Matches data.state_dim
+  hidden_dims: [256, 256, 256]
+  latent_dim: 128
+  activation: "gelu"
+  dropout: 0.1
+  use_residual: true
+
+action_head:
+  _target_: phaseforge.models.components.action_head.ActionHead
+  input_dim: 128
+  output_dim: 7           # Matches data.action_dim
+  head_type: "deterministic"
+  hidden_dim: 256
+
+phase_head:
+  _target_: phaseforge.models.components.phase_head.PhaseClassificationHead
+  latent_dim: 128
+  num_phases: 6
+
+router:
+  _target_: phaseforge.models.components.router.TopKRouter
+  latent_dim: 128
+  num_experts: 6
+  top_k: 2
+  noise_std: 0.1
+  balance_coeff: 0.01
+
+expert:
+  _target_: phaseforge.models.components.expert.ExpertMLP
+  input_dim: 128
+  hidden_dims: [256, 256]
+  output_dim: 7
+  activation: "gelu"

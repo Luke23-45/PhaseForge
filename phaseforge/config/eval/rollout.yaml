@@ -1,0 +1,12 @@
+# config/eval/rollout.yaml — Rollout evaluation config (environment-based)
+
+num_episodes: 20          # Episodes per task per seed
+max_horizon: 500          # Max timesteps per episode
+seeds: [42, 123, 456]
+device: "cuda"
+
+# Environment config (if LIBERO simulator available)
+env:
+  available: false        # Set to true when LIBERO sim is installed
+  suite: "libero_long"
+  render: false

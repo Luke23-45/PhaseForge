@@ -1,0 +1,34 @@
+# config/data/libero/libero90.yaml — LIBERO-90 dataset config
+
+# @package _global_
+# Merges into the root config under data.libero
+
+dataset_name: "libero90"
+description: "LIBERO-90: 90 short-horizon tasks for pretraining and bootstrapping"
+
+remote:
+  # Official LIBERO hosting — update URL if dataset moves
+  base_url: "https://utexas.box.com/shared/static/"
+  files:
+    - filename: "libero_90_openvocab_task_suite.hdf5"
+      checksum_sha256: null   # Populated after first successful download
+
+local:
+  raw_dir: "raw_data/libero90"
+
+split:
+  train_ratio: 0.9
+  val_ratio: 0.1
+  test_ratio: 0.0       # No test split for LIBERO-90 (use LIBERO-LONG for that)
+  split_by: "trajectory"
+  seed: 42              # Matches project.seed by default
+
+# Phase labeling config (nested here for cache-hash inclusion)
+phase_labeler:
+  _target_: phaseforge.data.libero.phase_labeler.RuleBasedPhaseLabeler
+  num_phases: 6
+  gripper_closed_threshold: 0.02
+  gripper_open_threshold: 0.04
+  eef_velocity_threshold: 0.01
+  min_phase_duration: 5
+  median_filter_size: 7

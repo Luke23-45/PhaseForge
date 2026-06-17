@@ -1,0 +1,29 @@
+# config/data/libero/libero_long.yaml — LIBERO-LONG evaluation config
+
+dataset_name: "libero_long"
+description: "LIBERO-LONG: 10 long-horizon tasks for downstream evaluation only"
+
+remote:
+  base_url: "https://utexas.box.com/shared/static/"
+  files:
+    - filename: "libero_long_openvocab_task_suite.hdf5"
+      checksum_sha256: null
+
+local:
+  raw_dir: "raw_data/libero_long"
+
+split:
+  train_ratio: 0.0      # No training on LIBERO-LONG
+  val_ratio: 0.0
+  test_ratio: 1.0       # All data is test/evaluation
+  split_by: "trajectory"
+  seed: 42
+
+phase_labeler:
+  _target_: phaseforge.data.libero.phase_labeler.RuleBasedPhaseLabeler
+  num_phases: 6
+  gripper_closed_threshold: 0.02
+  gripper_open_threshold: 0.04
+  eef_velocity_threshold: 0.01
+  min_phase_duration: 5
+  median_filter_size: 7

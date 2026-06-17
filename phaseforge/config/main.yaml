@@ -1,0 +1,19 @@
+# config/main.yaml — Root Hydra config (compose root)
+
+defaults:
+  - data: common
+  - data/libero: libero90
+  - models: phaseforge
+  - train: stage1
+  - eval: metrics
+  - _self_
+
+project:
+  name: "PhaseForge"
+  seed: 42
+  device: "cuda"
+  output_dir: "outputs/${now:%Y-%m-%d_%H-%M-%S}"
+  wandb:
+    project: "phaseforge"
+    entity: null          # Set via env var WANDB_ENTITY or override
+    mode: "online"        # online | offline | disabled
