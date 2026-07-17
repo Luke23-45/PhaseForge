@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
-from omegaconf import DictConfig
 from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
 
 
 def build_model(cfg: DictConfig):
     """Instantiate the model from the models config subtree.
 
     The model _target_ must resolve to a subclass of BaseManipulationModel.
+
+    .. note::
+       Config keys used for run-metadata (``name``) are stripped before
+       passing to the target constructor, because Hydra's ``instantiate``
+       passes *all* config keys as keyword arguments.
     """
     from phaseforge.models.base import BaseManipulationModel
 
-    model = instantiate(cfg.models)
+    model_cfg = OmegaConf.to_container(cfg.models, resolve=True)
+    model_cfg.pop("name", None)
+    model = instantiate(model_cfg)
     if not isinstance(model, BaseManipulationModel):
         raise TypeError(
             f"Model {type(model).__name__} does not implement BaseManipulationModel. "
