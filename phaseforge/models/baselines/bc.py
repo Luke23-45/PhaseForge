@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import torch
 from torch import Tensor
 
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
-from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.action_head import ActionHead
+from phaseforge.models.components.encoder import StateEncoder
 
 
 class BehaviorCloningModel(BaseManipulationModel):

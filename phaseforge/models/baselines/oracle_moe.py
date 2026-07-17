@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.encoder import StateEncoder
-from phaseforge.models.components.router import TopKRouter
 from phaseforge.models.components.expert import ExpertMLP
 from phaseforge.models.components.moe_layer import MoELayer
+from phaseforge.models.components.router import TopKRouter
 
 
 class OraclePhaseMoEModel(BaseManipulationModel):

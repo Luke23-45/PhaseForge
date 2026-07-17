@@ -7,6 +7,7 @@ Entry points:
 
 from __future__ import annotations
 
+import json
 import logging
 
 import hydra
@@ -18,7 +19,13 @@ from phaseforge.trains.callbacks.checkpointing import CheckpointCallback
 from phaseforge.trains.callbacks.early_stopping import EarlyStoppingCallback
 from phaseforge.trains.callbacks.metric_tracker import MetricTrackerCallback
 from phaseforge.trains.callbacks.wandb_logger import WandbLoggerCallback
-from phaseforge.utils.config import find_latest_checkpoint, get_output_dir, write_run_meta
+from phaseforge.utils.config import (
+    find_latest_checkpoint,
+    get_eval_output_dir,
+    get_output_dir,
+    resolve_checkpoint_source,
+    write_run_meta,
+)
 from phaseforge.utils.registry import build_data_pipeline, build_model, build_trainer
 from phaseforge.utils.seed import set_seed
 
@@ -67,33 +74,39 @@ def train(cfg: DictConfig) -> None:
     stage = cfg.train.get("stage", 1)
 
     if stage == 2:
-        # Load Stage 1 checkpoint and bootstrap
         ckpt_path = cfg.train.get("stage1_ckpt_path")
-        if not ckpt_path:
-            model_name = getattr(cfg.models, "name", cfg.models._target_.split(".")[-1])
-            auto_ckpt = find_latest_checkpoint(model_name, stage=1, base=cfg.project.output_dir)
-            if auto_ckpt is not None:
-                ckpt_path = str(auto_ckpt)
-                logger.info(f"Auto-detected Stage 1 checkpoint: {ckpt_path}")
-            else:
-                raise ValueError(
-                    "train.stage1_ckpt_path must be provided for Stage 2 training. "
-                    f"No checkpoint auto-detected for model '{model_name}' stage 1."
-                )
 
-        logger.info(f"Loading Stage 1 checkpoint from {ckpt_path}...")
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-
-        # We load strict=False because the Stage 2 model has a MoELayer that was not
-        # present or trained in Stage 1. We just want the encoder and action/phase heads.
-        model.load_state_dict(ckpt["model_state_dict"], strict=False)
-
-        # Execute the core bootstrapping algorithm
         if hasattr(model, "bootstrap_moe"):
+            # Models with bootstrapping (PhaseBootstrappedMoE, WarmStartMoE)
+            # need a Stage 1 checkpoint to initialise encoder + action_head.
+            if not ckpt_path:
+                model_name = getattr(cfg.models, "name", cfg.models._target_.split(".")[-1])
+                source_model = resolve_checkpoint_source(model_name)
+                auto_ckpt = find_latest_checkpoint(
+                    source_model, stage=1, base=cfg.project.output_dir,
+                    resolve_alias=False,
+                )
+                if auto_ckpt is not None:
+                    ckpt_path = str(auto_ckpt)
+                    logger.info(
+                        f"Auto-detected Stage 1 checkpoint (from '{source_model}'): {ckpt_path}"
+                    )
+                else:
+                    raise ValueError(
+                        f"{type(model).__name__} requires a Stage 1 checkpoint. "
+                        f"Set train.stage1_ckpt_path or ensure "
+                        f"outputs/{source_model}/stage1/ has one."
+                    )
+
+            logger.info(f"Loading Stage 1 checkpoint from {ckpt_path}...")
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            model.load_state_dict(ckpt["model_state_dict"], strict=False)
+
             model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
         else:
-            logger.info("Model does not have bootstrap_moe(); assuming it's a standard baseline.")
-            model.stage = 2
+            # Models without bootstrapping (ScratchMoE, OraclePhaseMoE)
+            # train from scratch — no checkpoint needed.
+            logger.info(f"{type(model).__name__}: No bootstrapping. Training from scratch.")
 
     # 5. Trainer
     logger.info(f"Initializing Stage {stage} Trainer...")
@@ -134,9 +147,9 @@ def train(cfg: DictConfig) -> None:
 
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def evaluate(cfg: DictConfig) -> None:
-    """Main evaluation entry point."""
+    """Evaluate a trained model on the validation/test set."""
     set_seed(cfg.project.seed)
-    output_dir = get_output_dir(cfg)
+    output_dir = get_eval_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     with open(output_dir / "resolved_config.yaml", "w") as f:
@@ -144,5 +157,43 @@ def evaluate(cfg: DictConfig) -> None:
     write_run_meta(output_dir, cfg)
 
     logger.info(f"Evaluation output directory: {output_dir}")
-    logger.info("Evaluation pipeline not fully implemented yet.")
-    # TODO: Implement evaluate() invoking the OfflineEvaluator
+
+    # 1. Data Pipeline
+    logger.info("Initializing Data Pipeline...")
+    pipeline = build_data_pipeline(cfg)
+    dataloaders = pipeline.run()
+    val_loader = dataloaders.get("val") or dataloaders.get("test")
+    if val_loader is None:
+        raise RuntimeError("No validation/test data found for evaluation.")
+
+    # 2. Model
+    logger.info("Initializing Model...")
+    model = build_model(cfg)
+
+    # 3. Load checkpoint
+    ckpt_path = cfg.train.get("stage1_ckpt_path")
+    if ckpt_path:
+        logger.info(f"Loading checkpoint from {ckpt_path}...")
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    else:
+        logger.warning(
+            "No checkpoint provided (train.stage1_ckpt_path). "
+            "Using randomly initialized model."
+        )
+
+    # 4. Run offline evaluation
+    from phaseforge.evaluations.runners.offline_evaluator import OfflineEvaluator
+
+    evaluator = OfflineEvaluator(cfg=cfg, model=model, dataloader=val_loader)
+    results = evaluator.run()
+
+    # 5. Save results
+    results_path = output_dir / "eval_results.json"
+    with open(results_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    logger.info("Evaluation complete:")
+    for key, val in results.items():
+        logger.info(f"  {key}: {val:.6f}")
+    logger.info(f"Results saved to {results_path}")
