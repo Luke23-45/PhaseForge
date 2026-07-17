@@ -102,10 +102,21 @@ class RuleBasedPhaseLabeler:
         # -------------------------------------------------------------------
         # Sweep through trajectory assigning phases
         # -------------------------------------------------------------------
+        # NOTE on transient phases: GRASP and PLACE are entered at a single
+        # event frame (gripper close / open). Without protection, the very
+        # next frame's velocity check would immediately refine GRASP->TRANSPORT
+        # and PLACE->RETRACT, leaving GRASP/PLACE as single-frame states that
+        # the median filter then erases. Simulation proved this dropped both
+        # to 0%. We therefore HOLD a transient phase for at least
+        # `min_phase_duration` frames before allowing refinement, so every
+        # phase survives post-processing.
         phases = np.zeros(T, dtype=np.int64)
         current_phase = APPROACH
+        phase_entered_at = 0  # timestep at which current_phase began
 
         for t in range(T):
+            held_long_enough = (t - phase_entered_at) >= self.min_phase_duration
+
             # Phase transitions driven by gripper events
             if grasp_events[t]:
                 # Backfill recent slow frames as PRE_GRASP
@@ -114,23 +125,28 @@ class RuleBasedPhaseLabeler:
                     if phases[bt] == APPROACH:
                         phases[bt] = PRE_GRASP
                 current_phase = GRASP
+                phase_entered_at = t
 
             elif release_events[t]:
                 current_phase = PLACE
+                phase_entered_at = t
 
             else:
-                # Refinement within GRASP → TRANSPORT
-                if current_phase == GRASP:
+                # Refinement within GRASP -> TRANSPORT (only after holding GRASP)
+                if current_phase == GRASP and held_long_enough:
                     if gripper_closed[t] and eef_vel[t] > self.eef_velocity_threshold:
                         current_phase = TRANSPORT
-                # Refinement within PLACE → RETRACT
-                elif current_phase == PLACE:
+                        phase_entered_at = t
+                # Refinement within PLACE -> RETRACT (only after holding PLACE)
+                elif current_phase == PLACE and held_long_enough:
                     if (not gripper_closed[t]) and eef_vel[t] > self.eef_velocity_threshold:
                         current_phase = RETRACT
-                # RETRACT → APPROACH (begin next sub-task cycle)
+                        phase_entered_at = t
+                # RETRACT -> APPROACH (begin next sub-task cycle)
                 elif current_phase == RETRACT:
                     if eef_vel[t] < self.eef_velocity_threshold:
                         current_phase = APPROACH
+                        phase_entered_at = t
 
             phases[t] = current_phase
 

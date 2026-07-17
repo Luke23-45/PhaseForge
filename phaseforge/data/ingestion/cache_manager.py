@@ -73,11 +73,16 @@ class CacheManager:
         trajectories: list[dict[str, Any]],
         norm_stats: dict[str, torch.Tensor],
         splits: dict[str, list[int]],
+        task_index: dict[str, int] | None = None,
     ) -> None:
         """Atomically write all processed data to the cache.
 
         Writes to a tmp directory first, then renames to the final path
         to prevent partial cache corruption.
+
+        Args:
+            task_index: Optional ``{task_name: int_id}`` mapping to persist
+                alongside the cache for auditability.
         """
         final_dir = self.cache_dir(config_hash)
         tmp_dir = self.cache_root / f"{config_hash}_tmp"
@@ -99,11 +104,16 @@ class CacheManager:
         # Splits (indices into the trajectories list)
         (tmp_dir / "splits.json").write_text(json.dumps(splits, indent=2))
 
+        # Task index (deterministic name -> id; auditable)
+        if task_index is not None:
+            (tmp_dir / "task_index.json").write_text(json.dumps(task_index, indent=2))
+
         # Manifest
         manifest = {
             "config_hash": config_hash,
             "num_trajectories": len(trajectories),
             "splits": {k: len(v) for k, v in splits.items()},
+            "num_tasks": len(task_index) if task_index is not None else None,
             "created_at": time.time(),
             "complete": True,
         }
@@ -121,11 +131,13 @@ class CacheManager:
     def load(
         self,
         config_hash: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, torch.Tensor], dict[str, list[int]]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, torch.Tensor], dict[str, list[int]], dict[str, int]]:
         """Load all data from the cache.
 
         Returns:
-            (trajectories, norm_stats, splits)
+            ``(trajectories, norm_stats, splits, task_index)``.
+            ``task_index`` is ``{}`` if the cache predates task-index
+            persistence (loaded from an old cache that lacks task_index.json).
         """
         d = self.cache_dir(config_hash)
         traj_dir = d / "trajectories"
@@ -135,4 +147,10 @@ class CacheManager:
         norm_stats = torch.load(d / "norm_stats.pt", weights_only=False)
         splits = json.loads((d / "splits.json").read_text())
 
-        return trajectories, norm_stats, splits
+        task_index_path = d / "task_index.json"
+        if task_index_path.exists():
+            task_index = json.loads(task_index_path.read_text())
+        else:
+            task_index = {}
+
+        return trajectories, norm_stats, splits, task_index

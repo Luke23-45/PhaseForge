@@ -17,6 +17,8 @@ dependencies = [
     "rich>=13.7",
     "matplotlib>=3.8",
     "scikit-learn>=1.4",
+    # LIBERO dataset download from the HuggingFace mirror
+    "huggingface_hub>=1.0",
 ]
 
 [project.optional-dependencies]

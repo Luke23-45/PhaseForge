@@ -3,20 +3,18 @@
 dataset_name: "libero_long"
 description: "LIBERO-LONG: 10 long-horizon tasks for downstream evaluation only"
 
-remote:
-  base_url: "https://utexas.box.com/shared/static/"
-  files:
-    - filename: "libero_long_openvocab_task_suite.hdf5"
-      checksum_sha256: null
+# Resolves to {data_root}/raw/libero/libero_10/ with the official 10-file
+# integrity check. Download via:
+#   python -m phaseforge.data.scripts.download_libero --suites libero_10
+suite: "libero_10"
 
-local:
-  raw_dir: "raw_data/libero_long"
+# role: "eval" -> all trajectories are held out; exposed via
+#                 DataPipelineStateMachine.get_eval_loader(). The normalizer
+#                 used here is the TRAIN-frozen one (never recomputed on eval).
+role: "eval"
 
 split:
-  train_ratio: 0.0      # No training on LIBERO-LONG
-  val_ratio: 0.0
-  test_ratio: 1.0       # All data is test/evaluation
-  split_by: "trajectory"
+  val_ratio: 0.0        # unused for eval role; kept for config-hash stability
   seed: 42
 
 phase_labeler:
