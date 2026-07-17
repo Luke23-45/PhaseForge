@@ -21,6 +21,7 @@ from phaseforge.utils.registry import build_model, build_data_pipeline, build_tr
 from phaseforge.trains.callbacks.checkpointing import CheckpointCallback
 from phaseforge.trains.callbacks.wandb_logger import WandbLoggerCallback
 from phaseforge.trains.callbacks.metric_tracker import MetricTrackerCallback
+from phaseforge.trains.callbacks.early_stopping import EarlyStoppingCallback
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,15 @@ def train(cfg: DictConfig) -> None:
         save_top_k=cfg.train.checkpoint.save_top_k,
     ))
     trainer.add_callback(MetricTrackerCallback())
+    
+    if hasattr(cfg.train, "early_stopping") or "early_stopping" in cfg.train:
+        trainer.add_callback(EarlyStoppingCallback(
+            monitor=cfg.train.early_stopping.monitor,
+            mode=cfg.train.early_stopping.mode,
+            patience=cfg.train.early_stopping.patience,
+            min_delta=cfg.train.early_stopping.min_delta,
+        ))
+
     if cfg.project.wandb.mode != "disabled":
         trainer.add_callback(WandbLoggerCallback())
 

@@ -31,6 +31,13 @@ checkpoint:
   mode: "min"
   save_top_k: 1
 
+early_stopping:
+  monitor: "val/loss_action"
+  mode: "min"
+  patience: 10
+  min_delta: 0.001
+
+
 # Routing metric logging
 routing_log_every_n_steps: 10
 routing_heatmap_every_n_epochs: 10

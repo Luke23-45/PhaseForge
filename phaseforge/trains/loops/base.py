@@ -53,6 +53,7 @@ class BaseTrainer(ABC):
         self.callbacks: list[Any] = []
         self.current_epoch = 0
         self.global_step = 0
+        self.should_stop = False
 
     def add_callback(self, callback: Any) -> None:
         """Add a lifecycle callback."""
@@ -91,6 +92,10 @@ class BaseTrainer(ABC):
             # Step the scheduler at the end of the epoch
             if self.scheduler:
                 self.scheduler.step()
+
+            if self.should_stop:
+                logger.info(f"Early stopping triggered at epoch {epoch}.")
+                break
 
         self._trigger_callbacks("on_train_end")
         logger.info("Training complete.")

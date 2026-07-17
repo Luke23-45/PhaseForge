@@ -24,6 +24,13 @@ checkpoint:
   mode: "min"             # Save when val loss decreases
   save_top_k: 1
 
+early_stopping:
+  monitor: "val/loss_total"
+  mode: "min"
+  patience: 10
+  min_delta: 0.001
+
+
 # Stage 2 does not apply here; this key is just defined for schema consistency
 stage1_ckpt_path: null
 freeze_encoder: false
