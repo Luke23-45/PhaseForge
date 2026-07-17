@@ -12,7 +12,8 @@ project:
   name: "PhaseForge"
   seed: 42
   device: "cuda"
-  output_dir: "outputs/${now:%Y-%m-%d_%H-%M-%S}"
+  output_dir: "outputs"
+  tag: null               # Optional user-friendly label (e.g., "lr1e-3", "ablation")
   wandb:
     project: "phaseforge"
     entity: null          # Set via env var WANDB_ENTITY or override

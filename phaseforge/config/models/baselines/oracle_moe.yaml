@@ -1,5 +1,6 @@
 # config/models/baselines/oracle_moe.yaml — Oracle-Phase MoE (upper bound)
 
+name: "oracle_moe"
 _target_: phaseforge.models.baselines.oracle_moe.OraclePhaseMoEModel
 
 encoder:

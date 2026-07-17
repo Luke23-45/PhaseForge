@@ -1,5 +1,6 @@
 # config/models/phaseforge.yaml — Phase-Bootstrapped MoE (proposed method)
 
+name: "phaseforge"
 _target_: phaseforge.models.phase_moe.PhaseBootstrappedMoE
 
 encoder:

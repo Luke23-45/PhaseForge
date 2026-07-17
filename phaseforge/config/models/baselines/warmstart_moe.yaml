@@ -1,5 +1,6 @@
 # config/models/baselines/warmstart_moe.yaml — Warm-Start MoE (pretrained without phase loss)
 
+name: "warmstart_moe"
 _target_: phaseforge.models.baselines.warmstart_moe.WarmStartMoEModel
 
 encoder:

@@ -7,8 +7,9 @@ lambda_phase: 0.0         # Phase loss not used in Stage 2
 balance_coeff: 0.01       # Weight on the auxiliary load-balancing loss
 log_every_n_steps: 50
 
-# REQUIRED: path to the Stage 1 best checkpoint
-# Set via CLI: train.stage1_ckpt_path=outputs/.../checkpoint_best.pt
+# Path to the Stage 1 best checkpoint.
+# If not set (null), the latest checkpoint is auto-detected from
+# outputs/<model_name>/stage1/ for the same model config.
 stage1_ckpt_path: null
 
 freeze_encoder: true      # Freeze encoder loaded from Stage 1 (ablation: false)

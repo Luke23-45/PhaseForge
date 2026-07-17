@@ -1,5 +1,6 @@
 # config/models/baselines/scratch_moe.yaml — Scratch MoE (random init, no pretraining)
 
+name: "scratch_moe"
 _target_: phaseforge.models.baselines.scratch_moe.ScratchMoEModel
 
 encoder:
