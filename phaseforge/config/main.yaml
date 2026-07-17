@@ -16,4 +16,4 @@ project:
   wandb:
     project: "phaseforge"
     entity: null          # Set via env var WANDB_ENTITY or override
-    mode: "online"        # online | offline | disabled
+    mode: "disabled"      # online | offline | disabled
