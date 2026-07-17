@@ -29,14 +29,17 @@ class EarlyStoppingCallback(Callback):
 
     def on_epoch_end(self, trainer: BaseTrainer, val_metrics: dict[str, float]) -> None:
         """Check if we should stop training."""
-        if self.monitor not in val_metrics:
+        # The training loop does not prefix keys with 'val/', so we strip it if provided
+        monitor_key = self.monitor.replace("val/", "")
+        
+        if monitor_key not in val_metrics:
             logger.warning(
-                f"Early stopping monitor '{self.monitor}' not found in val_metrics. "
+                f"Early stopping monitor '{self.monitor}' (resolved to '{monitor_key}') not found in val_metrics. "
                 f"Available metrics: {list(val_metrics.keys())}"
             )
             return
 
-        current_score = val_metrics[self.monitor]
+        current_score = val_metrics[monitor_key]
         
         # Check for improvement
         improved = False
