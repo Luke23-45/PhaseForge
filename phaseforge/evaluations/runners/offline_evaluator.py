@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import torch
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
+from phaseforge.evaluations.metrics import (
+    expert_utilization,
+    phase_alignment,
+    routing_stability,
+    task_metrics,
+)
 from phaseforge.models.base import BaseManipulationModel
-from phaseforge.evaluations.metrics import routing_stability, expert_utilization, phase_alignment, task_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ class OfflineEvaluator:
 
     def __init__(self, cfg: DictConfig, model: BaseManipulationModel, dataloader: DataLoader) -> None:
         self.cfg = cfg
-        self.metrics_cfg = cfg.eval.metrics
+        self.metrics_cfg = cfg.eval
         self.device = torch.device(cfg.project.get("device", "cuda"))
         self.model = model.to(self.device)
         self.dataloader = dataloader
