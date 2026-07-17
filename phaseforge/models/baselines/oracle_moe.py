@@ -42,8 +42,9 @@ class OraclePhaseMoEModel(BaseManipulationModel):
         state = batch["state"]
         phase = batch.get("phase")
         
-        if phase is None or not self.training:
-            # During eval (or if no phases provided), we must use the router
+        if phase is None:
+            # No oracle labels available — fall back to the (untrained) router.
+            # During training this should not happen with correct data loading.
             return self._standard_forward(state)
 
         # ORACLE ROUTING (Training)

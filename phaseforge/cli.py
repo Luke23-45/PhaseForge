@@ -176,6 +176,10 @@ def evaluate(cfg: DictConfig) -> None:
         logger.info(f"Loading checkpoint from {ckpt_path}...")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
+        # so load_state_dict() leaves it at the __init__ default (1).
+        if hasattr(model, "stage") and "stage" in ckpt:
+            model.stage = ckpt["stage"]
     else:
         logger.warning(
             "No checkpoint provided (train.stage1_ckpt_path). "
