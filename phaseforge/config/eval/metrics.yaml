@@ -1,4 +1,8 @@
 # config/eval/metrics.yaml — Evaluation metric configuration
+#
+# Default eval config (offline metrics on validation data).
+
+mode: "offline"
 
 mechanism:
   routing_entropy:

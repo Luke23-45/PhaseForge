@@ -32,6 +32,23 @@ from phaseforge.utils.seed import set_seed
 logger = logging.getLogger(__name__)
 
 
+def _resolve_device(cfg: DictConfig) -> torch.device:
+    """Resolve the compute device with a graceful CPU fallback.
+
+    LIBERO rollouts are reproducible on CPU; requiring a hard crash when
+    ``project.device=cuda`` is unavailable (e.g. local dev boxes) makes
+    the evaluator unusable. A warning is logged when falling back.
+    """
+    requested = str(cfg.project.get("device", "cuda"))
+    if requested.startswith("cuda") and not torch.cuda.is_available():
+        logger.warning(
+            "Device '%s' requested but CUDA is unavailable. Falling back to CPU.",
+            requested,
+        )
+        return torch.device("cpu")
+    return torch.device(requested)
+
+
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def train(cfg: DictConfig) -> None:
     """Main training entry point."""
@@ -147,7 +164,7 @@ def train(cfg: DictConfig) -> None:
 
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def evaluate(cfg: DictConfig) -> None:
-    """Evaluate a trained model on the validation/test set."""
+    """Evaluate a trained model (offline metrics or LIBERO rollouts)."""
     set_seed(cfg.project.seed)
     output_dir = get_eval_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -158,13 +175,20 @@ def evaluate(cfg: DictConfig) -> None:
 
     logger.info(f"Evaluation output directory: {output_dir}")
 
-    # 1. Data Pipeline
-    logger.info("Initializing Data Pipeline...")
-    pipeline = build_data_pipeline(cfg)
-    dataloaders = pipeline.run()
-    val_loader = dataloaders.get("val") or dataloaders.get("test")
-    if val_loader is None:
-        raise RuntimeError("No validation/test data found for evaluation.")
+    eval_mode = cfg.eval.get("mode", "offline")
+    logger.info(f"Evaluation mode: {eval_mode}")
+
+    # 1. Data Pipeline — only needed for offline metrics. Rollout evaluation
+    #    reads the training-frozen normalizer straight from the processed
+    #    cache and must NOT load the full dataset into RAM.
+    val_loader = None
+    if eval_mode != "rollout":
+        logger.info("Initializing Data Pipeline...")
+        pipeline = build_data_pipeline(cfg)
+        dataloaders = pipeline.run()
+        val_loader = dataloaders.get("val") or dataloaders.get("test")
+        if val_loader is None:
+            raise RuntimeError("No validation/test data found for evaluation.")
 
     # 2. Model
     logger.info("Initializing Model...")
@@ -186,10 +210,21 @@ def evaluate(cfg: DictConfig) -> None:
             "Using randomly initialized model."
         )
 
-    # 4. Run offline evaluation
-    from phaseforge.evaluations.runners.offline_evaluator import OfflineEvaluator
+    # 4. Run the selected evaluator
+    device = _resolve_device(cfg)
+    model.to(device)
 
-    evaluator = OfflineEvaluator(cfg=cfg, model=model, dataloader=val_loader)
+    if eval_mode == "rollout":
+        logger.info("Running rollout evaluation in LIBERO environment…")
+        from phaseforge.evaluations.runners.rollout_evaluator import RolloutEvaluator
+
+        evaluator = RolloutEvaluator(cfg=cfg, model=model, device=device)
+    else:
+        logger.info("Running offline evaluation on validation data…")
+        from phaseforge.evaluations.runners.offline_evaluator import OfflineEvaluator
+
+        evaluator = OfflineEvaluator(cfg=cfg, model=model, dataloader=val_loader)
+
     results = evaluator.run()
 
     # 5. Save results
@@ -199,5 +234,10 @@ def evaluate(cfg: DictConfig) -> None:
 
     logger.info("Evaluation complete:")
     for key, val in results.items():
-        logger.info(f"  {key}: {val:.6f}")
+        if isinstance(val, float):
+            logger.info(f"  {key}: {val:.6f}")
+        elif isinstance(val, dict):
+            logger.info(f"  {key}: <dict with {len(val)} entries>")
+        else:
+            logger.info(f"  {key}: {val}")
     logger.info(f"Results saved to {results_path}")

@@ -1,12 +1,21 @@
 # config/eval/rollout.yaml — Rollout evaluation config (environment-based)
+#
+# Override the default eval config via:
+#   phaseforge-eval eval=rollout
+#
+# Uses LIBERO OffScreenRenderEnv to run online rollouts with the
+# standard protocol: 50 episodes/task, 4 suites, binary success via
+# goal predicates.
 
-num_episodes: 20          # Episodes per task per seed
-max_horizon: 500          # Max timesteps per episode
-seeds: [42, 123, 456]
-device: "cuda"
+mode: "rollout"
 
-# Environment config (if LIBERO simulator available)
-env:
-  available: false        # Set to true when LIBERO sim is installed
-  suite: "libero_long"
-  render: false
+environment:
+  suites:
+    - "libero_spatial"
+    - "libero_object"
+    - "libero_goal"
+    - "libero_10"
+  num_steps_wait: 10      # Dummy steps at reset for physics to settle
+
+evaluation:
+  num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)

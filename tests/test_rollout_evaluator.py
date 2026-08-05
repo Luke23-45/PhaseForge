@@ -1,0 +1,366 @@
+"""CPU-only simulated tests for the rollout evaluator.
+
+These tests run WITHOUT the real ``libero``/``robosuite`` packages and
+WITHOUT a GPU. They exercise the full evaluation logic — cache-based
+normalizer loading, state normalization before inference, raw action
+passthrough, per-task/per-suite success aggregation, multi-suite
+averaging, and graceful error messages — against fake environments.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+from pathlib import Path
+
+import numpy as np
+import pytest
+import torch
+from omegaconf import OmegaConf
+
+from phaseforge.data.ingestion.cache_manager import CacheManager
+from phaseforge.evaluations.runners import rollout_evaluator as re_mod
+from phaseforge.evaluations.runners.rollout_evaluator import RolloutEvaluator
+
+STATE_DIM = 23
+ACTION_DIM = 7
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CONFIG_DIR = str(REPO_ROOT / "phaseforge" / "config")
+
+
+# ---------------------------------------------------------------------------
+# Fixtures / fakes
+# ---------------------------------------------------------------------------
+
+
+def make_cfg(
+    suites: list[str] | None = None,
+    num_episodes: int = 3,
+    seed: int = 42,
+) -> OmegaConf:
+    return OmegaConf.create(
+        {
+            "data": {"state_dim": STATE_DIM, "action_dim": ACTION_DIM, "batch_size": 1},
+            "project": {"seed": seed},
+            "eval": {
+                "mode": "rollout",
+                "environment": {
+                    "suites": suites or ["libero_spatial"],
+                    "num_steps_wait": 2,
+                },
+                "evaluation": {"num_episodes_per_task": num_episodes},
+            },
+        }
+    )
+
+
+class RecordingModel(torch.nn.Module):
+    """Fake policy: records every normalized state it sees, returns a fixed action."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_states: list[torch.Tensor] = []
+        self.constant_action = torch.full((1, ACTION_DIM), 5.0)
+
+    def get_action(self, state: torch.Tensor) -> torch.Tensor:
+        self.seen_states.append(state.detach().cpu().clone())
+        return self.constant_action
+
+
+class FakeStateEnv:
+    """Task 0 always succeeds; any other task never does.
+
+    Every episode terminates after a single step so the loop stays fast
+    even though SUITE_MAX_STEPS is in the hundreds.
+    """
+
+    def __init__(self, suite_name: str, task_id: int, seed: int, num_steps_wait: int = 10) -> None:
+        self.suite_name = suite_name
+        self.task_id = task_id
+        self.seed = seed
+        self.num_steps_wait = num_steps_wait
+        self.task_description = f"task_{suite_name}_{task_id}"
+        self.closed = False
+        self.actions_received: list[np.ndarray] = []
+
+    def reset(self, episode_idx: int = 0) -> np.ndarray:
+        return np.full(STATE_DIM, 10.0, dtype=np.float32)
+
+    def step(self, action: np.ndarray):
+        self.actions_received.append(action)
+        success = self.task_id == 0
+        return (
+            np.full(STATE_DIM, 10.0, dtype=np.float32),
+            0.0,
+            True,
+            False,
+            {"is_success": bool(success)},
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeSuite:
+    def __init__(self, n_tasks: int) -> None:
+        self.n_tasks = n_tasks
+
+    def get_task(self, task_id: int):
+        return types.SimpleNamespace(language=f"task_{task_id}")
+
+    def get_task_init_states(self, task_id: int) -> list[np.ndarray]:
+        return [np.zeros(STATE_DIM) for _ in range(50)]
+
+
+class FakeBenchmark:
+    def __init__(self, n_tasks: int = 2) -> None:
+        self.n_tasks = n_tasks
+
+    def get_benchmark_dict(self) -> dict[str, callable]:
+        return {name: lambda: FakeSuite(self.n_tasks) for name in SUITE_NAMES}
+
+
+SUITE_NAMES = [
+    "libero_spatial",
+    "libero_object",
+    "libero_goal",
+    "libero_10",
+    "libero_90",
+]
+
+
+@pytest.fixture
+def fake_libero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject a fake ``libero.libero`` module so no real LIBERO is needed."""
+    parent = types.ModuleType("libero")
+    child = types.ModuleType("libero.libero")
+    child.benchmark = FakeBenchmark()
+    monkeypatch.setitem(sys.modules, "libero", parent)
+    monkeypatch.setitem(sys.modules, "libero.libero", child)
+
+
+@pytest.fixture
+def block_libero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate LIBERO being uninstalled (None in sys.modules -> ImportError)."""
+    monkeypatch.setitem(sys.modules, "libero", None)
+    monkeypatch.setitem(sys.modules, "libero.libero", None)
+
+
+def _seed_cache(tmp_path: Path, data_cfg) -> str:
+    """Write a minimal processed cache with a known train-frozen normalizer."""
+    cache_root = tmp_path / "cache"
+    mgr = CacheManager(cache_root)
+    config_hash = CacheManager.compute_hash(data_cfg)
+    mgr.save(
+        config_hash=config_hash,
+        trajectories=[],
+        norm_stats={
+            "mean": torch.zeros(STATE_DIM),
+            "std": torch.full((STATE_DIM,), 2.0),
+        },
+        splits={"train": [], "val": [], "eval": []},
+    )
+    return config_hash
+
+
+def _make_evaluator(
+    tmp_path: Path,
+    cfg: OmegaConf,
+    model: torch.nn.Module | None = None,
+    monkeypatch: pytest.MonkeyPatch | None = None,
+) -> RolloutEvaluator:
+    if monkeypatch is not None:
+        monkeypatch.setattr(re_mod, "processed_cache_root", lambda: tmp_path / "cache")
+    _seed_cache(tmp_path, cfg.data)
+    return RolloutEvaluator(cfg=cfg, model=model or RecordingModel(), device=torch.device("cpu"))
+
+
+# ---------------------------------------------------------------------------
+# Normalizer loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_normalizer_from_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = make_cfg()
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+    assert torch.allclose(evaluator.normalizer.mean, torch.zeros(STATE_DIM))
+    assert torch.allclose(evaluator.normalizer.std, torch.full((STATE_DIM,), 2.0))
+
+
+def test_load_normalizer_missing_cache_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = make_cfg()
+    monkeypatch.setattr(re_mod, "processed_cache_root", lambda: tmp_path / "empty")
+    with pytest.raises(RuntimeError, match="No cached dataset found"):
+        RolloutEvaluator(cfg=cfg, model=RecordingModel(), device=torch.device("cpu"))
+
+
+def test_missing_libero_raises_helpful_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, block_libero
+) -> None:
+    cfg = make_cfg()
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+    with pytest.raises(RuntimeError, match="libero package not installed"):
+        evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=2)
+
+
+# ---------------------------------------------------------------------------
+# Rollout loop, normalization, and aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_suite_aggregates_successes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
+) -> None:
+    cfg = make_cfg(num_episodes=3)
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+    monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", FakeStateEnv)
+
+    results = evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=3)
+
+    # 2 tasks x 3 episodes; task 0 always succeeds, task 1 never does.
+    assert results["eval/success_rate/libero_spatial"] == pytest.approx(0.5)
+    assert results["eval/total_episodes/libero_spatial"] == 6
+    assert results["eval/total_successes/libero_spatial"] == 3
+    per_task = results["eval/per_task/libero_spatial"]
+    assert per_task["task_libero_spatial_0"]["success_rate"] == pytest.approx(1.0)
+    assert per_task["task_libero_spatial_0"]["successes"] == 3
+    assert per_task["task_libero_spatial_1"]["success_rate"] == pytest.approx(0.0)
+    assert per_task["task_libero_spatial_1"]["successes"] == 0
+
+
+def test_state_normalized_before_inference_and_action_raw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
+) -> None:
+    """Env state (10.0) must arrive normalized (mean 0, std 2 -> 5.0) to the
+    model, and the model's raw action must go to the env untouched."""
+    cfg = make_cfg(num_episodes=2)
+    model = RecordingModel()
+    evaluator = _make_evaluator(tmp_path, cfg, model=model, monkeypatch=monkeypatch)
+    monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", FakeStateEnv)
+
+    evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=2)
+
+    assert len(model.seen_states) == 4  # 2 tasks x 2 episodes
+    for seen in model.seen_states:
+        assert seen.shape == (1, STATE_DIM)
+        assert torch.allclose(seen, torch.full((1, STATE_DIM), 5.0), atol=1e-5)
+
+
+def test_actions_passed_to_env_are_raw_float64(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
+) -> None:
+    cfg = make_cfg(num_episodes=1)
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+
+    received: list[np.ndarray] = []
+
+    class RecordingFakeEnv(FakeStateEnv):
+        def step(self, action: np.ndarray):
+            received.append(action)
+            return super().step(action)
+
+    monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", RecordingFakeEnv)
+    evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
+
+    assert len(received) == 2  # one step per episode
+    for action in received:
+        assert action.shape == (ACTION_DIM,)
+        assert action.dtype == np.float64
+        assert np.allclose(action, 5.0)
+
+
+def test_envs_are_closed_after_suite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
+) -> None:
+    cfg = make_cfg(num_episodes=1)
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+
+    created: list[FakeStateEnv] = []
+
+    def factory(suite_name: str, task_id: int, seed: int, num_steps_wait: int = 10) -> FakeStateEnv:
+        env = FakeStateEnv(suite_name, task_id, seed, num_steps_wait)
+        created.append(env)
+        return env
+
+    monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", factory)
+    evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
+
+    assert len(created) == 2
+    assert all(env.closed for env in created)
+
+
+def test_run_multi_suite_averages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = make_cfg(suites=["libero_spatial", "libero_object"], num_episodes=2)
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+
+    def fake_suite(self, suite_name: str, num_episodes_per_task: int) -> dict:
+        rate = 1.0 if suite_name == "libero_spatial" else 0.25
+        return {
+            f"eval/success_rate/{suite_name}": rate,
+            f"eval/per_task/{suite_name}": {"t": {"success_rate": rate}},
+            f"eval/total_episodes/{suite_name}": 10,
+            f"eval/total_successes/{suite_name}": int(10 * rate),
+        }
+
+    evaluator.evaluate_suite = types.MethodType(fake_suite, evaluator)
+    results = evaluator.run()
+
+    assert results["eval/success_rate"] == pytest.approx(0.625)
+    assert results["eval/success_rate/libero_spatial"] == pytest.approx(1.0)
+    assert results["eval/success_rate/libero_object"] == pytest.approx(0.25)
+    assert results["eval/seed"] == 42
+    assert results["eval/num_episodes_per_task"] == 2
+    assert results["eval/suites"] == ["libero_spatial", "libero_object"]
+
+
+def test_rollout_mode_without_environment_keys_uses_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setting eval.mode=rollout without the rollout.yaml groups must not crash."""
+    cfg = make_cfg()
+    del cfg.eval["environment"]
+    del cfg.eval["evaluation"]
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+    assert evaluator.suites == ["libero_spatial"]
+    assert evaluator.num_episodes_per_task == 50
+    assert evaluator.num_steps_wait == 10
+
+
+# ---------------------------------------------------------------------------
+# Hydra config wiring
+# ---------------------------------------------------------------------------
+
+
+def test_eval_config_groups_compose() -> None:
+    from hydra import compose, initialize_config_dir
+
+    with initialize_config_dir(version_base="1.3", config_dir=CONFIG_DIR):
+        rollout_cfg = compose(config_name="main", overrides=["eval=rollout"])
+        assert rollout_cfg.eval.mode == "rollout"
+        assert list(rollout_cfg.eval.environment.suites) == [
+            "libero_spatial",
+            "libero_object",
+            "libero_goal",
+            "libero_10",
+        ]
+        assert rollout_cfg.eval.environment.num_steps_wait == 10
+        assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50
+
+        default_cfg = compose(config_name="main")
+        assert default_cfg.eval.mode == "offline"
+
+
+def test_bc_model_builds_and_acts_on_state_vector() -> None:
+    from hydra import compose, initialize_config_dir
+
+    from phaseforge.utils.registry import build_model
+
+    with initialize_config_dir(version_base="1.3", config_dir=CONFIG_DIR):
+        cfg = compose(config_name="main", overrides=["models=baselines/bc"])
+    model = build_model(cfg)
+    model.eval()
+    action = model.get_action(torch.randn(1, STATE_DIM))
+    assert action.shape == (1, ACTION_DIM)

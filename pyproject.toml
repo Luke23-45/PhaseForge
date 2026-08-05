@@ -28,6 +28,13 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.8",
 ]
+# LIBERO environment simulation (Linux + GPU required; heavy install:
+# pulls robosuite 1.4, mujoco, robomimic, bddl). Install only on the
+# evaluation machine:  uv sync --extra rollout
+rollout = [
+    "robosuite>=1.4",
+    "libero",
+]
 
 [project.scripts]
 phaseforge-train = "phaseforge.cli:train"
