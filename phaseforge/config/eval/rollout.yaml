@@ -17,6 +17,14 @@ environment:
     - "libero_10"
     - "libero_90"
   num_steps_wait: 10      # Dummy steps at reset for physics to settle
+  render_observations: false  # State-only policy: skip per-step camera
+                              # rendering (dominant eval cost). Set true
+                              # only to capture images/video.
+  num_workers: 1              # >1 spawns parallel worker processes, each
+                              # running a round-robin episode shard. Results
+                              # are identical to serial; VRAM scales roughly
+                              # linearly with worker count (one model per
+                              # worker). Recommended: 2-4 on a single GPU.
 
 evaluation:
   num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)

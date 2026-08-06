@@ -171,6 +171,35 @@ def train(cfg: DictConfig) -> None:
         wandb.finish()
 
 
+def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
+    """Build the configured model and load the evaluation checkpoint.
+
+    Used by both the CLI entry point and the parallel rollout workers so
+    that eval-time model construction (architecture, checkpoint, stage
+    restore) is identical in every process.
+
+    Returns:
+        The model in ``eval()`` mode, moved to CPU (caller decides device).
+    """
+    model = build_model(cfg)
+
+    ckpt_path = cfg.train.get("stage1_ckpt_path")
+    if ckpt_path:
+        logger.info(f"Loading checkpoint from {ckpt_path}...")
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
+        # so load_state_dict() leaves it at the __init__ default (1).
+        if hasattr(model, "stage") and "stage" in ckpt:
+            model.stage = ckpt["stage"]
+    else:
+        logger.warning(
+            "No checkpoint provided (train.stage1_ckpt_path). "
+            "Using randomly initialized model."
+        )
+    return model
+
+
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def evaluate(cfg: DictConfig) -> None:
     """Evaluate a trained model (offline metrics or LIBERO rollouts)."""
@@ -201,25 +230,9 @@ def evaluate(cfg: DictConfig) -> None:
 
     # 2. Model
     logger.info("Initializing Model...")
-    model = build_model(cfg)
+    model = build_eval_model(cfg)
 
-    # 3. Load checkpoint
-    ckpt_path = cfg.train.get("stage1_ckpt_path")
-    if ckpt_path:
-        logger.info(f"Loading checkpoint from {ckpt_path}...")
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"], strict=False)
-        # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
-        # so load_state_dict() leaves it at the __init__ default (1).
-        if hasattr(model, "stage") and "stage" in ckpt:
-            model.stage = ckpt["stage"]
-    else:
-        logger.warning(
-            "No checkpoint provided (train.stage1_ckpt_path). "
-            "Using randomly initialized model."
-        )
-
-    # 4. Run the selected evaluator
+    # 3. Run the selected evaluator
     device = _resolve_device(cfg)
     model.to(device)
 
@@ -236,7 +249,7 @@ def evaluate(cfg: DictConfig) -> None:
 
     results = evaluator.run()
 
-    # 5. Save results
+    # 4. Save results
     results_path = output_dir / "eval_results.json"
     with open(results_path, "w") as f:
         json.dump(results, f, indent=2)

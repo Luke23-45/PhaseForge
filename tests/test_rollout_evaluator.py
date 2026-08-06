@@ -75,7 +75,14 @@ class FakeStateEnv:
     even though SUITE_MAX_STEPS is in the hundreds.
     """
 
-    def __init__(self, suite_name: str, task_id: int, seed: int, num_steps_wait: int = 10) -> None:
+    def __init__(
+        self,
+        suite_name: str,
+        task_id: int,
+        seed: int,
+        num_steps_wait: int = 10,
+        render_observations: bool = False,
+    ) -> None:
         self.suite_name = suite_name
         self.task_id = task_id
         self.seed = seed
@@ -280,8 +287,14 @@ def test_envs_are_closed_after_suite(
 
     created: list[FakeStateEnv] = []
 
-    def factory(suite_name: str, task_id: int, seed: int, num_steps_wait: int = 10) -> FakeStateEnv:
-        env = FakeStateEnv(suite_name, task_id, seed, num_steps_wait)
+    def factory(
+        suite_name: str,
+        task_id: int,
+        seed: int,
+        num_steps_wait: int = 10,
+        render_observations: bool = False,
+    ) -> FakeStateEnv:
+        env = FakeStateEnv(suite_name, task_id, seed, num_steps_wait, render_observations)
         created.append(env)
         return env
 
@@ -327,6 +340,87 @@ def test_rollout_mode_without_environment_keys_uses_defaults(
     assert evaluator.suites == ["libero_spatial"]
     assert evaluator.num_episodes_per_task == 50
     assert evaluator.num_steps_wait == 10
+    assert evaluator.render_observations is False
+    assert evaluator.num_workers == 1
+
+
+# ---------------------------------------------------------------------------
+# Parallel episode sharding and aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_split_episode_shards_round_robin_and_cover_all() -> None:
+    shards = re_mod.split_episode_shards(10, 3)
+    assert shards == [[0, 3, 6, 9], [1, 4, 7], [2, 5, 8]]
+    assert sorted(i for s in shards for i in s) == list(range(10))
+
+
+def test_split_episode_shards_more_workers_than_episodes() -> None:
+    assert re_mod.split_episode_shards(3, 8) == [[0], [1], [2]]
+
+
+def test_split_episode_shards_rejects_zero_workers() -> None:
+    with pytest.raises(ValueError):
+        re_mod.split_episode_shards(10, 0)
+
+
+def test_resolve_num_workers_caps_to_episodes() -> None:
+    assert re_mod._resolve_num_workers(8, 3) == 3
+    assert re_mod._resolve_num_workers(2, 50) == 2
+    assert re_mod._resolve_num_workers(4, 0) == 1
+    assert re_mod._resolve_num_workers(1, 50) == 1
+
+
+def test_merge_worker_results_matches_serial_aggregation() -> None:
+    """Two workers split 50 episodes; task 0 succeeds only in worker 0's
+    half — the merged result must equal the serial 25/50. This is exactly
+    the chain evaluate_suite's parallel branch runs: merge -> finalize."""
+    worker_results = [
+        {
+            "worker_idx": 0,
+            "task_results": {
+                "t0": {"successes": 25, "episodes": 25},
+                "t1": {"successes": 0, "episodes": 25},
+            },
+        },
+        {
+            "worker_idx": 1,
+            "task_results": {
+                "t0": {"successes": 0, "episodes": 25},
+                "t1": {"successes": 0, "episodes": 25},
+            },
+        },
+    ]
+    merged = re_mod._merge_worker_results(worker_results)
+    assert merged == {"t0": 25, "t1": 0}
+
+    results = re_mod._finalize_suite_results("libero_spatial", merged, 50)
+    assert results["eval/success_rate/libero_spatial"] == pytest.approx(0.25)
+    assert results["eval/total_episodes/libero_spatial"] == 100
+    assert results["eval/total_successes/libero_spatial"] == 25
+    assert results["eval/per_task/libero_spatial"]["t0"]["successes"] == 25
+    assert results["eval/per_task/libero_spatial"]["t0"]["success_rate"] == pytest.approx(0.5)
+
+
+def test_render_observations_flag_plumbed_to_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
+) -> None:
+    cfg = make_cfg(num_episodes=1)
+    cfg.eval.environment.render_observations = True
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+
+    kwargs_seen: list[dict] = []
+
+    class RecordingFakeEnv(FakeStateEnv):
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            kwargs_seen.append(dict(kwargs))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", RecordingFakeEnv)
+    evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
+
+    assert len(kwargs_seen) == 2  # 2 tasks
+    assert all(kw.get("render_observations") is True for kw in kwargs_seen)
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +442,8 @@ def test_eval_config_groups_compose() -> None:
             "libero_90",
         ]
         assert rollout_cfg.eval.environment.num_steps_wait == 10
+        assert rollout_cfg.eval.environment.render_observations is False
+        assert rollout_cfg.eval.environment.num_workers == 1
         assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50
 
         default_cfg = compose(config_name="main")

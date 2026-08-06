@@ -33,11 +33,44 @@ SUITE_BENCHMARK_NAMES: dict[str, str] = {
 }
 
 
+def _disable_image_observables(env: Any) -> None:
+    """Disable image-modality observables so no per-step rendering occurs.
+
+    The policy is state-only; robosuite would otherwise re-render camera
+    images on every ``step()`` (the dominant evaluation cost — see
+    robosuite issue #722). State-modality observables (joint pos/vel, EEF,
+    gripper) are untouched, so the 23-DoF state vector is unaffected.
+
+    Fully defensive: if the observable API differs across robosuite
+    versions, log a warning instead of failing the evaluation.
+    """
+    observables = getattr(env, "_observables", None) or {}
+    disabled = 0
+    for obs in observables.values():
+        if getattr(obs, "modality", None) != "image":
+            continue
+        try:
+            if hasattr(obs, "set_enabled"):
+                obs.set_enabled(False)
+                disabled += 1
+        except Exception:
+            logger.warning(
+                "Could not disable image observable %r — rendering stays enabled.",
+                getattr(obs, "name", obs),
+                exc_info=True,
+            )
+    if disabled:
+        logger.info(
+            "Rendering disabled for %d image observable(s) (state-only policy).",
+            disabled,
+        )
+
+
 class StateOnlyLiberoEnv:
     """State-only wrapper around LIBERO's OffScreenRenderEnv.
 
     Constructs the 23-DoF state vector that matches our training data format.
-    All image observations are discarded.
+    All image observations are discarded (and, by default, not even rendered).
 
     Usage:
         env = StateOnlyLiberoEnv(suite_name="libero_spatial", task_id=0, seed=42)
@@ -54,6 +87,7 @@ class StateOnlyLiberoEnv:
         task_id: int,
         seed: int = 42,
         num_steps_wait: int = 10,
+        render_observations: bool = False,
     ) -> None:
         try:
             from libero.libero import benchmark, get_libero_path
@@ -86,6 +120,8 @@ class StateOnlyLiberoEnv:
             camera_heights=128,
             camera_widths=128,
         )
+        if not render_observations:
+            _disable_image_observables(self._env)
 
     @property
     def task_description(self) -> str:
