@@ -21,13 +21,15 @@ environment:
                               # (camera images + object sensors; the dominant
                               # per-step cost). Set true only to capture
                               # images/video (keeps everything enabled).
-  num_workers: 1              # >1 spawns parallel worker processes, each
-                              # running a round-robin episode shard. Results
-                              # are identical to serial; VRAM scales roughly
-                              # linearly with worker count (one model per
-                              # worker). Physics is single-threaded per env,
-                              # so throughput scales with vCPUs: ~1 worker per
-                              # vCPU (2 on the free Colab T4).
+  num_workers: 0              # 0 = auto: one worker per logical CPU (physics
+                              # is single-threaded per env, so throughput
+                              # scales with vCPUs; free Colab T4 -> 2 workers).
+                              # >0 spawns that many parallel worker processes,
+                              # each running a round-robin episode shard.
+                              # Results are identical to serial; VRAM scales
+                              # roughly linearly with worker count (one model
+                              # per worker) — set an explicit value on small
+                              # VRAM cards.
 
 evaluation:
   num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)

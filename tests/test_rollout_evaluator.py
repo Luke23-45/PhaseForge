@@ -48,6 +48,7 @@ def make_cfg(
                 "environment": {
                     "suites": suites or ["libero_spatial"],
                     "num_steps_wait": 2,
+                    "num_workers": 1,  # force serial path with fake envs
                 },
                 "evaluation": {"num_episodes_per_task": num_episodes},
             },
@@ -341,7 +342,7 @@ def test_rollout_mode_without_environment_keys_uses_defaults(
     assert evaluator.num_episodes_per_task == 50
     assert evaluator.num_steps_wait == 10
     assert evaluator.render_observations is False
-    assert evaluator.num_workers == 1
+    assert evaluator.num_workers == 0  # auto: one worker per logical CPU
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +370,19 @@ def test_resolve_num_workers_caps_to_episodes() -> None:
     assert re_mod._resolve_num_workers(2, 50) == 2
     assert re_mod._resolve_num_workers(4, 0) == 1
     assert re_mod._resolve_num_workers(1, 50) == 1
+
+
+def test_resolve_num_workers_auto_uses_cpu_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(re_mod.os, "cpu_count", lambda: 4)
+    assert re_mod._resolve_num_workers(0, 50) == 4
+    assert re_mod._resolve_num_workers(-1, 50) == 4
+    assert re_mod._resolve_num_workers(0, 2) == 2  # capped by episodes
+    assert re_mod._resolve_num_workers(0, 0) == 1  # nothing to parallelize
+
+    monkeypatch.setattr(re_mod.os, "cpu_count", lambda: None)
+    assert re_mod._resolve_num_workers(0, 50) == 1  # unknown CPU count
 
 
 def test_merge_worker_results_matches_serial_aggregation() -> None:
@@ -443,7 +457,7 @@ def test_eval_config_groups_compose() -> None:
         ]
         assert rollout_cfg.eval.environment.num_steps_wait == 10
         assert rollout_cfg.eval.environment.render_observations is False
-        assert rollout_cfg.eval.environment.num_workers == 1
+        assert rollout_cfg.eval.environment.num_workers == 0  # auto
         assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50
 
         default_cfg = compose(config_name="main")

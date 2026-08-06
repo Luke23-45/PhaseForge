@@ -12,8 +12,9 @@ Performance notes (verified against the LIBERO/robosuite stack):
   observables that build the 23-DoF state vector. Per-step rendering and
   sensor updates are the dominant per-step costs.
 - Per-step cost is physics-bound (~25 MuJoCo substeps per control step,
-  single-threaded per env), so wall-clock throughput scales with vCPUs:
-  set ``num_workers`` to ~1 per vCPU of the eval machine.
+  single-threaded per env), so wall-clock throughput scales with vCPUs.
+  ``num_workers: 0`` (the default) auto-resolves to one worker per logical
+  CPU; set an explicit value to cap it on small VRAM cards.
 - With ``num_workers > 1`` episodes are sharded round-robin across spawned
   worker processes (the vla-eval/LIBERO-recommended pattern), so the GPU can
   serve action inference while other workers simulate. Results are
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import os
 import time
 from typing import Any
 
@@ -45,11 +47,14 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_num_workers(requested: int, num_episodes: int) -> int:
-    """Cap the requested worker count to something meaningful.
+    """Resolve the effective worker count.
 
-    More workers than episodes wastes process spin-up; with zero episodes
-    there is nothing to parallelize at all.
+    ``requested <= 0`` means auto: one worker per logical CPU (physics is
+    single-threaded per env, so throughput scales with vCPUs). Either way
+    the count is capped so we never spin up more workers than episodes.
     """
+    if int(requested) <= 0:
+        requested = os.cpu_count() or 1
     return max(1, min(int(requested), num_episodes))
 
 
@@ -177,7 +182,7 @@ class RolloutEvaluator:
         - ``eval.environment.suites`` (default ``["libero_spatial"]``)
         - ``eval.environment.num_steps_wait`` (default 10)
         - ``eval.environment.render_observations`` (default False)
-        - ``eval.environment.num_workers`` (default 1)
+        - ``eval.environment.num_workers`` (default 0 = auto: one per CPU)
         - ``eval.evaluation.num_episodes_per_task`` (default 50)
     """
 
@@ -203,7 +208,7 @@ class RolloutEvaluator:
         self.render_observations: bool = bool(
             env_cfg.get("render_observations", False)
         )
-        self.num_workers: int = int(env_cfg.get("num_workers", 1))
+        self.num_workers: int = int(env_cfg.get("num_workers", 0))
         self.num_episodes_per_task: int = int(
             eval_settings.get("num_episodes_per_task", 50)
         )
@@ -428,12 +433,22 @@ class RolloutEvaluator:
         all_results: dict[str, Any] = {}
         all_suite_rates: list[float] = []
 
+        resolved_workers = _resolve_num_workers(
+            self.num_workers, self.num_episodes_per_task
+        )
+        if self.num_workers <= 0:
+            logger.info(
+                "num_workers=auto: resolved to %d worker(s) "
+                "(%d logical CPU(s))",
+                resolved_workers, os.cpu_count() or 1,
+            )
+
         for suite_name in self.suites:
             logger.info(
                 "Evaluating suite %s (%d episodes/task, %d worker(s))…",
                 suite_name,
                 self.num_episodes_per_task,
-                self.num_workers,
+                resolved_workers,
             )
             suite_results = self.evaluate_suite(
                 suite_name, num_episodes_per_task=self.num_episodes_per_task
