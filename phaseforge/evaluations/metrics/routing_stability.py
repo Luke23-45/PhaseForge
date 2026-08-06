@@ -106,14 +106,22 @@ def time_to_stable_routing(
     windows = entropy.unfold(0, window_size, 1)  # (T - window_size + 1, window_size)
     variances = windows.var(dim=-1)
 
-    consecutive = 0
-    for i in range(variances.numel()):
-        if variances[i] < variance_threshold:
-            consecutive += 1
-            if consecutive >= consecutive_windows:
-                return torch.tensor(i + 1, dtype=torch.int64, device=gate_logits.device)
-        else:
-            consecutive = 0
+    # Find the first run of `consecutive_windows` consecutive stable windows.
+    # Vectorized sliding-sum instead of a Python loop (the loop cost O(T)
+    # pure-Python iterations per evaluation on the full validation set).
+    stable = (variances < variance_threshold).to(torch.int64)
+    if stable.numel() >= consecutive_windows:
+        counts = stable.unfold(0, consecutive_windows, 1).sum(dim=-1)
+        hits = (counts == consecutive_windows).nonzero()
+        if hits.numel() > 0:
+            # Window at index `hits[0]` starts the run; the window at
+            # `hits[0] + consecutive_windows - 1` completes it, and the
+            # original loop returns (last window index) + 1.
+            return torch.tensor(
+                int(hits[0].item()) + consecutive_windows,
+                dtype=torch.int64,
+                device=gate_logits.device,
+            )
 
     return torch.tensor(T, dtype=torch.int64, device=gate_logits.device)
 

@@ -99,3 +99,64 @@ def test_time_to_stable_routing_short_sequence_returns_T() -> None:
     logits = torch.randn(10, 4)
     t = time_to_stable_routing(logits, window_size=100, consecutive_windows=5)
     assert t.item() == 10
+
+
+def _reference_time_to_stable(
+    gate_logits, window_size: int, variance_threshold: float, consecutive_windows: int
+) -> int:
+    """The original O(N) Python-loop implementation — the semantic contract
+    the vectorized version must match exactly."""
+    probs = torch.softmax(gate_logits, dim=-1)
+    log_probs = torch.log(probs.clamp(min=1e-8))
+    entropy = -(probs * log_probs).sum(dim=-1)
+    T = entropy.numel()
+
+    if T < window_size * consecutive_windows:
+        return T
+
+    windows = entropy.unfold(0, window_size, 1)
+    variances = windows.var(dim=-1)
+
+    consecutive = 0
+    for i in range(variances.numel()):
+        if variances[i] < variance_threshold:
+            consecutive += 1
+            if consecutive >= consecutive_windows:
+                return i + 1
+        else:
+            consecutive = 0
+    return T
+
+
+@pytest.mark.parametrize(
+    "logits",
+    [
+        _peak_logits(1000, 4),
+        _alternating_logits(500, 4),
+        torch.randn(800, 4),
+        torch.zeros(600, 4),
+        torch.cat([_alternating_logits(200, 4), _peak_logits(600, 4)]),  # late convergence
+    ],
+    ids=["peak", "alternating", "random", "constant", "late-run"],
+)
+def test_time_to_stable_routing_matches_reference_loop(logits) -> None:
+    for window_size, threshold, consecutive in [(100, 0.001, 5), (50, 0.0001, 3), (10, 1e-8, 1)]:
+        expected = _reference_time_to_stable(logits, window_size, threshold, consecutive)
+        got = time_to_stable_routing(
+            logits,
+            window_size=window_size,
+            variance_threshold=threshold,
+            consecutive_windows=consecutive,
+        )
+        assert got.item() == expected, (window_size, threshold, consecutive)
+
+
+def test_time_to_stable_routing_single_consecutive_window() -> None:
+    """consecutive_windows=1: first stable window is the answer immediately."""
+    logits = _peak_logits(300, 4)
+    t = time_to_stable_routing(
+        logits, window_size=50, variance_threshold=0.001, consecutive_windows=1
+    )
+    expected = _reference_time_to_stable(logits, 50, 0.001, 1)
+    assert t.item() == expected
+    assert t.item() < 300

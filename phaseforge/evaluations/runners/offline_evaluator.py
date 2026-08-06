@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 
 import torch
 from omegaconf import DictConfig
@@ -72,7 +73,20 @@ class OfflineEvaluator:
         action_preds = torch.cat(all_action_preds, dim=0)
         action_targets = torch.cat(all_action_targets, dim=0)
         phases = torch.cat(all_phases, dim=0)
-        
+
+        # 2b. Decisive signal first, logged IMMEDIATELY: raw action error. If a
+        #     later metric is slow (e.g. the routing metrics) and the run gets
+        #     interrupted, this line is what distinguishes "the model cannot
+        #     reproduce the training actions" (0% LIBERO success is expected)
+        #     from "the eval path is broken" (low MSE but 0% rollouts).
+        mask = torch.cat(all_masks, dim=0) if all_masks else None
+        mse = task_metrics.action_mse(action_preds, action_targets, mask)
+        logger.info(
+            "  eval/action_mse: %.6f (RMSE %.4f)",
+            mse, math.sqrt(max(mse, 0.0)),
+        )
+        results = {"eval/action_mse": mse}
+
         is_moe = len(all_expert_indices) > 0
         if is_moe:
             expert_indices = torch.cat(all_expert_indices, dim=0)
@@ -82,13 +96,17 @@ class OfflineEvaluator:
             gate_logits = None
 
         # 3. Compute Metrics
-        results = {}
+        # (results already contains eval/action_mse from step 2b)
         
         # Task Metrics
         if self.metrics_cfg.task.success_rate.enabled:
             threshold = self.metrics_cfg.task.success_rate.l2_threshold
             results["eval/success_rate"] = task_metrics.success_rate(
                 action_preds, action_targets, threshold
+            )
+            logger.info(
+                "  eval/success_rate (L2 <= %.2f): %.4f",
+                threshold, results["eval/success_rate"],
             )
             
         if self.metrics_cfg.task.boundary_smoothness.enabled:

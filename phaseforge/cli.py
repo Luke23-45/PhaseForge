@@ -12,7 +12,6 @@ import logging
 
 import hydra
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 
 from phaseforge.trains.callbacks.checkpointing import CheckpointCallback
@@ -49,6 +48,53 @@ def _resolve_device(cfg: DictConfig) -> torch.device:
     return torch.device(requested)
 
 
+def _log_state_dict_mismatch(
+    result,
+    context: str,
+    expected_unexpected_prefixes: tuple[str, ...] = (),
+) -> None:
+    """Surface weights silently skipped by ``strict=False`` checkpoint loads.
+
+    ``strict=False`` exists so a Stage 1 checkpoint can be loaded into a
+    Stage 2 model before bootstrapping (the MoE block is legitimately
+    absent), but it ALSO silently tolerates a model config that differs
+    from the checkpoint's training config — the policy then runs on
+    random/unloaded weights and LIBERO rollouts score 0% with no error.
+    Log the skipped keys explicitly so a mismatch is visible.
+    """
+    unexpected = [
+        key
+        for key in result.unexpected_keys
+        if not any(key.startswith(prefix) for prefix in expected_unexpected_prefixes)
+    ]
+    expected_count = len(result.unexpected_keys) - len(unexpected)
+    missing = list(result.missing_keys)
+
+    if expected_count and not missing and not unexpected:
+        logger.info(
+            "%s: %d key(s) not in the checkpoint (prefix(es) %s) — expected, "
+            "skipped.",
+            context, expected_count, ", ".join(expected_unexpected_prefixes) or "-",
+        )
+        return
+    if not missing and not unexpected:
+        return
+
+    logger.warning(
+        "%s: checkpoint/model mismatch — %d missing, %d unexpected key(s). "
+        "Missing (first 8): %s. Unexpected (first 8): %s.",
+        context, len(missing), len(unexpected),
+        missing[:8] or "-", unexpected[:8] or "-",
+    )
+    logger.warning(
+        "%s: mismatched weights are skipped silently. If the eval model config "
+        "differs from the checkpoint's training config, the policy runs on "
+        "random/unloaded weights (a common cause of 0%% success in LIBERO "
+        "rollouts). Verify eval config == train config.",
+        context,
+    )
+
+
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def train(cfg: DictConfig) -> None:
     """Main training entry point."""
@@ -72,8 +118,12 @@ def train(cfg: DictConfig) -> None:
 
     logger.info(f"Output directory: {output_dir}")
 
-    # 2. Init W&B
-    if cfg.project.wandb.mode != "disabled":
+    # 2. Init W&B (lazy import: cli.py stays importable without wandb installed)
+    try:
+        import wandb
+    except ImportError:
+        wandb = None
+    if wandb is not None and cfg.project.wandb.mode != "disabled":
         wandb.init(
             project=cfg.project.wandb.project,
             entity=cfg.project.wandb.entity,
@@ -125,7 +175,11 @@ def train(cfg: DictConfig) -> None:
 
             logger.info(f"Loading Stage 1 checkpoint from {ckpt_path}...")
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            model.load_state_dict(ckpt["model_state_dict"], strict=False)
+            _log_state_dict_mismatch(
+                model.load_state_dict(ckpt["model_state_dict"], strict=False),
+                "Stage 1 -> Stage 2 bootstrap load",
+                expected_unexpected_prefixes=("moe_layer",),
+            )
 
             model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
         else:
@@ -167,7 +221,7 @@ def train(cfg: DictConfig) -> None:
     # 7. Go!
     trainer.fit()
 
-    if wandb.run is not None:
+    if wandb is not None and wandb.run is not None:
         wandb.finish()
 
 
@@ -187,7 +241,10 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
     if ckpt_path:
         logger.info(f"Loading checkpoint from {ckpt_path}...")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        _log_state_dict_mismatch(
+            model.load_state_dict(ckpt["model_state_dict"], strict=False),
+            "Evaluation checkpoint load",
+        )
         # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
         # so load_state_dict() leaves it at the __init__ default (1).
         if hasattr(model, "stage") and "stage" in ckpt:

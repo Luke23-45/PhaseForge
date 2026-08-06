@@ -35,6 +35,39 @@ def success_rate(
     return successes / total
 
 
+def action_mse(
+    predicted_actions: Tensor, target_actions: Tensor, mask: Tensor | None = None
+) -> float:
+    """Mean squared error between predicted and target actions.
+
+    The single most informative offline diagnostic: if a policy that scores
+    0% in LIBERO rollouts cannot even reproduce the demonstration actions
+    (high MSE), the rollout result reflects model capability rather than an
+    evaluation bug.
+
+    Args:
+        predicted_actions: (B, A) or (B, T, A).
+        target_actions: Same shape as ``predicted_actions``.
+        mask: Optional (B, T) (or (B,)) boolean/0-1 padding mask. When given,
+            only the masked-in entries contribute (variable-length batches).
+
+    Returns:
+        Scalar MSE over the (masked) action entries, or ``float('nan')`` when
+        no entries remain.
+    """
+    if mask is not None:
+        m = mask.bool()
+        while m.ndim < predicted_actions.ndim:
+            m = m.unsqueeze(-1)
+        m = m.expand_as(predicted_actions)
+        predicted_actions = predicted_actions[m]
+        target_actions = target_actions[m]
+
+    if predicted_actions.numel() == 0:
+        return float("nan")
+    return float(((predicted_actions - target_actions) ** 2).mean())
+
+
 def boundary_smoothness(
     predicted_actions: Tensor, phases: Tensor, boundary_window: int = 3
 ) -> float:
