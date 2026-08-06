@@ -39,7 +39,7 @@ dev = [
 # may indicate binary incompatibility" at import time).
 rollout = [
     "numpy==1.26.4",
-    "robosuite==1.4.1",
+    "robosuite==1.4.0",
     "mujoco==2.3.7",
     "libero",
 ]
