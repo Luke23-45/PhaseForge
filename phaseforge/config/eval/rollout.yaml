@@ -17,14 +17,17 @@ environment:
     - "libero_10"
     - "libero_90"
   num_steps_wait: 10      # Dummy steps at reset for physics to settle
-  render_observations: false  # State-only policy: skip per-step camera
-                              # rendering (dominant eval cost). Set true
-                              # only to capture images/video.
+  render_observations: false  # State-only policy: prune unused observables
+                              # (camera images + object sensors; the dominant
+                              # per-step cost). Set true only to capture
+                              # images/video (keeps everything enabled).
   num_workers: 1              # >1 spawns parallel worker processes, each
                               # running a round-robin episode shard. Results
                               # are identical to serial; VRAM scales roughly
                               # linearly with worker count (one model per
-                              # worker). Recommended: 2-4 on a single GPU.
+                              # worker). Physics is single-threaded per env,
+                              # so throughput scales with vCPUs: ~1 worker per
+                              # vCPU (2 on the free Colab T4).
 
 evaluation:
   num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)

@@ -7,8 +7,13 @@ Runs the standard evaluation protocol:
 - Aggregate per-suite and overall success rates
 
 Performance notes (verified against the LIBERO/robosuite stack):
-- Image observables are disabled by default (``render_observations: false``):
-  the policy is state-only, and per-step camera rendering dominates runtime.
+- Unused observables are pruned by default (``render_observations: false``):
+  camera images AND object sensors are disabled, keeping only the five
+  observables that build the 23-DoF state vector. Per-step rendering and
+  sensor updates are the dominant per-step costs.
+- Per-step cost is physics-bound (~25 MuJoCo substeps per control step,
+  single-threaded per env), so wall-clock throughput scales with vCPUs:
+  set ``num_workers`` to ~1 per vCPU of the eval machine.
 - With ``num_workers > 1`` episodes are sharded round-robin across spawned
   worker processes (the vla-eval/LIBERO-recommended pattern), so the GPU can
   serve action inference while other workers simulate. Results are

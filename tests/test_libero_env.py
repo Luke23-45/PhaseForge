@@ -197,7 +197,7 @@ def test_close_calls_underlying_env() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rendering skip (_disable_image_observables)
+# Observable pruning (_disable_unused_observables)
 # ---------------------------------------------------------------------------
 
 
@@ -222,6 +222,11 @@ class FakeObservableEnv:
                 "agentview_image": FakeObservable("image"),
                 "eye_in_hand_image": FakeObservable("image"),
                 "robot0_joint_pos": FakeObservable("state"),
+                "robot0_joint_vel": FakeObservable("state"),
+                "robot0_eef_pos": FakeObservable("state"),
+                "robot0_eef_quat": FakeObservable("state"),
+                "robot0_gripper_qpos": FakeObservable("state"),
+                "world_bowl_pos": FakeObservable("object"),
             }
             if with_observables
             else None
@@ -235,30 +240,42 @@ class WrappedObservableEnv:
         self._env = FakeObservableEnv()
 
 
-def test_disable_image_observables_disables_only_image() -> None:
+def _enabled_names(observables: dict) -> list[str]:
+    return sorted(name for name, obs in observables.items() if obs.enabled)
+
+
+def test_pruning_keeps_only_state_vector_observables() -> None:
     env = FakeObservableEnv()
-    le._disable_image_observables(env)
-    assert env._observables["agentview_image"].enabled is False
-    assert env._observables["eye_in_hand_image"].enabled is False
-    assert env._observables["robot0_joint_pos"].enabled is True
+    le._disable_unused_observables(env)
+    # Exactly the five 23-DoF keys survive; images and object sensors go.
+    assert _enabled_names(env._observables) == [
+        "robot0_eef_pos",
+        "robot0_eef_quat",
+        "robot0_gripper_qpos",
+        "robot0_joint_pos",
+        "robot0_joint_vel",
+    ]
 
 
-def test_disable_image_observables_finds_wrapped_env() -> None:
+def test_pruning_finds_wrapped_env() -> None:
     """OffScreenRenderEnv stores the robosuite env at _env — the fix for
-    the 'Rendering skip NO-OP' seen in the Colab eval logs."""
+    the 'NO-OP' warnings seen in the Colab eval logs."""
     env = WrappedObservableEnv()
-    le._disable_image_observables(env)
-    inner = env._env._observables
-    assert inner["agentview_image"].enabled is False
-    assert inner["eye_in_hand_image"].enabled is False
-    assert inner["robot0_joint_pos"].enabled is True
+    le._disable_unused_observables(env)
+    assert _enabled_names(env._env._observables) == [
+        "robot0_eef_pos",
+        "robot0_eef_quat",
+        "robot0_gripper_qpos",
+        "robot0_joint_pos",
+        "robot0_joint_vel",
+    ]
 
 
-def test_disable_image_observables_warns_on_missing_observables(caplog) -> None:
+def test_pruning_warns_on_missing_observables(caplog) -> None:
     env = FakeObservableEnv(with_observables=False)
     with caplog.at_level(logging.WARNING, logger="phaseforge.evaluations.envs.libero_env"):
-        le._disable_image_observables(env)
-    assert "Rendering skip NO-OP" in caplog.text
+        le._disable_unused_observables(env)
+    assert "Observable pruning NO-OP" in caplog.text
 
 
 # ---------------------------------------------------------------------------

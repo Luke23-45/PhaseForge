@@ -33,6 +33,19 @@ SUITE_BENCHMARK_NAMES: dict[str, str] = {
 }
 
 
+#: The exact observable names that build the 23-DoF state vector
+#: (``_extract_state``). Everything else — camera images AND object
+#: sensors — is unused by the state-only policy and is disabled to
+#: eliminate per-step rendering / sensor-update costs.
+KEPT_OBSERVABLE_NAMES: tuple[str, ...] = (
+    "robot0_joint_pos",     # 7
+    "robot0_joint_vel",     # 7
+    "robot0_eef_pos",       # 3
+    "robot0_eef_quat",      # 4
+    "robot0_gripper_qpos",  # 2
+)
+
+
 def _find_observable_env(
     env: Any,
 ) -> tuple[Any | None, dict[str, Any] | None]:
@@ -58,37 +71,35 @@ def _find_observable_env(
     return None, None
 
 
-def _disable_image_observables(env: Any) -> None:
-    """Disable image-modality observables so no per-step rendering occurs.
+def _disable_unused_observables(env: Any) -> None:
+    """Keep only the observables that build the 23-DoF state vector.
 
     The policy is state-only; robosuite would otherwise re-render camera
-    images on every ``step()`` (the dominant evaluation cost — see
-    robosuite issue #722). State-modality observables (joint pos/vel, EEF,
-    gripper) are untouched, so the 23-DoF state vector is unaffected.
+    images and re-query every object sensor on each ``step()`` (the
+    dominant per-step costs — see robosuite issue #722). Only the five
+    proprioceptive observables listed in :data:`KEPT_OBSERVABLE_NAMES`
+    are kept, so ``_extract_state`` is unaffected.
 
-    Always logs a diagnostic (observable count, modalities, disabled
-    count) so a silent no-op — e.g. a robosuite API difference — is
-    visible in the eval log instead of quietly leaving rendering on.
+    Always logs a diagnostic (kept/disabled counts) so a silent no-op —
+    e.g. a robosuite API difference — is visible in the eval log instead
+    of quietly leaving the sensors on.
     """
     target_env, observables = _find_observable_env(env)
     if not observables:
         logger.warning(
-            "Rendering skip NO-OP: no _observables found on %s "
-            "(or any wrapped _env/env) — image observables will keep "
-            "rendering every step.",
+            "Observable pruning NO-OP: no _observables found on %s "
+            "(or any wrapped _env/env) — rendering and object sensors "
+            "will keep running every step.",
             type(env).__name__,
         )
         return
 
-    modalities: dict[str, int] = {}
     disabled = 0
-    image_obs = 0
+    kept = 0
     for name, obs in observables.items():
-        modality = getattr(obs, "modality", None)
-        modalities[str(modality)] = modalities.get(str(modality), 0) + 1
-        if modality != "image":
+        if name in KEPT_OBSERVABLE_NAMES:
+            kept += 1
             continue
-        image_obs += 1
         try:
             if hasattr(obs, "set_enabled"):
                 obs.set_enabled(False)
@@ -99,20 +110,20 @@ def _disable_image_observables(env: Any) -> None:
                 disabled += 1
                 continue
             logger.warning(
-                "Observable %r is image-modality but has no set_enabled/set_active.",
+                "Observable %r has no set_enabled/set_active — cannot prune it.",
                 name,
             )
         except Exception:
             logger.warning(
-                "Could not disable image observable %r — rendering stays enabled.",
+                "Could not disable observable %r — it stays enabled.",
                 name,
                 exc_info=True,
             )
 
     logger.info(
-        "Rendering skip: disabled %d/%d image observable(s) "
-        "(total observables: %d, modalities: %s)",
-        disabled, image_obs, len(observables), modalities,
+        "Observable pruning: kept %d/%d (23-DoF state), disabled %d "
+        "— no per-step rendering/sensor updates for the rest.",
+        kept, len(observables), disabled,
     )
 
 
@@ -171,7 +182,7 @@ class StateOnlyLiberoEnv:
             camera_widths=128,
         )
         if not render_observations:
-            _disable_image_observables(self._env)
+            _disable_unused_observables(self._env)
 
     @property
     def task_description(self) -> str:
