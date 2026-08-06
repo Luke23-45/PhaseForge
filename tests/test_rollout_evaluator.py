@@ -83,11 +83,13 @@ class FakeStateEnv:
         seed: int,
         num_steps_wait: int = 10,
         render_observations: bool = False,
+        hard_reset: bool = True,
     ) -> None:
         self.suite_name = suite_name
         self.task_id = task_id
         self.seed = seed
         self.num_steps_wait = num_steps_wait
+        self.hard_reset = hard_reset
         self.task_description = f"task_{suite_name}_{task_id}"
         self.closed = False
         self.actions_received: list[np.ndarray] = []
@@ -294,6 +296,7 @@ def test_envs_are_closed_after_suite(
         seed: int,
         num_steps_wait: int = 10,
         render_observations: bool = False,
+        hard_reset: bool = True,
     ) -> FakeStateEnv:
         env = FakeStateEnv(suite_name, task_id, seed, num_steps_wait, render_observations)
         created.append(env)
@@ -342,7 +345,35 @@ def test_rollout_mode_without_environment_keys_uses_defaults(
     assert evaluator.num_episodes_per_task == 50
     assert evaluator.num_steps_wait == 10
     assert evaluator.render_observations is False
+    assert evaluator.hard_reset is True
     assert evaluator.num_workers == 0  # auto: one worker per logical CPU
+
+
+def test_env_factory_receives_hard_reset_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
+) -> None:
+    """hard_reset: false in the config must reach the env constructor."""
+    cfg = make_cfg(num_episodes=1)
+    cfg.eval.environment.hard_reset = False
+    evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+
+    received: list[bool] = []
+
+    def factory(
+        suite_name: str,
+        task_id: int,
+        seed: int,
+        num_steps_wait: int = 10,
+        render_observations: bool = False,
+        hard_reset: bool = True,
+    ) -> FakeStateEnv:
+        received.append(hard_reset)
+        return FakeStateEnv(suite_name, task_id, seed, num_steps_wait)
+
+    monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", factory)
+    evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
+
+    assert received == [False, False]
 
 
 # ---------------------------------------------------------------------------

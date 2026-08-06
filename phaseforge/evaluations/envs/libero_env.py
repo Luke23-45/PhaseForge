@@ -140,6 +140,12 @@ class StateOnlyLiberoEnv:
         env.close()
 
     Note: Gymnasium-style step() return: (obs, reward, terminated, truncated, info).
+
+    ``hard_reset`` mirrors LIBERO/robosuite: ``True`` (default) rebuilds the
+    MuJoCo sim from XML on every ``reset()`` — the official benchmark
+    behavior, bit-identical across runs. ``False`` reuses the existing sim
+    (faster resets) but is NOT bit-identical after settling steps
+    (LeRobot docs, "Reset performance").
     """
 
     def __init__(
@@ -149,6 +155,7 @@ class StateOnlyLiberoEnv:
         seed: int = 42,
         num_steps_wait: int = 10,
         render_observations: bool = False,
+        hard_reset: bool = True,
     ) -> None:
         try:
             from libero.libero import benchmark, get_libero_path
@@ -180,9 +187,31 @@ class StateOnlyLiberoEnv:
             bddl_file_name=bddl_file,
             camera_heights=128,
             camera_widths=128,
+            hard_reset=hard_reset,
         )
         if not render_observations:
             _disable_unused_observables(self._env)
+
+        # LIBERO's BDDLBaseDomain.reward() re-evaluates the full BDDL
+        # success predicate on every step (bddl_base_domain.py:167-191) even
+        # though we discard the reward: ``done`` from step()
+        # (bddl_base_domain.py:809) is the very same predicate result. Stub
+        # reward() so each control step runs the predicate exactly once
+        # (via done) instead of twice. The stub is guarded: if the attribute
+        # chain ever changes, we degrade to the old behavior with a warning.
+        underlying = getattr(self._env, "env", None)
+        if underlying is not None and hasattr(underlying, "reward"):
+            underlying.reward = lambda action: 0.0
+        else:
+            logger.warning(
+                "Reward stub skipped: no underlying env.reward found on %s "
+                "— _check_success() still runs twice per step.",
+                type(self._env).__name__,
+            )
+
+        # None = not probed yet; True = done == BDDL success predicate
+        # (LIBERO semantics); False = fall back to explicit check_success().
+        self._success_via_done: bool | None = None
 
     @property
     def task_description(self) -> str:
@@ -234,16 +263,33 @@ class StateOnlyLiberoEnv:
     ) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Take a step and return Gymnasium-style (obs, reward, terminated, truncated, info).
 
-        Maps robosuite's ``done`` (horizon reached) + ``check_success()``
-        (goal predicates satisfied).  Following the LeRobot convention,
         ``terminated = done or is_success`` and ``truncated = False`` so
         that any episode end is a termination (the caller distinguishes
         success vs. timeout via ``info["is_success"]``).
+
+        For LIBERO envs ``done`` is already the BDDL success predicate:
+        ``BDDLBaseDomain.step`` overwrites robosuite's horizon-done with
+        ``done = self._check_success()`` (bddl_base_domain.py:809). The
+        explicit ``check_success()`` call is therefore redundant, and each
+        control step evaluates the predicate only once instead of twice
+        (the second call being robosuite's ``reward()`` -> ``_check_success()``,
+        which is stubbed at construction). The equivalence is probed once on
+        the first step; on any mismatch the wrapper falls back to the
+        explicit check so semantics never change silently.
         """
         action = np.asarray(action, dtype=np.float32).flatten()
         obs, reward, done, info = self._env.step(action)
         self._elapsed_steps += 1
-        is_success = self._env.check_success()
+        if self._success_via_done is None:
+            self._success_via_done = bool(done) == bool(self._env.check_success())
+            if not self._success_via_done:
+                logger.warning(
+                    "step(): done != _check_success() on this env — falling "
+                    "back to an explicit check_success() every step (slower)."
+                )
+        is_success = bool(done) if self._success_via_done else bool(
+            self._env.check_success()
+        )
         terminated = bool(done) or bool(is_success)
         truncated = False
         state = self._extract_state(obs)

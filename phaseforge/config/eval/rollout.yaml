@@ -17,6 +17,11 @@ environment:
     - "libero_10"
     - "libero_90"
   num_steps_wait: 10      # Dummy steps at reset for physics to settle
+  hard_reset: true        # Rebuild the MuJoCo sim from XML every episode:
+                          # the official benchmark default (bit-identical).
+                          # Set false to reuse the sim across episodes
+                          # (faster resets) — NOT bit-identical after
+                          # settling steps (LeRobot docs, "Reset performance").
   render_observations: false  # State-only policy: prune unused observables
                               # (camera images + object sensors; the dominant
                               # per-step cost). Set true only to capture

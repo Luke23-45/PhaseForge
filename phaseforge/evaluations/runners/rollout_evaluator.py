@@ -191,6 +191,8 @@ class RolloutEvaluator:
         - ``eval.environment.suites`` (default ``["libero_spatial"]``)
         - ``eval.environment.num_steps_wait`` (default 10)
         - ``eval.environment.render_observations`` (default False)
+        - ``eval.environment.hard_reset`` (default True: rebuild the sim
+          from XML every episode — the official protocol, bit-identical)
         - ``eval.environment.num_workers`` (default 0 = auto: one per CPU)
         - ``eval.evaluation.num_episodes_per_task`` (default 50)
     """
@@ -217,6 +219,7 @@ class RolloutEvaluator:
         self.render_observations: bool = bool(
             env_cfg.get("render_observations", False)
         )
+        self.hard_reset: bool = bool(env_cfg.get("hard_reset", True))
         self.num_workers: int = int(env_cfg.get("num_workers", 0))
         self.num_episodes_per_task: int = int(
             eval_settings.get("num_episodes_per_task", 50)
@@ -238,7 +241,13 @@ class RolloutEvaluator:
                 f"No cached dataset found for config_hash={config_hash}. "
                 "Run training (which builds the cache) before rollout evaluation."
             ) from exc
-        return FrozenNormalizer(mean=norm_stats["mean"], std=norm_stats["std"])
+        normalizer = FrozenNormalizer(mean=norm_stats["mean"], std=norm_stats["std"])
+        # Pin the stats to the eval device once. ``normalize()`` re-hosts
+        # mean/std on every call (normalizer.py:83-84); doing it here keeps
+        # that per-step work out of the rollout hot loop.
+        normalizer.mean = normalizer.mean.to(self.device)
+        normalizer.std = normalizer.std.to(self.device)
+        return normalizer
 
     @torch.inference_mode()
     def _get_action(self, state: np.ndarray) -> np.ndarray:
@@ -277,6 +286,7 @@ class RolloutEvaluator:
             seed=self.cfg.project.seed,
             num_steps_wait=self.num_steps_wait,
             render_observations=self.render_observations,
+            hard_reset=self.hard_reset,
         )
         task_desc = env.task_description
         max_steps = SUITE_MAX_STEPS[suite_name]
