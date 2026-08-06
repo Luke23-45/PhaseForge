@@ -143,6 +143,15 @@ def _run_suite_worker(
     A crash inside the worker propagates as a nonzero process exit; the
     parent raises a RuntimeError after :meth:`join`.
     """
+    # Spawned processes start with an unconfigured root logger, so INFO
+    # progress lines (task/episode logs below) would be silently dropped.
+    # Mirror the main-process format so worker progress appears on the
+    # same console.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     from phaseforge.cli import _resolve_device, build_eval_model
     from phaseforge.utils.seed import set_seed
 
