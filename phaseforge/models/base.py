@@ -9,9 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
 
-import torch
 import torch.nn as nn
 from torch import Tensor
 
@@ -23,16 +21,16 @@ class ModelOutput:
     action_pred: Tensor
     """(B, A) or (B, T, A) — predicted action(s)."""
 
-    phase_logits: Optional[Tensor] = None
+    phase_logits: Tensor | None = None
     """(B, P) — raw phase classification logits. None for non-phase models."""
 
-    routing_weights: Optional[Tensor] = None
+    routing_weights: Tensor | None = None
     """(B, K) — top-k normalized gating weights. None for non-MoE models."""
 
-    expert_indices: Optional[Tensor] = None
+    expert_indices: Tensor | None = None
     """(B, K) — top-k expert indices. None for non-MoE models."""
 
-    gate_logits: Optional[Tensor] = None
+    gate_logits: Tensor | None = None
     """(B, E) — raw gate logits over all experts (for metric logging)."""
 
     aux_losses: dict[str, Tensor] = field(default_factory=dict)
@@ -86,7 +84,7 @@ class BaseManipulationModel(nn.Module, ABC):
         Override in models that have a distinct encoder attribute.
         """
 
-    def get_routing_info(self) -> Optional[dict[str, Tensor]]:
+    def get_routing_info(self) -> dict[str, Tensor] | None:
         """Return the most recent routing state for metric logging.
 
         Returns:

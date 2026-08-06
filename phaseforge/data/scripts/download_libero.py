@@ -62,14 +62,14 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from phaseforge.data.paths import (
     DATA_DIR_ENV_VAR,
     EXPECTED_FILE_COUNTS,
-    LIBERO_LONG_DIRNAME,
     LIBERO_90_DIRNAME,
+    LIBERO_LONG_DIRNAME,
     get_data_root,
     libero_manifest_path,
     libero_raw_root,
@@ -288,7 +288,7 @@ def _write_manifest(
         "repo_id": HF_REPO_ID,
         "revision_requested": revision_label,
         "commit_sha": resolved_sha,
-        "downloaded_at_utc": datetime.now(timezone.utc).isoformat(),
+        "downloaded_at_utc": datetime.now(UTC).isoformat(),
         "suites": suites_meta,
         "integrity_check": "file_count (mirrors official LIBERO check_libero_dataset)",
         "schema_version": 1,

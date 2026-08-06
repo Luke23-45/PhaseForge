@@ -17,8 +17,8 @@ schema and resolves the config's robot0_* key names accordingly.
 
 from __future__ import annotations
 
-import sys
 import shutil
+import sys
 import traceback
 from pathlib import Path
 
@@ -201,7 +201,7 @@ def step3_run_fsm(cfg, raw_suite: Path):
 
     try:
         loaders = pipeline.run()
-        print(f"  run() returned without error.")
+        print("  run() returned without error.")
         for name, loader in loaders.items():
             print(f"    {name}: {type(loader).__name__ if loader else 'None'}")
         return loaders

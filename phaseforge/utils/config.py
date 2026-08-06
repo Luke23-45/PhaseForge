@@ -190,6 +190,9 @@ class CheckpointInfo:
     tag: str | None = None
     """User-provided tag from ``run_meta.json``, if available."""
 
+    seed: int | None = None
+    """Training seed from ``run_meta.json``, if available."""
+
 
 def resolve_checkpoint_source(model_name: str) -> str:
     """Map a model name to the source model for Stage 1 checkpoint lookup.
@@ -260,6 +263,7 @@ def scan_checkpoints(
         # Load metadata from run_meta.json when available
         config_hash: str | None = None
         meta_tag: str | None = tag
+        meta_seed: int | None = None
         meta_path = run / "run_meta.json"
         if meta_path.is_file():
             try:
@@ -267,6 +271,8 @@ def scan_checkpoints(
                     meta = json.load(f)
                 config_hash = meta.get("config_hash")
                 meta_tag = meta.get("tag") or tag
+                seed_val = meta.get("seed")
+                meta_seed = int(seed_val) if isinstance(seed_val, int) else None
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -279,6 +285,7 @@ def scan_checkpoints(
             run_id=run_id,
             config_hash=config_hash,
             tag=meta_tag,
+            seed=meta_seed,
         ))
 
     return checkpoints
@@ -322,6 +329,7 @@ def find_latest_checkpoint(
     stage: int = 1,
     base: str | Path = "outputs",
     resolve_alias: bool = True,
+    seed: int | None = None,
 ) -> Path | None:
     """Find the most recent *best* checkpoint for a model+stage combo.
 
@@ -336,10 +344,20 @@ def find_latest_checkpoint(
             so that models sharing a pretrained encoder find the correct
             checkpoint.  Set to ``False`` when the caller has already
             performed resolution.
+        seed: If provided, prefer a checkpoint whose ``run_meta.json``
+            records this training seed (multi-seed runs). Falls back to
+            the newest run when no seed match exists (e.g. legacy runs
+            written before seeds were recorded).
 
     Returns:
         Absolute path to the latest ``checkpoint_best.pt``, or ``None``.
     """
     source = resolve_checkpoint_source(model_name) if resolve_alias else model_name
     checkpoints = scan_checkpoints(source, stage, base)
-    return checkpoints[0].path if checkpoints else None
+    if not checkpoints:
+        return None
+    if seed is not None:
+        for info in checkpoints:
+            if info.seed == seed:
+                return info.path
+    return checkpoints[0].path

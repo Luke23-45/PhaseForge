@@ -3,6 +3,11 @@
 name: "oracle_moe"
 _target_: phaseforge.models.baselines.oracle_moe.OraclePhaseMoEModel
 
+# No Stage 1 pretraining exists for this baseline, so the encoder MUST be
+# trainable in Stage 2 (same reasoning as scratch_moe). A frozen random
+# encoder would make this "upper bound" strictly worse than BC.
+freeze_encoder: false
+
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder
   input_dim: 23

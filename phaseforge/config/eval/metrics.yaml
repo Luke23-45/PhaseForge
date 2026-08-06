@@ -36,7 +36,11 @@ task:
     l2_threshold: 0.05        # Max L2 error for offline success proxy
 
   completion_rate:
-    enabled: true
+    # Disabled: the offline evaluator processes a flattened step stream and
+    # cannot group steps into trajectories (sequence_length=1), so a
+    # trajectory-level completion rate would be ill-defined. Enable only
+    # when trajectory boundaries are available in the batch.
+    enabled: false
 
   boundary_smoothness:
     enabled: true

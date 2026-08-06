@@ -16,7 +16,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SUITE_MAX_STEPS: dict[str, int] = {
-    "libero_spatial": 220,
+    "libero_spatial": 280,
     "libero_object": 280,
     "libero_goal": 300,
     "libero_10": 520,

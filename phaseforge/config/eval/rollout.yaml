@@ -4,7 +4,7 @@
 #   phaseforge-eval eval=rollout
 #
 # Uses LIBERO OffScreenRenderEnv to run online rollouts with the
-# standard protocol: 50 episodes/task, 4 suites, binary success via
+# standard protocol: 50 episodes/task, 5 suites, binary success via
 # goal predicates.
 
 mode: "rollout"
@@ -15,6 +15,7 @@ environment:
     - "libero_object"
     - "libero_goal"
     - "libero_10"
+    - "libero_90"
   num_steps_wait: 10      # Dummy steps at reset for physics to settle
 
 evaluation:

@@ -27,6 +27,9 @@ class ScratchMoEModel(BaseManipulationModel):
         self.encoder = encoder
         self.moe_layer = MoELayer(router=router, experts=expert)
         self._last_gate_logits: Tensor | None = None
+        # Stage 2-only baseline (no Stage 1 exists). Kept as a plain
+        # attribute so checkpointing/eval metadata records the right stage.
+        self.stage = 2
 
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         state = batch["state"]

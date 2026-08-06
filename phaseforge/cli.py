@@ -54,6 +54,14 @@ def train(cfg: DictConfig) -> None:
     """Main training entry point."""
     # 1. Setup
     set_seed(cfg.project.seed)
+
+    # Per-model override: baselines without Stage 1 pretraining (scratch_moe,
+    # oracle_moe) must train their encoder in Stage 2. Apply before the
+    # resolved config / run metadata are written so records are accurate.
+    model_freeze = cfg.models.get("freeze_encoder", None)
+    if model_freeze is not None:
+        cfg.train.freeze_encoder = bool(model_freeze)
+
     output_dir = get_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +109,7 @@ def train(cfg: DictConfig) -> None:
                 source_model = resolve_checkpoint_source(model_name)
                 auto_ckpt = find_latest_checkpoint(
                     source_model, stage=1, base=cfg.project.output_dir,
-                    resolve_alias=False,
+                    resolve_alias=False, seed=cfg.project.get("seed"),
                 )
                 if auto_ckpt is not None:
                     ckpt_path = str(auto_ckpt)
@@ -145,12 +153,13 @@ def train(cfg: DictConfig) -> None:
     trainer.add_callback(MetricTrackerCallback())
 
     if hasattr(cfg.train, "early_stopping") or "early_stopping" in cfg.train:
-        trainer.add_callback(EarlyStoppingCallback(
-            monitor=cfg.train.early_stopping.monitor,
-            mode=cfg.train.early_stopping.mode,
-            patience=cfg.train.early_stopping.patience,
-            min_delta=cfg.train.early_stopping.min_delta,
-        ))
+        if cfg.train.early_stopping.get("enabled", True):
+            trainer.add_callback(EarlyStoppingCallback(
+                monitor=cfg.train.early_stopping.monitor,
+                mode=cfg.train.early_stopping.mode,
+                patience=cfg.train.early_stopping.patience,
+                min_delta=cfg.train.early_stopping.min_delta,
+            ))
 
     if cfg.project.wandb.mode != "disabled":
         trainer.add_callback(WandbLoggerCallback())

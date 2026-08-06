@@ -345,6 +345,7 @@ def test_eval_config_groups_compose() -> None:
             "libero_object",
             "libero_goal",
             "libero_10",
+            "libero_90",
         ]
         assert rollout_cfg.eval.environment.num_steps_wait == 10
         assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50

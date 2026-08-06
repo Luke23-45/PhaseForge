@@ -35,9 +35,87 @@ def routing_entropy(gate_logits: Tensor, normalize: bool = True) -> Tensor:
     mean_entropy = entropy.mean()
     
     if normalize and E > 1:
-        mean_entropy = mean_entropy / torch.log(torch.tensor(E, dtype=torch.float32, device=gate_logits.device))
+        denom = torch.log(
+            torch.tensor(E, dtype=torch.float32, device=gate_logits.device)
+        )
+        mean_entropy = mean_entropy / denom
         
     return mean_entropy
+
+
+def routing_entropy_variance(gate_logits: Tensor, window_size: int = 100) -> Tensor:
+    """Mean variance of per-step routing entropy over sliding windows.
+
+    Measures how much the router's certainty fluctuates over time. A low
+    value indicates stable routing; a high value indicates flickering.
+
+    Args:
+        gate_logits: (T, E) gating logits over the (flattened) step sequence.
+        window_size: Sliding-window length used to compute local variance.
+
+    Returns:
+        Scalar tensor: mean over all windows of the within-window variance
+        of per-step routing entropy. Falls back to the full-sequence
+        variance when the sequence is shorter than ``window_size``.
+    """
+    probs = F.softmax(gate_logits, dim=-1)
+    log_probs = torch.log(probs.clamp(min=1e-8))
+    entropy = -(probs * log_probs).sum(dim=-1)  # (T,)
+
+    if entropy.numel() < 2:
+        return torch.tensor(0.0, dtype=torch.float32, device=gate_logits.device)
+    if entropy.numel() <= window_size:
+        return entropy.var()
+
+    windows = entropy.unfold(0, window_size, 1)  # (T - window_size + 1, window_size)
+    return windows.var(dim=-1).mean()
+
+
+def time_to_stable_routing(
+    gate_logits: Tensor,
+    window_size: int = 100,
+    variance_threshold: float = 0.001,
+    consecutive_windows: int = 5,
+) -> Tensor:
+    """Step index at which routing first becomes stable.
+
+    Routing is considered stable when the variance of per-step routing
+    entropy within a ``window_size`` window stays below
+    ``variance_threshold`` for ``consecutive_windows`` consecutive windows.
+
+    Args:
+        gate_logits: (T, E) gating logits over the (flattened) step sequence.
+        window_size: Sliding-window length for local entropy variance.
+        variance_threshold: Maximum within-window entropy variance for a
+            window to count as stable.
+        consecutive_windows: Number of consecutive stable windows required.
+
+    Returns:
+        Int tensor: step index (end of the window at which stability was
+        reached). Returns ``T`` (the sequence length) if routing never
+        becomes stable within the available steps.
+    """
+    probs = F.softmax(gate_logits, dim=-1)
+    log_probs = torch.log(probs.clamp(min=1e-8))
+    entropy = -(probs * log_probs).sum(dim=-1)  # (T,)
+    T = entropy.numel()
+
+    if T < window_size * consecutive_windows:
+        return torch.tensor(T, dtype=torch.int64, device=gate_logits.device)
+
+    windows = entropy.unfold(0, window_size, 1)  # (T - window_size + 1, window_size)
+    variances = windows.var(dim=-1)
+
+    consecutive = 0
+    for i in range(variances.numel()):
+        if variances[i] < variance_threshold:
+            consecutive += 1
+            if consecutive >= consecutive_windows:
+                return torch.tensor(i + 1, dtype=torch.int64, device=gate_logits.device)
+        else:
+            consecutive = 0
+
+    return torch.tensor(T, dtype=torch.int64, device=gate_logits.device)
 
 
 class RoutingEntropyTracker:

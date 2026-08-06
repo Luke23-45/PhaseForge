@@ -6,7 +6,9 @@ import torch
 from torch import Tensor
 
 
-def success_rate(predicted_actions: Tensor, target_actions: Tensor, l2_threshold: float = 0.05) -> float:
+def success_rate(
+    predicted_actions: Tensor, target_actions: Tensor, l2_threshold: float = 0.05
+) -> float:
     """Offline proxy for success rate based on action L2 error threshold.
 
     Since offline metrics cannot directly measure task success (which requires an environment),
@@ -33,7 +35,9 @@ def success_rate(predicted_actions: Tensor, target_actions: Tensor, l2_threshold
     return successes / total
 
 
-def boundary_smoothness(predicted_actions: Tensor, phases: Tensor, boundary_window: int = 3) -> float:
+def boundary_smoothness(
+    predicted_actions: Tensor, phases: Tensor, boundary_window: int = 3
+) -> float:
     """Measure the prediction error specifically at phase boundaries.
 
     Phase transitions are the hardest parts of long-horizon tasks. This metric

@@ -33,6 +33,7 @@ checkpoint:
   save_top_k: 1
 
 early_stopping:
+  enabled: true
   monitor: "val/loss_action"
   mode: "min"
   patience: 10

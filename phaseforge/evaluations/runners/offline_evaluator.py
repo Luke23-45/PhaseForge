@@ -25,7 +25,9 @@ class OfflineEvaluator:
     Computes all enabled metrics defined in config/eval/metrics.yaml.
     """
 
-    def __init__(self, cfg: DictConfig, model: BaseManipulationModel, dataloader: DataLoader) -> None:
+    def __init__(
+        self, cfg: DictConfig, model: BaseManipulationModel, dataloader: DataLoader
+    ) -> None:
         self.cfg = cfg
         self.metrics_cfg = cfg.eval
         self.device = torch.device(cfg.project.get("device", "cuda"))
@@ -85,7 +87,9 @@ class OfflineEvaluator:
         # Task Metrics
         if self.metrics_cfg.task.success_rate.enabled:
             threshold = self.metrics_cfg.task.success_rate.l2_threshold
-            results["eval/success_rate"] = task_metrics.success_rate(action_preds, action_targets, threshold)
+            results["eval/success_rate"] = task_metrics.success_rate(
+                action_preds, action_targets, threshold
+            )
             
         if self.metrics_cfg.task.boundary_smoothness.enabled:
             window = self.metrics_cfg.task.boundary_smoothness.boundary_window
@@ -98,18 +102,61 @@ class OfflineEvaluator:
             num_experts = gate_logits.size(-1)
             
             if self.metrics_cfg.mechanism.routing_entropy.enabled:
-                results["eval/routing_entropy"] = routing_stability.routing_entropy(gate_logits, normalize=True).item()
-                
+                results["eval/routing_entropy"] = (
+                    routing_stability.routing_entropy(gate_logits, normalize=True).item()
+                )
+
+            if self.metrics_cfg.mechanism.routing_entropy_variance.enabled:
+                window = self.metrics_cfg.mechanism.routing_entropy_variance.get(
+                    "window_size", 100
+                )
+                results["eval/routing_entropy_variance"] = (
+                    routing_stability.routing_entropy_variance(
+                        gate_logits, window_size=window
+                    ).item()
+                )
+
+            if self.metrics_cfg.mechanism.time_to_stable_routing.enabled:
+                window = self.metrics_cfg.mechanism.routing_entropy_variance.get(
+                    "window_size", 100
+                )
+                var_threshold = (
+                    self.metrics_cfg.mechanism.time_to_stable_routing.get(
+                        "variance_threshold", 0.001
+                    )
+                )
+                consecutive = (
+                    self.metrics_cfg.mechanism.time_to_stable_routing.get(
+                        "consecutive_windows", 5
+                    )
+                )
+                results["eval/time_to_stable_routing"] = (
+                    routing_stability.time_to_stable_routing(
+                        gate_logits,
+                        window_size=window,
+                        variance_threshold=var_threshold,
+                        consecutive_windows=consecutive,
+                    ).item()
+                )
+
             if self.metrics_cfg.mechanism.expert_utilization.enabled:
-                fractions = expert_utilization.expert_utilization(expert_indices, num_experts)
-                
-                results["eval/balance_score"] = expert_utilization.expert_utilization_balance(fractions)
-                
+                fractions = expert_utilization.expert_utilization(
+                    expert_indices, num_experts
+                )
+
+                results["eval/balance_score"] = (
+                    expert_utilization.expert_utilization_balance(fractions)
+                )
+
                 if self.metrics_cfg.mechanism.collapse_rate.enabled:
                     factor = self.metrics_cfg.mechanism.collapse_rate.threshold_factor
-                    results["eval/collapse_rate"] = expert_utilization.collapse_rate(fractions, factor)
-                    
+                    results["eval/collapse_rate"] = (
+                        expert_utilization.collapse_rate(fractions, factor)
+                    )
+
             if self.metrics_cfg.mechanism.phase_expert_nmi.enabled:
-                results["eval/phase_expert_nmi"] = phase_alignment.phase_expert_nmi(phases, expert_indices)
-                
+                results["eval/phase_expert_nmi"] = (
+                    phase_alignment.phase_expert_nmi(phases, expert_indices)
+                )
+
         return results

@@ -8,9 +8,9 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from hydra.utils import instantiate
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
-from hydra.utils import instantiate
 
 from phaseforge.models.base import BaseManipulationModel
 
@@ -67,7 +67,9 @@ class BaseTrainer(ABC):
                 method(trainer=self, **kwargs)
 
     @abstractmethod
-    def _compute_loss(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+    def _compute_loss(
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         """Compute the loss for a single batch.
 
         Returns:

@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from phaseforge.models.components.router import TopKRouter, RouterOutput
 from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.router import RouterOutput, TopKRouter
 
 
 class MoEOutput(NamedTuple):
@@ -72,8 +72,6 @@ class MoELayer(nn.Module):
             MoEOutput containing the combined predictions and routing metadata.
         """
         B, D = latent.shape
-        E = self.router.num_experts
-        K = self.router.top_k
 
         # 1. Route inputs
         router_out: RouterOutput = self.router(latent)

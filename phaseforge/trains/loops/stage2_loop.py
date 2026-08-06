@@ -32,11 +32,14 @@ class Stage2Trainer(BaseTrainer):
         self.optimizer = instantiate(self.train_cfg.optimizer, params=active_params)
         self.scheduler = instantiate(self.train_cfg.scheduler, optimizer=self.optimizer)
         
-        logger.info(f"Stage 2 initialized. Trainable parameters: {sum(p.numel() for p in active_params)}")
+        n_params = sum(p.numel() for p in active_params)
+        logger.info(f"Stage 2 initialized. Trainable parameters: {n_params}")
         
         super().fit()
 
-    def _compute_loss(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+    def _compute_loss(
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         # Forward pass
         out = self.model(batch)
         

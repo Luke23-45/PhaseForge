@@ -32,7 +32,7 @@ from typing import Any
 
 import h5py
 import numpy as np
-from omegaconf import DictConfig, ListConfig
+from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
 

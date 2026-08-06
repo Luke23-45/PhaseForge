@@ -1,7 +1,9 @@
 """Script to upload the processed PhaseForge data to Hugging Face."""
 import argparse
 from pathlib import Path
+
 from huggingface_hub import HfApi
+
 
 def upload_dataset(data_dir: str, repo_id: str, token: str):
     data_path = Path(data_dir)

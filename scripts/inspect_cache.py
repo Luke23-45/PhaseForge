@@ -1,9 +1,11 @@
 """Script to inspect the processed PhaseForge cache."""
 
+import argparse
 import json
 from pathlib import Path
+
 import torch
-import argparse
+
 
 def inspect_cache(cache_dir: str):
     cache_path = Path(cache_dir)

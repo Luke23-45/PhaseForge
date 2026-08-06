@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import torch
-import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
-from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.action_head import ActionHead
-from phaseforge.models.components.phase_head import PhaseClassificationHead
-from phaseforge.models.components.router import TopKRouter
+from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import ExpertMLP
 from phaseforge.models.components.moe_layer import MoELayer
+from phaseforge.models.components.phase_head import PhaseClassificationHead
+from phaseforge.models.components.router import TopKRouter
 
 logger = logging.getLogger(__name__)
 

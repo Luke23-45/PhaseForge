@@ -6,8 +6,6 @@ and then applied (frozen) to all splits.
 
 from __future__ import annotations
 
-from typing import Union
-
 import numpy as np
 import torch
 from torch import Tensor
@@ -43,7 +41,7 @@ class RunningStatNormalizer:
             delta2 = sample.astype(np.float64) - self._mean
             self._M2 += delta * delta2
 
-    def finalize(self, eps: float = 1e-6) -> "FrozenNormalizer":
+    def finalize(self, eps: float = 1e-6) -> FrozenNormalizer:
         """Freeze the accumulated statistics.
 
         Args:
@@ -78,7 +76,7 @@ class FrozenNormalizer:
         self.mean = mean
         self.std = std
 
-    def normalize(self, x: Union[np.ndarray, Tensor]) -> Tensor:
+    def normalize(self, x: np.ndarray | Tensor) -> Tensor:
         """Normalize input to zero-mean unit-variance."""
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).float()
@@ -86,7 +84,7 @@ class FrozenNormalizer:
         std = self.std.to(x.device)
         return (x - mean) / std
 
-    def denormalize(self, x: Union[np.ndarray, Tensor]) -> Tensor:
+    def denormalize(self, x: np.ndarray | Tensor) -> Tensor:
         """Invert normalization."""
         if isinstance(x, np.ndarray):
             x = torch.from_numpy(x).float()
@@ -99,7 +97,7 @@ class FrozenNormalizer:
         torch.save({"mean": self.mean, "std": self.std}, path)
 
     @classmethod
-    def load(cls, path) -> "FrozenNormalizer":
+    def load(cls, path) -> FrozenNormalizer:
         import torch
         data = torch.load(path, weights_only=False)
         return cls(mean=data["mean"], std=data["std"])

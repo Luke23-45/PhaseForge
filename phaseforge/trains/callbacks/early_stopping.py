@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 import math
+from typing import TYPE_CHECKING
 
 from phaseforge.trains.callbacks.base import Callback
 
@@ -17,25 +17,39 @@ logger = logging.getLogger(__name__)
 class EarlyStoppingCallback(Callback):
     """Stops training if a monitored metric stops improving."""
 
-    def __init__(self, monitor: str = "val/loss_total", mode: str = "min", patience: int = 10, min_delta: float = 0.0) -> None:
+    def __init__(
+        self,
+        monitor: str = "val/loss_total",
+        mode: str = "min",
+        patience: int = 10,
+        min_delta: float = 0.0,
+        enabled: bool = True,
+    ) -> None:
         super().__init__()
         self.monitor = monitor
         self.mode = mode
         self.patience = patience
         self.min_delta = min_delta
-        
+        self.enabled = enabled
+
         self.wait_count = 0
         self.best_score = math.inf if mode == "min" else -math.inf
 
     def on_epoch_end(self, trainer: BaseTrainer, val_metrics: dict[str, float]) -> None:
         """Check if we should stop training."""
+        if not self.enabled:
+            return
+
         # The training loop does not prefix keys with 'val/', so we strip it if provided
         monitor_key = self.monitor.replace("val/", "")
         
         if monitor_key not in val_metrics:
             logger.warning(
-                f"Early stopping monitor '{self.monitor}' (resolved to '{monitor_key}') not found in val_metrics. "
-                f"Available metrics: {list(val_metrics.keys())}"
+                "Early stopping monitor '%s' (resolved to '%s') not found "
+                "in val_metrics. Available metrics: %s",
+                self.monitor,
+                monitor_key,
+                list(val_metrics.keys()),
             )
             return
 
@@ -55,8 +69,16 @@ class EarlyStoppingCallback(Callback):
             self.wait_count = 0
         else:
             self.wait_count += 1
-            logger.info(f"EarlyStopping: {self.monitor} did not improve. Patience: {self.wait_count}/{self.patience}")
-            
+            logger.info(
+                "EarlyStopping: %s did not improve. Patience: %d/%d",
+                self.monitor,
+                self.wait_count,
+                self.patience,
+            )
+
             if self.wait_count >= self.patience:
-                logger.info(f"EarlyStopping: Patience of {self.patience} reached. Signaling trainer to stop.")
+                logger.info(
+                    "EarlyStopping: Patience of %d reached. Signaling trainer to stop.",
+                    self.patience,
+                )
                 trainer.should_stop = True

@@ -1,9 +1,10 @@
 """Script to download and extract PhaseForge cache from Hugging Face."""
 import argparse
-import os
 import tarfile
 from pathlib import Path
+
 from huggingface_hub import HfApi, hf_hub_download
+
 
 def extract_tarball(tarball_path: Path, extract_dir: Path) -> None:
     print(f"Extracting {tarball_path.name}...")
@@ -53,7 +54,11 @@ def download_and_extract(repo_id: str, data_dir: str, token: str, keep_archives:
                 downloaded_tarball.unlink()
                 
                 # Cleanup empty 'data' dir if hf_hub_download created it
-                if downloaded_tarball.parent.name == "data" and not list(downloaded_tarball.parent.iterdir()):
+                parent_has_children = (
+                    downloaded_tarball.parent.name == "data"
+                    and not list(downloaded_tarball.parent.iterdir())
+                )
+                if parent_has_children:
                     downloaded_tarball.parent.rmdir()
                     
             print(f"Successfully downloaded and extracted {filename} \u2705")

@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import h5py
-import numpy as np
 
 
 def print_hdf5_tree(path: Path) -> None:
@@ -62,7 +61,7 @@ def print_hdf5_tree(path: Path) -> None:
         return
 
     print(f"  Number of demo groups: {len(data)}")
-    print(f"  Top-level attrs:")
+    print("  Top-level attrs:")
     for k, v in data.attrs.items():
         val_str = str(v)
         if len(val_str) > 120:
@@ -73,7 +72,7 @@ def print_hdf5_tree(path: Path) -> None:
     first_demo_key = sorted(data.keys())[0]
     first_demo = data[first_demo_key]
     print(f"\n  First demo: {first_demo_key}")
-    print(f"  Demo attrs:")
+    print("  Demo attrs:")
     for k, v in first_demo.attrs.items():
         val_str = str(v)
         if len(val_str) > 120:
@@ -83,13 +82,13 @@ def print_hdf5_tree(path: Path) -> None:
     # Check what's in /data/demo_X/obs
     obs = first_demo.get("obs")
     if obs is not None:
-        print(f"\n  Keys in obs/ subgroup:")
+        print("\n  Keys in obs/ subgroup:")
         for key in obs.keys():
             ds = obs[key]
             print(f"    {key}: shape={ds.shape}, dtype={ds.dtype}")
 
     # Check root-level datasets in demo
-    print(f"\n  Root-level datasets in demo:")
+    print("\n  Root-level datasets in demo:")
     for key in first_demo.keys():
         if key == "obs":
             continue
@@ -104,7 +103,7 @@ def print_hdf5_tree(path: Path) -> None:
         rs = first_demo["robot_states"]
         print(f"\n  robot_states: shape={rs.shape}, dtype={rs.dtype}")
         print(f"    first row: {rs[0]}")
-        print(f"    column breakdown hypothesis:")
+        print("    column breakdown hypothesis:")
         print(f"      [0:2] = gripper_qpos: {rs[0, :2]}")
         print(f"      [2:5] = eef_pos:      {rs[0, 2:5]}")
         print(f"      [5:9] = eef_quat:     {rs[0, 5:9]}")

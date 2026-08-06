@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import torch
-from torch import Tensor
-import numpy as np
 from sklearn.metrics import normalized_mutual_info_score
+from torch import Tensor
 
 
 def phase_expert_nmi(phases: Tensor, expert_indices: Tensor) -> float:
@@ -39,14 +38,22 @@ def phase_expert_nmi(phases: Tensor, expert_indices: Tensor) -> float:
         return 0.0
         
     if len(p_flat) != len(e_top1):
-        raise ValueError(f"Shape mismatch: phases has {len(p_flat)} elements, experts has {len(e_top1)}")
+        raise ValueError(
+            f"Shape mismatch: phases has {len(p_flat)} elements, "
+            f"experts has {len(e_top1)}"
+        )
 
     # Calculate NMI using scikit-learn
     # We use 'arithmetic' average method as standard
     return float(normalized_mutual_info_score(p_flat, e_top1, average_method='arithmetic'))
 
 
-def build_contingency_matrix(phases: Tensor, expert_indices: Tensor, num_phases: int, num_experts: int) -> Tensor:
+def build_contingency_matrix(
+    phases: Tensor,
+    expert_indices: Tensor,
+    num_phases: int,
+    num_experts: int,
+) -> Tensor:
     """Build a P x E contingency matrix (heatmap) of phase-expert assignments.
     
     Args:

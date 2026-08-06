@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -34,17 +33,17 @@ import torch
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
+from phaseforge.data.common.collator import PhaseAwareCollator
+from phaseforge.data.common.dataset import StateOnlyDataset
+from phaseforge.data.common.normalizer import RunningStatNormalizer
 from phaseforge.data.ingestion.cache_manager import CacheManager
 from phaseforge.data.ingestion.states import PipelineState
-from phaseforge.data.common.dataset import StateOnlyDataset
-from phaseforge.data.common.collator import PhaseAwareCollator
-from phaseforge.data.common.normalizer import RunningStatNormalizer
+from phaseforge.data.libero.task_index import build_task_index
 from phaseforge.data.paths import (
     EXPECTED_FILE_COUNTS,
     libero_suite_dir,
     processed_cache_root,
 )
-from phaseforge.data.libero.task_index import build_task_index
 
 logger = logging.getLogger(__name__)
 
@@ -284,9 +283,10 @@ class DataPipelineStateMachine:
 
     def _ingest_and_strip(self) -> None:
         logger.info("INGEST_AND_STRIP: parsing HDF5, stripping vision, labeling phases…")
-        from phaseforge.data.libero.vision_stripper import VisionStripper
-        from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
         from hydra.utils import instantiate
+
+        from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
+        from phaseforge.data.libero.vision_stripper import VisionStripper
 
         stripper = VisionStripper(
             state_keys=list(self.data_cfg.state_keys),
@@ -434,9 +434,10 @@ class DataPipelineStateMachine:
 
     def _ingest_suite_into(self, suite: str) -> list[dict[str, Any]]:
         """Ingest a suite folder into a fresh trajectory list (no caching)."""
-        from phaseforge.data.libero.vision_stripper import VisionStripper
-        from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
         from hydra.utils import instantiate
+
+        from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
+        from phaseforge.data.libero.vision_stripper import VisionStripper
 
         raw_dir = libero_suite_dir(suite)
         task_index = build_task_index(raw_dir)

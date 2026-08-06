@@ -15,7 +15,9 @@ class Stage1Trainer(BaseTrainer):
     Action loss is MSE. Phase loss is CrossEntropy.
     """
 
-    def _compute_loss(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+    def _compute_loss(
+        self, batch: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         # Forward pass
         out = self.model(batch)
         

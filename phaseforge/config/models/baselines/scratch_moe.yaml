@@ -3,6 +3,11 @@
 name: "scratch_moe"
 _target_: phaseforge.models.baselines.scratch_moe.ScratchMoEModel
 
+# No Stage 1 pretraining exists for this baseline, so the encoder MUST be
+# trainable in Stage 2. The Stage 2 config default (freeze_encoder: true)
+# would otherwise freeze a random encoder, crippling the baseline.
+freeze_encoder: false
+
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder
   input_dim: 23

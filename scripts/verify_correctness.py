@@ -12,13 +12,11 @@ VALUE-LEVEL questions, not just "did it crash":
 
 from __future__ import annotations
 
-import sys
 import shutil
-from pathlib import Path
+import sys
 from collections import Counter
+from pathlib import Path
 
-import h5py
-import numpy as np
 import torch
 from omegaconf import OmegaConf
 
@@ -105,7 +103,7 @@ def main():
     # Within one process hash() is stable; the bug manifests across processes.
     same_process = ids1 == ids2
     print(f"  same within one process? {same_process}")
-    print(f"  VERDICT: hash() is process-salted -> task_id WILL differ across runs.")
+    print("  VERDICT: hash() is process-salted -> task_id WILL differ across runs.")
 
     print()
     print("=" * 70)
@@ -118,29 +116,41 @@ def main():
             ph = ph.numpy()
         all_phases.extend(ph.tolist())
     counts = Counter(all_phases)
-    phase_names = {0: "APPROACH", 1: "PRE_GRASP", 2: "GRASP", 3: "TRANSPORT", 4: "PLACE", 5: "RETRACT"}
+    phase_names = {
+        0: "APPROACH", 1: "PRE_GRASP", 2: "GRASP", 3: "TRANSPORT",
+        4: "PLACE", 5: "RETRACT",
+    }
     print(f"  total timesteps labeled: {len(all_phases)}")
     for pid in range(6):
         c = counts.get(pid, 0)
         print(f"    {pid} {phase_names[pid]:12s}: {c:4d}  ({100*c/max(1,len(all_phases)):4.1f}%)")
     n_phases_present = sum(1 for pid in range(6) if counts.get(pid, 0) > 0)
     print(f"  phases present: {n_phases_present}/6")
-    print(f"  VERDICT: {'ONLY ' + str(n_phases_present) + ' of 6 phases detected' if n_phases_present < 6 else 'all 6 present'}")
+    verdict = (
+        f"ONLY {n_phases_present} of 6 phases detected"
+        if n_phases_present < 6
+        else "all 6 present"
+    )
+    print(f"  VERDICT: {verdict}")
 
     print()
     print("=" * 70)
     print("CHECK 3: normalization correctness")
     print("=" * 70)
-    mean = trajs1[0]["state"]  # already normalized in-place during _normalize_and_save
-    # recompute mean/std over the TRAIN split from the normalized tensors
-    train_idxs = []
+    # recompute mean/std from the NORMALIZED tensors (they are normalized
+    # in-place during _normalize_and_save)
     # we don't have splits here reliably, so compute over ALL normalized trajs
     all_states = torch.cat([t["state"] for t in trajs1], dim=0)
     m = all_states.mean(dim=0)
     s = all_states.std(dim=0)
     print(f"  normalized train mean (should be ~0):  min={m.min():.3f} max={m.max():.3f}")
     print(f"  normalized train std  (should be ~1):  min={s.min():.3f} max={s.max():.3f}")
-    print(f"  VERDICT: {'normalization applied' if abs(m.mean())<0.5 else 'NOT normalized / wrong'}")
+    verdict = (
+        "normalization applied"
+        if abs(m.mean()) < 0.5
+        else "NOT normalized / wrong"
+    )
+    print(f"  VERDICT: {verdict}")
 
     print()
     print("=" * 70)
@@ -150,7 +160,12 @@ def main():
     print(f"  cache written to: {cache_dir}")
     is_in_outputs = "outputs" in str(cache_dir)
     print(f"  under outputs/? {is_in_outputs}")
-    print(f"  VERDICT: {'cache is under per-run outputs/ -> NOT shared across runs' if is_in_outputs else 'cache is shared'}")
+    verdict = (
+        "cache is under per-run outputs/ -> NOT shared across runs"
+        if is_in_outputs
+        else "cache is shared"
+    )
+    print(f"  VERDICT: {verdict}")
 
     print()
     print("=" * 70)
@@ -165,7 +180,12 @@ def main():
     print(f"  train_end = int({n}*0.9) = {tr_end}")
     print(f"  val_end   = {tr_end} + int({n}*0.1) = {val_end}")
     print(f"  val slice = [{tr_end}:{val_end}] -> {val_end - tr_end} trajs")
-    print(f"  VERDICT: {'val split is EMPTY due to integer truncation' if val_end == tr_end else 'val non-empty'}")
+    verdict = (
+        "val split is EMPTY due to integer truncation"
+        if val_end == tr_end
+        else "val non-empty"
+    )
+    print(f"  VERDICT: {verdict}")
 
     print()
     print("=" * 70)

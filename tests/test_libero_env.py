@@ -201,7 +201,7 @@ def test_close_calls_underlying_env() -> None:
 def test_max_steps_match_official_protocol() -> None:
     # Values used by the LeRobot/OpenVLA LIBERO evaluation protocol.
     assert SUITE_MAX_STEPS == {
-        "libero_spatial": 220,
+        "libero_spatial": 280,
         "libero_object": 280,
         "libero_goal": 300,
         "libero_10": 520,

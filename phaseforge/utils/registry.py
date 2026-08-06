@@ -20,6 +20,9 @@ def build_model(cfg: DictConfig):
 
     model_cfg = OmegaConf.to_container(cfg.models, resolve=True)
     model_cfg.pop("name", None)
+    # Training-only metadata carried in the model config (per-model override
+    # for `train.freeze_encoder`); it is not a model constructor argument.
+    model_cfg.pop("freeze_encoder", None)
     model = instantiate(model_cfg)
     if not isinstance(model, BaseManipulationModel):
         raise TypeError(

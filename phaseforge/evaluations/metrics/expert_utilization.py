@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 
 
@@ -53,7 +52,10 @@ def expert_utilization_balance(fractions: Tensor) -> float:
     entropy = -torch.sum(probs * torch.log(probs))
     
     # Normalize by log(E)
-    normalized_entropy = entropy / torch.log(torch.tensor(E, dtype=torch.float32, device=fractions.device))
+    denom = torch.log(
+        torch.tensor(E, dtype=torch.float32, device=fractions.device)
+    )
+    normalized_entropy = entropy / denom
     
     return normalized_entropy.item()
 

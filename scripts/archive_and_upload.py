@@ -1,9 +1,10 @@
 """Script to archive and upload the processed PhaseForge cache to Hugging Face."""
 import argparse
-import os
 import tarfile
 from pathlib import Path
+
 from huggingface_hub import HfApi
+
 
 def make_tarball(source_dir: Path, output_filename: Path) -> None:
     print(f"Archiving {source_dir.name} -> {output_filename.name}")
