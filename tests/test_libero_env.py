@@ -228,12 +228,30 @@ class FakeObservableEnv:
         )
 
 
+class WrappedObservableEnv:
+    """LIBERO-style composition wrapper: real env lives at self._env."""
+
+    def __init__(self) -> None:
+        self._env = FakeObservableEnv()
+
+
 def test_disable_image_observables_disables_only_image() -> None:
     env = FakeObservableEnv()
     le._disable_image_observables(env)
     assert env._observables["agentview_image"].enabled is False
     assert env._observables["eye_in_hand_image"].enabled is False
     assert env._observables["robot0_joint_pos"].enabled is True
+
+
+def test_disable_image_observables_finds_wrapped_env() -> None:
+    """OffScreenRenderEnv stores the robosuite env at _env — the fix for
+    the 'Rendering skip NO-OP' seen in the Colab eval logs."""
+    env = WrappedObservableEnv()
+    le._disable_image_observables(env)
+    inner = env._env._observables
+    assert inner["agentview_image"].enabled is False
+    assert inner["eye_in_hand_image"].enabled is False
+    assert inner["robot0_joint_pos"].enabled is True
 
 
 def test_disable_image_observables_warns_on_missing_observables(caplog) -> None:

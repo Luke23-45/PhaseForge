@@ -33,6 +33,31 @@ SUITE_BENCHMARK_NAMES: dict[str, str] = {
 }
 
 
+def _find_observable_env(
+    env: Any,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Locate the robosuite env that owns the observable dict.
+
+    LIBERO's ``OffScreenRenderEnv`` is a composition wrapper: the real
+    robosuite env — and its ``_observables`` dict — lives at ``env._env``
+    (confirmed on Colab: the wrapper itself has no ``_observables``).
+    Walks nested ``_env``/``env`` attributes defensively and guards
+    against cycles.
+    """
+    seen: set[int] = set()
+    current: Any = env
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        observables = getattr(current, "_observables", None)
+        if observables:
+            return current, observables
+        nested = getattr(current, "_env", None)
+        if nested is None:
+            nested = getattr(current, "env", None)
+        current = nested
+    return None, None
+
+
 def _disable_image_observables(env: Any) -> None:
     """Disable image-modality observables so no per-step rendering occurs.
 
@@ -45,11 +70,12 @@ def _disable_image_observables(env: Any) -> None:
     count) so a silent no-op — e.g. a robosuite API difference — is
     visible in the eval log instead of quietly leaving rendering on.
     """
-    observables = getattr(env, "_observables", None)
+    target_env, observables = _find_observable_env(env)
     if not observables:
         logger.warning(
-            "Rendering skip NO-OP: env %s exposes no _observables dict — "
-            "image observables will keep rendering every step.",
+            "Rendering skip NO-OP: no _observables found on %s "
+            "(or any wrapped _env/env) — image observables will keep "
+            "rendering every step.",
             type(env).__name__,
         )
         return
