@@ -29,18 +29,18 @@ dev = [
     "mypy>=1.8",
 ]
 # LIBERO environment simulation (Linux + GPU required; heavy install:
-# pulls robosuite 1.4, mujoco, robomimic, bddl). Install only on the
-# evaluation machine:  uv sync --extra rollout
-# Pins match LIBERO's own requirements: mujoco 2.3.7 is the last release
-# exposing mjData.qM (removed in 3.0, which breaks robosuite's OSC
-# controller with AttributeError: 'MjData' object has no attribute 'qM').
-# numpy is pinned <2 because mujoco 2.3.7 / robosuite 1.4.x wheels are
-# compiled against numpy 1.x (numpy>=2 raises "numpy.dtype size changed,
-# may indicate binary incompatibility" at import time).
+# pulls robosuite 1.4, mujoco, bddl). Install only on the evaluation
+# machine:  uv sync --extra rollout
+# Pins:
+# - robosuite==1.4.0 matches PyPI libero 0.1.1's exact pin.
+# - mujoco==3.3.1 is critical: robosuite's OSC controller calls the
+#   legacy mj_fullM(model, dst, data.qM); mujoco REMOVED mjData.qM in
+#   3.10.0 (2026-06-22), so any unpinned mujoco>=3 resolves to 3.10.x
+#   and crashes with AttributeError: 'MjData' object has no attribute
+#   'qM'. 3.3.1 is pre-3.10, has cp312 wheels, and supports numpy 2.
 rollout = [
-    "numpy==1.26.4",
     "robosuite==1.4.0",
-    "mujoco==2.3.7",
+    "mujoco==3.3.1",
     "libero",
 ]
 
