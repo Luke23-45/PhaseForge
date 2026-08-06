@@ -41,29 +41,53 @@ def _disable_image_observables(env: Any) -> None:
     robosuite issue #722). State-modality observables (joint pos/vel, EEF,
     gripper) are untouched, so the 23-DoF state vector is unaffected.
 
-    Fully defensive: if the observable API differs across robosuite
-    versions, log a warning instead of failing the evaluation.
+    Always logs a diagnostic (observable count, modalities, disabled
+    count) so a silent no-op — e.g. a robosuite API difference — is
+    visible in the eval log instead of quietly leaving rendering on.
     """
-    observables = getattr(env, "_observables", None) or {}
+    observables = getattr(env, "_observables", None)
+    if not observables:
+        logger.warning(
+            "Rendering skip NO-OP: env %s exposes no _observables dict — "
+            "image observables will keep rendering every step.",
+            type(env).__name__,
+        )
+        return
+
+    modalities: dict[str, int] = {}
     disabled = 0
-    for obs in observables.values():
-        if getattr(obs, "modality", None) != "image":
+    image_obs = 0
+    for name, obs in observables.items():
+        modality = getattr(obs, "modality", None)
+        modalities[str(modality)] = modalities.get(str(modality), 0) + 1
+        if modality != "image":
             continue
+        image_obs += 1
         try:
             if hasattr(obs, "set_enabled"):
                 obs.set_enabled(False)
                 disabled += 1
+                continue
+            if hasattr(obs, "set_active"):  # robosuite < 1.4 fallback
+                obs.set_active(False)
+                disabled += 1
+                continue
+            logger.warning(
+                "Observable %r is image-modality but has no set_enabled/set_active.",
+                name,
+            )
         except Exception:
             logger.warning(
                 "Could not disable image observable %r — rendering stays enabled.",
-                getattr(obs, "name", obs),
+                name,
                 exc_info=True,
             )
-    if disabled:
-        logger.info(
-            "Rendering disabled for %d image observable(s) (state-only policy).",
-            disabled,
-        )
+
+    logger.info(
+        "Rendering skip: disabled %d/%d image observable(s) "
+        "(total observables: %d, modalities: %s)",
+        disabled, image_obs, len(observables), modalities,
+    )
 
 
 class StateOnlyLiberoEnv:

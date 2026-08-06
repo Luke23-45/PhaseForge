@@ -9,9 +9,12 @@ construction, the official reset sequence (seed -> reset -> set_init_state
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 
+import phaseforge.evaluations.envs.libero_env as le
 from phaseforge.evaluations.envs.libero_env import (
     SUITE_BENCHMARK_NAMES,
     SUITE_MAX_STEPS,
@@ -191,6 +194,53 @@ def test_close_calls_underlying_env() -> None:
     env = _make_env(fake)
     env.close()
     assert fake.calls[-1] == ("close",)
+
+
+# ---------------------------------------------------------------------------
+# Rendering skip (_disable_image_observables)
+# ---------------------------------------------------------------------------
+
+
+class FakeObservable:
+    """Minimal robosuite-style observable: modality + set_enabled/set_active."""
+
+    def __init__(self, modality: str) -> None:
+        self.modality = modality
+        self.enabled = True
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def set_active(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+
+class FakeObservableEnv:
+    def __init__(self, with_observables: bool = True) -> None:
+        self._observables = (
+            {
+                "agentview_image": FakeObservable("image"),
+                "eye_in_hand_image": FakeObservable("image"),
+                "robot0_joint_pos": FakeObservable("state"),
+            }
+            if with_observables
+            else None
+        )
+
+
+def test_disable_image_observables_disables_only_image() -> None:
+    env = FakeObservableEnv()
+    le._disable_image_observables(env)
+    assert env._observables["agentview_image"].enabled is False
+    assert env._observables["eye_in_hand_image"].enabled is False
+    assert env._observables["robot0_joint_pos"].enabled is True
+
+
+def test_disable_image_observables_warns_on_missing_observables(caplog) -> None:
+    env = FakeObservableEnv(with_observables=False)
+    with caplog.at_level(logging.WARNING, logger="phaseforge.evaluations.envs.libero_env"):
+        le._disable_image_observables(env)
+    assert "Rendering skip NO-OP" in caplog.text
 
 
 # ---------------------------------------------------------------------------
