@@ -2,7 +2,7 @@
 
 **Purpose:** expand section D of the issues register (`docs/notes/issues_register.md`) into the full statement of what PhaseForge claims, what prior work already covers (verified online), what is genuinely ours, and the empirical program required to defend it. This document drives the paper's contribution statement and the reply to the professor.
 
-**As of:** 2026-08-07 · Rev. 2: teacher-forced routing cell (E8) added — decomposable oracle (§3.2), prediction 4 (§4), experiment + decision rules (§5), positioning (§6), risk row (§7). · Cross-references: `issues_register.md` (D1, D4, C1, C3), `REPORT_to_professor_2.md`
+**As of:** 2026-08-07 · Rev. 3: big decisions locked — vision permanently removed (state-only + object-state oracle channel); `libero_90` sole core dataset, `libero_10` only labeled zero-shot row (E1, E5 updated). · Rev. 2: teacher-forced routing cell (E8) added — decomposable oracle (§3.2), prediction 4 (§4), experiment + decision rules (§5), positioning (§6), risk row (§7). · Cross-references: `issues_register.md` (D1, D4, C1, C3, A2), `REPORT_to_professor_2.md`
 
 ---
 
@@ -91,11 +91,11 @@ MAR documents pseudo-balancing at LLM scale. Our dry run shows the same signatur
 
 | # | Experiment | Gate / decision |
 |---|---|---|
-| E1 | **Evaluation fixes first** (issues A2, B6): in-distribution suite decided (libero_90 as primary; spatial/object/goal/10 as labeled zero-shot); state-replay consistency test passes | Blocking — nothing below is interpretable without it |
+| E1 | **Evaluation fixes first** (issues A2, B6): sole core dataset `libero_90` (train + ID eval, DECIDED 2026-08-07); `libero_10` as the only labeled zero-shot row (official downstream transfer test, 10 eps/task); state-replay consistency test passes | Blocking — nothing below is interpretable without it |
 | E2 | **2×2 factorial** (C1): add `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`; train all 7 models full-length (100/200 epochs, no truncating early stop) | Isolates encoder-init vs router-init effects |
 | E3 | **Full-length training** (C5) on the object-state channel (Stage 1 of professor plan) | Real ceilings, not dry-run floors |
 | E4 | **Balance-vs-NMI logging + balance-weight sweep** (C3): 0 / 0.01 / 0.1 | Tests the pseudo-balancing mechanism; if balance kills NMI at all weights, the bootstrap claim needs the orthogonal-basis direction (SMP) or decoupling (AdaMoE) |
-| E5 | **Rollout protocol**: 5 suites × 50 episodes/task × 3 seeds, per-suite + per-task breakdowns; oracle footnoted as non-deployable (B3) | Predictions 1–3 testable; zero-shot suites reported as such |
+| E5 | **Rollout protocol**: `libero_90` ID (90 tasks × 50 eps/task × 3 seeds, per-task breakdowns) + `libero_10` labeled zero-shot (10 tasks × 10 eps/task); oracle footnoted as non-deployable (B3) | Predictions 1–3 testable |
 | E6 | **Phase-label spot-check** (C4) on real trajectories | Protects the bootstrap, NMI, and oracle from label-error propagation |
 | E7 | **Oracle redesign decision** (B2): balanced sampling or auxiliary router loss, OR relabel as signature-only bound | Keeps the upper-bound claim honest |
 | E8 | **Teacher-forced routing cell** (oracle + learned phase predictor; route at inference by `argmax` of predicted phase) | Fills the supervision-regime axis; quantifies Gap 1 (phase predictability) and Gap 2 (strategy loss); head-to-head vs the MEAT/MTO/PAMAE recipe |

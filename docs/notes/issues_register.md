@@ -26,7 +26,8 @@
 - **Our setup:** training = `libero_90` (90 HDF5 files, `role: train`, source `yifengzhu-hf/LIBERO-datasets`); rollout eval = `libero_spatial`, `libero_object`, `libero_goal`, `libero_10`, `libero_90` (`phaseforge/config/eval/rollout.yaml:13-18`).
 - **Consequence:** the Spatial/Object/Goal rollouts were **zero-shot evaluation on unseen tasks/objects/instructions**. The 0% is therefore confounded by TWO independent causes (A1 + A2). After the A1 fix, Spatial/Object/Goal could remain near-0% purely from zero-shot — and would be misread as "the fix failed."
 - Consistency check: `docs/notes/evaluation_plan.md:26` correctly said "evaluate on LIBERO-90 (our training tasks)" — but the implemented `rollout.yaml` added spatial/object/goal without this rationale; discrepancy between plan doc and config.
-- **Decision pending (blocking Stage 1 diff):** in-distribution evaluation target — (a) `libero_90` suite as primary sanity suite + spatial/object/goal/10 as explicitly-labeled zero-shot rows, or (b) train on the union (90+30+10) for in-distribution leaderboard-style numbers. (b) changes the study design; (a) is the professor-endorsed minimal fix.
+- **Decision (RESOLVED 2026-08-07, big-decision session):** `libero_90` is the SOLE core dataset — train AND eval (in-distribution). `libero_10` retained as the ONLY labeled zero-shot row (it is the *official* downstream transfer test of LIBERO-90 pretraining per the LIBERO paper/GitHub) at LeRobot's 10 eps/task. Spatial/Object/Goal dropped from core eval entirely (they are separate transfer-study benchmarks, not eval suites for a libero_90-trained agent). Verified online 2026-08-07: LIBERO GitHub (BENCHMARK list = SPATIAL/OBJECT/GOAL/90/10; "LIBERO-100 further split into LIBERO-90 for pretraining and LIBERO-10 for testing"); LeRobot docs (standard 4-suite eval is for vision models). Consequence: `rollout.yaml` suites list shrinks to `libero_90` + `libero_10` (part of Stage 1 diff, E3); single 66 GB cache re-ingestion (object-state keys, Decision 1) instead of multi-suite.
+- Decision 1 (same session): **vision permanently removed** from the core study — state-only + robosuite object-state channel (professor Stage 1); cameras stay disabled in train (VisionStripper) and eval (KEPT_OBSERVABLE_NAMES, `render_observations: false`). Claim excludes perception; state-only numbers are never leaderboard-comparable by design. Stage 3 (optional end-to-end vision) deferred, not part of this paper.
 
 ### A3. Ruled-out failure classes (audit record) — `RULED-OUT`
 | Hypothesized cause | Evidence against | Source lesson |
@@ -214,7 +215,7 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 
 | # | Issue | Blocker? | Next action |
 |---|---|---|---|
-| A2 | Task-pool mismatch (zero-shot confound) | **YES — before Stage 1 diff** | Decide in-distribution eval target; declare protocol in writeup |
+| A2 | Task-pool mismatch (zero-shot confound) | **RESOLVED** 2026-08-07 | libero_90 sole core (train+eval); libero_10 only labeled zero-shot row; spatial/object/goal dropped; update `rollout.yaml` in Stage 1 diff |
 | B6 | State-replay consistency test | YES — Stage 1 gate | Implement pre-retrain gate |
 | E2/E3 | Object-state keys + train/eval parity | YES — Stage 1 diff | Enumerate keys per suite; update both sides in lockstep |
 | C1 | Confounded 2×2 factorial | YES — design decision | Add `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap` |
