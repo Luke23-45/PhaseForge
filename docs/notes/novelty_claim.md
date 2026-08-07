@@ -138,7 +138,7 @@ MAR documents pseudo-balancing at LLM scale. Our dry run shows the same signatur
 1. Mazza et al., "MoE-ACT: Improving Surgical Imitation Learning Policies through Supervised Mixture-of-Experts" (MEAT), arXiv:2601.21971.
 2. Guo, Liu, Sun, Zhao, Zhou, Ma, "MoE-ACT: Scaling Multi-Task Bimanual Manipulation with Sparse Language-Conditioned Mixture-of-Experts Transformers", arXiv:2603.15265.
 3. Hao, Zhai, Liu, Soh, "Abstracting Robot Manipulation Skills via Mixture-of-Experts Diffusion Policies" (SMP), ICLR 2026, arXiv:2601.21251.
-4. "LAR-MoE: Latent-Aligned Routing for Mixture of Experts in Robotic Manipulation", arXiv:2603.08476 (authors unverified — confirm before citing).
+4. A. Rodriguez, C. Li, L. Mazza, R. Younis, O. Hellig, S. Bodenstedt, M. Wagner, S. Speidel, "LAR-MoE: Latent-Aligned Routing for Mixture of Experts in Robotic Imitation Learning", arXiv:2603.08476, 2026-03-09 (verified; same group as MoE-ACT).
 5. Shen et al., "Expertise need not monopolize: Action-Specialized Mixture of Experts for Vision-Language-Action Learning" (AdaMoE), arXiv:2510.14300.
 6. Hou et al., "From Pseudo-Balancing to True Specialization: Memory-Aware Routing for Mixture-of-Experts", Findings of ACL 2026, pp. 17320–17337, DOI 10.18653/v1/2026.findings-acl.857.
 7. Lei, Gu, Tang, Chen, Wang, "Move-Then-Operate: Behavioral Phasing for Human-Like Robotic Manipulation", ICML 2026, arXiv:2604.23620.

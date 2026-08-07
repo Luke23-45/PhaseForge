@@ -5,6 +5,8 @@
 **Date:** August 7, 2026
 **Subject:** Response to your analysis of the 0% rollout results — our objectives, the verified failure analysis, and our revised three-stage plan
 
+> **Revision (round 3, 2026-08-07):** this version corrects two claims of the round-2 text: (i) the 0% result is now attributed to **two** confirmed causes — A1 observability (as before) **and A2 task-pool mismatch** (the evaluated spatial/object/goal suites are zero-shot task pools; see §2.4); (ii) the oracle baseline is relabeled **signature-only / non-deployable** (E7) and a **teacher-forced cell** (E8, privileged-training, label-free inference) joins the matrix, which grew from 5 models to **8 cells** (Batch A/B). The full-length training claim is now true: early stopping is explicitly disabled in the protocol runners (`643674a`); tests: 113/113.
+
 ---
 
 ## 1. Our Objectives (with the Context Behind Them)
@@ -20,7 +22,7 @@ The design is deliberately two-staged:
 - **Stage 1:** a generalist policy is trained with behavior cloning while jointly classifying a rule-based *skill phase* (6 phases: idle/reach/pick/carry/place/other, median-filtered). The phase loss is training-only; it is never an input at inference.
 - **Stage 2:** the stage-1 encoder is frozen and reorganized into a top-2-of-6 MoE. Each expert is initialized from the stage-1 action head; the router is bootstrapped from phase centroids in latent space; training continues under an auxiliary load-balancing loss.
 
-The experimental matrix is five models — `bc`, `scratch_moe`, `warmstart_moe`, `phaseforge` (proposed), and `oracle_moe` (ground-truth phase routing, intended as the specialization upper bound) — trained on LIBERO-90 and evaluated with the accepted protocol (simulator rollouts, goal predicates, per-suite breakdowns, 50 episodes per task, multiple seeds). The paper's claims rest on MoE-specific metrics (time-to-stable-routing, routing entropy, expert balance, collapse rate, phase–expert NMI) *and* rollout success rates, not on loss curves alone.
+The experimental matrix (round-2 dry run: five models — `bc`, `scratch_moe`, `warmstart_moe`, `phaseforge` (proposed), and `oracle_moe`). Round 3 extended it to eight cells: the five above, `teacher_forced` (E8; GT-partitioned experts, predicted-phase routing at inference — privileged *training*, label-free *inference*, deployable after training, footnoted), `phase_pretrain_random_router`, and `plain_encoder_phase_bootstrap` (2×2 completion). The oracle is relabeled a **signature-only, non-deployable bound** (its claim is the routing signature, not success). Evaluation: simulator rollouts, goal predicates, per-task breakdowns, 50 episodes/task on the in-distribution suite, 3 seeds. The paper's claims rest on MoE-specific metrics (time-to-stable-routing, routing entropy, expert balance, collapse rate, phase–expert NMI) *and* rollout success rates, not on loss curves alone.
 
 ### 1.2 Why we chose state-only (and what we missed)
 
@@ -41,7 +43,7 @@ All six runs (5 models × 2 stages) and all evaluations completed cleanly on rea
 
 ### 2.2 Rollout evaluation (the real metric)
 
-We built the full rollout harness (`StateOnlyLiberoEnv` wrapper over `OffScreenRenderEnv`, rollout evaluator, multi-seed runner) and hardened it in the process: the BDDL success predicate is now evaluated once per step, `hard_reset` semantics are verified, and silent `strict=False` state-dict mismatches are now surfaced loudly at both load sites. On the actual simulator, results are **0% success: libero_spatial 0/500, libero_object 0/500** (libero_goal was in progress at last check), with episodes running the full horizon.
+We built the full rollout harness (`StateOnlyLiberoEnv` wrapper over `OffScreenRenderEnv`, rollout evaluator, multi-seed runner) and hardened it in the process: the BDDL success predicate is now evaluated once per step, `hard_reset` semantics are verified, and silent `strict=False` state-dict mismatches are now surfaced loudly at both load sites. On the actual simulator, results are **0% success: libero_spatial 0/500, libero_object 0/500** (libero_goal was in progress at last check), with episodes running the full horizon. Round-3 analysis (A2) added a second cause: those suites are **zero-shot task pools** — their tasks were never in the training set — so 0% is also consistent with task-pool mismatch, not observability alone (see §2.4).
 
 ### 2.3 Why we concluded observability, not a bug
 
@@ -54,8 +56,15 @@ Before concluding, we ran the diagnostics the literature's own 0%-success post-m
 | Action-space mismatch (LeRobot / xVLA issue class) | Model 7-DoF, env OSC_POSE 7-DoF | Ruled out |
 | Eval-env / checkpoint-load bugs (LeRobot issue class) | Load path audited; mismatch logging added; predicate evaluated once per step | Ruled out |
 | Undertrained / **under-observable** policy | 23-DoF proprioception, zero object information | **Consistent with all evidence** |
+| **Zero-shot task pool (A2)** | spatial/object/goal suites are unseen tasks; eval was zero-shot, never labeled as such | **Consistent (added round 3)** |
 
-The remaining explanation is the information ceiling: our 23-DoF state (`robot0_joint_pos/vel`, `robot0_eef_pos/quat`, `robot0_gripper_qpos`) describes the arm and gripper only. Object placement is drawn fresh every episode and is not a function of joint angles. A policy that cannot know where the bowl is cannot pick it up — 0/500 is the signature of that, exactly as you describe.
+The primary explanation remains the information ceiling: our 23-DoF state (`robot0_joint_pos/vel`, `robot0_eef_pos/quat`, `robot0_gripper_qpos`) describes the arm and gripper only. Object placement is drawn fresh every episode and is not a function of joint angles. A policy that cannot know where the bowl is cannot pick it up.
+
+### 2.4 Second confirmed cause: task-pool mismatch (A2)
+
+Round-3 analysis showed the 0% was **over-attributed to observability alone**. The raw LIBERO-90 pool mixes feature/spatial (2×), object (2×) and goal (1×) tasks, and our dem100 training subset was drawn with a 5:1 object:spatial ratio — a different distribution from the eval suites. The spatial/object suites are **zero-shot** evaluation: their tasks were never trained on. 0/500 is therefore consistent with two stacked causes, not one.
+
+**Decision 2 (locked):** evaluation is restricted to `libero_90` as the in-distribution core (90 tasks × 50 eps × 3 seeds, per-task breakdowns) plus `libero_10` as a labeled zero-shot row (10 tasks × 10 eps); spatial/object/goal suites are dropped from the protocol. Results JSONs declare `eval/suite_roles` (in-distribution / zero-shot) so the split can never be silently conflated again.
 
 ---
 
@@ -63,7 +72,7 @@ The remaining explanation is the information ceiling: our 23-DoF state (`robot0_
 
 1. **Your outside evidence confirms our read.** The π0 ablation you cite (proprioception removal costs ≈1.4 points of average success when vision is present — 94.2% → 92.8%) quantifies what our failure analysis suggested qualitatively: the task-relevant signal lives almost entirely in the object/visual channel. Take the images away too, as we did, and only a fraction of a point's worth of signal channel remains to solve the whole task. Similarly, the object-perturbation stress tests — >90% models collapsing under object-position changes — underline how sensitive these tasks are to object location. We agree fully: on these tasks a model with zero object information is *structurally* unable to succeed, for any architecture.
 2. **We accept the reframe of the false binary.** "Full VLM/diffusion perception stack" and "no object information at all" are not the only two options. In the robotics MoE literature (AdaMoE, MENTOR, semantically-structured MoE variants), MoE is a routing/capacity layer applied *inside or alongside* an existing perception-equipped backbone — it inherits perception; it never replaces it. A router can only select among experts using what is in its inputs; no amount of expert specialization invents information that never entered the network. That is an information-theoretic ceiling, not an expressivity problem, and we will not spend compute trying to defeat it.
-3. **Agreed: no further work on the 23-dim arm-only setup.** We will not attempt to rescue it with a larger or cleverer MoE. It is retired as an evaluation configuration.
+3. **Agreed: no further work on the 23-dim arm-only setup.** We will not attempt to rescue it with a larger or cleverer MoE. It is retired as an evaluation configuration. Evaluation scope is locked by Decision 2 (§2.4): `libero_90` in-distribution + `libero_10` labeled zero-shot only.
 4. **We adopt your staging** (Section 4), including the honesty constraints: state-oracle results are labeled as such, never compared against vision-based leaderboard numbers, and reported internally as an architecture sanity-check.
 
 ---
@@ -74,11 +83,11 @@ The remaining explanation is the information ceiling: our 23-DoF state (`robot0_
 
 - **What:** restore the low-dim `object-state` observables robosuite already computes at every physics step — absolute positions of each task object and object positions relative to the end-effector. Nothing is rendered; the cost is a few extra floats per step. This is the channel classic state-based manipulation pipelines (robomimic-style baselines and the imitation-learning line LIBERO descends from) have always paired with proprioception.
 - **Concrete changes in PhaseForge:**
-  - *Training side:* extend the state schema (`phaseforge/config/data/common.yaml`, `state_keys`) and the ingestion stripper so the object-state keys enter the training HDF5 features; the cache hash changes, triggering re-ingestion; retrain stage 1 + stage 2 for all five models.
+  - *Training side:* extend the state schema (`phaseforge/config/data/common.yaml`, `state_keys`) and the ingestion stripper so the object-state keys enter the training HDF5 features; the cache hash changes, triggering re-ingestion; retrain stage 1 + stage 2 for all eight cells (Batch A/B matrix, §1.1).
   - *Eval side:* enable the matching observables in `KEPT_OBSERVABLE_NAMES` and `_extract_state` (`phaseforge/evaluations/envs/libero_env.py`) so train and eval states are exactly the same schema — parity being the place where silent drift has bitten us before.
 - **Verification gates before we call Stage 1 done:**
   1. State-replay consistency test passes (env state matches recorded demo state under demo actions).
-  2. Per-suite success rates clear the floor, with per-task breakdowns and 3 seeds.
+  2. In-distribution success on `libero_90` (per-task breakdowns, 3 seeds) clears the floor; the `libero_10` zero-shot row is reported labeled.
   3. Routing metrics (entropy, balance, collapse, NMI) remain healthy and interpretable — we re-open the phase–expert alignment question now that the policy can actually see the objects.
 - **Honest labeling:** this is a state-oracle sanity check of the MoE architecture. These numbers will not be reported as LIBERO leaderboard results and will not be compared against OpenVLA, π0.5, or ACT.
 
@@ -105,7 +114,7 @@ Thank you — and yes. We will implement the Stage 1 schema/observable changes a
 
 | Stage | Work | Estimate |
 |---|---|---|
-| Stage 1 | Schema + env changes, re-ingestion, retrain 5 models, rollout eval (all suites, 3 seeds) | ~3–5 days |
+| Stage 1 | Schema + env changes (done), re-ingestion, retrain 8 cells, rollout eval (`libero_90` + `libero_10`, 3 seeds) | ~38 h compute (F3 estimate); 2–4 weeks wall on free Colab |
 | Stage 2 | Embedding-cache script, one-suite validation, then sweep | ~1 week |
 | Stage 3 | Decision point after stages 1–2 results | TBD |
 

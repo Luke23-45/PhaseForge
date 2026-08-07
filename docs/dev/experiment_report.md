@@ -23,6 +23,8 @@ Six models covering the proposed method and five baselines:
 
 *(ES = early stopping triggered)*
 
+*Oracle MoE footnotes (E7): receives privileged GT phase labels at inference — non-deployable; its only claim is the routing signature (NMI=1.0, entropy≈0), not success. The July matrix is superseded by the 8-cell Batch A/B protocol (C1/E7/E8: `bc`, `scratch_moe`, `warmstart_moe`, `phaseforge`, `oracle_moe`, `teacher_forced`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`); rollout success (B1) is goal-predicate based, not this L2 proxy.*
+
 **Training hyperparameters (Stage 1):**
 - Optimizer: AdamW, lr=3e-4, weight_decay=1e-4
 - Scheduler: CosineAnnealing, T_max=100, eta_min=1e-6
@@ -55,7 +57,7 @@ Six models covering the proposed method and five baselines:
 | **PhaseForge** (proposed) | **10.99%** | 0.734 | 0.990 | 0.000 | 0.000 |
 | **Scratch MoE** (baseline) | **11.12%** | 0.690 | 0.980 | 0.000 | 0.000 |
 | **WarmStart MoE** (ablation) | **11.37%** | 0.946 | 0.992 | 0.000 | 0.000 |
-| **Oracle MoE** (upper bound) | **4.54%** | ≈0 | ≈0 | 0.833 | 1.000 |
+| **Oracle MoE** (GT routing; signature-only bound) | **4.54%** | ≈0 | ≈0 | 0.833 | 1.000 |
 
 ### 2.2 Success Rate Ranking
 

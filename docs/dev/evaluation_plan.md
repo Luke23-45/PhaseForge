@@ -41,10 +41,10 @@ LIBERO-PRO (Zhou et al., 2025) demonstrates that even the standard rollout proto
 
 | Dependency | Version | Purpose | Installation |
 |-----------|---------|---------|-------------|
-| `robosuite` | ≥1.4 | Franka Panda simulation | `uv add robosuite` |
-| `mujoco` | ≥3.1 | Physics engine (robosuite dep) | installed with robosuite |
-| `gymnasium` | ≥0.29 | Environment interface | installed with robosuite |
-| `libero` | latest | Task definitions, initial states, benchmark | `pip install libero` (or fork) |
+| `robosuite` | ==1.4.0 | Franka Panda simulation | `uv sync --extra rollout` |
+| `mujoco` | ==3.3.1 | Physics engine (robosuite dep) | installed with robosuite |
+| `gymnasium` | 1.3.0 (resolved via robosuite, uv.lock) | Environment interface | installed with robosuite |
+| `libero` | ==0.1.1 (resolved in uv.lock) | Task definitions, initial states, benchmark | `uv add libero` |
 
 The official LIBERO package provides:
 - `libero.benchmark.get_benchmark_dict()` — loads task suites
@@ -54,8 +54,7 @@ The official LIBERO package provides:
 
 **Installation order:**
 ```
-pip install robosuite  # includes mujoco
-pip install libero     # includes benchmark definitions
+uv sync --extra rollout  # robosuite==1.4.0, mujoco==3.3.1, libero==0.1.1 (uv.lock)
 ```
 
 Note: robosuite and MuJoCo require a display server (X11 on Linux, or use EGL/OSMesa). On headless servers, use `xvfb` or `egl` rendering.

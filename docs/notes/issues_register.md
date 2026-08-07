@@ -54,7 +54,8 @@
 - `oracle_moe.py`: router bypassed, GT phase labels select the expert; each expert sees only its phase's samples (~1/6), phase imbalance → starvation (collapse_rate 0.833 in dry run), zero router gradient, balance loss disabled.
 - Options: (a) redesigned oracle (balanced phase sampling / auxiliary router supervision), or (b) keep but relabel as "perfect phase-alignment bound, not deployable" (see B3).
 
-### B3. Oracle privileged-information labeling (reporting integrity) — `OPEN`
+### B3. Oracle privileged-information labeling (reporting integrity) — `DONE (2026-08-07)`
+- Footnotes applied: oracle relabeled signature-only/non-deployable in `experiment_report.md` tables and REPORT #2; teacher-forced (E8) footnote added.
 - GT phases used at training; at inference falls back to the untrained router when no labels are fed (`oracle_moe.py:49`) — its privilege is training-time only unless the harness feeds labels. Exact inference behavior in rollout eval must be stated explicitly.
 - Action: footnote oracle in every success table as non-deployable upper bound; add to reporting template NOW (before results arrive / anchoring bias).
 
@@ -145,10 +146,12 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 ### D2. Comparison discipline vs vision baselines — `CONFIRMED` policy
 - State-only/state-oracle numbers must never be compared with OpenVLA/π0.5/ACT leaderboard numbers (97–98%). Stage-1 numbers are an internal architecture sanity check. LeRobot protocol: 10 episodes/task × 4 suites (400 eps); ours: 50/task (OpenVLA standard) — fine, but state the protocol.
 
-### D3. Report #2 contains now-stale claims — `OPEN`
+### D3. Report #2 contains now-stale claims — `DONE (2026-08-07)`
+- Revised: A2 cause added (task-pool mismatch / zero-shot suites), oracle relabeled, matrix 5 models -> 8 cells, full-length training claim corrected (643674a), timeline updated to F3 estimate.
 - `docs/notes/REPORT_to_professor_2.md` attributes 0% to observability alone (true but incomplete) and sets gates ("per-suite success rates clear the floor") that are invalid for zero-shot suites. Must be revised in the reply to the professor (round 3) with the confirmed A2 finding.
 
-### D4. Citation errors found during online verification — `OPEN` (fix in paper draft)
+### D4. Citation errors found during online verification — `PARTIAL (novelty_claim fixed; paper draft pending)`
+- LAR-MoE verified: A. Rodriguez, C. Li, L. Mazza, R. Younis, O. Hellig, S. Bodenstedt, M. Wagner, S. Speidel, arXiv:2603.08476, 2026-03-09 (updated in novelty_claim.md).
 - Our experiment report cites "Move-Then-Operate (Xu, ICML 2026)" — actual authors: **Lei Lei, Jie Gu, Chu Tang, Jingmin Chen, Ruiqi Wang** (arXiv 2604.23620).
 - Two DIFFERENT papers named "MoE-ACT": our proposal's (Guo et al., arXiv 2603.15265, bimanual) vs the professor's "MEAT" (Mazza et al., arXiv 2601.21971, surgical). Cite both, disambiguated.
 - MAR citation verified: Hou et al., Findings of ACL 2026, pp. 17320–17337 (DOI 10.18653/v1/2026.findings-acl.857).
@@ -180,16 +183,19 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 
 ## F. Rollout Infrastructure & Compute
 
-### F1. `sim.forward()` before each `mj_step` — `OPEN` (unpatched)
+### F1. `sim.forward()` before each `mj_step` — `DONE (artifact; verdict pending Colab)`
+- Evidence tool delivered: `scripts/benchmark_sim_forward.py` (replay-sanity, both modes, per-step eef errors). Runs on the Colab box before full training; F1 stays unpatched until the benchmark says otherwise.
 - Candidate physics-correctness fix; no community precedent found; requires a Colab benchmark (e.g., replay-sanity) to decide. Do not ship without evidence.
 
 ### F2. `hard_reset` semantics — `CONFIRMED` (handled)
 - `hard_reset: true` = official benchmark default (bit-identical); soft resets NOT bit-identical after settling steps (LeRobot docs). Config documents both. Keep hard_reset for published numbers.
 
-### F3. Incomplete evaluation runs — `OPEN`
+### F3. Incomplete evaluation runs — `OPEN (protocol ready; runs pending Colab)`
+- Runbook delivered: `docs/dev/colab_protocol.md` (ordered steps: sync -> census B6 -> re-ingest -> F1 benchmark -> full-length train -> eval -> diagnostics).
 - Colab logs: libero_spatial done (500 eps, 6539 s), libero_object done (500 eps, 4579 s), libero_goal partial (ended at task 4/10), libero_10 + libero_90 not run. **Locked protocol (2026-08-07, resolved plan):** libero_90 ID (90 tasks × 50 eps) + libero_10 (10 × 10 eps) × 3 seeds × 8 models ≈ 110k eps ≈ **2–4 weeks wall-clock on free T4 (2 workers)** at ~13 s+/episode; training ≈ 3.5–4 days. Reductions only at the B6 gate, recorded in the resolved plan.
 
-### F4. Headless/physics environment risks — `OPEN` (monitored)
+### F4. Headless/physics environment risks — `DONE (pins); xvfb/egl handled per-run`
+- Exact pins recorded in evaluation_plan.md: robosuite==1.4.0, mujoco==3.3.1, gymnasium 1.3.0, libero==0.1.1 (match pyproject/uv.lock).
 - robosuite/MuJoCo need a display/EGL (xvfb/egl on headless Colab); pin robosuite/mujoco versions so physics matches training demo generation (evaluation_plan §5).
 
 ### F5. Local env lacks libero/robosuite — `CONFIRMED` constraint
