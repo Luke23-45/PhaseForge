@@ -42,6 +42,6 @@ Thumbs.db
 # Project specific
 outputs/
 logs/
-docs/notes
+# docs/notes
 docs/implemention
 docs/legder
