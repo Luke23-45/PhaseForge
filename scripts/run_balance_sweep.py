@@ -37,6 +37,9 @@ def run_sweep(balance_coeff: float, seed: int) -> None:
         f"project.seed={seed}",
         f"models.router.balance_coeff={balance_coeff}",
         f"project.tag=balance_{balance_coeff}",
+        # Full-length runs only: the sweep compares final-epoch routing
+        # states, so early stopping must not truncate any cell.
+        "train.early_stopping.enabled=false",
     ]
     print(f"\n>>> Running: {' '.join(cmd)}")
     result = subprocess.run(cmd)
