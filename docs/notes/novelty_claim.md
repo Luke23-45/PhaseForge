@@ -1,49 +1,130 @@
-Here's the verified picture of the prior-art landscape (all papers found online, real titles/venues), then the detailed comparison against our implementation.
+# PhaseForge — Novelty Claim & Positioning
 
-## The papers, verified
+**Purpose:** expand section D of the issues register (`docs/notes/issues_register.md`) into the full statement of what PhaseForge claims, what prior work already covers (verified online), what is genuinely ours, and the empirical program required to defend it. This document drives the paper's contribution statement and the reply to the professor.
 
-| Paper | Venue/ID | Mechanism | Key result |
+**As of:** 2026-08-07 · Cross-references: `issues_register.md` (D1, D4, C1, C3), `REPORT_to_professor_2.md`
+
+---
+
+## 1. The research question (restated)
+
+PhaseForge is a **training-strategy study**, not a new-architecture or new-perception study:
+
+> Does bootstrapping a MoE router from phase structure discovered in a *frozen, phase-supervised latent* produce more stable routing, cleaner expert specialization, and better long-horizon policy behavior than (a) no structure (scratch), (b) generic warm-starting (BC encoder, random router), (c) supervised routing without initialization (MEAT/PAMAE/MTO-style), or (d) unsupervised latent alignment (LAR-MoE-style)?
+
+Two-stage design: **Stage 1** trains a generalist BC policy with an auxiliary phase-classification head (6 rule-based phases). **Stage 2** freezes the encoder, initializes 6 experts from the stage-1 action head, **initializes the router weights from phase centroids computed in the stage-1 latent space**, and continues training with top-2 routing under an auxiliary load-balancing loss. Inference is state-only; phase labels are never an input.
+
+Five baselines (two to be added): `bc`, `scratch_moe`, `warmstart_moe`, `oracle_moe` (ground-truth phase routing, upper bound), and the proposed `phaseforge`; plus `phase_pretrain_random_router` and `plain_encoder_phase_bootstrap` to complete the 2×2 (issues register C1).
+
+---
+
+## 2. The verified prior-art landscape (what is taken)
+
+All of the following were verified online (2026-08-07). The general claim — *"phase/skill structure helps MoE specialize in manipulation"* — is already made by many:
+
+| Paper | Venue/ID | Core mechanism | Overlaps with us |
 |---|---|---|---|
-| **MEAT** — "MoE-ACT: Improving Surgical Imitation Learning Policies through Supervised Mixture-of-Experts" (Mazza et al.) | arXiv 2601.21971, Jan 2026 | Supervised MoE added to **ACT**; one expert per task phase; gating network **supervised with phase labels** (CE loss); ordered surgical phases (grasp → retract) | ACT 50%→85% end-to-end; 60%→85% grasping; data-efficient (<150 demos) |
-| **MoE-ACT** (Guo et al.) — the one our proposal cites | arXiv 2603.15265, Mar 2026 | MoE FFN in ACT **encoder**, language-conditioned, FiLM decoding, multi-scale cross-attn; bimanual RoboTwin 2.0 | +33% over vanilla ACT (22%→55%) |
-| **SMP** — "Abstracting Robot Manipulation Skills via MoE Diffusion Policies" (Hao, Zhai, Liu, Soh) | **ICLR 2026**, arXiv 2601.21251 | Diffusion MoE with **state-adaptive orthonormal skill basis** (Stiefel/QR) + **sticky Dirichlet-Markov gating**; state-only router distilled at inference; sparse top-k activation | 0.54 avg on RoboTwin-2 vs 0.48 next best; ~30% active params |
-| **LAR-MoE** — "Latent-Aligned Routing for MoE in Robotic..." | arXiv 2603.08476 | Two-stage: **unsupervised** student–teacher co-training of obs+future-action latent, then routing regularized to follow that latent; **no phase labels**; ACT-style experts; soft routing + entropy reg | Structured specialization without annotations; zero-shot ex vivo |
-| **AdaMoE** (Shen et al.) | arXiv 2510.14300, Oct 2025 | MoE in π0's action expert; **decouples expert selection (router) from weighting (scale adapter)** — directly attacks the load-balance-vs-specialization conflict | +1.8% LIBERO, +9.3% RoboTwin, +21.5% real world |
-| **Memory-Aware Routing (MAR)** (Hou et al.) | Findings ACL 2026 | Names the **pseudo-balancing** failure (same input routed randomly to satisfy balance → knowledge overlap, no specialization); per-expert memory buffers guide consistent routing | +35% specialization (KED), 2–25% accuracy, half the experts |
-| **Move-Then-Operate (MTO)** (Lei, Gu, Tang, Chen, Wang — *not* Xu) | ICML 2026, arXiv 2604.23620 | Dual-expert VLA (move/operate), **chunk-level phase router**, teacher-forcing with GT labels, hard routing, MLLM-generated phase labels | +24.1% over π0 on RoboTwin2 (68.9%) |
-| **PAMAE** | arXiv 2606.27144 | Phase-aware MoE action module for flow-matching VLA; phase-aware router + lightweight phase head + routing alignment; **two-stage training** (warmup experts, then supervised routing, aux losses annealed 30%) | +9.2% over VLA baselines |
-| **CoRDE** | arXiv 2606.21935 | Frozen concept encoder guides variational expert responsibility via soft mapping; LoRA experts on frozen backbone; reduces routing collapse | LIBERO + D3IL gains |
+| **MEAT** (Mazza et al.), "MoE-ACT: Improving Surgical IL Policies through Supervised MoE" | arXiv 2601.21971 | Supervised MoE on ACT; gating trained with phase-label CE; experts per phase | Phase-supervised routing (no init strategy) |
+| **MoE-ACT** (Guo et al.), bimanual | arXiv 2603.15265 | MoE FFN in ACT encoder; language-conditioned; FiLM | MoE + ACT family (task-level, not phase-level) |
+| **SMP** (Hao, Zhai, Liu, Soh) | ICLR 2026, arXiv 2601.21251 | Diffusion MoE; state-adaptive orthonormal skill basis; sticky Dirichlet-Markov gating; distilled state-only router | Phase-consistent activation; identifiability fix for exactly our NMI=0 symptom |
+| **LAR-MoE** | arXiv 2603.08476 | Unsupervised student–teacher latent co-training; routing regularized to latent; no labels | Two-stage; challenges our supervised-phase premise |
+| **AdaMoE** (Shen et al.) | arXiv 2510.14300 | Decouples expert selection from weighting (scale adapter); resolves balance-vs-specialization conflict | The C3 dilemma, solved at router level |
+| **Memory-Aware Routing** (Hou et al.) | Findings ACL 2026, pp. 17320–17337 | Identifies **pseudo-balancing**; memory buffers for consistent routing | Our dry-run signature (NMI=0, balance ≥ 0.98), at LLM scale |
+| **Move-Then-Operate** (Lei et al.) | ICML 2026, arXiv 2604.23620 | Dual-expert (move/operate); chunk-level phase router; teacher-forcing; MLLM phase labels | Phase-supervised routing + label generation |
+| **PAMAE** | arXiv 2606.27144 | Phase-aware router + phase head; two-stage (warmup → supervised routing, annealed) | Closest two-stage structure — still no centroid bootstrap |
+| **CoRDE** | arXiv 2606.21935 | Frozen concept encoder → variational expert responsibility; LoRA experts | Semantic priors instead of phase labels |
 
-## Where we overlap with each (the professor's point, confirmed)
+**What this means:** the general finding is not publishable on its own. The contributions must be (i) the specific initialization mechanism, (ii) the evaluation framework, (iii) the controlled-study design — and (iv) any empirical finding (e.g., small-scale pseudo-balancing) that is new by scale/domain.
 
-The general claim — **"phase/skill structure helps MoE specialize in manipulation"** — is already made by MEAT, SMP, MTO, PAMAE, and implicitly LAR-MoE/CoRDE. On the specific dimensions:
+---
 
-- **Phase-supervised routing during training:** MEAT (CE on gate), MTO (teacher-forcing router), PAMAE (routing-alignment loss). All three are "our idea minus the bootstrap."
-- **Two-stage training:** PAMAE (warmup→supervised routing), LAR-MoE (unsupervised pretrain→latent-aligned routing), CoRDE (offline distillation→online). Two-stage is now a standard recipe.
-- **State-only router at inference:** SMP (distills state-only router), CoRDE (online state-only execution). So "router sees only state" is *not* a differentiator either.
-- **Balance-vs-specialization:** AdaMoE and MAR both exist *because* of the exact dilemma we hit (dry run: balance ≥ 0.98, NMI = 0.0 — textbook pseudo-balancing). Our C3 issue is a known, named problem.
-- **Temporal routing stability:** SMP (sticky gates), TRACT (monotone chunk routing) — our `time_to_stable_routing` metric is our answer to a problem they solve in the architecture.
+## 3. The gap analysis — what is actually ours
 
-## What remains genuinely ours (candidate novelty)
+### 3.1 Mechanism: phase-centroid router bootstrap (primary claim)
 
-1. **Phase-centroid router bootstrap on a frozen stage-1 latent.** Nobody initializes router *weights* from phase centroids computed in a pretrained latent. The closest are PAMAE/MTO/MEAT, which supervise routing gradients directly; LAR-MoE, which aligns to *unsupervised* latents; SMP, which distills an amortized posterior. Centroid-bootstrap-as-initialization is unclaimed — this is the sharpest mechanism claim.
-2. **The oracle-routing upper bound + NMI phase-expert alignment diagnostics.** SMP measures phase consistency via gate patterns, PAMAE via dominance purity — but the *oracle* (GT-label routing as an upper bound, with NMI=1.0 as the instrumented sanity signature) is our evaluation-framework contribution.
-3. **The controlled state-only factorial at 0.6M params.** Everyone else is vision/VLA-scale. Nobody runs the *training-strategy question* as a controlled study (bc/scratch/warmstart/phase-bootstrap/oracle + the planned 2×2). That framing is defensible — but only if we add the 2×2 (C1), or the comparison is still uninterpretable.
-4. **Pseudo-balancing demonstrated in small-scale continuous control.** MAR found it at LLM scale; our dry run (NMI=0 with balance≈1.0 at 0.6M params) would be the small-scale evidence — a genuine transferable finding if the diagnosis holds after the eval fixes.
+No verified paper initializes router **weights** from phase centroids computed in a frozen pretrained latent. The field's approaches to phase-supervised routing:
 
-## Corrections to our existing citations (found during verification)
+- **Supervise routing gradients directly** (MEAT: CE on gate; MTO: teacher-forcing; PAMAE: routing-alignment loss) — the router learns from scratch under supervision.
+- **Align routing to unsupervised structure** (LAR-MoE: latent distances; CoRDE: concept prior).
+- **Distill a gate posterior** (SMP: state-only router matched to amortized posterior).
+- **Fix routing mechanics** (AdaMoE: decoupled weighting; MAR: memory buffers).
 
-- Our experiment report cites "Move-Then-Operate (Xu, ICML 2026)" — actual authors are **Lei Lei, Jie Gu, Chu Tang, Jingmin Chen, Ruiqi Wang**.
-- Our proposal's "MoE-ACT (Guo et al., 2026)" is **real** (bimanual paper, arXiv 2603.15265) — but there's a **second, different** MoE-ACT (surgical, Mazza et al.) which is the "MEAT" the professor means. Both must be cited and disambiguated.
-- MAR is verified: Hou et al., Findings ACL 2026, pages 17320–17337.
-- LAR-MoE authors could not be confirmed from the PDF snippet ("Rodriguez et al." unverified) — flag for verification.
-- MoE-DP citation (Cheng, 2025) unverified; the SMP paper's closest baseline is the MoE diffusion policy of Wang et al., 2024 — likely the correct reference.
+PhaseForge instead treats phase structure as an **initialization prior**: stage-1 phase supervision shapes the latent, phase centroids are computed there, and the router starts at those centroids. The phase structure is injected *before* any routing optimization, then refined by the balance loss. This is a distinct, unclaimed training strategy. Its falsifiable prediction: **the bootstrap survives load balancing** — i.e., NMI between phase labels and expert assignment > 0 at convergence, unlike warmstart/scratch, *without* sacrificing balance or inducing collapse.
 
-## What this changes in the paper positioning
+### 3.2 Evaluation framework: oracle upper bound + NMI diagnostics (methodology claim)
 
-The sharpened contribution (per professor D1) should read something like:
+The `oracle_moe` baseline (GT-phase routing, expected signature NMI=1.0, entropy≈0, balance≈0 — observed in the dry run) is a faithful upper bound on phase-aligned specialization, and the routing-metric battery (time-to-stable-routing, entropy, balance, collapse, phase-expert NMI) is an interpretable diagnostic instrument. No verified manipulation-MoE paper uses this combination (SMP reports gate patterns; PAMAE reports dominance purity — neither has an oracle bound). Caveat (issues register B2/B3): the oracle must be relabeled or redesigned — its current training (single-expert-per-phase, imbalance → starvation) makes its *success rate* an invalid bound; its *routing-signature* value (NMI=1.0 sanity check) remains valid.
 
-> "We isolate the *training strategy* variable in phase-structured MoE: is bootstrapping the router from phase centroids in a frozen, phase-supervised latent a better initialization than supervised routing (MEAT/PAMAE/MTO), unsupervised latent alignment (LAR-MoE), or no structure (scratch/warmstart)? — measured with an oracle-routing upper bound and NMI-based phase-expert diagnostics, in a controlled state-only setting."
+### 3.3 Experimental design: controlled state-only factorial (design claim)
 
-That claim is narrow enough to be novel and directly testable with the planned 2×2. The general finding, pseudo-balancing at small scale, is a secondary contribution that also needs the balance-vs-NMI sweep (C3) to be credible.
+A 2×2 factorial over (encoder init: phase-supervised vs plain) × (router init: centroid-bootstrap vs random), plus `bc` and the oracle, at 0.6–0.8M parameters, on LIBERO-90 with the accepted rollout protocol — this is the first controlled study isolating the *training strategy* variable in phase-structured MoE. All vision/VLA-scale work bundles architecture + perception + scale; we deliberately hold those constant (state-only, small scale) so that any measured difference is attributable to the strategy.
 
+### 3.4 Empirical finding: pseudo-balancing in small-scale continuous control (secondary claim)
+
+MAR documents pseudo-balancing at LLM scale. Our dry run shows the same signature at 0.6M parameters in continuous control (balance ≥ 0.98, NMI = 0.0, zero collapse — redundancy with balance). If this holds after the evaluation fixes (A2/B6/C3), it is a transferable, small-scale demonstration of the failure mode and a clean motivation for the bootstrap.
+
+---
+
+## 4. The sharpened novelty claim (wording for the paper)
+
+> We study the **training strategy** of phase-structured MoE policies for manipulation. Prior work supervises routing directly (MEAT; Move-Then-Operate; PAMAE), aligns routing to unsupervised latents (LAR-MoE), or fixes routing mechanics (AdaMoE; Memory-Aware Routing). We show that **bootstrapping the router from phase centroids in a frozen, phase-supervised latent** is a distinct initialization strategy that (prediction 1) yields phase-expert alignment (NMI > 0) that survives load-balancing, unlike random- or plain-warm-started routers, (prediction 2) improves routing stability and rollout success over the same architecture without the bootstrap, and (prediction 3) is bounded above by an oracle-routing policy whose NMI=1.0 signature validates the diagnostics. The study is conducted as a controlled state-only factorial at small scale, isolating the strategy variable from perception and scale.
+
+**Explicitly NOT claimed:** vision-level performance; LIBERO leaderboard numbers; the general finding "phase structure helps MoE" (taken); perception capability of any kind (stages 2–3 are separate).
+
+---
+
+## 5. Empirical program to defend the claim
+
+| # | Experiment | Gate / decision |
+|---|---|---|
+| E1 | **Evaluation fixes first** (issues A2, B6): in-distribution suite decided (libero_90 as primary; spatial/object/goal/10 as labeled zero-shot); state-replay consistency test passes | Blocking — nothing below is interpretable without it |
+| E2 | **2×2 factorial** (C1): add `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`; train all 7 models full-length (100/200 epochs, no truncating early stop) | Isolates encoder-init vs router-init effects |
+| E3 | **Full-length training** (C5) on the object-state channel (Stage 1 of professor plan) | Real ceilings, not dry-run floors |
+| E4 | **Balance-vs-NMI logging + balance-weight sweep** (C3): 0 / 0.01 / 0.1 | Tests the pseudo-balancing mechanism; if balance kills NMI at all weights, the bootstrap claim needs the orthogonal-basis direction (SMP) or decoupling (AdaMoE) |
+| E5 | **Rollout protocol**: 5 suites × 50 episodes/task × 3 seeds, per-suite + per-task breakdowns; oracle footnoted as non-deployable (B3) | Predictions 1–3 testable; zero-shot suites reported as such |
+| E6 | **Phase-label spot-check** (C4) on real trajectories | Protects the bootstrap, NMI, and oracle from label-error propagation |
+| E7 | **Oracle redesign decision** (B2): balanced sampling or auxiliary router loss, OR relabel as signature-only bound | Keeps the upper-bound claim honest |
+
+**Decision rules** (from the proposal, updated for the factorial):
+
+- Supported: PhaseForge ≥ warmstart ≥ scratch on success AND routing stability, with NMI > 0 for phaseforge at convergence.
+- Mechanism-level support: the 2×2 shows the *encoder* effect (phase vs plain) and the *router* effect (bootstrap vs random) separately; a win on either axis is attributable.
+- Rejected: PhaseForge ≤ warmstart ⇒ phase structure adds nothing beyond pretraining; NMI stays 0 for all ⇒ bootstrap does not survive balance ⇒ pursue the SMP/AdaMoE directions (E4) or revise the hypothesis.
+- Caveat: if `oracle_moe` success ≤ learned models (as in the dry run), the oracle cannot bound success — only the routing signature (NMI=1.0) is claimed (3.2).
+
+---
+
+## 6. Positioning strategy
+
+- **Comparison discipline (D2):** state-oracle/state-only numbers are an internal architecture sanity check. Never placed next to OpenVLA/π0.5/ACT numbers; protocol declared (50 episodes/task; in-distribution vs zero-shot per suite).
+- **Related-work framing:** position against the five routing strategies in §3.1 — supervised (MEAT/MTO/PAMAE), unsupervised-aligned (LAR-MoE), posterior-distilled (SMP), mechanical-fix (AdaMoE/MAR) — with our init-prior strategy as the new cell. Cite both MoE-ACT papers disambiguated; correct citations per issues register D4.
+- **Labelling:** oracle footnoted as non-deployable privileged bound; zero-shot rows labeled; stage-1 numbers never called "LIBERO results."
+- **Stages 2–3 (per professor plan):** the novelty claim lives in stages 1–2. Cached-embedding (stage 2) and end-to-end vision (stage 3) are perception questions, orthogonal to the strategy claim; they extend the study only after the strategy question is answered.
+
+---
+
+## 7. Risks to the claim and mitigations
+
+| Risk | Source | Mitigation |
+|---|---|---|
+| Unsupervised latent alignment beats supervised bootstrap | LAR-MoE (verified) | 2×2 + E4; if confirmed, report as controlled negative result — still a valid contribution (first state-only factorial) |
+| Our NMI=0 is the identifiability problem SMP solves by construction (orthogonal basis) | SMP (verified) | E4 sweep decides; if balance always kills NMI, adopt orthonormal-basis or decoupled-weighting variant as follow-up, not in this paper |
+| Load balancing itself is the enemy | AdaMoE, MAR (verified) | Sweep balance weight; log balance-vs-NMI per epoch (C3) |
+| Supervised routing (MEAT/MTO/PAMAE) makes "phase helps" unnovel | verified | Claims are init-mechanism + evaluation-framework + controlled-study, not the general finding |
+| Zero-shot confound resurfaces and is misread as "fix failed" | issues A2 | In-distribution suite primary; zero-shot labeled; gates in E1 |
+| Oracle invalid as success bound | dry run (collapse 0.833) | Signature-only claim or redesign (E7) |
+
+---
+
+## 8. References (verified 2026-08-07)
+
+1. Mazza et al., "MoE-ACT: Improving Surgical Imitation Learning Policies through Supervised Mixture-of-Experts" (MEAT), arXiv:2601.21971.
+2. Guo, Liu, Sun, Zhao, Zhou, Ma, "MoE-ACT: Scaling Multi-Task Bimanual Manipulation with Sparse Language-Conditioned Mixture-of-Experts Transformers", arXiv:2603.15265.
+3. Hao, Zhai, Liu, Soh, "Abstracting Robot Manipulation Skills via Mixture-of-Experts Diffusion Policies" (SMP), ICLR 2026, arXiv:2601.21251.
+4. "LAR-MoE: Latent-Aligned Routing for Mixture of Experts in Robotic Manipulation", arXiv:2603.08476 (authors unverified — confirm before citing).
+5. Shen et al., "Expertise need not monopolize: Action-Specialized Mixture of Experts for Vision-Language-Action Learning" (AdaMoE), arXiv:2510.14300.
+6. Hou et al., "From Pseudo-Balancing to True Specialization: Memory-Aware Routing for Mixture-of-Experts", Findings of ACL 2026, pp. 17320–17337, DOI 10.18653/v1/2026.findings-acl.857.
+7. Lei, Gu, Tang, Chen, Wang, "Move-Then-Operate: Behavioral Phasing for Human-Like Robotic Manipulation", ICML 2026, arXiv:2604.23620.
+8. PAMAE: "Phase-Aware-MoE Action Experts Towards Reliable Flow-Matching VLA Policies", arXiv:2606.27144.
+9. CoRDE: "Concept-prior Routed Diffusion Experts for Structural Generalization in Robot Manipulation", arXiv:2606.21935.
+10. Liu et al., "LIBERO: Benchmarking Knowledge Transfer for Lifelong Robot Learning", NeurIPS 2023 (Datasets & Benchmarks).
