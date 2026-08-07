@@ -201,6 +201,35 @@ class DataPipelineStateMachine:
                 )
         return index
 
+    def _check_state_dim_consistency(self, trajs: list[dict[str, Any]]) -> None:
+        """Guard: every decoded state vector must match ``data.state_dim``.
+
+        ``data.state_dim`` sizes the model encoder's ``input_dim``, while the
+        decoded width is determined by the object index (k_slots, mask flag)
+        and by whether the object channel is enabled. A mismatch — e.g. the
+        channel disabled but a stale ``state_dim=151``, or index/config drift
+        — would otherwise surface only as a shape error at the first model
+        forward pass, after a useless 66GB re-ingest. Failing loud here
+        catches it at the source.
+        """
+        expected = int(self.data_cfg.get("state_dim", 0))
+        if expected <= 0:
+            return
+        bad = sorted(
+            {
+                int(traj["state"].shape[-1])
+                for traj in trajs
+                if traj["state"].shape[-1] != expected
+            }
+        )
+        if bad:
+            raise PipelineError(
+                f"Decoded state dims {bad} do not match data.state_dim="
+                f"{expected}. Fix data.object_state / the object index / "
+                "data.state_dim, then re-ingest — the model encoder "
+                "input_dim would disagree with the decoded states."
+            )
+
     def _proprio_slices(self) -> tuple[tuple[int, int], tuple[int, int]]:
         """Derive the labeler's EEF/gripper slices from the configured state_keys.
 
@@ -401,6 +430,7 @@ class DataPipelineStateMachine:
                 all_trajs.append(traj)
 
         logger.info(f"  Total trajectories after stripping: {len(all_trajs)}")
+        self._check_state_dim_consistency(all_trajs)
         self._trajectories = all_trajs
         self._state = PipelineState.NORMALIZE_AND_SAVE
 
@@ -556,6 +586,7 @@ class DataPipelineStateMachine:
             for traj in stripper.strip(hdf5_path):
                 traj["phase"] = labeler.label(traj)
                 trajs.append(traj)
+        self._check_state_dim_consistency(trajs)
         return trajs
 
     # ------------------------------------------------------------------

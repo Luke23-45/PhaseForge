@@ -11,7 +11,10 @@ import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
-from phaseforge.data.ingestion.state_machine import DataPipelineStateMachine
+from phaseforge.data.ingestion.state_machine import (
+    DataPipelineStateMachine,
+    PipelineError,
+)
 from phaseforge.data.libero.object_state import (
     JOINT_FREE,
     JOINT_HINGE,
@@ -259,3 +262,43 @@ def test_object_mask_dims_none_when_index_has_no_mask(tmp_path) -> None:
 
     index_with_mask = make_index(include_mask=True)
     assert fsm._object_mask_dims(index_with_mask) == set(range(51, 55))
+
+
+# ---------------------------------------------------------------------------
+# Decoded state-dim invariant (DataPipelineStateMachine._check_state_dim_consistency)
+# ---------------------------------------------------------------------------
+
+
+def test_state_dim_invariant_rejects_mismatched_decoded_states() -> None:
+    """e.g. object channel disabled while state_dim still says 151."""
+    fsm = _make_fsm({"enabled": False}, state_dim=151)
+    with pytest.raises(PipelineError, match="state_dim"):
+        fsm._check_state_dim_consistency([{"state": np.zeros((4, 23))}])
+
+
+def test_state_dim_invariant_rejects_mixed_decoded_dims() -> None:
+    """A corpus with inconsistent state widths is always a bug."""
+    fsm = _make_fsm({"enabled": True}, state_dim=151)
+    trajs = [
+        {"state": np.zeros((4, 151))},
+        {"state": np.zeros((4, 135))},
+    ]
+    with pytest.raises(PipelineError, match="135"):
+        fsm._check_state_dim_consistency(trajs)
+
+
+def test_state_dim_invariant_passes_when_matching() -> None:
+    fsm = _make_fsm({"enabled": True}, state_dim=151)
+    fsm._check_state_dim_consistency([{"state": np.zeros((4, 151))}] * 3)
+
+
+def test_state_dim_invariant_skipped_without_state_dim() -> None:
+    """Configs without a state_dim field are not tripped up."""
+    data_cfg = OmegaConf.create(
+        {
+            "state_keys": [{"key": "robot0_joint_pos", "dim": 7}],
+            "libero": {"phase_labeler": {"num_phases": 6}},
+        }
+    )
+    fsm = DataPipelineStateMachine(OmegaConf.create({"data": data_cfg}))
+    fsm._check_state_dim_consistency([{"state": np.zeros((4, 23))}])
