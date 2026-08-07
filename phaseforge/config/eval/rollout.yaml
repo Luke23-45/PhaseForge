@@ -51,3 +51,13 @@ environment:
 
 evaluation:
   num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)
+  # Per-suite episode counts (E5, locked): libero_90 = 50 eps/task
+  # (in-distribution), libero_10 = 10 eps/task (labeled zero-shot row).
+  # Suites without an entry fall back to num_episodes_per_task.
+  episodes_per_suite:
+    libero_90: 50
+    libero_10: 10
+
+  # B4: every eval_results.json declares each suite's role (ID vs OOD) via
+  # "eval/suite_roles". Do not add suites here without updating
+  # SUITE_ID_OOD_ROLES in rollout_evaluator.py.

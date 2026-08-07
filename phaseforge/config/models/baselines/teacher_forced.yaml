@@ -1,0 +1,53 @@
+# config/models/baselines/teacher_forced.yaml — E8 cell:
+# GT-partitioned experts in training, predicted-phase routing at inference
+#
+# Shares the phaseforge Stage 1 checkpoint, phase head included
+# (resolve_checkpoint_source maps this name to "phaseforge"), so only the
+# Stage 2 supervision regime differs from the proposed method. The phase
+# head (the learned phase predictor) is frozen in Stage 2; the router is
+# structural parity only (never consulted — routing is by GT phase in
+# training and by argmax(phase_head) at inference).
+#
+# Footnotes (locked 2026-08-07): routes top-1 (exclusive GT phase
+# partition) vs phaseforge's top-2 (method hyperparameter); natural
+# sampling — phase starvation is a reported diagnostic, not a silent
+# failure.
+
+name: "teacher_forced"
+_target_: phaseforge.models.baselines.teacher_forced.TeacherForcedMoEModel
+
+encoder:
+  _target_: phaseforge.models.components.encoder.StateEncoder
+  input_dim: 151          # Matches data.state_dim (23 + 16*7 objects + 16 mask)
+  hidden_dims: [256, 256, 256]
+  latent_dim: 128
+  activation: "gelu"
+  dropout: 0.1
+  use_residual: true
+
+action_head:
+  _target_: phaseforge.models.components.action_head.ActionHead
+  input_dim: 128
+  output_dim: 7
+  head_type: "deterministic"
+  hidden_dim: 256
+
+phase_head:
+  _target_: phaseforge.models.components.phase_head.PhaseClassificationHead
+  latent_dim: 128
+  num_phases: 6
+
+router:
+  _target_: phaseforge.models.components.router.TopKRouter
+  latent_dim: 128
+  num_experts: 6
+  top_k: 1             # Exclusive top-1 GT partition (locked E8 decision)
+  noise_std: 0.0       # Router never consulted; kept for structural parity
+  balance_coeff: 0.01
+
+expert:
+  _target_: phaseforge.models.components.expert.ExpertMLP
+  input_dim: 128
+  hidden_dims: [256, 256]
+  output_dim: 7
+  activation: "gelu"

@@ -45,6 +45,15 @@ from phaseforge.evaluations.envs.libero_env import (
 
 logger = logging.getLogger(__name__)
 
+# B4: declare the evaluation role of every suite in the results. Per
+# Decision 2 (issues register A2) only libero_90 (in-distribution) and
+# libero_10 (labeled zero-shot row) are evaluated; anything else is
+# declared "unclassified" rather than silently implied to be ID.
+SUITE_ID_OOD_ROLES: dict[str, str] = {
+    "libero_90": "in-distribution",
+    "libero_10": "zero-shot (labeled)",
+}
+
 
 def _resolve_num_workers(requested: int, num_episodes: int) -> int:
     """Resolve the effective worker count.
@@ -196,6 +205,8 @@ class RolloutEvaluator:
         - ``eval.environment.num_workers`` (default 0 = auto: one per CPU)
         - ``eval.environment.object_state`` (default None = disabled)
         - ``eval.evaluation.num_episodes_per_task`` (default 50)
+        - ``eval.evaluation.episodes_per_suite`` (default {} = use the
+          per-task count for every suite; E5 sets libero_90=50, libero_10=10)
     """
 
     def __init__(
@@ -225,8 +236,17 @@ class RolloutEvaluator:
         self.num_episodes_per_task: int = int(
             eval_settings.get("num_episodes_per_task", 50)
         )
+        # Per-suite episode counts (E5): libero_90 = 50 eps/task (ID),
+        # libero_10 = 10 eps/task (labeled zero-shot row). Falls back to
+        # ``num_episodes_per_task`` for suites without an entry.
+        self.episodes_per_suite: dict[str, int] = {
+            str(k): int(v) for k, v in (eval_settings.get("episodes_per_suite") or {}).items()
+        }
         # P-Stage 1 object-state channel (None = disabled).
         self.object_state_cfg: Any = env_cfg.get("object_state")
+
+    def _episodes_for_suite(self, suite_name: str) -> int:
+        return self.episodes_per_suite.get(suite_name, self.num_episodes_per_task)
 
     def _load_normalizer(self) -> FrozenNormalizer:
         """Load the training-frozen normalizer from the processed cache.
@@ -467,14 +487,15 @@ class RolloutEvaluator:
             )
 
         for suite_name in self.suites:
+            episodes_per_task = self._episodes_for_suite(suite_name)
             logger.info(
                 "Evaluating suite %s (%d episodes/task, %d worker(s))…",
                 suite_name,
-                self.num_episodes_per_task,
+                episodes_per_task,
                 resolved_workers,
             )
             suite_results = self.evaluate_suite(
-                suite_name, num_episodes_per_task=self.num_episodes_per_task
+                suite_name, num_episodes_per_task=episodes_per_task
             )
             all_results.update(suite_results)
             rate_key = f"eval/success_rate/{suite_name}"
@@ -487,5 +508,10 @@ class RolloutEvaluator:
         all_results["eval/seed"] = self.cfg.project.seed
         all_results["eval/num_episodes_per_task"] = self.num_episodes_per_task
         all_results["eval/suites"] = list(self.suites)
+        # B4: ID-vs-OOD declaration — no suite is implicitly ID.
+        all_results["eval/suite_roles"] = {
+            suite: SUITE_ID_OOD_ROLES.get(suite, "unclassified")
+            for suite in self.suites
+        }
 
         return all_results

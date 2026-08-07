@@ -7,6 +7,7 @@ import logging
 import torch
 import torch.nn.functional as F
 
+from phaseforge.evaluations.metrics import expert_utilization, phase_alignment, routing_stability
 from phaseforge.trains.loops.base import BaseTrainer
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,12 @@ class Stage2Trainer(BaseTrainer):
     Computes: L_total = L_action + β_balance * L_balance
     Action loss is MSE. Balance loss is auxiliary.
     Optionally freezes the encoder.
+
+    Every epoch also logs the routing diagnostics (C3: balance-vs-NMI
+    trajectory) over the validation set — ``val/phase_expert_nmi``,
+    ``val/balance_score``, ``val/collapse_rate``, ``val/routing_entropy`` —
+    so pseudo-balancing (balance high while NMI collapses to 0) is visible
+    at training time instead of only in offline evaluation.
     """
 
     def fit(self) -> None:
@@ -38,10 +45,12 @@ class Stage2Trainer(BaseTrainer):
         super().fit()
 
     def _compute_loss(
-        self, batch: dict[str, torch.Tensor]
+        self, batch: dict[str, torch.Tensor], out=None
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        # Forward pass
-        out = self.model(batch)
+        # Forward pass (reuse an existing output when provided, e.g. from the
+        # validation loop, to avoid a double forward).
+        if out is None:
+            out = self.model(batch)
         
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
@@ -67,3 +76,74 @@ class Stage2Trainer(BaseTrainer):
         }
         
         return total_loss, metrics
+
+    @torch.no_grad()
+    def _validate(self) -> dict[str, float]:
+        """Validation plus per-epoch routing diagnostics (C3).
+
+        Reuses the forward outputs for both the loss metrics and the routing
+        metrics so validation stays a single forward pass per batch.
+        """
+        if self.val_loader is None:
+            return {}
+            
+        self.model.eval()
+        agg_metrics: dict[str, float] = {}
+        num_batches = 0
+
+        expert_indices_all: list[torch.Tensor] = []
+        phases_all: list[torch.Tensor] = []
+        gate_logits_all: list[torch.Tensor] = []
+
+        for batch in self.val_loader:
+            batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+
+            out = self.model(batch)
+            _, metrics = self._compute_loss(batch, out=out)
+
+            for k, v in metrics.items():
+                agg_metrics[k] = agg_metrics.get(k, 0.0) + v
+            num_batches += 1
+
+            if out.expert_indices is not None:
+                expert_indices_all.append(out.expert_indices.detach().cpu())
+                phases_all.append(batch["phase"].cpu())
+            if out.gate_logits is not None:
+                gate_logits_all.append(out.gate_logits.detach().cpu())
+
+        if num_batches == 0:
+            return {}
+        agg_metrics = {k: v / num_batches for k, v in agg_metrics.items()}
+
+        # Routing diagnostics: balance-vs-specialization trajectory (C3).
+        if expert_indices_all:
+            expert_indices = torch.cat(expert_indices_all, dim=0)
+            phases = torch.cat(phases_all, dim=0)
+
+            agg_metrics["val/phase_expert_nmi"] = phase_alignment.phase_expert_nmi(
+                phases, expert_indices
+            )
+
+            num_experts = int(expert_indices.max().item()) + 1
+            fractions = expert_utilization.expert_utilization(expert_indices, num_experts)
+            agg_metrics["val/balance_score"] = (
+                expert_utilization.expert_utilization_balance(fractions)
+            )
+            agg_metrics["val/collapse_rate"] = expert_utilization.collapse_rate(fractions)
+
+        if gate_logits_all:
+            gate_logits = torch.cat(gate_logits_all, dim=0)
+            agg_metrics["val/routing_entropy"] = (
+                routing_stability.routing_entropy(gate_logits, normalize=True).item()
+            )
+
+        logger.info(
+            "Epoch %d routing diagnostics: NMI=%.4f balance=%.4f collapse=%.4f entropy=%.4f",
+            self.current_epoch,
+            agg_metrics.get("val/phase_expert_nmi", float("nan")),
+            agg_metrics.get("val/balance_score", float("nan")),
+            agg_metrics.get("val/collapse_rate", float("nan")),
+            agg_metrics.get("val/routing_entropy", float("nan")),
+        )
+
+        return agg_metrics

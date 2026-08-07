@@ -3,6 +3,12 @@
 Each seed's evaluation uses the checkpoint TRAINED with that same seed
 (seed-matched lookup via ``phaseforge.utils.config.find_latest_checkpoint``).
 
+The suites are the Decision-2 set only: ``libero_90`` (in-distribution, ID)
+and ``libero_10`` (labeled zero-shot row). The per-suite mean/std in
+``outputs/eval/final_results.json`` reports ID vs OOD separately; every
+rollout run's ``eval_results.json`` additionally declares the ID/OOD role
+of each suite (B4).
+
 Usage:
     uv sync --extra rollout          # one-time: installs libero + robosuite
     uv run python scripts/run_multi_seed_eval.py
@@ -23,15 +29,20 @@ import numpy as np
 
 from phaseforge.utils.config import find_latest_checkpoint
 
-# Model config names and their checkpoint paths.
-# If the checkpoint path is None, the seed-matched best checkpoint is
-# auto-detected from outputs/<model_name>/stage<N>/ (see STAGES below).
-MODELS: list[tuple[str, str | None]] = [
-    ("bc", None),
-    ("phaseforge", None),
-    ("scratch_moe", None),
-    ("warmstart_moe", None),
-    ("oracle_moe", None),
+# (model name, Hydra config path, explicit checkpoint path or None).
+# The config path is REQUIRED: model configs live under config/models/…
+# (e.g. ``baselines/bc``); a bare name like ``bc`` does not resolve. If the
+# checkpoint path is None, the seed-matched best checkpoint is auto-detected
+# from outputs/<model_name>/stage<N>/ (see STAGES below).
+MODELS: list[tuple[str, str, str | None]] = [
+    ("bc", "baselines/bc", None),
+    ("phaseforge", "phaseforge", None),
+    ("scratch_moe", "baselines/scratch_moe", None),
+    ("warmstart_moe", "baselines/warmstart_moe", None),
+    ("oracle_moe", "baselines/oracle_moe", None),
+    ("phase_pretrain_random_router", "baselines/phase_pretrain_random_router", None),
+    ("plain_encoder_phase_bootstrap", "baselines/plain_encoder_phase_bootstrap", None),
+    ("teacher_forced", "baselines/teacher_forced", None),
 ]
 
 # Stage whose best checkpoint should be evaluated for each model.
@@ -42,18 +53,23 @@ STAGES: dict[str, int] = {
     "scratch_moe": 2,
     "warmstart_moe": 2,
     "oracle_moe": 2,
+    "phase_pretrain_random_router": 2,
+    "plain_encoder_phase_bootstrap": 2,
+    "teacher_forced": 2,
 }
 
 SEEDS = [42, 43, 44]
 
-SUITES = ["libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"]
+# Decision 2 (issues register A2): only the in-distribution suite and the
+# labeled zero-shot suite are evaluated.
+SUITES = ["libero_90", "libero_10"]
 
 
-def run_eval(model_name: str, ckpt_path: Path | None, seed: int) -> dict:
+def run_eval(model_cfg: str, ckpt_path: Path | None, seed: int) -> dict:
     """Run a single evaluation and return the parsed JSON results."""
     cmd = [
         "phaseforge-eval",
-        f"models={model_name}",
+        f"models={model_cfg}",
         "eval=rollout",
         f"project.seed={seed}",
     ]
@@ -70,7 +86,7 @@ def run_eval(model_name: str, ckpt_path: Path | None, seed: int) -> dict:
     # Parse results from the output JSON file
     # The eval command writes to outputs/eval/{model_name}/{run_id}/eval_results.json
     # Find the latest one
-    eval_base = Path("outputs/eval") / model_name
+    eval_base = Path("outputs/eval") / model_cfg.split("/")[-1]
     if not eval_base.is_dir():
         print(f"  WARNING: no output directory found at {eval_base}")
         return {"error": True}
@@ -91,7 +107,7 @@ def run_eval(model_name: str, ckpt_path: Path | None, seed: int) -> dict:
 def main() -> None:
     all_results: dict[str, dict] = {}
 
-    for model_name, ckpt_path_str in MODELS:
+    for model_name, model_cfg, ckpt_path_str in MODELS:
         print(f"\n{'='*60}")
         print(f"Model: {model_name}")
         print(f"{'='*60}")
@@ -112,7 +128,7 @@ def main() -> None:
                 continue
 
             print(f"    Checkpoint: {ckpt_path}")
-            result = run_eval(model_name, ckpt_path, seed)
+            result = run_eval(model_cfg, ckpt_path, seed)
             per_seed_results.append(result)
 
         # Aggregate success rates across seeds
@@ -133,6 +149,10 @@ def main() -> None:
                 "mean_success_rate": float(np.mean(overall_rates)),
                 "std_success_rate": float(np.std(overall_rates)),
                 "per_seed_success_rates": overall_rates,
+                "suite_roles": {
+                    "libero_90": "in-distribution",
+                    "libero_10": "zero-shot (labeled)",
+                },
             }
             for suite in SUITES:
                 if suite_rates[suite]:
@@ -160,39 +180,22 @@ def main() -> None:
     print(f"Final results saved to {output_path}")
     print(f"{'='*60}")
 
-    # Print final table
-    header = (
-        f"\n{'Model':<20} {'Average':<15} {'Spatial':<15} "
-        f"{'Object':<15} {'Goal':<15} {'Long':<15} {'90':<15}"
+    # Print final table (ID = libero_90, OOD = libero_10 per Decision 2)
+    header = f"\n{'Model':<32} {'Overall':<15}" + "".join(
+        f" {suite:<15}" for suite in SUITES
     )
     print(header)
-    print("-" * 105)
+    print("-" * (32 + 15 + 15 * len(SUITES)))
     for model_name, summary in all_results.items():
-        avg = f"{summary['mean_success_rate']:.4f} ± {summary['std_success_rate']:.4f}"
-        spatial = (
-            f"{summary.get('libero_spatial_mean', 0):.4f} "
-            f"± {summary.get('libero_spatial_std', 0):.4f}"
-        )
-        obj = (
-            f"{summary.get('libero_object_mean', 0):.4f} "
-            f"± {summary.get('libero_object_std', 0):.4f}"
-        )
-        goal = (
-            f"{summary.get('libero_goal_mean', 0):.4f} "
-            f"± {summary.get('libero_goal_std', 0):.4f}"
-        )
-        long_ = (
-            f"{summary.get('libero_10_mean', 0):.4f} "
-            f"± {summary.get('libero_10_std', 0):.4f}"
-        )
-        ninety = (
-            f"{summary.get('libero_90_mean', 0):.4f} "
-            f"± {summary.get('libero_90_std', 0):.4f}"
-        )
         row = (
-            f"{model_name:<20} {avg:<15} {spatial:<15} {obj:<15} "
-            f"{goal:<15} {long_:<15} {ninety:<15}"
+            f"{model_name:<32} "
+            f"{summary['mean_success_rate']:.4f} ± {summary['std_success_rate']:.4f}"
         )
+        for suite in SUITES:
+            m = summary.get(f"{suite}_mean")
+            s = summary.get(f"{suite}_std")
+            cell = f"{m:.4f} ± {s:.4f}" if m is not None else "n/a"
+            row += f" {cell:<15}"
         print(row)
 
 

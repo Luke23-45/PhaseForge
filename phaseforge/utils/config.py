@@ -202,10 +202,22 @@ def resolve_checkpoint_source(model_name: str) -> str:
     ``warmstart_moe`` was pretrained *without* a phase head (via ``BC``),
     so its Stage 1 checkpoint lives under ``outputs/bc/stage1/``.
 
+    The 2x2 factorial (C1) cells and the teacher-forced cell (E8) follow
+    the same pattern:
+
+    * ``warmstart_moe``, ``plain_encoder_phase_bootstrap`` -> plain BC
+      checkpoint (``bc``).
+    * ``phase_pretrain_random_router``, ``teacher_forced`` -> phaseforge's
+      phase-supervised checkpoint (``phaseforge``) — shared pretraining,
+      so only the Stage 2 supervision regime differs (locked E8 decision).
+
     Returns the model name to query, which may be different from the input.
     """
     alias_map: dict[str, str] = {
         "warmstart_moe": "bc",
+        "plain_encoder_phase_bootstrap": "bc",
+        "phase_pretrain_random_router": "phaseforge",
+        "teacher_forced": "phaseforge",
     }
     return alias_map.get(model_name, model_name)
 
