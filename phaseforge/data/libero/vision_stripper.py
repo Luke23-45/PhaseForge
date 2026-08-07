@@ -4,24 +4,36 @@ This is the ONLY module in the codebase that opens image keys in HDF5.
 After this module runs, no downstream code ever encounters image arrays.
 Images are never loaded into RAM — we skip them entirely at the HDF5 level.
 
-Schema agnosticism
-------------------
-The LIBERO dataset has been released with different HDF5 key naming
-conventions across versions. This module auto-detects the convention
-used by each file and resolves the configured state keys accordingly.
+Schema contract (flattened naming only)
+---------------------------------------
+The mirror used by this project is pinned to ``yifengzhu-hf/LIBERO-datasets``
+(see ``phaseforge/data/scripts/download_libero.py``), which uses the
+flattened key convention:
 
-Known schemas:
+    obs/joint_states       (T, 7)   — robot arm joint positions
+    obs/ee_pos             (T, 3)   — end-effector position
+    obs/ee_ori             (T, 3)   — end-effector axis-angle (unused)
+    obs/gripper_states     (T, 2)   — gripper finger qpos
+    demo/robot_states      (T, 9)   — [gripper(2), eef_pos(3), eef_quat(4)]
+    demo/states            (T, S)   — flattened MuJoCo sim state (qpos+qvel);
+                                      used only by the object-state decoder
 
-  "robosuite"  — keys match the raw robosuite observation dict:
-      obs/robot0_joint_pos, obs/robot0_joint_vel, obs/robot0_eef_pos,
-      obs/robot0_eef_quat, obs/robot0_gripper_qpos
+Joint velocity is derived from ``joint_states`` via finite differences.
+The end-effector quaternion is read from ``demo/robot_states[:, 5:9]``.
 
-  "flattened"  — keys use flattened naming common in HF releases:
-      obs/joint_states, obs/ee_pos, obs/ee_ori, obs/gripper_states
-      Joint velocity is derived via finite differences.
-      End-effector quaternion is extracted from demo/robot_states[:, 5:9].
+The config's ``state_keys`` use robosuite naming (``robot0_joint_pos`` etc.);
+the resolver below maps them onto the flattened keys. Only this one schema is
+supported — the auto-detection of the old "robosuite"-style releases was
+removed because the mirror is pinned (Decision 2, 2026-08-07).
 
-Detection is per-file, so a mixed corpus works without errors.
+Object-state channel (P-Stage 1)
+--------------------------------
+When the pipeline passes an :class:`ObjectIndex`
+(``phaseforge.data.libero.object_state``), the stripper additionally decodes
+per-object world poses from ``demo/states`` (pure numpy, no physics
+stepping) and appends them to the state vector:
+
+    [ proprio (23) | object_block (k_slots*7) | mask (k_slots) ]
 """
 
 from __future__ import annotations
@@ -33,6 +45,8 @@ from typing import Any
 import h5py
 import numpy as np
 from omegaconf import DictConfig
+
+from phaseforge.data.libero.object_state import ObjectIndex
 
 logger = logging.getLogger(__name__)
 
@@ -46,86 +60,33 @@ def _is_vision_key(key: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Schema detection
-# ---------------------------------------------------------------------------
-
-_ROBOSUITE_SENTINEL = "robot0_joint_pos"
-_FLATTENED_SENTINEL = "joint_states"
-
-
-def _detect_obs_schema(obs_group: h5py.Group) -> str:
-    """Return ``"robosuite"`` or ``"flattened"`` based on available keys.
-
-    Raises ``ValueError`` if neither schema is recognised.
-    """
-    if _ROBOSUITE_SENTINEL in obs_group:
-        return "robosuite"
-    elif _FLATTENED_SENTINEL in obs_group:
-        return "flattened"
-    else:
-        available = sorted(obs_group.keys())
-        raise ValueError(
-            f"Cannot detect HDF5 obs schema: expected either "
-            f"'{_ROBOSUITE_SENTINEL}' (robosuite) or "
-            f"'{_FLATTENED_SENTINEL}' (flattened) in obs/. "
-            f"Available keys: {available}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Schema-specific key resolvers
+# Flattened-schema key resolver
 # ---------------------------------------------------------------------------
 
 
-def _resolve_robosuite(
+def _resolve_key(
     obs_group: h5py.Group,
     demo_group: h5py.Group,
     key: str,
 ) -> np.ndarray | None:
-    """Resolve ``key`` under the robosuite naming convention.
+    """Resolve a robosuite-named ``key`` against the flattened schema.
 
-    All keys are read directly from ``obs_group``.
-    """
-    if key == "robot0_joint_vel":
-        return obs_group["robot0_joint_vel"][:].astype(np.float32)
-    if key == "robot0_joint_pos":
-        return obs_group["robot0_joint_pos"][:].astype(np.float32)
-    if key == "robot0_eef_pos":
-        return obs_group["robot0_eef_pos"][:].astype(np.float32)
-    if key == "robot0_eef_quat":
-        return obs_group["robot0_eef_quat"][:].astype(np.float32)
-    if key == "robot0_gripper_qpos":
-        return obs_group["robot0_gripper_qpos"][:].astype(np.float32)
-    return None
-
-
-def _resolve_flattened(
-    obs_group: h5py.Group,
-    demo_group: h5py.Group,
-    key: str,
-) -> np.ndarray | None:
-    """Resolve ``key`` under the flattened naming convention.
-
-    Some keys come from ``obs_group``, some from ``demo_group``,
-    and ``robot0_joint_vel`` is derived via finite differences.
+    Some keys come from ``obs_group``, some from ``demo_group``, and
+    ``robot0_joint_vel`` is derived via finite differences. Returns ``None``
+    when the key cannot be produced (logged by the caller).
     """
     if key == "robot0_joint_pos":
-        # Canonical: joint_states in obs/
         if "joint_states" in obs_group:
             return obs_group["joint_states"][:].astype(np.float32)
         return None
 
     if key == "robot0_joint_vel":
-        # Derive from joint_states via finite differences
-        src = "joint_states"
-        if src not in obs_group:
+        if "joint_states" not in obs_group:
             return None
-        arr = obs_group[src][:].astype(np.float32)  # (T, 7)
-        vel = np.diff(arr, axis=0, prepend=arr[:1])
-        return vel
+        arr = obs_group["joint_states"][:].astype(np.float32)  # (T, 7)
+        return np.diff(arr, axis=0, prepend=arr[:1])
 
     if key == "robot0_eef_pos":
-        # Try ee_pos, fall back to ee_states[:, :3]
         if "ee_pos" in obs_group:
             return obs_group["ee_pos"][:].astype(np.float32)
         if "ee_states" in obs_group:
@@ -133,9 +94,9 @@ def _resolve_flattened(
         return None
 
     if key == "robot0_eef_quat":
-        # Extract from robot_states at demo root (9-dim: gripper+ee_pos+ee_quat)
+        # robot_states at demo root is 9-dim: [gripper(2), eef_pos(3), eef_quat(4)]
         if "robot_states" in demo_group:
-            rs = demo_group["robot_states"][:]  # (T, 9)
+            rs = demo_group["robot_states"][:]
             if rs.shape[-1] >= 9:
                 return rs[:, 5:9].astype(np.float32)
         return None
@@ -148,35 +109,30 @@ def _resolve_flattened(
     return None
 
 
-# Dispatch table: schema_name → resolver function
-_SCHEMA_RESOLVERS = {
-    "robosuite": _resolve_robosuite,
-    "flattened": _resolve_flattened,
-}
-
-
 # ---------------------------------------------------------------------------
 # VisionStripper
 # ---------------------------------------------------------------------------
 
 
 class VisionStripper:
-    """Parse a LIBERO HDF5 file and return state-only trajectory dicts.
-
-    Auto-detects the HDF5 schema (robosuite vs. flattened naming) per file
-    and resolves the configured state keys accordingly.
+    """Parse a LIBERO HDF5 file (flattened schema) and return state-only dicts.
 
     Args:
         state_keys: List of DictConfig entries with ``key`` and ``dim`` fields,
-                    or a list of plain strings.
+                    or a list of plain strings. Robosuite naming.
         task_index: ``{task_name: int_id}`` mapping produced by
             :func:`phaseforge.data.libero.task_index.build_task_index`.
+        object_index: Optional :class:`ObjectIndex` enabling the P-Stage 1
+            object-state channel. When set, each trajectory's state is
+            ``[proprio (23) | object_block | mask]`` (the mask is omitted
+            when the index has ``include_mask=False``).
     """
 
     def __init__(
         self,
         state_keys: list[Any],
         task_index: dict[str, int] | None = None,
+        object_index: ObjectIndex | None = None,
     ) -> None:
         self._key_specs: list[tuple[str, int | None]] = []
         for entry in state_keys:
@@ -192,12 +148,13 @@ class VisionStripper:
                 "hash()-based scheme produced different ids per run."
             )
         self._task_index = task_index
+        self.object_index = object_index
 
     def strip(self, hdf5_path: Path) -> list[dict[str, np.ndarray]]:
         """Extract state-only data from one HDF5 file.
 
         Args:
-            hdf5_path: Path to a LIBERO ``.hdf5`` file.
+            hdf5_path: Path to a LIBERO ``.hdf5`` file (flattened schema).
 
         Returns:
             List of trajectory dicts. Each dict contains:
@@ -206,6 +163,7 @@ class VisionStripper:
             - ``"task_id"``: int (derived from filename)
             - ``"traj_id"``: int (demo index)
         """
+        task_name = hdf5_path.stem
         task_id = self._task_id_from_path(hdf5_path)
         trajectories: list[dict[str, np.ndarray]] = []
 
@@ -224,21 +182,12 @@ class VisionStripper:
                     logger.warning(f"  Demo {demo_key} has no 'obs'. Skipping.")
                     continue
 
-                # Auto-detect schema for this file (once per file, cached below)
-                if not hasattr(self, "_schema"):
-                    schema = _detect_obs_schema(obs)
-                    logger.info(
-                        "  %s: detected schema '%s'", hdf5_path.name, schema
-                    )
-                    self._schema = schema
-                resolver = _SCHEMA_RESOLVERS[self._schema]
-
-                # Build state array
+                # Build the proprioceptive state vector
                 state_arrays: list[np.ndarray] = []
                 missing_keys: list[str] = []
 
                 for key, expected_dim in self._key_specs:
-                    arr = resolver(obs, demo, key)
+                    arr = _resolve_key(obs, demo, key)
                     if arr is None:
                         missing_keys.append(key)
                         continue
@@ -267,15 +216,29 @@ class VisionStripper:
                     )
                     continue
 
-                state = np.concatenate(state_arrays, axis=-1)  # (T, state_dim)
+                state = np.concatenate(state_arrays, axis=-1)  # (T, 23)
 
-                action_key = "actions"
-                if action_key not in demo:
+                # Object-state channel: decode from demo/states (numpy-only)
+                if self.object_index is not None:
+                    if "states" not in demo:
+                        raise ValueError(
+                            f"Demo {demo_key}: object_state is enabled but "
+                            "'states' is missing at the demo root of "
+                            f"{hdf5_path.name}. Re-download the dataset."
+                        )
+                    states = demo["states"][:].astype(np.float32)  # (T, S)
+                    obj_block, obj_mask = self.object_index.decode(task_name, states)
+                    # obj_mask is (T, k_slots) when the index has
+                    # include_mask=True, else (T, 0) — a no-op on
+                    # concatenation. The eval env honors the same flag.
+                    state = np.concatenate([state, obj_block, obj_mask], axis=-1)
+
+                if "actions" not in demo:
                     logger.warning(
                         f"  Demo {demo_key}: no 'actions'. Skipping."
                     )
                     continue
-                action = demo[action_key][:].astype(np.float32)
+                action = demo["actions"][:].astype(np.float32)
 
                 traj_id = int(
                     demo_key.replace("demo_", "").lstrip("0") or "0"
@@ -289,10 +252,6 @@ class VisionStripper:
                         "traj_id": traj_id,
                     }
                 )
-
-        # Reset schema cache for next file
-        if hasattr(self, "_schema"):
-            del self._schema
 
         logger.info(
             "  %s: extracted %d trajectories, "

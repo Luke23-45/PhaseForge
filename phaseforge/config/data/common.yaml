@@ -27,8 +27,22 @@ state_keys:
 action_key: "actions"
 action_dim: 7
 
-# Computed: sum of all dims above
-state_dim: 23   # 7+7+3+4+2
+# P-Stage 1 object-state channel: per-object world poses decoded (numpy-only)
+# from the mirror's demo/states arrays via the census-built index table
+# (phaseforge.data.scripts.build_object_index -> {data_root}/raw/libero/object_index.json).
+# State layout: [proprio (23) | object_block (k_slots*7) | mask (k_slots)].
+# k_slots is a fixed upper bound for ALL 90 tasks (zero-pad underfilled);
+# the census reports the true max — lowering it later re-ingests the cache.
+# The mask dims are excluded from normalization (already binary).
+object_state:
+  enabled: true
+  k_slots: 16            # census-tightened after patch 0; decoder fails loud if exceeded
+  dim_per_object: 7      # world pos (3) + quat (4) — must match object_state.py
+  include_mask: true
+  index_path: null       # null -> {data_root}/raw/libero/object_index.json
+
+# Computed: 23 (proprio) + 16*7 (objects) + 16 (mask)
+state_dim: 151
 
 # Cache root (relative to project output_dir or absolute)
 cache_root: "cache"

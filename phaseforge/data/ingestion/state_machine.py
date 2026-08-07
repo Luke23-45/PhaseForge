@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -38,9 +39,11 @@ from phaseforge.data.common.dataset import StateOnlyDataset
 from phaseforge.data.common.normalizer import RunningStatNormalizer
 from phaseforge.data.ingestion.cache_manager import CacheManager
 from phaseforge.data.ingestion.states import PipelineState
+from phaseforge.data.libero.object_state import ObjectIndex
 from phaseforge.data.libero.task_index import build_task_index
 from phaseforge.data.paths import (
     EXPECTED_FILE_COUNTS,
+    libero_object_index_path,
     libero_suite_dir,
     processed_cache_root,
 )
@@ -138,6 +141,89 @@ class DataPipelineStateMachine:
                 f"{data_phases} but {details}. All must match, otherwise the "
                 "phase labels cannot be indexed by the classifier/router/scatter."
             )
+
+    # ------------------------------------------------------------------
+    # Object-state channel (P-Stage 1)
+    # ------------------------------------------------------------------
+
+    def _load_object_index(self) -> ObjectIndex | None:
+        """Load the per-task object decode tables, or None when disabled.
+
+        Reads ``data.object_state``; the index file defaults to
+        ``{data_root}/raw/libero/object_index.json`` (census output) unless
+        ``data.object_state.index_path`` is set explicitly.
+
+        Validates the config <-> index handshake: the config's
+        ``k_slots`` / ``dim_per_object`` / ``include_mask`` and the resulting
+        ``data.state_dim`` must match what the index actually produces.
+        Otherwise the decoded state vectors, the normalizer's mask exclusion
+        and the model encoder's ``input_dim`` would silently disagree.
+        """
+        oscfg = self.data_cfg.get("object_state")
+        if oscfg is None or not oscfg.get("enabled", True):
+            return None
+        raw_path = oscfg.get("index_path")
+        path = Path(raw_path) if raw_path else libero_object_index_path()
+        index = ObjectIndex.load(path)
+
+        cfg_k_slots = oscfg.get("k_slots")
+        if cfg_k_slots is not None and int(cfg_k_slots) != index.k_slots:
+            raise ValueError(
+                f"data.object_state.k_slots={cfg_k_slots} does not match the "
+                f"index at {path}: k_slots={index.k_slots}. Rebuild the index "
+                "with build_object_index or update the config, then re-ingest."
+            )
+        cfg_dim = oscfg.get("dim_per_object")
+        if cfg_dim is not None and int(cfg_dim) != index.dim_per_object:
+            raise ValueError(
+                f"data.object_state.dim_per_object={cfg_dim} does not match "
+                f"the index at {path}: dim_per_object={index.dim_per_object}."
+            )
+        cfg_include_mask = oscfg.get("include_mask", True)
+        if bool(cfg_include_mask) != index.include_mask:
+            raise ValueError(
+                f"data.object_state.include_mask={cfg_include_mask} does not "
+                f"match the index at {path}: include_mask={index.include_mask}."
+            )
+
+        # The model encoder is sized from data.state_dim; the decoded states
+        # are sized from the index. They must agree.
+        state_dim = self.data_cfg.get("state_dim")
+        if state_dim is not None:
+            proprio_dim = sum(int(e["dim"]) for e in self.data_cfg.state_keys)
+            expected = proprio_dim + index.state_block_size
+            if int(state_dim) != expected:
+                raise ValueError(
+                    f"data.state_dim={state_dim} does not match the object "
+                    f"layout: proprio {proprio_dim} + object-state block "
+                    f"{index.state_block_size} = {expected}. The model "
+                    "encoder input_dim would disagree with the decoded states."
+                )
+        return index
+
+    def _proprio_slices(self) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Derive the labeler's EEF/gripper slices from the configured state_keys.
+
+        Single source of truth: the proprioceptive block is the concatenation
+        of ``state_keys`` (in config order), and the object block is appended
+        after it, so these slices are stable regardless of the object channel.
+        """
+        cursor = 0
+        by_key: dict[str, tuple[int, int]] = {}
+        for entry in self.data_cfg.state_keys:
+            key = entry["key"]
+            dim = int(entry["dim"])
+            by_key[key] = (cursor, cursor + dim)
+            cursor += dim
+        return by_key["robot0_eef_pos"], by_key["robot0_gripper_qpos"]
+
+    def _object_mask_dims(self, object_index: ObjectIndex | None) -> set[int] | None:
+        """State indices of the binary mask dims (excluded from normalization)."""
+        if object_index is None or not object_index.include_mask:
+            return None
+        proprio_dim = sum(int(e["dim"]) for e in self.data_cfg.state_keys)
+        obj_start = proprio_dim + object_index.k_slots * object_index.dim_per_object
+        return set(range(obj_start, obj_start + object_index.k_slots))
 
     # ------------------------------------------------------------------
     # Public API
@@ -288,11 +374,18 @@ class DataPipelineStateMachine:
         from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
         from phaseforge.data.libero.vision_stripper import VisionStripper
 
+        object_index = self._load_object_index()
         stripper = VisionStripper(
             state_keys=list(self.data_cfg.state_keys),
             task_index=self._task_index,
+            object_index=object_index,
         )
-        labeler: RuleBasedPhaseLabeler = instantiate(self.data_cfg.libero.phase_labeler)
+        eef_slice, gripper_slice = self._proprio_slices()
+        labeler: RuleBasedPhaseLabeler = instantiate(
+            self.data_cfg.libero.phase_labeler,
+            eef_pos_slice=eef_slice,
+            gripper_qpos_slice=gripper_slice,
+        )
 
         hdf5_files = sorted(self._raw_dir.glob("*.hdf5"))
         if not hdf5_files:
@@ -318,8 +411,12 @@ class DataPipelineStateMachine:
         # Bug 5 fix: TASK-LEVEL split (no same-task leakage).
         splits = self._build_task_level_splits(split_cfg)
 
-        # Compute normalization stats on TRAIN split only
-        normalizer = RunningStatNormalizer()
+        # Compute normalization stats on TRAIN split only.
+        # Mask dims (object-slot occupancy, already binary) are excluded.
+        object_index = self._load_object_index()
+        normalizer = RunningStatNormalizer(
+            ignore_dims=self._object_mask_dims(object_index)
+        )
         for idx in splits["train"]:
             traj = self._trajectories[idx]
             state_np = traj["state"]  # (T, S) numpy array
@@ -441,11 +538,18 @@ class DataPipelineStateMachine:
 
         raw_dir = libero_suite_dir(suite)
         task_index = build_task_index(raw_dir)
+        object_index = self._load_object_index()
         stripper = VisionStripper(
             state_keys=list(self.data_cfg.state_keys),
             task_index=task_index,
+            object_index=object_index,
         )
-        labeler: RuleBasedPhaseLabeler = instantiate(self.data_cfg.libero.phase_labeler)
+        eef_slice, gripper_slice = self._proprio_slices()
+        labeler: RuleBasedPhaseLabeler = instantiate(
+            self.data_cfg.libero.phase_labeler,
+            eef_pos_slice=eef_slice,
+            gripper_qpos_slice=gripper_slice,
+        )
 
         trajs: list[dict[str, Any]] = []
         for hdf5_path in sorted(raw_dir.glob("*.hdf5")):

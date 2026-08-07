@@ -1,8 +1,11 @@
 """State-only LIBERO environment wrapper.
 
-Wraps ``OffScreenRenderEnv`` to produce the 23-DoF state vector
-(7 joint pos + 7 joint vel + 3 EEF pos + 4 EEF quat + 2 gripper qpos)
-that matches the training data format. All image observations are discarded.
+Wraps ``OffScreenRenderEnv`` to produce the state vector that matches the
+training data format: the 23-DoF proprioceptive block (7 joint pos + 7
+joint vel + 3 EEF pos + 4 EEF quat + 2 gripper qpos), optionally extended
+with the P-Stage 1 object-state channel (per-object world pos + quat +
+occupancy mask, in the same layout the ingest pipeline decodes from the
+mirror's ``states`` arrays). All image observations are discarded.
 """
 
 from __future__ import annotations
@@ -33,10 +36,10 @@ SUITE_BENCHMARK_NAMES: dict[str, str] = {
 }
 
 
-#: The exact observable names that build the 23-DoF state vector
-#: (``_extract_state``). Everything else — camera images AND object
-#: sensors — is unused by the state-only policy and is disabled to
-#: eliminate per-step rendering / sensor-update costs.
+#: The exact observable names that build the 23-DoF proprioceptive block
+#: (``_extract_state``). Everything else — camera images AND object sensors
+#: that are NOT part of the configured object-state channel — is unused and
+#: is disabled to eliminate per-step rendering / sensor-update costs.
 KEPT_OBSERVABLE_NAMES: tuple[str, ...] = (
     "robot0_joint_pos",     # 7
     "robot0_joint_vel",     # 7
@@ -71,14 +74,15 @@ def _find_observable_env(
     return None, None
 
 
-def _disable_unused_observables(env: Any) -> None:
-    """Keep only the observables that build the 23-DoF state vector.
+def _disable_unused_observables(env: Any, keep_extra: tuple[str, ...] = ()) -> None:
+    """Keep only the observables that build the state vector.
 
     The policy is state-only; robosuite would otherwise re-render camera
     images and re-query every object sensor on each ``step()`` (the
-    dominant per-step costs — see robosuite issue #722). Only the five
-    proprioceptive observables listed in :data:`KEPT_OBSERVABLE_NAMES`
-    are kept, so ``_extract_state`` is unaffected.
+    dominant per-step costs — see robosuite issue #722). Only the
+    proprioceptive observables in :data:`KEPT_OBSERVABLE_NAMES` plus the
+    per-object ``{name}_pos`` / ``{name}_quat`` observables listed in
+    ``keep_extra`` are kept, so ``_extract_state`` is unaffected.
 
     Always logs a diagnostic (kept/disabled counts) so a silent no-op —
     e.g. a robosuite API difference — is visible in the eval log instead
@@ -94,10 +98,11 @@ def _disable_unused_observables(env: Any) -> None:
         )
         return
 
+    keep = set(KEPT_OBSERVABLE_NAMES) | set(keep_extra)
     disabled = 0
     kept = 0
     for name, obs in observables.items():
-        if name in KEPT_OBSERVABLE_NAMES:
+        if name in keep:
             kept += 1
             continue
         try:
@@ -121,7 +126,7 @@ def _disable_unused_observables(env: Any) -> None:
             )
 
     logger.info(
-        "Observable pruning: kept %d/%d (23-DoF state), disabled %d "
+        "Observable pruning: kept %d/%d (state vector), disabled %d "
         "— no per-step rendering/sensor updates for the rest.",
         kept, len(observables), disabled,
     )
@@ -130,12 +135,16 @@ def _disable_unused_observables(env: Any) -> None:
 class StateOnlyLiberoEnv:
     """State-only wrapper around LIBERO's OffScreenRenderEnv.
 
-    Constructs the 23-DoF state vector that matches our training data format.
-    All image observations are discarded (and, by default, not even rendered).
+    Constructs the state vector that matches our training data format:
+    the 23-DoF proprioceptive block plus, when ``object_state_cfg`` is
+    provided, the per-task object-state channel (same object selection and
+    ordering as the ingest-side decode — both read the census-built
+    :class:`ObjectIndex`). All image observations are discarded (and, by
+    default, not even rendered).
 
     Usage:
         env = StateOnlyLiberoEnv(suite_name="libero_spatial", task_id=0, seed=42)
-        state = env.reset(episode_idx=0)       # (23,) numpy array
+        state = env.reset(episode_idx=0)       # (state_dim,) numpy array
         next_state, reward, terminated, truncated, info = env.step(action)
         env.close()
 
@@ -156,6 +165,7 @@ class StateOnlyLiberoEnv:
         num_steps_wait: int = 10,
         render_observations: bool = False,
         hard_reset: bool = True,
+        object_state_cfg: Any = None,
     ) -> None:
         try:
             from libero.libero import benchmark, get_libero_path
@@ -178,6 +188,40 @@ class StateOnlyLiberoEnv:
         self._task = self.task_suite.get_task(task_id)
         self._init_states = self.task_suite.get_task_init_states(task_id)
 
+        # P-Stage 1 object-state channel: same census-built index as the
+        # ingest side, so train <-> eval object selection matches by
+        # construction (E3).
+        self._object_names: list[str] = []
+        self._object_k_slots = 0
+        self._object_dim = 7
+        self._object_include_mask = True
+        if object_state_cfg is not None:
+            from omegaconf import DictConfig, OmegaConf
+
+            oscfg = (
+                object_state_cfg
+                if isinstance(object_state_cfg, DictConfig)
+                else OmegaConf.create(dict(object_state_cfg))
+            )
+            if oscfg.get("enabled", True):
+                from phaseforge.data.libero.object_state import ObjectIndex
+                from phaseforge.data.paths import libero_object_index_path
+
+                index_path = oscfg.get("index_path")
+                path = Path(index_path) if index_path else libero_object_index_path()
+                object_index = ObjectIndex.load(path)
+                self._object_index = object_index
+                self._object_names = object_index.object_names(self._task.name)
+                self._object_k_slots = object_index.k_slots
+                self._object_dim = object_index.dim_per_object
+                self._object_include_mask = object_index.include_mask
+                logger.info(
+                    "Object-state channel enabled for %s: %d object(s) "
+                    "(k_slots=%d, dim_per_object=%d)",
+                    self._task.name, len(self._object_names),
+                    self._object_k_slots, self._object_dim,
+                )
+
         bddl_file = str(
             Path(get_libero_path("bddl_files"))
             / self._task.problem_folder
@@ -190,7 +234,12 @@ class StateOnlyLiberoEnv:
             hard_reset=hard_reset,
         )
         if not render_observations:
-            _disable_unused_observables(self._env)
+            keep_extra = tuple(
+                name
+                for obj in self._object_names
+                for name in (f"{obj}_pos", f"{obj}_quat")
+            )
+            _disable_unused_observables(self._env, keep_extra=keep_extra)
 
         # LIBERO's BDDLBaseDomain.reward() re-evaluates the full BDDL
         # success predicate on every step (bddl_base_domain.py:167-191) even
@@ -224,16 +273,35 @@ class StateOnlyLiberoEnv:
         return len(self._init_states)
 
     def _extract_state(self, obs: dict[str, np.ndarray]) -> np.ndarray:
-        """Concatenate the 23-DoF state vector from the observation dict."""
-        return np.concatenate(
-            [
-                obs["robot0_joint_pos"],    # 7
-                obs["robot0_joint_vel"],    # 7
-                obs["robot0_eef_pos"],      # 3
-                obs["robot0_eef_quat"],     # 4
-                obs["robot0_gripper_qpos"], # 2
-            ]
-        ).astype(np.float32)
+        """Concatenate the state vector from the observation dict.
+
+        Layout (identical to the ingest side):
+            [ proprio (23) | object_block (k_slots*7) | mask (k_slots) ]
+
+        Object poses come from the ``{name}_pos`` / ``{name}_quat``
+        observables (kept enabled for this task's objects); empty slots are
+        zero-padded and the occupancy mask is appended.
+        """
+        parts = [
+            obs["robot0_joint_pos"],    # 7
+            obs["robot0_joint_vel"],    # 7
+            obs["robot0_eef_pos"],      # 3
+            obs["robot0_eef_quat"],     # 4
+            obs["robot0_gripper_qpos"], # 2
+        ]
+        n_objects = len(self._object_names)
+        if n_objects:
+            for name in self._object_names:
+                parts.append(obs[f"{name}_pos"])
+                parts.append(obs[f"{name}_quat"])
+            pad = self._object_k_slots - n_objects
+            if pad > 0:
+                parts.append(np.zeros(pad * self._object_dim, dtype=np.float32))
+            if self._object_include_mask:
+                mask = np.zeros(self._object_k_slots, dtype=np.float32)
+                mask[:n_objects] = 1.0
+                parts.append(mask)
+        return np.concatenate(parts).astype(np.float32)
 
     def reset(self, episode_idx: int = 0) -> np.ndarray:
         """Reset env to the given initial state and return the initial state vector.

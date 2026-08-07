@@ -17,6 +17,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 
@@ -25,16 +26,21 @@ sys.path.insert(0, str(REPO))
 
 # reuse the synthesizer from the other script
 sys.path.insert(0, str(REPO / "scripts"))
-from simulate_pipeline import make_synthetic_libero_file  # noqa: E402
+from simulate_pipeline import (  # noqa: E402
+    SYNTHETIC_OBJECTS_BY_TASK,
+    make_synthetic_libero_file,
+    write_synthetic_object_index,
+)
 
 
 def build_cfg(sim_root: Path) -> OmegaConf:
+    raw_libero = sim_root / "raw" / "libero"
     return OmegaConf.create({
         "project": {"output_dir": str(sim_root / "outputs")},
         "data": {
             "cache_root": "cache",
             "batch_size": 4, "num_workers": 0, "pin_memory": False,
-            "sequence_length": 1, "stride": 1, "state_dim": 23,
+            "sequence_length": 1, "stride": 1, "state_dim": 151,
             "state_keys": [
                 {"key": "robot0_joint_pos", "dim": 7},
                 {"key": "robot0_joint_vel", "dim": 7},
@@ -42,6 +48,13 @@ def build_cfg(sim_root: Path) -> OmegaConf:
                 {"key": "robot0_eef_quat", "dim": 4},
                 {"key": "robot0_gripper_qpos", "dim": 2},
             ],
+            "object_state": {
+                "enabled": True,
+                "k_slots": 16,
+                "dim_per_object": 7,
+                "include_mask": True,
+                "index_path": str(raw_libero / "object_index.json"),
+            },
             "libero": {
                 "local": {"raw_dir": "raw_data/libero90"},
                 "split": {"train_ratio": 0.9, "val_ratio": 0.1, "test_ratio": 0.0, "seed": 42},
@@ -88,6 +101,7 @@ def main():
                               "LIVING_ROOM_SCENE2_put_bowl_demo",
                               "STUDY_SCENE1_pick_book_demo"]):
         make_synthetic_libero_file(raw_suite / f"{task}.hdf5", n_demos=3, T=60, seed=i)
+    write_synthetic_object_index(raw_suite.parent, SYNTHETIC_OBJECTS_BY_TASK)
 
     print("=" * 70)
     print("CHECK 1: task_id determinism across two runs (hash() bug)")
@@ -140,7 +154,8 @@ def main():
     # recompute mean/std from the NORMALIZED tensors (they are normalized
     # in-place during _normalize_and_save)
     # we don't have splits here reliably, so compute over ALL normalized trajs
-    all_states = torch.cat([t["state"] for t in trajs1], dim=0)
+    # (mask dims 135:151 are excluded from normalization and stay 0/1)
+    all_states = torch.cat([t["state"] for t in trajs1], dim=0)[:, :135]
     m = all_states.mean(dim=0)
     s = all_states.std(dim=0)
     print(f"  normalized train mean (should be ~0):  min={m.min():.3f} max={m.max():.3f}")
@@ -184,6 +199,44 @@ def main():
         "val split is EMPTY due to integer truncation"
         if val_end == tr_end
         else "val non-empty"
+    )
+    print(f"  VERDICT: {verdict}")
+
+    print()
+    print("=" * 70)
+    print("CHECK 6: object-state channel (block dims + occupancy mask)")
+    print("=" * 70)
+    # Layout: [proprio 23 | objects 16*7 | mask 16] => state_dim 151.
+    # 3 synthetic objects per task -> mask has 3 ones, 13 zeros, all timesteps.
+    obj_block_start, obj_block_end = 23, 23 + 16 * 7
+    mask_start, mask_end = obj_block_end, obj_block_end + 16
+    state_dims = {int(t["state"].shape[-1]) for t in trajs1}
+    print(f"  state dims across trajs: {state_dims}")
+    shape_ok = state_dims == {151}
+    mask_ok = True
+    finite_ok = True
+    for t in trajs1:
+        st = t["state"]
+        if isinstance(st, torch.Tensor):
+            st = st.numpy()
+        mask = st[:, mask_start:mask_end]
+        if not set(np.unique(mask)) <= {0.0, 1.0}:
+            mask_ok = False
+            print(f"    BAD mask values in task {t['task_id']}: {np.unique(mask)}")
+        n_filled = int(mask[0].sum())
+        if n_filled != 3:
+            mask_ok = False
+            print(f"    expected 3 filled slots, got {n_filled} (task {t['task_id']})")
+        if not np.isfinite(st[:, obj_block_start:obj_block_end]).all():
+            finite_ok = False
+            print(f"    non-finite object block (task {t['task_id']})")
+    print(f"  shape==151 across trajs? {shape_ok}")
+    print(f"  mask binary + 3 filled slots? {mask_ok}")
+    print(f"  object block finite? {finite_ok}")
+    verdict = (
+        "object-state channel OK"
+        if (shape_ok and mask_ok and finite_ok)
+        else "object-state channel BROKEN"
     )
     print(f"  VERDICT: {verdict}")
 

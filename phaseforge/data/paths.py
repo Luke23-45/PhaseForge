@@ -174,6 +174,22 @@ def libero_manifest_path(data_root: str | os.PathLike | None = None) -> Path:
     return libero_raw_root(data_root) / "MANIFEST.json"
 
 
+def libero_object_index_path(data_root: str | os.PathLike | None = None) -> Path:
+    """Return the path to the per-task object decode tables.
+
+    The index maps each task filename stem to the ``qpos`` slices and hinge
+    constants needed to decode object world poses from the demo ``states``
+    arrays (see ``phaseforge.data.libero.object_state.ObjectIndex``). It is
+    produced once per mirror revision by the patch-0 census:
+
+        python -m phaseforge.data.scripts.build_object_index --suites libero_90
+
+    Defaults to ``{data_root}/raw/libero/object_index.json`` so it sits next
+    to the HDF5 files it describes and travels with the data volume.
+    """
+    return libero_raw_root(data_root) / "object_index.json"
+
+
 def processed_cache_root(data_root: str | os.PathLike | None = None) -> Path:
     """Return the shared, run-agnostic processed-cache root.
 

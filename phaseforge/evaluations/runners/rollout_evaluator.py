@@ -194,6 +194,7 @@ class RolloutEvaluator:
         - ``eval.environment.hard_reset`` (default True: rebuild the sim
           from XML every episode — the official protocol, bit-identical)
         - ``eval.environment.num_workers`` (default 0 = auto: one per CPU)
+        - ``eval.environment.object_state`` (default None = disabled)
         - ``eval.evaluation.num_episodes_per_task`` (default 50)
     """
 
@@ -224,6 +225,8 @@ class RolloutEvaluator:
         self.num_episodes_per_task: int = int(
             eval_settings.get("num_episodes_per_task", 50)
         )
+        # P-Stage 1 object-state channel (None = disabled).
+        self.object_state_cfg: Any = env_cfg.get("object_state")
 
     def _load_normalizer(self) -> FrozenNormalizer:
         """Load the training-frozen normalizer from the processed cache.
@@ -287,6 +290,7 @@ class RolloutEvaluator:
             num_steps_wait=self.num_steps_wait,
             render_observations=self.render_observations,
             hard_reset=self.hard_reset,
+            object_state_cfg=self.object_state_cfg,
         )
         task_desc = env.task_description
         max_steps = SUITE_MAX_STEPS[suite_name]

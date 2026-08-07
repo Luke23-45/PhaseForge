@@ -4,18 +4,20 @@
 #   phaseforge-eval eval=rollout
 #
 # Uses LIBERO OffScreenRenderEnv to run online rollouts with the
-# standard protocol: 50 episodes/task, 5 suites, binary success via
-# goal predicates.
+# standard protocol: 50 episodes/task, binary success via goal predicates.
+#
+# Suites (Decision 2, 2026-08-07): libero_90 is the in-distribution
+# evaluation target (90 tasks) and libero_10 the labeled zero-shot row
+# (LeRobot downstream-transfer protocol). The spatial/object/goal suites
+# are deliberately NOT evaluated — they were dropped to avoid resurfacing
+# the A2 misread risk.
 
 mode: "rollout"
 
 environment:
   suites:
-    - "libero_spatial"
-    - "libero_object"
-    - "libero_goal"
-    - "libero_10"
     - "libero_90"
+    - "libero_10"
   num_steps_wait: 10      # Dummy steps at reset for physics to settle
   hard_reset: true        # Rebuild the MuJoCo sim from XML every episode:
                           # the official benchmark default (bit-identical).
@@ -23,9 +25,9 @@ environment:
                           # (faster resets) — NOT bit-identical after
                           # settling steps (LeRobot docs, "Reset performance").
   render_observations: false  # State-only policy: prune unused observables
-                              # (camera images + object sensors; the dominant
-                              # per-step cost). Set true only to capture
-                              # images/video (keeps everything enabled).
+                              # (camera images + non-object sensors; the
+                              # dominant per-step cost). Set true only to
+                              # capture images/video (keeps everything).
   num_workers: 0              # 0 = auto: one worker per logical CPU (physics
                               # is single-threaded per env, so throughput
                               # scales with vCPUs; free Colab T4 -> 2 workers).
@@ -35,6 +37,17 @@ environment:
                               # roughly linearly with worker count (one model
                               # per worker) — set an explicit value on small
                               # VRAM cards.
+
+  # P-Stage 1 object-state channel: the eval env reads the same census-built
+  # index as the ingest pipeline and builds the identical state layout
+  # ([proprio 23 | objects k_slots*7 | mask k_slots]). Must match
+  # config/data/common.yaml object_state.
+  object_state:
+    enabled: true
+    k_slots: 16
+    dim_per_object: 7
+    include_mask: true
+    index_path: null         # null -> {data_root}/raw/libero/object_index.json
 
 evaluation:
   num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)

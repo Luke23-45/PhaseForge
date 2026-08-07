@@ -22,7 +22,7 @@ from phaseforge.data.ingestion.cache_manager import CacheManager
 from phaseforge.evaluations.runners import rollout_evaluator as re_mod
 from phaseforge.evaluations.runners.rollout_evaluator import RolloutEvaluator
 
-STATE_DIM = 23
+STATE_DIM = 151
 ACTION_DIM = 7
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +84,7 @@ class FakeStateEnv:
         num_steps_wait: int = 10,
         render_observations: bool = False,
         hard_reset: bool = True,
+        object_state_cfg: object | None = None,
     ) -> None:
         self.suite_name = suite_name
         self.task_id = task_id
@@ -297,6 +298,7 @@ def test_envs_are_closed_after_suite(
         num_steps_wait: int = 10,
         render_observations: bool = False,
         hard_reset: bool = True,
+        object_state_cfg: object | None = None,
     ) -> FakeStateEnv:
         env = FakeStateEnv(suite_name, task_id, seed, num_steps_wait, render_observations)
         created.append(env)
@@ -366,6 +368,7 @@ def test_env_factory_receives_hard_reset_setting(
         num_steps_wait: int = 10,
         render_observations: bool = False,
         hard_reset: bool = True,
+        object_state_cfg: object | None = None,
     ) -> FakeStateEnv:
         received.append(hard_reset)
         return FakeStateEnv(suite_name, task_id, seed, num_steps_wait)
@@ -480,16 +483,16 @@ def test_eval_config_groups_compose() -> None:
         rollout_cfg = compose(config_name="main", overrides=["eval=rollout"])
         assert rollout_cfg.eval.mode == "rollout"
         assert list(rollout_cfg.eval.environment.suites) == [
-            "libero_spatial",
-            "libero_object",
-            "libero_goal",
-            "libero_10",
             "libero_90",
+            "libero_10",
         ]
         assert rollout_cfg.eval.environment.num_steps_wait == 10
         assert rollout_cfg.eval.environment.render_observations is False
         assert rollout_cfg.eval.environment.num_workers == 0  # auto
         assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50
+        assert rollout_cfg.eval.environment.object_state.enabled is True
+        assert rollout_cfg.eval.environment.object_state.k_slots == 16
+        assert rollout_cfg.data.state_dim == 151
 
         default_cfg = compose(config_name="main")
         assert default_cfg.eval.mode == "offline"

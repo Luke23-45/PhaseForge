@@ -11,12 +11,13 @@ package and exercises the real phaseforge.* code paths.
 Schema used: "flattened" naming (obs/joint_states, obs/ee_pos,
 obs/gripper_states, demo/robot_states). This is the schema found
 on the HuggingFace mirror (yifengzhu-hf/LIBERO-datasets) per
-multiple independent sources. The VisionStripper auto-detects this
-schema and resolves the config's robot0_* key names accordingly.
+multiple independent sources. The VisionStripper maps these
+flattened keys to the config's robot0_* key names explicitly.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import traceback
@@ -29,6 +30,91 @@ from omegaconf import OmegaConf
 # Repo root on disk
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
+
+
+# ---------------------------------------------------------------------------
+# Synthetic object-state layout (mirrors the census-built index format)
+# ---------------------------------------------------------------------------
+
+#: Number of synthetic objects per task (all free joints).
+SYNTHETIC_OBJECTS = 3
+#: qpos size: robot (7 arm + 2 gripper) + 3 free objects x 7.
+SYNTHETIC_NQ = 9 + 7 * SYNTHETIC_OBJECTS
+#: qvel size: robot (7 + 2) + 3 free objects x 6.
+SYNTHETIC_NV = 9 + 6 * SYNTHETIC_OBJECTS
+
+#: Object names per synthetic task (3 tasks, mirroring step1_synthesize).
+SYNTHETIC_OBJECTS_BY_TASK = {
+    "KITCHEN_SCENE1_open_drawer_demo": ["drawer_0", "bowl_0", "book_0"],
+    "LIVING_ROOM_SCENE2_put_bowl_demo": ["bowl_0", "cup_0", "plate_0"],
+    "STUDY_SCENE1_pick_book_demo": ["book_0", "laptop_0", "pen_0"],
+}
+
+
+def synthetic_states(T: int, rng: np.random.Generator) -> np.ndarray:
+    """Build a ``(T, nq+nv)`` flattened sim state for the synthetic tasks.
+
+    Layout matches the real LIBERO convention: ``[qpos(nq), qvel(nv)]``.
+    Object free-joint blocks are normalized quaternions so the decode math
+    is exercised on valid inputs.
+    """
+    qpos = np.empty((T, SYNTHETIC_NQ), dtype=np.float32)
+    qpos[:, :7] = rng.normal(0, 0.5, (T, 7))    # arm joints
+    qpos[:, 7:9] = 0.05                          # gripper (open-ish)
+    for k in range(SYNTHETIC_OBJECTS):
+        base = 9 + 7 * k
+        qpos[:, base : base + 3] = (
+            np.cumsum(rng.normal(0, 0.01, (T, 3)), axis=0) + 1.0
+        )
+        qpos[:, base + 3] = 1.0
+        qpos[:, base + 4 : base + 7] = rng.normal(0, 0.05, (T, 3))
+        norm = np.linalg.norm(qpos[:, base + 3 : base + 7], axis=-1, keepdims=True)
+        qpos[:, base + 3 : base + 7] /= norm
+    qvel = rng.normal(0, 0.01, (T, SYNTHETIC_NV)).astype(np.float32)
+    return np.concatenate([qpos, qvel], axis=-1).astype(np.float32)
+
+
+def write_synthetic_object_index(
+    raw_libero_dir: Path,
+    object_names_by_task: dict[str, list[str]],
+    k_slots: int = 16,
+) -> Path:
+    """Write an ``object_index.json`` for synthetic tasks (all free joints).
+
+    Mirrors the census format consumed by ``ObjectIndex.load``. The index
+    lives next to the raw suite dirs, as the real census output does.
+    """
+    tasks = {
+        name: {
+            "nq": SYNTHETIC_NQ,
+            "objects": [
+                {
+                    "name": obj,
+                    "joint_type": "free",
+                    "qpos_start": 9 + 7 * k,
+                    "qpos_len": 7,
+                }
+                for k, obj in enumerate(names)
+            ],
+        }
+        for name, names in object_names_by_task.items()
+    }
+    idx_path = raw_libero_dir / "object_index.json"
+    idx_path.parent.mkdir(parents=True, exist_ok=True)
+    idx_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "k_slots": k_slots,
+                "dim_per_object": 7,
+                "include_mask": True,
+                "tasks": tasks,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return idx_path
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +135,7 @@ def make_synthetic_libero_file(
                 agentview_rgb      (T, H, W, 3) uint8   (vision — stripped)
                 eye_in_hand_rgb    (T, H, W, 3) uint8   (vision — stripped)
             robot_states           (T, 9)   float32  [gripper(2), eef_pos(3), eef_quat(4)]
+            states                 (T, 57)  float32  [qpos(30), qvel(27)] — object decode
             actions                (T, 7)   float32
 
     We craft a trajectory with a deliberate grasp-release cycle so the
@@ -83,8 +170,8 @@ def make_synthetic_libero_file(
             gripper[t1:t2] = 0.005  # "closed" (below 0.02 threshold)
             obs["gripper_states"] = gripper
 
-            # Vision keys — these must be present for schema detection
-            # but should be stripped by VisionStripper (never loaded)
+            # Vision keys — required by the flattened schema; the stripper
+            # must drop them without ever loading them into RAM.
             obs["agentview_rgb"] = np.zeros((T, H, W, 3), dtype=np.uint8)
             obs["eye_in_hand_rgb"] = np.zeros((T, H, W, 3), dtype=np.uint8)
 
@@ -98,6 +185,9 @@ def make_synthetic_libero_file(
             ).astype(np.float32)
             grp["robot_states"] = robot_states
 
+            # Flattened sim state (P-Stage 1 object-state decode source)
+            grp["states"] = synthetic_states(T, rng)
+
             # Actions: 7-dim
             grp["actions"] = rng.normal(0, 0.05, (T, 7)).astype(np.float32)
 
@@ -106,15 +196,15 @@ def step1_synthesize(sim_root: Path) -> Path:
     print("\n========== STEP 1: synthesize LIBERO-shaped HDF5 ==========")
     raw_suite = sim_root / "raw" / "libero" / "libero_90"
     raw_suite.mkdir(parents=True, exist_ok=True)
-    task_names = [
-        "KITCHEN_SCENE1_open_drawer_demo",
-        "LIVING_ROOM_SCENE2_put_bowl_demo",
-        "STUDY_SCENE1_pick_book_demo",
-    ]
+    task_names = list(SYNTHETIC_OBJECTS_BY_TASK)
     for i, task in enumerate(task_names):
         p = raw_suite / f"{task}.hdf5"
         make_synthetic_libero_file(p, n_demos=3, T=60, seed=i)
         print(f"  wrote {p.name}  ({3} demos x 60 steps)")
+    idx_path = write_synthetic_object_index(
+        raw_suite.parent, SYNTHETIC_OBJECTS_BY_TASK
+    )
+    print(f"  wrote object index {idx_path.name} (k_slots=16)")
     print(f"  -> {raw_suite}")
     return raw_suite
 
@@ -136,7 +226,7 @@ def step2_build_config(sim_root: Path, raw_suite: Path) -> OmegaConf:
             "pin_memory": False,
             "sequence_length": 1,
             "stride": 1,
-            "state_dim": 23,
+            "state_dim": 151,
             "state_keys": [
                 {"key": "robot0_joint_pos", "dim": 7},
                 {"key": "robot0_joint_vel", "dim": 7},
@@ -144,6 +234,13 @@ def step2_build_config(sim_root: Path, raw_suite: Path) -> OmegaConf:
                 {"key": "robot0_eef_quat", "dim": 4},
                 {"key": "robot0_gripper_qpos", "dim": 2},
             ],
+            "object_state": {
+                "enabled": True,
+                "k_slots": 16,
+                "dim_per_object": 7,
+                "include_mask": True,
+                "index_path": str(raw_suite.parent / "object_index.json"),
+            },
             "libero": {
                 "local": {"raw_dir": "raw_data/libero90"},
                 "split": {

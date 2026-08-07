@@ -21,7 +21,12 @@ from phaseforge.evaluations.envs.libero_env import (
     StateOnlyLiberoEnv,
 )
 
-STATE_DIM = 23
+# State layout: [proprio 23 | objects k_slots*7 | mask k_slots] => 151.
+# The fixture uses 2 objects of 16 slots to exercise zero-padding.
+STATE_DIM = 151
+OBJECT_K_SLOTS = 16
+OBJECT_DIM = 7
+OBJECT_NAMES = ("world_bowl", "world_cup")
 KEY_DIMS = {
     "robot0_joint_pos": 7,
     "robot0_joint_vel": 7,
@@ -38,16 +43,30 @@ def make_fake_obs() -> dict[str, np.ndarray]:
     for key, dim in KEY_DIMS.items():
         obs[key] = np.arange(v, v + dim, dtype=np.float64)
         v += dim
+    for name in OBJECT_NAMES:
+        obs[f"{name}_pos"] = np.arange(v, v + 3, dtype=np.float64)
+        v += 3
+        obs[f"{name}_quat"] = np.arange(v, v + 4, dtype=np.float64)
+        v += 4
     return obs
 
 
 def expected_state_vector() -> np.ndarray:
-    """The 23-dim concatenation in the training-data key order."""
+    """The 151-dim concatenation in the training-data key order."""
     parts = []
     v = 1.0
     for dim in KEY_DIMS.values():
         parts.append(np.arange(v, v + dim, dtype=np.float32))
         v += dim
+    # Object block: proprio ends at value 24, so bowl = 24..30, cup = 31..37.
+    obj_block = np.zeros(OBJECT_K_SLOTS * OBJECT_DIM, dtype=np.float32)
+    obj_block[: len(OBJECT_NAMES) * OBJECT_DIM] = np.arange(
+        24.0, 24.0 + len(OBJECT_NAMES) * OBJECT_DIM
+    )
+    parts.append(obj_block)
+    mask = np.zeros(OBJECT_K_SLOTS, dtype=np.float32)
+    mask[: len(OBJECT_NAMES)] = 1.0
+    parts.append(mask)
     return np.concatenate(parts).astype(np.float32)
 
 
@@ -87,6 +106,7 @@ def _make_env(
     num_steps_wait: int = 10,
     seed: int = 42,
     num_init_states: int = 5,
+    object_names: list[str] | None = None,
 ) -> StateOnlyLiberoEnv:
     """Construct a StateOnlyLiberoEnv without running its LIBERO __init__."""
     obj = object.__new__(StateOnlyLiberoEnv)
@@ -97,6 +117,10 @@ def _make_env(
     obj._success_via_done = None
     obj._init_states = [np.zeros(STATE_DIM, dtype=np.float64) for _ in range(num_init_states)]
     obj._task = type("Task", (), {"language": "fake task"})()
+    obj._object_names = object_names if object_names is not None else list(OBJECT_NAMES)
+    obj._object_k_slots = OBJECT_K_SLOTS
+    obj._object_dim = OBJECT_DIM
+    obj._object_include_mask = True
     return obj
 
 
@@ -123,6 +147,36 @@ def test_state_vector_matches_training_state_keys() -> None:
     assert state[14:17].tolist() == list(range(15, 18))
     assert state[17:21].tolist() == list(range(18, 22))
     assert state[21:23].tolist() == list(range(22, 24))
+
+
+def test_object_state_appended_with_zero_pad_and_mask() -> None:
+    """Objects go into slot 0..2 (world_bowl=24..30, world_cup=31..37),
+    slots 2..15 are zero-padded, and the mask marks filled slots."""
+    env = _make_env(FakeRobosuiteEnv())
+    state = env._extract_state(make_fake_obs())
+    obj_start, obj_end = 23, 23 + OBJECT_K_SLOTS * OBJECT_DIM
+    mask_start = obj_end
+    assert state.shape == (151,)
+    np.testing.assert_allclose(
+        state[obj_start:obj_start + 7], np.arange(24.0, 31.0), rtol=0, atol=0
+    )
+    np.testing.assert_allclose(
+        state[obj_start + 7:obj_start + 14], np.arange(31.0, 38.0), rtol=0, atol=0
+    )
+    np.testing.assert_allclose(
+        state[obj_start + 14:obj_end], np.zeros(14 * 7), rtol=0, atol=0
+    )
+    np.testing.assert_allclose(
+        state[mask_start:], [1.0, 1.0] + [0.0] * 14, rtol=0, atol=0
+    )
+
+
+def test_no_object_state_when_not_configured() -> None:
+    """Without object names the state vector stays at the 23-dim proprio layout."""
+    env = _make_env(FakeRobosuiteEnv(), object_names=[])
+    state = env._extract_state(make_fake_obs())
+    assert state.shape == (23,)
+    np.testing.assert_allclose(state, expected_state_vector()[:23], rtol=0, atol=0)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +311,10 @@ class FakeObservableEnv:
                 "robot0_eef_quat": FakeObservable("state"),
                 "robot0_gripper_qpos": FakeObservable("state"),
                 "world_bowl_pos": FakeObservable("object"),
+                "world_bowl_quat": FakeObservable("object"),
+                "world_cup_pos": FakeObservable("object"),
+                "world_cup_quat": FakeObservable("object"),
+                "world_plate_pos": FakeObservable("object"),
             }
             if with_observables
             else None
@@ -284,6 +342,26 @@ def test_pruning_keeps_only_state_vector_observables() -> None:
         "robot0_gripper_qpos",
         "robot0_joint_pos",
         "robot0_joint_vel",
+    ]
+
+
+def test_pruning_keeps_extra_object_observables() -> None:
+    """With the object-state channel enabled, the listed object observables
+    (and only those) survive pruning alongside the proprio keys."""
+    env = FakeObservableEnv()
+    le._disable_unused_observables(
+        env, keep_extra=("world_bowl_pos", "world_bowl_quat", "world_cup_pos", "world_cup_quat")
+    )
+    assert _enabled_names(env._observables) == [
+        "robot0_eef_pos",
+        "robot0_eef_quat",
+        "robot0_gripper_qpos",
+        "robot0_joint_pos",
+        "robot0_joint_vel",
+        "world_bowl_pos",
+        "world_bowl_quat",
+        "world_cup_pos",
+        "world_cup_quat",
     ]
 
 

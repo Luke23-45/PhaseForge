@@ -16,12 +16,19 @@ class RunningStatNormalizer:
 
     Call :meth:`update` with each training batch, then :meth:`finalize`
     to produce a :class:`FrozenNormalizer`.
+
+    Args:
+        ignore_dims: Optional iterable of state indices that are excluded
+            from the statistics. Those dims are frozen to ``mean=0, std=1``
+            (identity). Used for the object-slot mask dims, which are
+            already binary by construction.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ignore_dims: set[int] | list[int] | tuple[int, ...] | None = None) -> None:
         self._count: int = 0
         self._mean: np.ndarray | None = None
         self._M2: np.ndarray | None = None  # Sum of squared deviations
+        self._ignore = set(int(d) for d in (ignore_dims or ()))
 
     def update(self, batch: np.ndarray) -> None:
         """Update running statistics with a new batch.
@@ -31,18 +38,29 @@ class RunningStatNormalizer:
         """
         if batch.ndim == 1:
             batch = batch[np.newaxis, :]  # (1, D)
+        D = batch.shape[-1]
+        bad = sorted(i for i in self._ignore if i < 0 or i >= D)
+        if bad:
+            raise ValueError(
+                f"ignore_dims indices {bad} out of range for state_dim {D}"
+            )
+        keep = np.ones(D, dtype=np.float64)
+        for i in self._ignore:
+            keep[i] = 0.0
         for sample in batch:
             self._count += 1
             if self._mean is None:
                 self._mean = np.zeros_like(sample, dtype=np.float64)
                 self._M2 = np.zeros_like(sample, dtype=np.float64)
-            delta = sample.astype(np.float64) - self._mean
+            delta = (sample.astype(np.float64) - self._mean) * keep
             self._mean += delta / self._count
-            delta2 = sample.astype(np.float64) - self._mean
+            delta2 = (sample.astype(np.float64) - self._mean) * keep
             self._M2 += delta * delta2
 
     def finalize(self, eps: float = 1e-6) -> FrozenNormalizer:
         """Freeze the accumulated statistics.
+
+        Ignored dims (:attr:`_ignore`) are frozen to ``mean=0, std=1``.
 
         Args:
             eps: Small constant added to std to avoid division by zero.
@@ -59,6 +77,14 @@ class RunningStatNormalizer:
         else:
             variance = self._M2 / (self._count - 1)
             std = torch.from_numpy(np.sqrt(variance) + eps).float()
+
+        for i in self._ignore:
+            if i >= mean.shape[0]:
+                raise ValueError(
+                    f"ignore_dims index {i} out of range for state_dim {mean.shape[0]}"
+                )
+            mean[i] = 0.0
+            std[i] = 1.0
 
         return FrozenNormalizer(mean=mean, std=std)
 

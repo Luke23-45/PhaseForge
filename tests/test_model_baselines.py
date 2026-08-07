@@ -21,7 +21,7 @@ def _make_baseline_cfg(target: str) -> DictConfig:
                 "freeze_encoder": False,
                 "encoder": {
                     "_target_": "phaseforge.models.components.encoder.StateEncoder",
-                    "input_dim": 23,
+                    "input_dim": 151,
                     "hidden_dims": [64, 64],
                     "latent_dim": 32,
                 },
@@ -49,7 +49,7 @@ def test_build_model_strips_freeze_encoder_and_name() -> None:
 
 
 def test_scratch_moe_reports_stage_2() -> None:
-    encoder = StateEncoder(input_dim=23, hidden_dims=[64], latent_dim=32)
+    encoder = StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32)
     router = TopKRouter(latent_dim=32, num_experts=4, top_k=2)
     expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
     model = ScratchMoEModel(encoder=encoder, router=router, expert=expert)
@@ -57,7 +57,7 @@ def test_scratch_moe_reports_stage_2() -> None:
 
 
 def test_oracle_moe_reports_stage_2() -> None:
-    encoder = StateEncoder(input_dim=23, hidden_dims=[64], latent_dim=32)
+    encoder = StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32)
     router = TopKRouter(latent_dim=32, num_experts=4, top_k=2)
     expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
     model = OraclePhaseMoEModel(encoder=encoder, router=router, expert=expert, num_phases=3)

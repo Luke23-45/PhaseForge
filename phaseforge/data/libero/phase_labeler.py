@@ -52,6 +52,8 @@ class RuleBasedPhaseLabeler:
         eef_velocity_threshold: float = 0.01,
         min_phase_duration: int = 5,
         median_filter_size: int = 7,
+        eef_pos_slice: tuple[int, int] | None = None,
+        gripper_qpos_slice: tuple[int, int] | None = None,
     ) -> None:
         self.num_phases = num_phases
         self.gripper_closed_threshold = gripper_closed_threshold
@@ -59,6 +61,17 @@ class RuleBasedPhaseLabeler:
         self.eef_velocity_threshold = eef_velocity_threshold
         self.min_phase_duration = min_phase_duration
         self.median_filter_size = median_filter_size
+        # Explicit slices into the state vector (end indices exclusive),
+        # derived by the pipeline from the configured state_keys. When unset,
+        # _extract_signals falls back to the canonical 23-dim layout.
+        self.eef_pos_slice = (
+            tuple(int(v) for v in eef_pos_slice) if eef_pos_slice is not None else None
+        )
+        self.gripper_qpos_slice = (
+            tuple(int(v) for v in gripper_qpos_slice)
+            if gripper_qpos_slice is not None
+            else None
+        )
 
     def label(self, traj: dict[str, Any]) -> np.ndarray:
         """Produce a (T,) integer phase label array from a trajectory dict.
@@ -170,7 +183,10 @@ class RuleBasedPhaseLabeler:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Extract EEF position and gripper aperture from the state vector.
 
-        Assumes the canonical state key order from common.yaml:
+        When explicit slices are configured (``eef_pos_slice`` /
+        ``gripper_qpos_slice``, derived by the pipeline from the configured
+        ``state_keys``), those are used verbatim. Otherwise the canonical
+        state key order from common.yaml is assumed:
             [0:7]   joint_pos
             [7:14]  joint_vel
             [14:17] eef_pos       ← 3-dim
@@ -181,7 +197,13 @@ class RuleBasedPhaseLabeler:
         """
         S = state.shape[-1]
 
-        if S >= 23:
+        if self.eef_pos_slice is not None and self.gripper_qpos_slice is not None:
+            eef_pos = state[:, self.eef_pos_slice[0] : self.eef_pos_slice[1]]
+            gripper_qpos = state[
+                :, self.gripper_qpos_slice[0] : self.gripper_qpos_slice[1]
+            ]
+            gripper_aperture = gripper_qpos.mean(axis=-1)
+        elif S >= 23:
             eef_pos = state[:, 14:17]
             gripper_qpos = state[:, 21:23]
             gripper_aperture = gripper_qpos.mean(axis=-1)

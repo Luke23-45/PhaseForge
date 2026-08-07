@@ -6,7 +6,7 @@ integrity check passes and the *unmodified* CLI pipelines can be exercised
 end to end — no GPU, no 66GB download, no libero sim.
 
 Schema mirrors ``scripts/simulate_pipeline.py`` (HF-mirror naming), which the
-``VisionStripper`` auto-detects:
+``VisionStripper`` maps to the config's ``robot0_*`` key names:
 
     /data/demo_{i}/
         obs/joint_states       (T, 7)   float32
@@ -15,6 +15,7 @@ Schema mirrors ``scripts/simulate_pipeline.py`` (HF-mirror naming), which the
         obs/agentview_rgb      (T,128,128,3) uint8  (vision — stripped)
         obs/eye_in_hand_rgb    (T,128,128,3) uint8  (vision — stripped)
         robot_states           (T, 9)   float32  [gripper(2), eef_pos(3), eef_quat(4)]
+        states                 (T, 57)  float32  [qpos(30), qvel(27)] — object decode
         actions                (T, 7)   float32
 
 Usage::
@@ -43,15 +44,23 @@ sys.path.insert(0, str(_REPO))
 
 from phaseforge.data.paths import EXPECTED_FILE_COUNTS, libero_suite_dir  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from simulate_pipeline import (  # noqa: E402
+    synthetic_states,
+    write_synthetic_object_index,
+)
+
 TASK_COUNT = EXPECTED_FILE_COUNTS["libero_90"]
 SUITE = "libero_90"
+#: All 90 DRYRUN tasks share the same 3-object scene (all free joints).
+DRYRUN_OBJECTS = ["cube_0", "cube_1", "cube_2"]
 
 
 def make_synthetic_libero_file(path: Path, n_demos: int, T: int, seed: int) -> None:
     """Write one HDF5 file matching the real LIBERO flattened schema."""
     rng = np.random.default_rng(seed)
     # Tiny images are fine: the stripper identifies vision keys by NAME and
-    # never loads them into RAM (schema detection only needs the key present).
+    # never loads them into RAM (it only needs the keys present in the file).
     H, W = 16, 16
 
     with h5py.File(path, "w") as f:
@@ -75,7 +84,8 @@ def make_synthetic_libero_file(path: Path, n_demos: int, T: int, seed: int) -> N
             gripper[t1:t2] = 0.005  # "closed" (below the 0.02 threshold)
             obs["gripper_states"] = gripper
 
-            # Vision keys — required for schema detection, stripped later.
+            # Vision keys — required by the flattened schema; the stripper
+            # must drop them without ever loading them into RAM.
             obs["agentview_rgb"] = np.zeros((T, H, W, 3), dtype=np.uint8)
             obs["eye_in_hand_rgb"] = np.zeros((T, H, W, 3), dtype=np.uint8)
 
@@ -84,6 +94,9 @@ def make_synthetic_libero_file(path: Path, n_demos: int, T: int, seed: int) -> N
             grp["robot_states"] = np.concatenate(
                 [gripper, obs["ee_pos"][:], eef_quat], axis=-1
             ).astype(np.float32)
+
+            # Flattened sim state (P-Stage 1 object-state decode source)
+            grp["states"] = synthetic_states(T, rng)
 
             # 7-dim actions
             grp["actions"] = rng.normal(0, 0.05, (T, 7)).astype(np.float32)
@@ -112,6 +125,14 @@ def main() -> None:
     for i in range(TASK_COUNT):
         p = suite_dir / f"DRYRUN_task_{i:03d}.hdf5"
         make_synthetic_libero_file(p, n_demos=args.demos, T=args.steps, seed=i)
+
+    # P-Stage 1: the FSM loads the object index at
+    # {data_root}/raw/libero/object_index.json — every DRYRUN task must be
+    # present there, otherwise decoding raises a KeyError on the first file.
+    write_synthetic_object_index(
+        suite_dir.parent,
+        {f"DRYRUN_task_{i:03d}": DRYRUN_OBJECTS for i in range(TASK_COUNT)},
+    )
 
     total_kb = sum(f.stat().st_size for f in suite_dir.glob("*.hdf5")) // 1024
     print(f"Wrote {TASK_COUNT} synthetic tasks to {suite_dir} ({total_kb} KB).")
