@@ -79,8 +79,9 @@
   - **Two new cells required:** `phase_pretrain_random_router` (phase encoder × random router), `plain_encoder_phase_bootstrap` (plain encoder × centroid-bootstrapped router).
   - If timeline can't absorb: at minimum declare the bundling as a limitation.
 
-### C2. Frozen encoder in Stage 2 — `OPEN`
+### C2. Frozen encoder in Stage 2 — `OPEN` (stance: explicitly DEFERRED 2026-08-07)
 - `scratch_moe` (unfrozen) beat frozen-encoder models in the dry run; frozen latent cannot adapt to the routing objective. Ablation (frozen vs unfrozen with lower LR) from proposal §13 never run.
+- Stance (resolved plan Rev. 2): the core 2×2 holds the encoder frozen per the proposal's stage-2 design; unfrozen variants remain a register-listed sensitivity ablation, not part of the headline matrix.
 
 ### C3. Specialization–balance dilemma — `OPEN`
 - Balance loss (coeff 0.01) enforces balance ≥ 0.98 but NMI = 0.0 for all learned models — the documented "pseudo-balancing" pattern; balance masks washed-out phase signal.
@@ -103,7 +104,7 @@
 - Privileged-*training* only, label-free inference → deployable after training, teacher-student pattern (professor-endorsed); footnoted per honesty rule.
 - Rename in all artifacts (no longer "oracle"): "teacher-forced routing."
 - NMI for this cell = prediction quality (CE-trained), NOT emergent specialization — metric-meaning rules added to `novelty_claim.md` §4.
-- Imbalance/starvation caveat of B2 still applies to its GT partition (balanced sampling / auxiliary router loss on the table).
+- Imbalance/starvation caveat of B2 still applies to its GT partition — **stance LOCKED (2026-08-07)**: core runs use natural sampling for all cells (parity); balanced sampling only as a labeled sensitivity run if starvation materializes.
 - Register in `novelty_claim.md` as experiment E8 (with interpretation table + decision rules + risk row).
 
 ---
@@ -176,7 +177,7 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 - `hard_reset: true` = official benchmark default (bit-identical); soft resets NOT bit-identical after settling steps (LeRobot docs). Config documents both. Keep hard_reset for published numbers.
 
 ### F3. Incomplete evaluation runs — `OPEN`
-- Colab logs: libero_spatial done (500 eps, 6539 s), libero_object done (500 eps, 4579 s), libero_goal partial (ended at task 4/10), libero_10 + libero_90 not run. Full protocol = 5 suites × 500 eps × 3 seeds × 7 models (if C1) — needs scheduling + worker/VRAM plan (free T4 → 2 workers).
+- Colab logs: libero_spatial done (500 eps, 6539 s), libero_object done (500 eps, 4579 s), libero_goal partial (ended at task 4/10), libero_10 + libero_90 not run. **Locked protocol (2026-08-07, resolved plan):** libero_90 ID (90 tasks × 50 eps) + libero_10 (10 × 10 eps) × 3 seeds × 8 models ≈ 110k eps ≈ **2–4 weeks wall-clock on free T4 (2 workers)** at ~13 s+/episode; training ≈ 3.5–4 days. Reductions only at the B6 gate, recorded in the resolved plan.
 
 ### F4. Headless/physics environment risks — `OPEN` (monitored)
 - robosuite/MuJoCo need a display/EGL (xvfb/egl on headless Colab); pin robosuite/mujoco versions so physics matches training demo generation (evaluation_plan §5).
@@ -224,7 +225,7 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 | B3/D3 | Oracle labeling + stale Report #2 | YES — reporting integrity | Revise Report #2; footnote oracle in template |
 | A4/C5 | Full-length training | High | Run 100/200-epoch schedules |
 | C3 | Balance-vs-NMI logging | Medium | Log + sweep balance weight |
-| B2 | Oracle upper-bound validity | Medium | Redesign or relabel |
+| B2 | Oracle upper-bound validity | **RESOLVED** (2026-08-07) | GT-oracle signature-only reference; teacher-forced (C7/E8) is the valid bound |
 | D1 | Novelty (MEAT/SMP + 7 more verified) | Medium | Read full papers; sharpen to centroid bootstrap + oracle/NMI framework |
 | D4 | Citation errors in existing docs | Low | Fix authors/IDs in paper draft (verified list in D1 table) |
 | F1 | `sim.forward()` question | Low | Colab replay benchmark if pursued |
