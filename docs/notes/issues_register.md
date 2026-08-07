@@ -95,6 +95,16 @@
 ### C6. Unrun ablations (proposal §13) — `OPEN`
 - Phase supervision vs none (C1), frozen vs unfrozen encoder (C2), hard vs soft routing, expert/phase count, phase-label noise, data fraction. Not required all at once — decide priority with the professor's 2×2 first.
 
+### C7. Teacher-forced routing cell (decomposable oracle) — `NEW` (2026-08-07, adopted)
+- Motivation: the GT-routing oracle (B2) is an invalid success bound, and its inference is label-fed. A teacher-forced variant — experts partitioned by GT phase during training, routing at inference by `argmax` of a learned phase predictor (stage-1 phase head) — becomes a *decomposable instrument*:
+  - `oracle (GT routing) − predicted` = **phase-predictability loss** (answers C4 quantitatively: are the rule-based phases grounded in the 23-DoF state?)
+  - `predicted − phaseforge` = **strategy loss** (what bootstrap + balance cost vs the field's supervised-routing recipe)
+- Privileged-*training* only, label-free inference → deployable after training, teacher-student pattern (professor-endorsed); footnoted per honesty rule.
+- Rename in all artifacts (no longer "oracle"): "teacher-forced routing."
+- NMI for this cell = prediction quality (CE-trained), NOT emergent specialization — metric-meaning rules added to `novelty_claim.md` §4.
+- Imbalance/starvation caveat of B2 still applies to its GT partition (balanced sampling / auxiliary router loss on the table).
+- Register in `novelty_claim.md` as experiment E8 (with interpretation table + decision rules + risk row).
+
 ---
 
 ## D. Novelty & Positioning
@@ -208,6 +218,7 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 | B6 | State-replay consistency test | YES — Stage 1 gate | Implement pre-retrain gate |
 | E2/E3 | Object-state keys + train/eval parity | YES — Stage 1 diff | Enumerate keys per suite; update both sides in lockstep |
 | C1 | Confounded 2×2 factorial | YES — design decision | Add `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap` |
+| C7 | Teacher-forced routing cell (decomposable oracle) | YES — design decision (adopted) | Implement as E8: GT-partitioned experts + predicted-phase routing at inference; fills supervision-regime axis |
 | C4 | Phase-label validation | YES — before bootstrap | Spot-check on real trajectories |
 | B3/D3 | Oracle labeling + stale Report #2 | YES — reporting integrity | Revise Report #2; footnote oracle in template |
 | A4/C5 | Full-length training | High | Run 100/200-epoch schedules |
