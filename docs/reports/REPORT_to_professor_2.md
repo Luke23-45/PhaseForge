@@ -5,7 +5,7 @@
 **Date:** August 7, 2026
 **Subject:** Response to your analysis of the 0% rollout results — our objectives, the verified failure analysis, and our revised three-stage plan
 
-> **Revision (round 3, 2026-08-07):** this version corrects two claims of the round-2 text: (i) the 0% result is now attributed to **two** confirmed causes — A1 observability (as before) **and A2 task-pool mismatch** (the evaluated spatial/object/goal suites are zero-shot task pools; see §2.4); (ii) the oracle baseline is relabeled **signature-only / non-deployable** (E7) and a **teacher-forced cell** (E8, privileged-training, label-free inference) joins the matrix, which grew from 5 models to **8 cells** (Batch A/B). The full-length training claim is now true: early stopping is explicitly disabled in the protocol runners (`643674a`); tests: 113/113.
+> **Revision (round 3, 2026-08-07):** this version corrects two claims of the round-2 text: (i) the 0% result is now attributed to **two** confirmed causes — A1 observability (as before) **and A2 task-pool mismatch** (the evaluated spatial/object/goal suites are zero-shot task pools; see §2.4); (ii) the oracle baseline is relabeled **signature-only / non-deployable** (E7) and a **teacher-forced cell** (E8, privileged-training, label-free inference) joins the matrix, which grew from 5 models to **8 cells** (Batch A/B). The full-length training claim is now true: early stopping is explicitly disabled in the protocol runners (`643674a`); tests: 117/117.
 
 ---
 
@@ -114,7 +114,7 @@ Thank you — and yes. We will implement the Stage 1 schema/observable changes a
 
 | Stage | Work | Estimate |
 |---|---|---|
-| Stage 1 | Schema + env changes (done), re-ingestion, retrain 8 cells, rollout eval (`libero_90` + `libero_10`, 3 seeds) | ~38 h compute (F3 estimate); 2–4 weeks wall on free Colab |
+| Stage 1 | Schema + env changes (done), re-ingestion, retrain 8 cells, rollout eval (`libero_90` + `libero_10`, 3 seeds) | ~110k eps (8 cells × 13,800 eps); ~2–4 weeks wall on free Colab T4 (2 workers, ~13 s+/ep); training ≈ 3.5–4 days (register F3) |
 | Stage 2 | Embedding-cache script, one-suite validation, then sweep | ~1 week |
 | Stage 3 | Decision point after stages 1–2 results | TBD |
 

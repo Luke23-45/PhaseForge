@@ -39,29 +39,31 @@ import numpy as np
 def _load_demo_states_and_actions(suite: str, demo_idx: int, data_root: Path):
     """Load a demo's recorded states and actions from the raw HDF5 mirror.
 
-    The mirrors store per-task HDF5 files with ``data/state`` (flattened
-    qpos+qvel) and ``data/actions``. We pick the task file at ``demo_idx``
-    and its first trajectory. This function is intentionally thin: it only
-    needs enough to answer F1, and the full truth is the B6 gate in
-    ``build_object_index.py``.
+    Layout is the LIBERO convention (same as ``build_object_index.py`` and
+    ``vision_stripper.py`` consume): ``f["data"]`` is a group keyed
+    ``demo_N``, each demo holds ``states`` (T, S) and ``actions`` (T, A).
+    We pick the task file at ``demo_idx`` and its first trajectory. This
+    function is intentionally thin: it only needs enough to answer F1, and
+    the full truth is the B6 gate in ``build_object_index.py``.
     """
     h5py = __import__("h5py")
-    dataset_root = data_root / "raw" / "libero"
-    suite_dir = None
-    for cand in dataset_root.iterdir():
-        if cand.is_dir() and cand.name == suite:
-            suite_dir = cand
-            break
-    if suite_dir is None:
-        raise FileNotFoundError(f"{suite} directory not found under {dataset_root}")
+    from phaseforge.data.paths import libero_suite_dir
+
+    suite_dir = libero_suite_dir(suite, data_root)
+    if not suite_dir.exists():
+        raise FileNotFoundError(f"Suite dir not found: {suite_dir} (mirror not downloaded?)")
 
     files = sorted(suite_dir.glob("*.hdf5"))
     if demo_idx >= len(files):
         raise IndexError(f"{suite} has only {len(files)} task files")
 
     with h5py.File(files[demo_idx], "r") as f:
-        state = np.array(f["data/state"][0])      # (T, flat_state)
-        actions = np.array(f["data/actions"][0])  # (T, action_dim)
+        demos = sorted(f["data"].keys())
+        if not demos:
+            raise ValueError(f"{files[demo_idx].stem}: no demos in file")
+        demo = f["data"][demos[0]]
+        state = np.array(demo["states"][:])     # (T, S)
+        actions = np.array(demo["actions"][:])  # (T, A)
     return state, actions
 
 
@@ -79,15 +81,18 @@ def _replay(state_traj: np.ndarray, actions: np.ndarray, env, extra_forward: boo
 
     eef_pos_errs: list[float] = []
     eef_quat_errs: list[float] = []
-    for t in range(T):
+    # Compare the post-step state against the NEXT recorded state: in the
+    # demo convention, state[t+1] is the result of executing action[t].
+    for t in range(T - 1):
         if extra_forward and t > 0:
             env.sim.forward()
         env.step(actions[t])
 
         flat = env.sim.get_state().flatten()
-        recorded = state_traj[t]
+        recorded = state_traj[t + 1]
         # eef offset from qpos: for LIBERO this is fixed by the robot model;
-        # use the recorded 7-dim proprio slice as a pragmatic proxy.
+        # use the recorded proprio slice as a pragmatic proxy — identical in
+        # both modes, so the mode comparison stays valid.
         eef_pos_errs.append(float(np.linalg.norm(flat[:3] - recorded[:3])))
         q = flat[3:7]
         qr = recorded[3:7]
@@ -99,7 +104,7 @@ def _replay(state_traj: np.ndarray, actions: np.ndarray, env, extra_forward: boo
         "eef_pos_max": float(np.max(eef_pos_errs)),
         "eef_quat_mae": float(np.mean(eef_quat_errs)),
         "eef_quat_max": float(np.max(eef_quat_errs)),
-        "steps": T,
+        "steps": T - 1,
     }
 
 

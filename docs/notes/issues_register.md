@@ -148,7 +148,7 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 
 ### D3. Report #2 contains now-stale claims — `DONE (2026-08-07)`
 - Revised: A2 cause added (task-pool mismatch / zero-shot suites), oracle relabeled, matrix 5 models -> 8 cells, full-length training claim corrected (643674a), timeline updated to F3 estimate.
-- `docs/notes/REPORT_to_professor_2.md` attributes 0% to observability alone (true but incomplete) and sets gates ("per-suite success rates clear the floor") that are invalid for zero-shot suites. Must be revised in the reply to the professor (round 3) with the confirmed A2 finding.
+- `docs/reports/REPORT_to_professor_2.md` attributes 0% to observability alone (true but incomplete) and sets gates ("per-suite success rates clear the floor") that are invalid for zero-shot suites. Must be revised in the reply to the professor (round 3) with the confirmed A2 finding.
 
 ### D4. Citation errors found during online verification — `PARTIAL (novelty_claim fixed; paper draft pending)`
 - LAR-MoE verified: A. Rodriguez, C. Li, L. Mazza, R. Younis, O. Hellig, S. Bodenstedt, M. Wagner, S. Speidel, arXiv:2603.08476, 2026-03-09 (updated in novelty_claim.md).

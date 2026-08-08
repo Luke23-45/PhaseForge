@@ -9,7 +9,7 @@ next step runs. Record the resolved versions and commit hashes in the run log
 
 ```bash
 uv sync --extra rollout          # robosuite==1.4.0, mujoco==3.3.1, libero==0.1.1 (uv.lock)
-uv run pytest -q                 # gate: 113/113
+uv run pytest -q                 # gate: 117/117
 ```
 
 Mirror the raw LIBERO HDF5 cache (`{data_root}/raw/libero/{libero_90,libero_10}`)
@@ -49,21 +49,26 @@ Early stopping is disabled in the protocol runners (commit `643674a`); full
 schedules run: stage 1 100 epochs, stage 2 200 epochs.
 
 ```bash
-uv run python scripts/run_multi_seed_train.py --matrix <batch_a_b_matrix.yaml> --seeds 42 43 44
+uv run python scripts/run_multi_seed_train.py
 ```
 
+The runner takes NO arguments: the 8-cell matrix and seeds 42/43/44 are
+hardcoded (`MODEL_STAGES`, `SEEDS`); edit the script if the matrix changes.
 8 cells x 3 seeds = 24 runs (C2 sensitivity runs stay out of the headline set).
 
 ## 5. Rollout evaluation (A6, B1)
 
 ```bash
-uv run python scripts/run_multi_seed_eval.py --suites libero_90 libero_10 --seeds 42 43 44
+uv run python scripts/run_multi_seed_eval.py
 ```
 
-Protocol: `libero_90` in-distribution (90 x 50 eps x 3 seeds, per-task
-breakdowns) + `libero_10` labeled zero-shot (10 x 10 eps). Results JSONs must
-declare `eval/suite_roles`. F3 estimate: ~37.5 h + 0.28 h ~ 38 h compute on a
-single GPU.
+The runner takes NO arguments: suites (`libero_90`, `libero_10`) and seeds
+42/43/44 are hardcoded (`SUITES`, `SEEDS`). Protocol: `libero_90`
+in-distribution (90 x 50 eps x 3 seeds, per-task breakdowns) + `libero_10`
+labeled zero-shot (10 x 10 eps). Results JSONs must declare `eval/suite_roles`.
+F3 estimate (issues register): ~110k episodes (8 cells x 13,800 eps) ~
+2-4 weeks wall-clock on free T4 (2 workers) at ~13 s+/episode; training ~
+3.5-4 days.
 
 ## 6. Diagnostics + results copy-back
 
