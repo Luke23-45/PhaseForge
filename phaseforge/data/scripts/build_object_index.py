@@ -326,8 +326,16 @@ def _run_b6_gate(
             set(int(round(i)) for i in np.linspace(0, T - 1, steps_per_demo))
         )
         for t in steps:
-            env.set_init_state(states[t])
-            live_obs = _live_observations(env)
+            # LIBERO's set_init_state() returns the freshly materialized
+            # observation dict. Use that return value when available: some
+            # OffScreenRenderEnv versions update sim.data but do not refresh
+            # the wrapped observation cache until the next public call.
+            state_obs = env.set_init_state(states[t])
+            live_obs = (
+                state_obs
+                if isinstance(state_obs, dict)
+                else _live_observations(env)
+            )
             # Materialize the sequence before passing it to NumPy.  Recent
             # NumPy versions reject a generator as the first argument to
             # concatenate (and this gate must fail on a real mismatch, not
