@@ -17,6 +17,7 @@ dependencies = [
     "rich>=13.7",
     "matplotlib>=3.8",
     "scikit-learn>=1.4",
+    "scipy>=1.11",  # mannwhitneyu for multi-seed head-to-head comparisons (D3)
     # LIBERO dataset download from the HuggingFace mirror
     "huggingface_hub>=1.0",
 ]

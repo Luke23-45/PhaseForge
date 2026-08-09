@@ -11,11 +11,13 @@ After thorough review of the literature (LIBERO NeurIPS 2023, OpenVLA, Pi0.5, GR
 | **Episodes per task** | **50** (standard) or **10** (minimum) | OpenVLA: 50; LeRobot: 10 |
 | **Total trials per suite** | 500 (10 tasks × 50 episodes) or 400 (4 suites × 10 tasks × 10 episodes) | OpenVLA §4, LeRobot docs |
 | **Suites** | LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, LIBERO-Long (LIBERO-10) | LIBERO §4.2 |
-| **Seeds** | 3 random seeds, report mean ± standard error | OpenVLA, all SOTA work |
-| **Initial states** | Sampled i.i.d. from training distribution (different from training states) | OpenVLA issue #138, Kim et al. |
+| **Seeds** | 3 random seeds; report mean ± std (ddof=1) with a 95% bootstrap CI (stratified over task-level rates, resampling seeds within tasks — rliable structure; a plain seed-level bootstrap undercovers at n=3) | OpenVLA, all SOTA work; Agarwal et al. 2021 |
+| **Initial states** | Per task, one fixed set of initial states sampled i.i.d. from the task's initial-state distribution (LIBERO samples 50 per task from that same distribution); the same states are used for every seed — episodes are *identical across seeds*, only the policy's action sampling differs. This is standard practice, not a flaw: OpenVLA's eval uses `initial_states[episode_idx]` with 3-seed averaging, V-VLAPS uses a 10×10 task×initial-state grid, PriorVLA fixes all runs to seed 42, and LeRobot's identical-episodes bug (issue #2375) was fixed only by PR #2899 (Feb 2026) — the absence of this behavior was itself treated as a bug | OpenVLA issue #138, LIBERO maintainers issue #2, Kim et al., V-VLAPS |
 | **Action space** | 7-DoF continuous: 6D delta EE pose + 1D gripper | LIBERO §4 |
 | **Observation** | RGB images (agentview + wrist) + 8-DoF proprioception | Standard VLA setting |
 | **Max steps** | Suite-specific: Spatial=280, Object=280, Goal=300, Long=520 | LeRobot `TASK_SUITE_MAX_STEPS` |
+
+**Locked.** This protocol is accepted as written and the evaluation code is frozen. No change — suites, episode counts, seeds, statistics, or reporting format — without explicit professor sign-off. (Changed 2026-08-09: Seeds and Initial states rows corrected per the accepted-standard audit; statistics row now mean ± std + bootstrap CI; D6 note on `episodes_per_suite`; §2.8/§2.9 rewritten to match `run_multi_seed_eval.py` and the mandatory suite-role reporting rule.)
 
 ### 1.1 What This Means for PhaseForge
 
@@ -588,68 +590,71 @@ evaluation:
 
 ### 2.8 Multi-Seed Run Script
 
-**`scripts/run_multi_seed_eval.py`** — convenience script for 3-seed evaluation:
+**`scripts/run_multi_seed_eval.py`** — the multi-seed evaluation runner
+(rewritten 2026-08-09 per the accepted-standard audit, professor review
+items 1–6; this section supersedes the earlier reference sketch).
 
-```python
-"""Run 3-seed rollout evaluation for a single model checkpoint."""
-import subprocess
-import json
-from pathlib import Path
-
-MODELS = [
-    ("phaseforge", "outputs/phaseforge/stage2/2026-07-17_09-27-55_f63dfb08/checkpoints/checkpoint_best.pt"),
-    ("bc", "outputs/bc/stage1/2026-07-17_09-50-03_29c621df/checkpoints/checkpoint_best.pt"),
-    ("scratch_moe", "outputs/scratch_moe/stage2/2026-07-17_09-56-59_0d627795/checkpoints/checkpoint_best.pt"),
-    ("warmstart_moe", "outputs/warmstart_moe/stage2/2026-07-17_10-13-36_29b20708/checkpoints/checkpoint_best.pt"),
-    ("oracle_moe", "outputs/oracle_moe/stage2/2026-07-17_10-21-41_aa28a106/checkpoints/checkpoint_best.pt"),
-]
-
-SEEDS = [42, 43, 44]
-
-def run_eval(model_name, ckpt_path, seed):
-    cmd = [
-        "uv", "run", "phaseforge-eval",
-        f"models={model_name}",
-        f"train.stage1_ckpt_path={ckpt_path}",
-        "eval=rollout",
-        f"project.seed={seed}",
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return json.loads(result.stdout)
-
-if __name__ == "__main__":
-    all_results = {}
-    for model_name, ckpt_path in MODELS:
-        per_seed = []
-        for seed in SEEDS:
-            result = run_eval(model_name, ckpt_path, seed)
-            per_seed.append(result)
-        # Aggregate mean ± std across seeds
-        success_rates = [r["eval/success_rate"] for r in per_seed]
-        all_results[model_name] = {
-            "mean": np.mean(success_rates),
-            "std": np.std(success_rates),
-            "per_seed": per_seed,
-        }
-        print(f"{model_name}: {all_results[model_name]['mean']:.4f} ± {all_results[model_name]['std']:.4f}")
-
-    with Path("outputs/eval/final_results.json").open("w") as f:
-        json.dump(all_results, f, indent=2)
+```bash
+uv run python scripts/run_multi_seed_eval.py                        # all 8 cells
+uv run python scripts/run_multi_seed_eval.py --cells bc phaseforge   # subset
+uv run python scripts/run_multi_seed_eval.py --dry-run --cells bc    # plan only
+uv run python scripts/run_multi_seed_eval.py --seeds 42 43 44 45 46  # 5-seed (gate B6)
 ```
 
-### 2.8 Reporting Format
+Guarantees (full list in the script docstring; unit-tested in
+`tests/test_multi_seed_summary.py` and `tests/test_run_multi_seed_eval.py`):
 
-Following the published standard, the final table should look like:
+- One `phaseforge-eval` subprocess per (cell, suite, seed). Per-suite
+  timeouts are sized from the real workload (libero_90: 4500 × ~13 s /
+  2 workers × 1.5 buffer ≈ 12 h) — never the old fixed 2-hour cap that
+  killed every libero_90 run.
+- A missing/failed seed is `None`, **never** a silent `0.0`. A cell below
+  `MIN_SEEDS_FOR_SUMMARY` (3) valid seeds is marked `complete: false`,
+  flagged loudly, and makes the script exit nonzero.
+- `--explicit-checkpoint` is threaded into every subprocess with no
+  alternative resolution path — it can never be silently dropped
+  (professor item 6, verified).
+- Eval run dirs are identified by a before/after snapshot (no "newest
+  dir" guessing) and `eval/seed` in the JSON must equal the requested
+  seed.
+- Statistics: mean ± std (ddof=1) plus a 95% stratified bootstrap CI over
+  task-level rates (rliable structure, Agarwal et al. 2021), and
+  head-to-head statistics for every cell pair — rliable-style
+  probability of improvement and Mann-Whitney U — written to
+  `final_results.json` under `comparisons`.
+- Every suite column and summary carries its role label
+  (ID in-distribution / ZS zero-shot) — professor item 4 (D7).
+- Output: `outputs/eval/final_results.json` (full payload) + console table.
 
-| Model | Spatial | Object | Goal | Long | Average |
-|-------|:-------:|:------:|:----:|:----:|:-------:|
-| BC | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X |
-| PhaseForge | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X |
-| Scratch MoE | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X |
-| WarmStart MoE | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X |
-| Oracle MoE | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X ± X.X | XX.X |
+**D6 note:** the config key `episodes_per_suite` (rollout.yaml) is kept
+by design — it means episodes per TASK within each suite (libero_90: 50 →
+4,500; libero_10: 10 → 100). Renaming was considered and rejected (breaks
+every config override for zero gain); the semantics are pinned in
+`rollout.yaml` and `SuiteSpec.episodes_per_task`.
 
-Each cell = mean ± standard error over 3 seeds.
+### 2.9 Reporting Format
+
+Following the published standard, the final table must look like this —
+the suite-role label is MANDATORY in every results table (professor item
+4): a "clean" table must never quietly drop the ID/zero-shot distinction:
+
+| Model | libero_90 (ID) | libero_10 (ZS) | Overall |
+|-------|:--------------:|:--------------:|:-------:|
+| BC | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| PhaseForge | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| Scratch MoE | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| WarmStart MoE | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| Oracle MoE (signature-only bound) | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| Teacher-Forced | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| Phase-Pretrain Random Router | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+| Plain Encoder Phase Bootstrap | XX.X ± X.X [CI] | XX.X ± X.X [CI] | XX.X |
+
+Each cell = mean ± std (ddof=1) over 3 seeds, with the 95% stratified
+bootstrap CI over task-level rates in brackets. A cell with fewer than 3
+valid seeds is marked incomplete and is never reported as a 3-seed
+statistic. Head-to-head claims (e.g. PhaseForge vs WarmStart MoE) must
+cite the probability of improvement and Mann-Whitney U from the
+`comparisons` block of `final_results.json`, not a bare mean gap.
 
 ---
 

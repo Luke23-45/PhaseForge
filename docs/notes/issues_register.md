@@ -13,6 +13,8 @@
 
 **Latest round (Patch 1 + Batch A/B):** P-Stage 1 object-state channel implemented (state_dim 151, object index census + B6 gate); 2×2 cells + teacher-forced cell (C1/C7/E8) implemented with tests; C3 per-epoch NMI-vs-balance logging + sweep script; B4 ID/OOD declaration. Tests: **117/117**. Statuses updated to reflect code-level completion; Colab execution steps remain OPEN.
 
+**Round 2026-08-09 (eval harness D1–D7, professor review):** `run_multi_seed_eval.py` rewritten (workload-sized per-suite timeouts; missing seed = `None`, never silent `0.0`; `complete: false` below 3 valid seeds + exit 1; snapshot-diff run-dir attribution; `eval/seed` verification; explicit-checkpoint threaded with no fallback path). Statistics: mean ± std (ddof=1) + 95% stratified bootstrap CI (rliable two-axis resample, regression-pinned) + rliable-style probability-of-improvement and Mann-Whitney U per cell pair (`comparisons` in `final_results.json`). ID/ZS role labels mandatory in tables. `.github/workflows/ci.yml` gates ruff + mypy (harness) + pytest on exit codes. `patch_docs.py` E501s fixed with string content verified byte-identical (AST dump diff). Protocol docs corrected/locked; B5 `IMPLEMENTED (code)`, 5-seed expansion deferred to the B6 gate. Tests: **157/157**, ruff clean, mypy clean (harness).
+
 **Patch 2 (this session, uncommitted):** closes the residual code-level gaps from the Patch-1 audit — (a) `rollout_evaluator.py` fallback suite default changed `["libero_spatial"]` → `["libero_90"]` so omitting `eval.environment.suites` can no longer silently resurface the A2 zero-shot confound; (b) `early_stopping.enabled` defaults flipped to `false` in `config/train/stage1.yaml` + `stage2.yaml` (full-length schedules for ANY invocation path, incl. ad-hoc runs — the runners' `enabled=false` overrides are now redundant but harmless; opt-in via `train.early_stopping.enabled=true`); (c) dead config `train.balance_coeff` removed from both stage YAMLs (live knob is `models.router.balance_coeff`); (d) B7 parity lock test added — `ObjectIndex.decode` (ingest side) vs eval `_extract_state` cross-asserted on a synthetic free+hinge task; (e) `common.yaml` state_dim comment corrected (manually maintained, runtime-validated, not auto-computed).
 
 ---
@@ -65,8 +67,10 @@
 - No protocol statement labeling which suites are in-distribution vs zero-shot transfer. Must be stated in writeup + reporting template (see A2).
 - **Fix:** `eval_results.json` now declares `eval/suite_roles` (libero_90 = in-distribution, libero_10 = zero-shot (labeled); anything else = "unclassified") — `rollout_evaluator.py`; `final_results.json` carries the same declaration; `run_multi_seed_eval.py` aggregates only the Decision-2 suites. Reporting-template footnote pending (B3/D3).
 
-### B5. Multi-seed statistics — `OPEN` (infra ready)
-- Runner exists (`scripts/run_multi_seed_eval.py`, seeds 42/43/44); full 3-seed sweep never run. Required for paper tables (mean ± std).
+### B5. Multi-seed statistics — `IMPLEMENTED (code)` ⚠ sweep pending (Batch C)
+- Runner rewritten 2026-08-09 (accepted-standard audit, professor review): mean ± std (ddof=1); 95% stratified bootstrap CI over task-level rates (rliable structure, Agarwal et al. 2021 — the rliable `np.ix_` two-axis resample, regression-pinned); head-to-head statistics for every cell pair (rliable-style probability of improvement + Mann-Whitney U) in `final_results.json` → `comparisons`; per-suite timeouts sized to the workload; missing seed = `None`, never silent `0.0`; `complete: false` below 3 valid seeds; ID/ZS role labels on every table column. Tests: 33 (summary) + 4 (script smoke).
+- **5-seed expansion (professor §3: tightens the head-to-head intervals) — DEFERRED to the B6 gate** (compute-binding decisions are made there, per `issues_resolved_plan.md` Rev. 2). Zero code change needed when the gate passes: `--seeds 42 43 44 45 46`.
+- Full 3-seed sweep never run (needs Colab/GPU; Batch C).
 
 ### B6. State-replay consistency test — `FIXED (code)` ⚠ execution pending (Colab)
 - Env state vs recorded HDF5 demo state under demo actions must match within MuJoCo tolerance before trusting any rollout (evaluation_plan §3.1). Professor: "unusually careful practice" — mandatory gate for Stage 1.
