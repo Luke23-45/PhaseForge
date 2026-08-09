@@ -8,6 +8,7 @@ the model forward outputs (no double forward pass).
 
 from __future__ import annotations
 
+import pytest
 import torch
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
@@ -58,6 +59,50 @@ class CountingMoEModel(torch.nn.Module):
             routing_weights=weights,
             expert_indices=indices,
             gate_logits=gate,
+            aux_losses={"balance": torch.tensor(0.0)},
+        )
+
+    def freeze_encoder(self) -> None:
+        pass
+
+
+class NaNMoEModel(CountingMoEModel):
+    """Fake MoE with a poisoned forward: NaN action predictions."""
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        out = super().forward(batch)
+        return ModelOutput(
+            action_pred=torch.full_like(out.action_pred, float("nan")),
+            phase_logits=None,
+            routing_weights=out.routing_weights,
+            expert_indices=out.expert_indices,
+            gate_logits=out.gate_logits,
+            aux_losses=out.aux_losses,
+        )
+
+
+class SqrtPoisonModel(torch.nn.Module):
+    """Finite forward but a NaN gradient (``sqrt`` derivative at zero).
+
+    ``sqrt(0)`` is 0 (finite loss) but its local derivative is infinite;
+    multiplying by a zero constant makes the chain-rule product
+    ``0 * inf = NaN``, so the gradient guard must catch it while the loss
+    guard sees a perfectly finite loss.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.a = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        B = batch["action"].size(0)
+        action_pred = torch.zeros(B, 2) + torch.sqrt(self.a) * 0.0
+        return ModelOutput(
+            action_pred=action_pred,
+            phase_logits=None,
+            routing_weights=None,
+            expert_indices=None,
+            gate_logits=None,
             aux_losses={"balance": torch.tensor(0.0)},
         )
 
@@ -133,3 +178,51 @@ def test_compute_loss_accepts_reused_output() -> None:
     assert model.forward_calls == calls_before
     assert total_loss.requires_grad
     assert set(metrics) == {"loss_total", "loss_action", "loss_balance"}
+
+
+def test_expert_count_uses_configured_count_not_max_index() -> None:
+    # Phases restricted to {0, 1} while the model has 3 experts: expert 2
+    # never fires. The collapse rate must count it as dead (1/3) — deriving
+    # the expert count from the largest observed index would report 0.5 and
+    # hide the dead expert.
+    model = CountingMoEModel(num_experts=3)
+    dataset = _DictDataset(num=32, seed=6)
+    dataset.phases.clamp_(max=1)
+    trainer = _make_trainer(model, DataLoader(dataset, batch_size=8))
+
+    val_metrics = trainer._validate()
+
+    assert val_metrics["val/collapse_rate"] == pytest.approx(1.0 / 3.0, abs=1e-6)
+
+
+def test_validate_losses_are_sample_weighted() -> None:
+    # 7 samples in batches of 4 + 3: the short final batch must not weigh
+    # as much as a full one. The reported loss is the mean over ALL samples.
+    model = CountingMoEModel(num_experts=3)
+    dataset = _DictDataset(num=7, seed=5)
+    trainer = _make_trainer(model, DataLoader(dataset, batch_size=4))
+
+    val_metrics = trainer._validate()
+
+    # action_pred == 0 => per-sample MSE == action^2.
+    expected = float((dataset.actions ** 2).mean())
+    assert val_metrics["loss_action"] == pytest.approx(expected, rel=1e-6)
+    assert val_metrics["loss_total"] == pytest.approx(expected, rel=1e-6)
+
+
+def test_non_finite_loss_fails_fast() -> None:
+    model = NaNMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(seed=8), batch_size=8))
+
+    with pytest.raises(FloatingPointError, match="Non-finite training loss"):
+        trainer.fit()
+
+
+def test_non_finite_gradient_fails_fast() -> None:
+    # The loss is finite (sqrt(0) = 0) but the gradient w.r.t. `a` is NaN
+    # (0 * inf through the chain rule): only the gradient guard can catch it.
+    model = SqrtPoisonModel()
+    trainer = _make_trainer(model, DataLoader(_DictDataset(seed=9), batch_size=8))
+
+    with pytest.raises(FloatingPointError, match="Non-finite gradient"):
+        trainer.fit()

@@ -31,3 +31,13 @@ class MetricTrackerCallback(Callback):
 
     def get_history(self, key: str) -> list[float]:
         return self.history.get(key, [])
+
+    def state_dict(self) -> dict:
+        """Serialize tracked history for checkpoint resume."""
+        return {"history": {k: list(v) for k, v in self.history.items()}}
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore tracked history from a checkpoint."""
+        self.history = defaultdict(list)
+        for k, v in state.get("history", {}).items():
+            self.history[k] = list(v)

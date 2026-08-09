@@ -25,3 +25,10 @@ class Callback:
 
     def on_train_end(self, trainer: BaseTrainer) -> None:
         pass
+
+    def state_dict(self) -> dict:
+        """Serializable state for checkpoint resume. Default: no state."""
+        return {}
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore state saved by :meth:`state_dict`. Default: no-op."""

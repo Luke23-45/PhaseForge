@@ -33,6 +33,11 @@ early_stopping:
   min_delta: 0.001
 
 
-# Stage 2 does not apply here; this key is just defined for schema consistency
+# Path to the Stage 1 best checkpoint (Stage 2 only; null = auto-detect).
 stage1_ckpt_path: null
 freeze_encoder: false
+
+# Optional resume: path to a checkpoint saved by CheckpointCallback. Restores
+# model/optimizer/scheduler/RNG/callback state and continues from the recorded
+# epoch (null = fresh run).
+resume_from: null

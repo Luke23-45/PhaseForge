@@ -123,7 +123,6 @@ def _make_env(
     obj.seed = seed
     obj.num_steps_wait = num_steps_wait
     obj._elapsed_steps = 0
-    obj._success_via_done = None
     obj._init_states = [np.zeros(STATE_DIM, dtype=np.float64) for _ in range(num_init_states)]
     obj._task = type("Task", (), {"language": "fake task"})()
     obj._object_names = object_names if object_names is not None else list(OBJECT_NAMES)
@@ -352,33 +351,33 @@ def test_step_continues_mid_episode() -> None:
     assert truncated is False
 
 
-def test_step_probes_done_success_once_then_skips_check() -> None:
-    """LIBERO semantics (done == _check_success): the first step probes the
-    equivalence, and afterwards check_success() is NOT called per step —
-    the predicate runs exactly once per control step (inside step())."""
+def test_step_checks_success_every_step() -> None:
+    """The explicit check_success() predicate runs on EVERY step — the
+    official LeRobot wrapper pattern (professor review item 3). No probe,
+    no inference from ``done``."""
     fake = FakeRobosuiteEnv(done=True, success=True)
     env = _make_env(fake)
     env.step(np.zeros(7))
     env.step(np.zeros(7))
 
-    assert fake.calls.count(("check_success",)) == 1  # probe only
-    assert env._success_via_done is True
+    assert fake.calls.count(("check_success",)) == 2  # once per step, always
+    assert not hasattr(env, "_success_via_done")
 
 
-def test_step_mismatch_falls_back_to_check_success(caplog) -> None:
-    """Non-LIBERO env (done != predicate): probe detects the mismatch once,
-    warns, and calls check_success() on every subsequent step."""
+def test_step_done_without_success_is_termination_not_success(caplog) -> None:
+    """``done`` from horizon exhaustion must never be miscounted as success:
+    terminated = done or is_success, and is_success comes from the explicit
+    predicate — check_success() is still called every step."""
     fake = FakeRobosuiteEnv(done=True, success=False)
     env = _make_env(fake)
     with caplog.at_level(logging.WARNING, logger="phaseforge.evaluations.envs.libero_env"):
         _, _, terminated, _, info = env.step(np.zeros(7))
         env.step(np.zeros(7))
 
-    assert env._success_via_done is False
-    assert fake.calls.count(("check_success",)) == 3  # probe + 2 fallback steps
-    assert terminated is True
+    assert fake.calls.count(("check_success",)) == 2
+    assert terminated is True  # done=True -> terminated, but not a success
     assert info["is_success"] is False
-    assert "falling back" in caplog.text
+    assert "falling back" not in caplog.text
 
 
 def test_close_calls_underlying_env() -> None:

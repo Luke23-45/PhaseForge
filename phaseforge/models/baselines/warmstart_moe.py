@@ -11,7 +11,10 @@ from torch.utils.data import DataLoader
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
-from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.expert import (
+    ExpertMLP,
+    warm_start_experts_from_action_head,
+)
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.router import TopKRouter
 
@@ -37,6 +40,7 @@ class WarmStartMoEModel(BaseManipulationModel):
         self.action_head = action_head
         self.moe_layer = MoELayer(router=router, experts=expert)
         self._stage = 1
+        self._encoder_frozen = False
         self._last_gate_logits: Tensor | None = None
 
     @property
@@ -48,8 +52,18 @@ class WarmStartMoEModel(BaseManipulationModel):
         self._stage = value
 
     def freeze_encoder(self) -> None:
+        """Freeze the encoder for Stage 2 (weights + eval mode, no dropout)."""
         for param in self.encoder.parameters():
             param.requires_grad = False
+        self._encoder_frozen = True
+        self.encoder.eval()
+
+    def train(self, mode: bool = True) -> WarmStartMoEModel:
+        """Override so a frozen encoder stays deterministic during Stage 2."""
+        super().train(mode)
+        if mode and self._encoder_frozen:
+            self.encoder.eval()
+        return self
 
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         state = batch["state"]
@@ -101,21 +115,15 @@ class WarmStartMoEModel(BaseManipulationModel):
         # 1. Router remains randomly initialized (standard MoE initialization)
         logger.info("WarmStartMoE: Leaving router randomly initialized.")
 
-        # 2. Initialize Experts with ActionHead weights
-        action_head_state_dict = self.action_head.state_dict()
-        for i, expert in enumerate(self.moe_layer.experts):
-            expert_dict = expert.state_dict()
-            mapping = {
-                "trunk.0.weight": "hidden.0.weight",
-                "trunk.0.bias": "hidden.0.bias",
-                "mean_head.weight": "output_proj.weight",
-                "mean_head.bias": "output_proj.bias",
-            }
-            new_dict = {}
-            for src_k, dst_k in mapping.items():
-                if src_k in action_head_state_dict and dst_k in expert_dict:
-                    new_dict[dst_k] = action_head_state_dict[src_k].clone()
-            expert.load_state_dict(new_dict, strict=False)
-            
+        # 2. Initialize Experts with ActionHead weights (exact, strict copy +
+        #    small symmetry-breaking jitter so the action loss can shape
+        #    routing).
+        warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
+
+        # The Stage 1 action head is unused in Stage 2; exclude it from the
+        # optimizer so trainable-parameter counts are correct.
+        for param in self.action_head.parameters():
+            param.requires_grad = False
+
         logger.info("WarmStartMoE: Initialized all experts with Stage 1 ActionHead weights.")
         self.stage = 2

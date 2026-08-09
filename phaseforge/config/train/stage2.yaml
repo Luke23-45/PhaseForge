@@ -13,6 +13,11 @@ stage1_ckpt_path: null
 
 freeze_encoder: true      # Freeze encoder loaded from Stage 1 (ablation: false)
 
+# Optional resume: path to a checkpoint saved by CheckpointCallback. Restores
+# model/optimizer/scheduler/RNG/callback state and continues from the recorded
+# epoch (null = fresh run).
+resume_from: null
+
 optimizer:
   _target_: torch.optim.AdamW
   lr: 1.0e-4              # Lower LR for fine-tuning

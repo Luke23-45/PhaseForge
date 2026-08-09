@@ -26,7 +26,10 @@ from torch.utils.data import DataLoader
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
-from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.expert import (
+    ExpertMLP,
+    warm_start_experts_from_action_head,
+)
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.router import TopKRouter
 
@@ -65,6 +68,7 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         self.moe_layer = MoELayer(router=router, experts=expert)
         self.num_phases = num_phases
         self._stage = 1
+        self._encoder_frozen = False
         self._last_gate_logits: Tensor | None = None
 
     @property
@@ -79,9 +83,19 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         logger.info(f"PlainEncoderPhaseBootstrapModel transitioned to Stage {value}.")
 
     def freeze_encoder(self) -> None:
+        """Freeze the encoder for Stage 2 (weights + eval mode, no dropout)."""
         for param in self.encoder.parameters():
             param.requires_grad = False
-        logger.info("Encoder weights frozen.")
+        self._encoder_frozen = True
+        self.encoder.eval()
+        logger.info("Encoder weights frozen; encoder kept in eval mode (no dropout).")
+
+    def train(self, mode: bool = True) -> PlainEncoderPhaseBootstrapModel:
+        """Override so a frozen encoder stays deterministic during Stage 2."""
+        super().train(mode)
+        if mode and self._encoder_frozen:
+            self.encoder.eval()
+        return self
 
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         state = batch["state"]
@@ -172,12 +186,27 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
             counts = torch.bincount(phase, minlength=self.num_phases).float()
             phase_counts += counts
 
-        phase_counts = torch.clamp(phase_counts, min=1.0)
+        # An absent phase would produce a zero centroid reported as if it had
+        # one sample — that silently corrupts the router init, so it is a
+        # hard failure instead.
+        absent = phase_counts == 0
+        if absent.any():
+            raise ValueError(
+                "Phase centroid bootstrap: "
+                f"{int(absent.sum().item())} phase(s) have zero samples in the "
+                f"bootstrap dataloader (missing: "
+                f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
+                "Refusing to bootstrap with zero centroids; every phase must "
+                "be present in the training data."
+            )
         centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
 
         logger.info(f"Computed latent centroids for {self.num_phases} phases.")
 
         # 2. Initialize Router with the (normalized) centroids
+        # The router is configured with normalize_input=True, so the gate
+        # logits are true cosine similarities between the (normalized) latent
+        # and each (unit-norm) centroid.
         centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
 
         router_weight = self.moe_layer.router.gate_linear.weight.data
@@ -189,22 +218,14 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
 
         logger.info(f"Initialized router weights with {limit} phase centroids.")
 
-        # 3. Initialize Experts with ActionHead weights
-        action_head_state_dict = self.action_head.state_dict()
-        mapping = {
-            "trunk.0.weight": "hidden.0.weight",
-            "trunk.0.bias": "hidden.0.bias",
-            "mean_head.weight": "output_proj.weight",
-            "mean_head.bias": "output_proj.bias",
-        }
+        # 3. Initialize Experts with ActionHead weights (exact, strict copy +
+        #    small symmetry-breaking jitter).
+        warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
 
-        for i, expert in enumerate(self.moe_layer.experts):
-            expert_dict = expert.state_dict()
-            new_dict = {}
-            for src_k, dst_k in mapping.items():
-                if src_k in action_head_state_dict and dst_k in expert_dict:
-                    new_dict[dst_k] = action_head_state_dict[src_k].clone()
-            expert.load_state_dict(new_dict, strict=False)
+        # The Stage 1 action head is unused in Stage 2; exclude it from the
+        # optimizer so trainable-parameter counts are correct.
+        for param in self.action_head.parameters():
+            param.requires_grad = False
 
         logger.info("Initialized all experts with Stage 1 ActionHead weights.")
 

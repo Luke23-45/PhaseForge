@@ -262,10 +262,6 @@ class StateOnlyLiberoEnv:
                 type(self._env).__name__,
             )
 
-        # None = not probed yet; True = done == BDDL success predicate
-        # (LIBERO semantics); False = fall back to explicit check_success().
-        self._success_via_done: bool | None = None
-
         # Joint-velocity finite-difference history (parity contract, E3):
         # None means "no previous position" -> t=0 velocity is zeros,
         # exactly like the ingest-side np.diff(prepend=first_row).
@@ -375,29 +371,26 @@ class StateOnlyLiberoEnv:
         that any episode end is a termination (the caller distinguishes
         success vs. timeout via ``info["is_success"]``).
 
-        For LIBERO envs ``done`` is already the BDDL success predicate:
-        ``BDDLBaseDomain.step`` overwrites robosuite's horizon-done with
-        ``done = self._check_success()`` (bddl_base_domain.py:809). The
-        explicit ``check_success()`` call is therefore redundant, and each
-        control step evaluates the predicate only once instead of twice
-        (the second call being robosuite's ``reward()`` -> ``_check_success()``,
-        which is stubbed at construction). The equivalence is probed once on
-        the first step; on any mismatch the wrapper falls back to the
-        explicit check so semantics never change silently.
+        Success is detected with the EXPLICIT ``env.check_success()`` call
+        on every step (the official LeRobot LIBERO wrapper pattern) — never
+        inferred from ``done`` alone. ``done`` can be raised by horizon
+        exhaustion or by the BDDL predicate; trusting it after a one-step
+        probe is unsafe (a probe result does not hold forever, and a
+        horizon termination must never be miscounted as success).
+        ``is_success`` is therefore always the explicit predicate result,
+        and ``terminated`` combines it with the environment's ``done``.
+
+        The reward() stub installed at construction keeps the BDDL
+        predicate evaluation at one call per step (robosuite's reward()
+        would otherwise re-evaluate it); the explicit check_success()
+        below is the authoritative source for ``is_success``.
         """
         action = np.asarray(action, dtype=np.float32).flatten()
         obs, reward, done, info = self._env.step(action)
         self._elapsed_steps += 1
-        if self._success_via_done is None:
-            self._success_via_done = bool(done) == bool(self._env.check_success())
-            if not self._success_via_done:
-                logger.warning(
-                    "step(): done != _check_success() on this env — falling "
-                    "back to an explicit check_success() every step (slower)."
-                )
-        is_success = bool(done) if self._success_via_done else bool(
-            self._env.check_success()
-        )
+        # Explicit success check every step — official wrapper semantics
+        # (LeRobot libero.py), no inference from `done`.
+        is_success = bool(self._env.check_success())
         terminated = bool(done) or bool(is_success)
         truncated = False
         state = self._extract_state(obs)

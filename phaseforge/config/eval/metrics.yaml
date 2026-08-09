@@ -1,6 +1,15 @@
 # config/eval/metrics.yaml — Evaluation metric configuration
 #
 # Default eval config (offline metrics on validation data).
+#
+# Trajectory-based temporal metrics (E9): routing_entropy_variance,
+# time_to_stable_routing and boundary_action_smoothness are temporal and
+# therefore ONLY valid within a single trajectory. The offline evaluator
+# regroups batches by the collator's trajectory_id/trajectory_position
+# keys and computes them per trajectory, then averages. If the dataloader
+# does not provide those keys the metrics are SKIPPED with a warning and
+# recorded under eval/skipped_metrics — they are never computed across
+# episode boundaries.
 
 mode: "offline"
 
@@ -8,19 +17,27 @@ mechanism:
   routing_entropy:
     enabled: true
     log_every_n_steps: 10
+    # Note: entropy of the PRE-TOP-K softmax gate probabilities over all
+    # experts (see eval/metric_definitions in the results payload).
 
   routing_entropy_variance:
     enabled: true
     window_size: 100
+    # Temporal metric — computed per trajectory (E9). A window_size that
+    # exceeds the trajectory length falls back to the full-trajectory
+    # variance (documented behavior).
 
   time_to_stable_routing:
     enabled: true
     variance_threshold: 0.001
     consecutive_windows: 5
+    # Temporal metric — computed per trajectory (E9).
 
   expert_utilization:
     enabled: true
     log_every_n_steps: 50
+    # Counts ALL top-k routing assignments (top-k vs top-1 distinction is
+    # declared in eval/metric_definitions).
 
   collapse_rate:
     enabled: true
@@ -29,6 +46,8 @@ mechanism:
   phase_expert_nmi:
     enabled: true
     log_every_n_steps: 50
+    # Uses only the TOP-1 routing assignment (declared in
+    # eval/metric_definitions).
 
 task:
   success_rate:
@@ -42,9 +61,13 @@ task:
     # when trajectory boundaries are available in the batch.
     enabled: false
 
-  boundary_smoothness:
+  boundary_action_smoothness:
     enabled: true
     boundary_window: 3        # Timesteps around boundary
+    # Temporal metric — computed per trajectory (E9). Measures the L2
+    # temporal change of PREDICTED actions near phase transitions, NOT an
+    # error against target actions (named accordingly; a target-based
+    # boundary error requires trajectory-aligned targets).
 
   sample_efficiency:
     enabled: false            # Expensive; enable only for dedicated ablation runs

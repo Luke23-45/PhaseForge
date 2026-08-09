@@ -36,6 +36,13 @@ class OraclePhaseMoEModel(BaseManipulationModel):
         
         self.moe_layer = MoELayer(router=router, experts=expert)
         self.num_phases = num_phases
+        if num_phases < 1:
+            raise ValueError(f"num_phases must be positive, got {num_phases}")
+        if num_phases > router.num_experts:
+            raise ValueError(
+                f"Oracle routing requires at least one expert per phase: "
+                f"num_phases={num_phases}, num_experts={router.num_experts}."
+            )
         self._last_gate_logits: Tensor | None = None
         # Stage 2-only baseline (no Stage 1 exists). Kept as a plain
         # attribute so checkpointing/eval metadata records the right stage.
@@ -44,11 +51,15 @@ class OraclePhaseMoEModel(BaseManipulationModel):
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         state = batch["state"]
         phase = batch.get("phase")
-        
+
         if phase is None:
-            # No oracle labels available — fall back to the (untrained) router.
-            # During training this should not happen with correct data loading.
-            return self._standard_forward(state)
+            raise RuntimeError(
+                "OraclePhaseMoEModel requires ground-truth 'phase' labels in "
+                "every forward pass and never falls back to the (untrained) "
+                "router: routing by it would silently corrupt the oracle "
+                "upper bound. The oracle is a routing-signature reference "
+                "only and is not deployable without phase labels."
+            )
 
         # ORACLE ROUTING (Training)
         latent = self.encoder(state)
@@ -62,9 +73,12 @@ class OraclePhaseMoEModel(BaseManipulationModel):
 
         # Ensure E >= P for oracle mapping
         E = self.moe_layer.router.num_experts
-        
-        # Clamp phases to available experts (fallback)
-        expert_indices = torch.clamp(phase, max=E-1).unsqueeze(-1)  # (B, 1)
+        if phase.numel() and (phase.min() < 0 or phase.max() >= self.num_phases):
+            raise ValueError(
+                f"Oracle phase labels must be in [0, {self.num_phases - 1}], "
+                f"got range [{int(phase.min())}, {int(phase.max())}]."
+            )
+        expert_indices = phase.unsqueeze(-1)  # (B, 1)
         
         # Oracle weights are 1.0 (perfect certainty)
         routing_weights = torch.ones((B, 1), device=latent.device)  # (B, 1)
@@ -99,22 +113,14 @@ class OraclePhaseMoEModel(BaseManipulationModel):
             aux_losses={"balance": torch.tensor(0.0, device=latent.device)},
         )
 
-    def _standard_forward(self, state: Tensor) -> ModelOutput:
-        """Used during evaluation when oracle labels are not guaranteed."""
-        latent = self.encoder(state)
-        moe_out = self.moe_layer(latent)
-        self._last_gate_logits = moe_out.gate_logits.detach()
-        return ModelOutput(
-            action_pred=moe_out.combined_output,
-            phase_logits=None,
-            routing_weights=moe_out.routing_weights,
-            expert_indices=moe_out.expert_indices,
-            gate_logits=moe_out.gate_logits,
-            aux_losses={"balance": moe_out.balance_loss},
-        )
-
     def get_action(self, state: Tensor) -> Tensor:
-        # Standard inference (no oracle)
+        """Label-free inference path (rollouts).
+
+        Routing falls back to the router's gate, which was never trained for
+        the oracle (routing is by GT phase during training). Rollout scores
+        from this path are therefore NOT a policy-deployable signal — the
+        oracle is a routing-signature reference only.
+        """
         latent = self.encoder(state)
         moe_out = self.moe_layer(latent)
         return moe_out.combined_output

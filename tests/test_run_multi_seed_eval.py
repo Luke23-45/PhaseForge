@@ -94,12 +94,13 @@ def test_invalid_suite_exits_2(tmp_path: Path) -> None:
     assert "invalid choice" in proc.stderr
 
 
-def test_end_to_end_aggregation_and_comparisons(
+def test_end_to_end_shared_checkpoint_excludes_comparisons(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full main() flow with a stubbed subprocess layer: aggregation,
-    overall statistics, role labels, head-to-head comparisons, payload,
-    and exit-code contract — all exercised against the real code."""
+    """--explicit-checkpoint: every cell ran the IDENTICAL checkpoint, so the
+    payload records ``checkpoint_shared_across_seeds: true`` and head-to-head
+    statistics are excluded (review item 9). Aggregation and episode-weighted
+    overall still run against the real code."""
     runner = load_runner()
     fake_ckpt = tmp_path / "ckpt.pt"
     fake_ckpt.write_bytes(b"fake")
@@ -136,6 +137,13 @@ def test_end_to_end_aggregation_and_comparisons(
     assert runner.main() == 0  # all cells complete -> exit 0
 
     payload = json.loads(out_path.read_text())
+    assert payload["checkpoint_shared_across_seeds"] is True
+    assert payload["checkpoint_path"] == str(fake_ckpt)
+    assert payload["comparisons"] == []
+    assert "comparisons_excluded" in payload
+    assert payload["episode_weighted_overall"] is True
+    assert payload["protocol_notes"], "protocol caveats must ship with results"
+
     assert len(payload["cells"]) == 2
     first = payload["cells"][0]
     assert first["cell"] == "bc"
@@ -143,18 +151,67 @@ def test_end_to_end_aggregation_and_comparisons(
     assert first["suites"]["libero_10"]["suite_role"] == "zero-shot"
     assert first["suites"]["libero_90"]["complete"] is True
     assert first["overall"]["seeds_valid"] == 3
-    assert first["overall"]["mean"] == pytest.approx(0.3)  # (0.4 + 0.2) / 2
+    # Episode-weighted overall for bc: (0.4*4500 + 0.2*100) / 4600
+    assert first["overall"]["weighting"] == "episode-weighted"
+    assert first["overall"]["mean"] == pytest.approx((0.4 * 4500 + 0.2 * 100) / 4600)
     assert first["overall"]["ci95"] is not None
+
+
+def test_end_to_end_comparisons_independent_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --explicit-checkpoint, head-to-head statistics ARE computed
+    (per-cell checkpoints), on the episode-weighted aggregate."""
+    runner = load_runner()
+    fake_ckpt = tmp_path / "ckpt.pt"
+    fake_ckpt.write_bytes(b"fake")
+    out_path = tmp_path / "final_results.json"
+
+    def fake_run(cell, model_cfg, suite, seed, checkpoint, eval_root_arg, args):
+        rate = {"bc": 0.4, "phaseforge": 0.6}[cell] if suite.name == "libero_90" else 0.2
+        return SeedResult(
+            seed=seed,
+            suite=suite.name,
+            success_rate=rate,
+            n_episodes_run=suite.n_episodes,
+            per_task_rates=[rate] * suite.n_tasks,
+            raw_path=None,
+        )
+
+    monkeypatch.setattr(runner, "run_single_seed", fake_run)
+    monkeypatch.setattr(
+        runner, "find_latest_checkpoint", lambda *a, **k: fake_ckpt
+    )
+    monkeypatch.setattr(
+        sys, "argv",
+        [
+            "run_multi_seed_eval.py",
+            "--cells", "bc", "phaseforge",
+            "--suites", "libero_90", "libero_10",
+            "--checkpoint-root", str(tmp_path),
+            "--eval-root", str(tmp_path / "eval"),
+            "--output", str(out_path),
+        ],
+    )
+
+    assert runner.main() == 0
+
+    payload = json.loads(out_path.read_text())
+    assert payload["checkpoint_shared_across_seeds"] is False
+    assert payload["checkpoint_path"] is None
+    assert "comparisons_excluded" not in payload
 
     comps = payload["comparisons"]
     assert len(comps) == 1  # one unordered pair: (bc, phaseforge)
     pair = comps[0]
     assert (pair["cell_a"], pair["cell_b"]) == ("bc", "phaseforge")
     assert pair["seeds_used"] == [42, 43, 44]
-    assert pair["mean_a"] == pytest.approx(0.3)
-    assert pair["mean_b"] == pytest.approx(0.4)
-    assert pair["margin_a_minus_b"] == pytest.approx(-0.1)
-    assert pair["prob_a_over_b"] == pytest.approx(0.0)  # degenerate 0.3 vs 0.4
+    # Episode-weighted means: bc = (0.4*4500 + 0.2*100)/4600,
+    # phaseforge = (0.6*4500 + 0.2*100)/4600.
+    assert pair["mean_a"] == pytest.approx((0.4 * 4500 + 0.2 * 100) / 4600)
+    assert pair["mean_b"] == pytest.approx((0.6 * 4500 + 0.2 * 100) / 4600)
+    assert pair["margin_a_minus_b"] == pytest.approx(-(0.2 * 4500) / 4600)
+    assert pair["prob_a_over_b"] == pytest.approx(0.0)  # degenerate 0.4 vs 0.6
     assert pair["prob_b_over_a"] == pytest.approx(1.0)
     # Fully separated groups: small p (asymptotic, tie-corrected for the
     # within-group ties; the exact 0.1 only applies to tie-free samples).

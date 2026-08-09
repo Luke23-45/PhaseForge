@@ -40,7 +40,7 @@ def _make_cfg() -> OmegaConf:
             "eval": {
                 "task": {
                     "success_rate": {"enabled": True, "l2_threshold": 0.05},
-                    "boundary_smoothness": {"enabled": False},
+                    "boundary_action_smoothness": {"enabled": False},
                 },
             },
         }

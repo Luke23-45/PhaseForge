@@ -57,8 +57,17 @@ def write_payload(
     n_episodes: int | None = None,
     rate_value: object = None,
     drop_per_task: bool = False,
+    n_tasks: int | None = None,
+    per_task_episodes: int | None = None,
+    per_task_successes: list[int] | None = None,
 ) -> Path:
-    """Write an ``eval_results.json`` with controllable corruptions."""
+    """Write an ``eval_results.json`` with controllable corruptions.
+
+    Per-task entries are keyed by numeric task id (the format written by
+    ``rollout_evaluator.py``). ``n_tasks`` / ``per_task_episodes`` /
+    ``per_task_successes`` corrupt the strict per-task validation
+    (review item 10).
+    """
     payload: dict = {
         f"eval/success_rate/{suite.name}": rate_value
         if rate_value is not None
@@ -69,13 +78,20 @@ def write_payload(
         "eval/seed": seed_value if seed_value is not None else seed,
     }
     if not drop_per_task:
-        tasks = per_task_rates or [rate] * suite.n_tasks
+        tasks = per_task_rates or [rate] * (n_tasks or suite.n_tasks)
+        successes = per_task_successes or [
+            round(t * suite.episodes_per_task) for t in tasks
+        ]
         payload[f"eval/per_task/{suite.name}"] = {
-            f"task_{i}": {
-                "successes": round(t * suite.episodes_per_task),
-                "episodes": suite.episodes_per_task,
+            str(i): {
+                "successes": successes[i],
+                "episodes": (
+                    per_task_episodes
+                    if per_task_episodes is not None
+                    else suite.episodes_per_task
+                ),
             }
-            for i, t in enumerate(tasks)
+            for i in range(len(tasks))
         }
     if bad_json:
         path.write_text("{not json")
@@ -135,6 +151,17 @@ def test_estimated_timeout_sizes() -> None:
     assert estimated_timeout_s(SUITES["libero_10"], workers=1) == 1950
     # workers is floored at 1 — never a division-by-zero
     assert estimated_timeout_s(SUITES["libero_10"], workers=0) == 1950
+
+
+def test_estimated_timeout_seconds_per_episode() -> None:
+    """--seconds-per-episode is threaded into the estimate (review item 7)."""
+    # 100 eps x 26 s / 2 workers x 1.5 = 1950 s
+    assert (
+        estimated_timeout_s(SUITES["libero_10"], seconds_per_episode=26.0)
+        == 1950
+    )
+    with pytest.raises(ValueError):
+        estimated_timeout_s(SUITES["libero_10"], seconds_per_episode=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +240,56 @@ def test_parse_zero_rate_is_valid_not_a_failure(tmp_path: Path) -> None:
     result = parse_seed_result(tmp_path / "eval_results.json", TINY, 42)
     assert result.success_rate == 0.0
     assert result.error is None
+
+
+def test_parse_rejects_wrong_task_count(tmp_path: Path) -> None:
+    """Strict per-task validation: task count must equal suite.n_tasks."""
+    write_payload(tmp_path / "eval_results.json", TINY, 42, 0.5, n_tasks=2)
+    result = parse_seed_result(tmp_path / "eval_results.json", TINY, 42)
+    assert result.success_rate is None
+    assert "2 task entries, expected 3" in result.error
+
+
+def test_parse_rejects_per_task_episodes_mismatch(tmp_path: Path) -> None:
+    """Every task must run exactly episodes_per_task episodes (never 0)."""
+    write_payload(
+        tmp_path / "eval_results.json", TINY, 42, 0.5, per_task_episodes=0
+    )
+    result = parse_seed_result(tmp_path / "eval_results.json", TINY, 42)
+    assert result.success_rate is None
+    assert "episodes=0, expected 10" in result.error
+
+
+def test_parse_rejects_successes_out_of_range(tmp_path: Path) -> None:
+    write_payload(
+        tmp_path / "eval_results.json", TINY, 42, 0.5,
+        per_task_successes=[3, 4, 11],
+    )
+    result = parse_seed_result(tmp_path / "eval_results.json", TINY, 42)
+    assert result.success_rate is None
+    assert "out of [0, 10]" in result.error
+
+
+def test_parse_rejects_rate_inconsistent_with_per_task(tmp_path: Path) -> None:
+    """Headline rate must match the per-task successes sum."""
+    write_payload(
+        tmp_path / "eval_results.json", TINY, 42, 0.5,
+        per_task_successes=[9, 9, 9],  # derived rate 0.9 != 0.5
+    )
+    result = parse_seed_result(tmp_path / "eval_results.json", TINY, 42)
+    assert result.success_rate is None
+    assert "inconsistent" in result.error
+
+
+def test_parse_rejects_non_dict_task_entry(tmp_path: Path) -> None:
+    write_payload(tmp_path / "eval_results.json", TINY, 42, 0.5)
+    path = tmp_path / "eval_results.json"
+    payload = json.loads(path.read_text())
+    payload["eval/per_task/test_suite"]["1"] = "not a dict"
+    path.write_text(json.dumps(payload))
+    result = parse_seed_result(path, TINY, 42)
+    assert result.success_rate is None
+    assert "not a dict" in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +443,71 @@ def test_overall_no_complete_seeds() -> None:
     assert overall["ci95"] is None
 
 
+def test_overall_episode_weighted() -> None:
+    """episodes_by_suite weights suites by episode count (review item 20)."""
+    suite_b = SuiteSpec(
+        name="suite_b", n_tasks=3, episodes_per_task=10,
+        max_steps=400, role="zero-shot",
+    )
+    a_results = [
+        seed_result(42, TINY.name, 0.5),
+        seed_result(43, TINY.name, 0.7),
+        seed_result(44, TINY.name, 0.9),
+    ]
+    b_results = [
+        seed_result(42, suite_b.name, 0.3),
+        seed_result(43, suite_b.name, 0.5),
+        seed_result(44, suite_b.name, 0.7),
+    ]
+    summaries = [summarize_cell("cell_a", TINY, a_results),
+                 summarize_cell("cell_a", suite_b, b_results)]
+    weights = {TINY.name: 100, suite_b.name: 10}
+    overall = summarize_overall(
+        "cell_a", summaries,
+        {TINY.name: a_results, suite_b.name: b_results},
+        episodes_by_suite=weights,
+    )
+    # Per-seed: (suite_rate x episodes) summed over suites / total episodes.
+    assert overall["weighting"] == "episode-weighted"
+    assert overall["episodes_by_suite"] == weights
+    assert overall["per_seed"]["42"] == pytest.approx(
+        (0.5 * 100 + 0.3 * 10) / 110
+    )
+    assert overall["per_seed"]["43"] == pytest.approx(
+        (0.7 * 100 + 0.5 * 10) / 110
+    )
+    assert overall["per_seed"]["44"] == pytest.approx(
+        (0.9 * 100 + 0.7 * 10) / 110
+    )
+    assert overall["mean"] == pytest.approx(
+        np.mean(
+            [
+                (0.5 * 100 + 0.3 * 10) / 110,
+                (0.7 * 100 + 0.5 * 10) / 110,
+                (0.9 * 100 + 0.7 * 10) / 110,
+            ]
+        )
+    )
+    assert overall["ci95"] is not None
+
+
+def test_overall_weighted_missing_suite_raises() -> None:
+    suite_b = SuiteSpec(
+        name="suite_b", n_tasks=3, episodes_per_task=10,
+        max_steps=400, role="zero-shot",
+    )
+    summaries = [
+        summarize_cell("cell_a", TINY, [seed_result(42, TINY.name, 0.5)]),
+        summarize_cell("cell_a", suite_b, [seed_result(42, suite_b.name, 0.5)]),
+    ]
+    with pytest.raises(ValueError, match="missing suites"):
+        summarize_overall(
+            "cell_a", summaries,
+            {TINY.name: [], suite_b.name: []},
+            episodes_by_suite={TINY.name: 100},
+        )
+
+
 # ---------------------------------------------------------------------------
 # bootstrap_cis
 # ---------------------------------------------------------------------------
@@ -416,6 +558,36 @@ def test_bootstrap_insufficient_seeds_nan() -> None:
     cis = bootstrap_cis({"s": [[0.5] * 10]}, n_boot=100, rng_seed=0)
     assert np.isnan(cis["s"][0]) and np.isnan(cis["s"][1])
     assert np.isnan(cis["overall"][0])
+
+
+def test_bootstrap_rejects_length_mismatch() -> None:
+    """Per-task lists of unequal length raise — never silent truncation."""
+    per_task = {"s": [[0.4, 0.6], [0.5, 0.7, 0.9]]}
+    with pytest.raises(ValueError, match="truncat"):
+        bootstrap_cis(per_task, n_boot=100, rng_seed=0)
+
+
+def test_bootstrap_weighted_overall() -> None:
+    """Episode-weighted overall: a 1000-episode suite outweighs a 10-ep one."""
+    per_task = {
+        "big": [[0.9] * 5 for _ in range(3)],
+        "small": [[0.1] * 5 for _ in range(3)],
+    }
+    cis = bootstrap_cis(
+        per_task, n_boot=2000, rng_seed=0, weights={"big": 1000, "small": 10}
+    )
+    # Every replicate: big=0.9, small=0.1 -> overall = (900 + 1) / 1010
+    assert cis["overall"][0] == pytest.approx(901 / 1010)
+    assert cis["overall"][1] == pytest.approx(901 / 1010)
+    # Unweighted (default) would be a flat 0.5 — the two must differ.
+    cis_u = bootstrap_cis(per_task, n_boot=2000, rng_seed=0)
+    assert cis_u["overall"][0] == pytest.approx(0.5)
+
+
+def test_bootstrap_weighted_missing_weight_raises() -> None:
+    per_task = {"big": [[0.9] * 5 for _ in range(3)]}
+    with pytest.raises(ValueError, match="missing weight"):
+        bootstrap_cis(per_task, n_boot=100, rng_seed=0, weights={"other": 1})
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +676,7 @@ def test_compare_cells_full() -> None:
 
 
 def test_compare_cells_intersection_excludes_crashed_seeds() -> None:
-    """A seed crashed in ONE suite of ONE cell is dropped from the pair."""
+    """A seed crashed in ONE suite of ONE cell drops that suite's bootstrap."""
     a_rates = {42: 0.5, 43: 0.5, 44: 0.5}
     b_rates = {42: 0.6, 43: 0.6, 44: 0.6}
     a_tasks = {
@@ -519,10 +691,70 @@ def test_compare_cells_intersection_excludes_crashed_seeds() -> None:
         "cell_a", "cell_b", a_rates, b_rates, a_tasks, b_tasks,
         n_boot=200, rng_seed=0,
     )
-    # Seed 43 has no per-task data in suite s2 of cell B -> dropped.
+    # Seed 43 has no per-task data in suite s2 of cell B -> the WHOLE suite
+    # s2 is dropped from the paired bootstrap; only s1 is compared.
     assert res["seeds_used"] == [42, 43, 44]
+    assert res["suites_compared"] == ["s1"]
     assert res["prob_a_over_b"] == pytest.approx(0.0)
     assert "not computed" not in res.get("note", "")
+
+
+def test_compare_cells_no_paired_suite_not_computed() -> None:
+    """No suite with per-task data for EVERY common seed on both sides."""
+    a_rates = {42: 0.5, 43: 0.5, 44: 0.5}
+    b_rates = {42: 0.6, 43: 0.6, 44: 0.6}
+    a_tasks = {"s1": {42: [0.5], 43: [0.5]}}  # seed 44 lacks per-task data
+    b_tasks = {"s1": {42: [0.6], 43: [0.6], 44: [0.6]}}
+    res = compare_cells(
+        "cell_a", "cell_b", a_rates, b_rates, a_tasks, b_tasks,
+        n_boot=100, rng_seed=0,
+    )
+    assert res["prob_a_over_b"] is None
+    assert res["suites_compared"] == []
+    assert "not computed" in res["note"]
+
+
+def test_compare_cells_weighted_aggregate() -> None:
+    """episodes_by_suite makes the aggregate episode-weighted (review item
+    20): the 1000-episode suite decides the contest even though the two
+    cells are a perfect per-suite mirror (unweighted tie)."""
+    a_rates = {42: 0.5, 43: 0.5, 44: 0.5}
+    b_rates = {42: 0.5, 43: 0.5, 44: 0.5}
+    a_tasks = {
+        "big": {42: [0.9] * 3, 43: [0.9] * 3, 44: [0.9] * 3},
+        "small": {42: [0.1] * 3, 43: [0.1] * 3, 44: [0.1] * 3},
+    }
+    b_tasks = {
+        "big": {42: [0.1] * 3, 43: [0.1] * 3, 44: [0.1] * 3},
+        "small": {42: [0.9] * 3, 43: [0.9] * 3, 44: [0.9] * 3},
+    }
+    res = compare_cells(
+        "cell_a", "cell_b", a_rates, b_rates, a_tasks, b_tasks,
+        n_boot=200, rng_seed=0,
+        episodes_by_suite={"big": 1000, "small": 10},
+    )
+    # Weighted aggregates: A = (900 + 1)/1010 ~ 0.892, B = 0.108.
+    # Constant per-suite rates -> every replicate is constant -> exact.
+    assert res["prob_a_over_b"] == pytest.approx(1.0)
+    assert res["prob_b_over_a"] == pytest.approx(0.0)
+    # The unweighted comparison of the same grids is a flat 0.5 tie: the
+    # weights flipped the outcome, proving they reach the comparison.
+    res_u = compare_cells(
+        "cell_a", "cell_b", a_rates, b_rates, a_tasks, b_tasks,
+        n_boot=200, rng_seed=0,
+    )
+    assert res_u["prob_a_over_b"] == pytest.approx(0.0)
+
+
+def test_prob_improvement_weighted_identical_cells() -> None:
+    """Weights thread into probability_of_improvement: identical cells with
+    episode weights still yield P ~ 0.5 (independent streams, deterministic
+    for a fixed seed)."""
+    same = {"s": [[0.5, 0.6, 0.5, 0.6] for _ in range(3)]}
+    p = probability_of_improvement(
+        same, same, n_boot=500, rng_seed=0, weights={"s": 100}
+    )
+    assert 0.35 <= p <= 0.65
 
 
 def test_compare_cells_insufficient_common_seeds() -> None:

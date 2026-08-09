@@ -3,8 +3,23 @@
 Runs the standard evaluation protocol:
 - For each task in each configured suite
 - For each episode, reset env to initial state, run policy until done/max_steps
-- Record binary success from env.check_success()
+- Record binary success from the EXPLICIT ``env.check_success()``
 - Aggregate per-suite and overall success rates
+
+Correctness contracts (issues register E9):
+- Actions are validated (exact 7 dims, finite) before every env.step and
+  NEVER silently clipped; the policy is recorded in ``eval/action_policy``.
+- The env state vector is validated (shape == normalizer/model input dim,
+  finite) before the first model call of each episode.
+- Per-task results are keyed by numeric task ID (descriptions are retained
+  as metadata); task counts from the installed benchmark are asserted
+  against the protocol's suite definitions at startup.
+- Episode counts / wait steps / worker counts / suite names are validated
+  up front — a zero episode count can never reach an obscure shard error.
+- The results payload records full provenance: checkpoint path + SHA-256
+  + its run_meta, git commit, config/data/cache/object-index hashes, the
+  effective worker count, per-suite episode counts, environment versions,
+  and the installed controller identity (train/eval action semantics).
 
 Performance notes (verified against the LIBERO/robosuite stack):
 - Unused observables are pruned by default (``render_observations: false``):
@@ -24,10 +39,13 @@ Performance notes (verified against the LIBERO/robosuite stack):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import multiprocessing
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -42,6 +60,7 @@ from phaseforge.evaluations.envs.libero_env import (
     SUITE_MAX_STEPS,
     StateOnlyLiberoEnv,
 )
+from phaseforge.utils.config import git_info
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +72,20 @@ SUITE_ID_OOD_ROLES: dict[str, str] = {
     "libero_90": "in-distribution",
     "libero_10": "zero-shot (labeled)",
 }
+
+#: Official task counts per LIBERO suite (E9): the runtime benchmark's
+#: ``n_tasks`` is asserted against these before any rollout runs, so a
+#: mismatched LIBERO version can never silently evaluate a different grid
+#: than the one the summary code assumes (issues register E9, item 12).
+SUITE_N_TASKS: dict[str, int] = {
+    "libero_spatial": 10,
+    "libero_object": 10,
+    "libero_goal": 10,
+    "libero_10": 10,
+    "libero_90": 90,
+}
+
+ACTION_DIM_DEFAULT = 7  # OSC_POSE delta pose + gripper (LIBERO convention)
 
 
 def _resolve_num_workers(requested: int, num_episodes: int) -> int:
@@ -76,50 +109,84 @@ def split_episode_shards(num_episodes: int, num_workers: int) -> list[list[int]]
     """
     if num_workers <= 0:
         raise ValueError("num_workers must be >= 1")
+    if num_episodes <= 0:
+        raise ValueError(
+            f"num_episodes must be >= 1, got {num_episodes} — refusing to "
+            "produce zero-size shards"
+        )
     n = min(num_workers, num_episodes)
     return [list(range(w, num_episodes, n)) for w in range(n)]
 
 
 def _merge_worker_results(
     worker_results: list[dict[str, Any]],
-) -> dict[str, int]:
+) -> dict[int, dict[str, Any]]:
     """Aggregate per-task success counts from parallel workers.
 
-    Returns ``{task_description: total_successes}`` — the same shape the
-    serial path builds — so both feed :func:`_finalize_suite_results`
-    identically.
+    Returns ``{task_id: {"description": str, "successes": int}}`` — the
+    same shape the serial path builds — so both feed
+    :func:`_finalize_suite_results` identically. Task IDs are primary keys
+    (E9); descriptions are merged from the first worker that saw the task.
     """
-    merged: dict[str, int] = {}
+    merged: dict[int, dict[str, Any]] = {}
     for payload in worker_results:
-        for task_desc, counts in payload["task_results"].items():
-            merged[task_desc] = merged.get(task_desc, 0) + int(counts["successes"])
+        for task_id, counts in payload["task_results"].items():
+            key = int(task_id)
+            entry = merged.setdefault(key, {"description": "", "successes": 0})
+            entry["successes"] += int(counts["successes"])
+            if counts.get("description"):
+                entry["description"] = counts["description"]
     return merged
 
 
 def _finalize_suite_results(
     suite_name: str,
-    per_task_successes: dict[str, int],
+    per_task_successes: dict[int, dict[str, Any]],
     num_episodes_per_task: int,
+    expected_tasks: int | None = None,
 ) -> dict[str, Any]:
     """Convert per-task success counts into the standard suite result dict.
 
     Shared by the serial and parallel paths so both produce identical
-    ``eval/*`` result structures.
+    ``eval/*`` result structures. Per-task entries are keyed by numeric
+    task ID with the description retained as metadata (E9).
+
+    Args:
+        expected_tasks: When given, the number of per-task entries is
+            asserted against it (runtime task-count check, E9).
     """
-    per_task_results: dict[str, dict[str, float | int]] = {}
+    if expected_tasks is not None and len(per_task_successes) != expected_tasks:
+        raise ValueError(
+            f"{suite_name}: expected {expected_tasks} per-task entries, got "
+            f"{len(per_task_successes)} — task ids are misaligned or a task "
+            "was evaluated twice/never."
+        )
+    if num_episodes_per_task < 1:
+        raise ValueError(
+            f"{suite_name}: num_episodes_per_task must be >= 1, got "
+            f"{num_episodes_per_task}"
+        )
+    per_task_results: dict[str, dict[str, Any]] = {}
     total_episodes = 0
     total_successes = 0
-    for task_desc, successes in per_task_successes.items():
+    for task_id, entry in sorted(per_task_successes.items()):
+        successes = int(entry["successes"])
+        if successes < 0 or successes > num_episodes_per_task:
+            raise ValueError(
+                f"{suite_name} task {task_id}: successes={successes} is outside "
+                f"[0, {num_episodes_per_task}]"
+            )
         rate = (
             successes / num_episodes_per_task if num_episodes_per_task else 0.0
         )
-        per_task_results[task_desc] = {
+        per_task_results[str(task_id)] = {
+            "description": entry.get("description", ""),
             "success_rate": rate,
-            "successes": int(successes),
+            "successes": successes,
             "episodes": num_episodes_per_task,
         }
         total_episodes += num_episodes_per_task
-        total_successes += int(successes)
+        total_successes += successes
 
     overall_success_rate = (
         total_successes / total_episodes if total_episodes > 0 else 0.0
@@ -148,7 +215,7 @@ def _run_suite_worker(
     pickled across processes. GPU memory usage scales roughly linearly
     with worker count — keep ``num_workers`` modest on small VRAM cards.
 
-    Results are sent as ``{"worker_idx": int, "task_results": {desc: {…}}}``.
+    Results are sent as ``{"worker_idx": int, "task_results": {task_id: {…}}}``.
     A crash inside the worker propagates as a nonzero process exit; the
     parent raises a RuntimeError after :meth:`join`.
     """
@@ -176,16 +243,46 @@ def _run_suite_worker(
         worker_idx + 1, num_workers, suite_name, num_tasks,
         len(episode_indices), episode_indices,
     )
-    task_results: dict[str, dict[str, int]] = {}
+    task_results: dict[int, dict[str, Any]] = {}
     for task_id in range(num_tasks):
-        task_desc, successes = evaluator._evaluate_task(
+        task_id_out, task_desc, successes = evaluator._evaluate_task(
             suite_name, task_id, episode_indices, num_tasks
         )
-        task_results[task_desc] = {
+        task_results[task_id_out] = {
+            "description": task_desc,
             "successes": successes,
             "episodes": len(episode_indices),
         }
-    result_queue.put({"worker_idx": worker_idx, "task_results": task_results})
+    result_queue.put(
+        {
+            "worker_idx": worker_idx,
+            "task_results": task_results,
+            # The parent cannot inspect an environment created in this
+            # spawned worker. Return controller provenance explicitly.
+            "controller_meta": evaluator._controller_meta,
+        }
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    """Streaming SHA-256 of a checkpoint file (metadata, not full read)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _library_versions() -> dict[str, str]:
+    """Best-effort versions of the environment stack (E9 metadata)."""
+    versions: dict[str, str] = {}
+    for lib in ("libero", "robosuite", "mujoco", "gymnasium"):
+        try:
+            module = __import__(lib)
+            versions[lib] = getattr(module, "__version__", "unknown")
+        except Exception:  # noqa: BLE001 — metadata is best-effort
+            versions[lib] = "not installed"
+    return versions
 
 
 class RolloutEvaluator:
@@ -222,6 +319,8 @@ class RolloutEvaluator:
         self.device = device
         self.model.eval()
         self.normalizer = self._load_normalizer()
+        self._controller_meta: dict[str, Any] | None = None
+        self._action_policy_recorded = False
 
         # Resolve rollout settings defensively so that setting
         # ``eval.mode=rollout`` without the full rollout.yaml still works.
@@ -247,6 +346,53 @@ class RolloutEvaluator:
         # P-Stage 1 object-state channel (None = disabled).
         self.object_state_cfg: Any = env_cfg.get("object_state")
 
+        self._validate_settings()
+
+    def _validate_settings(self) -> None:
+        """Fail fast on protocol-breaking settings (issues register E9).
+
+        A zero episode count would otherwise surface as an obscure
+        ``range(... step=0)`` error deep inside shard splitting.
+        """
+        # Only suites with a complete protocol definition (benchmark name,
+        # expected task count, max steps) are runnable. ``libero_long`` is a
+        # legacy alias of the libero_10 benchmark that has NO protocol entry
+        # (no SUITE_N_TASKS/SUITE_MAX_STEPS mapping) — rejecting it here
+        # beats a KeyError halfway through evaluation.
+        supported = sorted(
+            set(SUITE_BENCHMARK_NAMES) & set(SUITE_N_TASKS) & set(SUITE_MAX_STEPS)
+        )
+        unknown = [s for s in self.suites if s not in supported]
+        if unknown:
+            raise ValueError(
+                f"Unknown or unsupported suite name(s): {unknown}. Supported "
+                f"suites: {supported}. ('libero_long' is a legacy alias with "
+                "no protocol definition — use 'libero_10'.)"
+            )
+        if self.num_episodes_per_task < 1:
+            raise ValueError(
+                f"num_episodes_per_task must be >= 1, got "
+                f"{self.num_episodes_per_task}"
+            )
+        for suite, count in self.episodes_per_suite.items():
+            if suite not in self.suites:
+                raise ValueError(
+                    f"episodes_per_suite contains {suite!r}, but that suite is "
+                    f"not in eval.environment.suites={self.suites}"
+                )
+            if count < 1:
+                raise ValueError(
+                    f"episodes_per_suite[{suite}] must be >= 1, got {count}"
+                )
+        if self.num_steps_wait < 0:
+            raise ValueError(
+                f"num_steps_wait must be >= 0, got {self.num_steps_wait}"
+            )
+        if self.num_workers < 0:
+            raise ValueError(
+                f"num_workers must be >= 0 (0 = auto), got {self.num_workers}"
+            )
+
     def _episodes_for_suite(self, suite_name: str) -> int:
         return self.episodes_per_suite.get(suite_name, self.num_episodes_per_task)
 
@@ -255,17 +401,32 @@ class RolloutEvaluator:
 
         Uses the same cache-hash mechanism as ``DataPipelineStateMachine``
         so the normalizer is guaranteed to match training-time statistics.
+        The cache hash and manifest provenance are recorded for the eval
+        payload (issues register E9, items 14/16).
         """
         cache_root = processed_cache_root()
         cache_mgr = CacheManager(cache_root)
-        config_hash = CacheManager.compute_hash(self.cfg.data)
+        self._cache_hash = CacheManager.compute_hash(self.cfg.data)
         try:
-            _, norm_stats, _, _ = cache_mgr.load(config_hash)
+            _, norm_stats, _, _ = cache_mgr.load(self._cache_hash)
         except FileNotFoundError as exc:
             raise RuntimeError(
-                f"No cached dataset found for config_hash={config_hash}. "
+                f"No cached dataset found for config_hash={self._cache_hash}. "
                 "Run training (which builds the cache) before rollout evaluation."
             ) from exc
+        # Manifest provenance: object-index hash, git commit, state schema —
+        # recorded so the eval result can be audited against the cache.
+        manifest_path = cache_mgr.cache_dir(self._cache_hash) / "manifest.json"
+        self._cache_manifest: dict[str, Any] = {}
+        if manifest_path.is_file():
+            try:
+                self._cache_manifest = json.loads(manifest_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                logger.warning(
+                    "Could not read cache manifest %s — provenance will be "
+                    "incomplete in the eval payload.",
+                    manifest_path,
+                )
         normalizer = FrozenNormalizer(mean=norm_stats["mean"], std=norm_stats["std"])
         # Pin the stats to the eval device once. ``normalize()`` re-hosts
         # mean/std on every call (normalizer.py:83-84); doing it here keeps
@@ -276,10 +437,12 @@ class RolloutEvaluator:
 
     @torch.inference_mode()
     def _get_action(self, state: np.ndarray) -> np.ndarray:
-        """Run model inference: state (23,) -> action (7,).
+        """Run model inference: state (S,) -> action (7,).
 
-        Normalizes the state, calls ``get_action()``, and returns
-        the raw (already unnormalized) action as a numpy array.
+        Normalizes the state, calls ``get_action()``, and validates the
+        action (exact 7 dims, finite values) before returning it. Actions
+        are NEVER silently clipped; a violation raises immediately so an
+        invalid policy cannot silently poison a whole suite (E9).
 
         ``inference_mode`` is safe here: ``get_action()`` is a pure
         forward pass (no autograd hooks or in-place leaf mutation), and it
@@ -290,7 +453,94 @@ class RolloutEvaluator:
         action = self.model.get_action(state_tensor)
         if action.ndim == 2:
             action = action.squeeze(0)
+        self._validate_action(action)
         return action.cpu().numpy().astype(np.float64)
+
+    def _validate_action(self, action: torch.Tensor) -> None:
+        """Validate the model output before it reaches the environment.
+
+        Raises:
+            ValueError: If the action is not exactly ``action_dim``-shaped,
+                or contains non-finite values. Clipping is deliberately
+                never applied.
+        """
+        action_dim = int(self.cfg.data.get("action_dim", ACTION_DIM_DEFAULT))
+        if action.ndim != 1 or action.shape[0] != action_dim:
+            raise ValueError(
+                f"Model returned action of shape {tuple(action.shape)} — "
+                f"expected ({action_dim},). The policy's action space does "
+                "not match the LIBERO OSC_POSE convention; refusing to "
+                "run a mismatched controller."
+            )
+        if not torch.isfinite(action).all():
+            raise ValueError(
+                f"Model returned non-finite action values: "
+                f"{action.detach().cpu().numpy()}. Refusing to step the env "
+                "with NaN/Inf actions (they would silently corrupt the "
+                "physics state)."
+            )
+        if not self._action_policy_recorded:
+            self._action_policy_recorded = True
+            logger.info(
+                "Action validation active: shape=(%d,), finite=required, "
+                "clip=none (no silent clipping).",
+                action_dim,
+            )
+
+    def _validate_state(self, state: np.ndarray) -> None:
+        """Validate an env state vector against the normalizer/model input.
+
+        Raises:
+            ValueError: On dimensionality mismatch (train/eval schema
+                drift, issues register B7/E9) or non-finite values.
+        """
+        expected = int(self.normalizer.mean.shape[0])
+        if state.ndim != 1 or state.shape[0] != expected:
+            raise ValueError(
+                f"Env returned state of shape {getattr(state, 'shape', None)} "
+                f"— expected ({expected},) from the training normalizer. "
+                "Train/eval state schema has drifted; fix the state keys or "
+                "object index before trusting any rollout."
+            )
+        if not np.isfinite(state).all():
+            raise ValueError("Env returned non-finite state values.")
+
+    def _capture_controller_metadata(self, env: StateOnlyLiberoEnv) -> None:
+        """Record the installed controller identity (action semantics, E9).
+
+        The training HDF5 actions were generated by LIBERO's default
+        OffScreenRenderEnv controller (OSC_POSE, delta EEF pose + gripper).
+        This records the ACTUAL controller of the installed env so the
+        train/eval action-convention equivalence is auditable, and logs a
+        warning when the installed controller is not OSC_POSE.
+        """
+        if self._controller_meta is not None:
+            return
+        controller: Any = None
+        try:
+            env_attr = getattr(env, "_env", None)
+            robots = getattr(env_attr, "robots", None)
+            if robots:
+                controller = robots[0].controller
+        except Exception:  # noqa: BLE001 — metadata is best-effort
+            controller = None
+        if controller is None:
+            self._controller_meta = {"note": "controller introspection unavailable"}
+            return
+        self._controller_meta = {
+            "name": getattr(controller, "name", "unknown"),
+            "control_freq": getattr(controller, "control_freq", None),
+            "action_scale": getattr(controller, "action_scale", None),
+            "interpolation": getattr(controller, "interpolation", None),
+        }
+        if self._controller_meta.get("name") != "OSC_POSE":
+            logger.warning(
+                "Installed env controller is %r (expected OSC_POSE) — the "
+                "7-DoF action semantics of the training HDF5 data are only "
+                "guaranteed for the default LIBERO controller. Recorded in "
+                "eval/controller; inspect before reporting numbers.",
+                self._controller_meta.get("name"),
+            )
 
     def _evaluate_task(
         self,
@@ -298,12 +548,12 @@ class RolloutEvaluator:
         task_id: int,
         episode_indices: list[int],
         num_tasks: int,
-    ) -> tuple[str, int]:
+    ) -> tuple[int, str, int]:
         """Run the given absolute episode indices on one task.
 
         Used by both the serial path (all episodes) and the parallel
-        workers (a round-robin shard). Returns ``(task_description,
-        successes)``.
+        workers (a round-robin shard). Returns ``(task_id, task_description,
+        successes)`` — the task ID is the primary key (E9).
         """
         env = StateOnlyLiberoEnv(
             suite_name=suite_name,
@@ -317,6 +567,20 @@ class RolloutEvaluator:
         task_desc = env.task_description
         max_steps = SUITE_MAX_STEPS[suite_name]
         task_successes = 0
+        self._capture_controller_metadata(env)
+
+        # Initial-state availability check (E9): every requested episode
+        # index must be a valid init state, or we abort the task instead of
+        # raising a confusing per-episode IndexError halfway through.
+        num_init_states = env.num_init_states
+        if episode_indices and max(episode_indices) >= num_init_states:
+            env.close()
+            raise IndexError(
+                f"Task {task_id} ({task_desc}): requested episode index "
+                f"{max(episode_indices)} but only {num_init_states} initial "
+                f"states are available — reduce num_episodes_per_task / "
+                "episodes_per_suite."
+            )
 
         logger.info(
             "  [%d/%d] task: %s — running %d episodes",
@@ -326,11 +590,13 @@ class RolloutEvaluator:
         try:
             for shard_pos, episode_idx in enumerate(episode_indices):
                 state = env.reset(episode_idx=episode_idx)
+                self._validate_state(state)
                 episode_success = False
 
                 for _ in range(max_steps):
                     action = self._get_action(state)
                     state, _, terminated, truncated, info = env.step(action)
+                    self._validate_state(state)
 
                     if terminated or truncated:
                         if info.get("is_success", False):
@@ -350,7 +616,7 @@ class RolloutEvaluator:
         finally:
             env.close()
 
-        return task_desc, task_successes
+        return task_id, task_desc, task_successes
 
     def evaluate_suite(
         self,
@@ -374,21 +640,35 @@ class RolloutEvaluator:
 
         task_suite = benchmark.get_benchmark_dict()[bench_key]()
         num_tasks = task_suite.n_tasks
+        # Runtime task-count assertion (E9): the summary code assumes fixed
+        # suite sizes; a version mismatch must abort loudly, not silently
+        # evaluate a different task grid.
+        expected_tasks = SUITE_N_TASKS[suite_name]
+        if num_tasks != expected_tasks:
+            raise RuntimeError(
+                f"Suite {suite_name}: installed LIBERO reports {num_tasks} "
+                f"tasks but the protocol expects {expected_tasks}. The "
+                "installed LIBERO/robosuite version does not match the "
+                "protocol definition — do not evaluate against it."
+            )
         num_workers = _resolve_num_workers(self.num_workers, num_episodes_per_task)
 
         suite_start = time.monotonic()
 
         if num_workers <= 1:
-            per_task_successes: dict[str, int] = {}
+            per_task_successes: dict[int, dict[str, Any]] = {}
             for task_id in range(num_tasks):
                 task_start = time.monotonic()
-                task_desc, task_successes = self._evaluate_task(
+                task_id_out, task_desc, task_successes = self._evaluate_task(
                     suite_name,
                     task_id,
                     list(range(num_episodes_per_task)),
                     num_tasks,
                 )
-                per_task_successes[task_desc] = task_successes
+                per_task_successes[task_id_out] = {
+                    "description": task_desc,
+                    "successes": task_successes,
+                }
                 elapsed = time.monotonic() - task_start
                 logger.info(
                     "  [%d/%d] task: %s — SR: %.1f%% (%d/%d) [%.0fs]",
@@ -402,7 +682,8 @@ class RolloutEvaluator:
             )
 
         results = _finalize_suite_results(
-            suite_name, per_task_successes, num_episodes_per_task
+            suite_name, per_task_successes, num_episodes_per_task,
+            expected_tasks=expected_tasks,
         )
         suite_elapsed = time.monotonic() - suite_start
         logger.info(
@@ -421,7 +702,7 @@ class RolloutEvaluator:
         num_tasks: int,
         num_episodes_per_task: int,
         num_workers: int,
-    ) -> dict[str, int]:
+    ) -> dict[int, dict[str, Any]]:
         """Shard episodes across spawned worker processes and aggregate.
 
         Workers are spawned with the ``spawn`` context (required for
@@ -466,20 +747,143 @@ class RolloutEvaluator:
             )
 
         worker_results = [result_queue.get() for _ in processes]
+        controller_meta = next(
+            (
+                result.get("controller_meta")
+                for result in worker_results
+                if result.get("controller_meta") is not None
+            ),
+            None,
+        )
+        if controller_meta is not None:
+            self._controller_meta = controller_meta
         return _merge_worker_results(worker_results)
+
+    def _checkpoint_metadata(self) -> dict[str, Any]:
+        """Checkpoint path + SHA-256 + its training run_meta (E9, items 14/16).
+
+        Also warns when the training run's git commit differs from the
+        current commit (train/eval code drift) — recorded, never fatal.
+        """
+        meta: dict[str, Any] = {"path": None, "sha256": None, "run_meta": None}
+        train_cfg = self.cfg.get("train")
+        ckpt_path = train_cfg.get("stage1_ckpt_path") if train_cfg is not None else None
+        if not ckpt_path:
+            return meta
+        ckpt = Path(ckpt_path).resolve()
+        meta["path"] = str(ckpt)
+        try:
+            meta["sha256"] = _sha256_file(ckpt)
+        except OSError as exc:
+            logger.warning("Could not hash checkpoint %s: %s", ckpt, exc)
+        run_meta_path = ckpt.parent.parent / "run_meta.json"
+        if run_meta_path.is_file():
+            try:
+                meta["run_meta"] = json.loads(run_meta_path.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning(
+                    "Could not read run_meta.json next to checkpoint %s: %s",
+                    ckpt, exc,
+                )
+            else:
+                train_commit = meta["run_meta"].get("git_commit") or ""
+                cur_commit = self._git_commit
+                if train_commit and cur_commit and train_commit != cur_commit:
+                    logger.warning(
+                        "Checkpoint %s was trained at git commit %s but the "
+                        "current commit is %s — train/eval code may differ. "
+                        "Recorded in eval/checkpoint.run_meta.",
+                        ckpt, train_commit, cur_commit,
+                    )
+        return meta
+
+    def _provenance(self) -> dict[str, Any]:
+        """Full provenance payload (issues register E9, items 14/16/17)."""
+        cfg = self.cfg
+        git = git_info()
+        self._git_commit = git.get("commit", "")
+        manifest_prov = self._cache_manifest.get("provenance") or {}
+
+        state_repr: dict[str, Any] = {
+            "state_dim": int(self.normalizer.mean.shape[0]),
+            "proprio_dim": 23,
+        }
+        if self.object_state_cfg is not None:
+            oscfg = (
+                self.object_state_cfg
+                if isinstance(self.object_state_cfg, DictConfig)
+                else self.object_state_cfg
+            )
+            state_repr.update(
+                {
+                    "object_state": {
+                        "enabled": bool(oscfg.get("enabled", True)),
+                        "k_slots": int(oscfg.get("k_slots", 0)),
+                        "dim_per_object": int(oscfg.get("dim_per_object", 0)),
+                        "include_mask": bool(oscfg.get("include_mask", False)),
+                    }
+                }
+            )
+
+        action_policy = {
+            "dim": int(cfg.data.get("action_dim", ACTION_DIM_DEFAULT)),
+            "validation": (
+                "raise on wrong shape or NaN/Inf — actions are never "
+                "silently clipped"
+            ),
+            "clip": "none",
+            "convention": (
+                "OSC_POSE delta EEF pose + gripper (LIBERO OffScreenRenderEnv "
+                "default controller — the same 7-DoF convention the training "
+                "HDF5 actions were generated with); installed controller "
+                "recorded under eval/controller"
+            ),
+        }
+
+        episodes_per_suite = {
+            suite: self._episodes_for_suite(suite) for suite in self.suites
+        }
+
+        data_hash = CacheManager.compute_hash(cfg.data)
+        return {
+            "eval/checkpoint": self._checkpoint_metadata(),
+            "eval/git_commit": git.get("commit", ""),
+            "eval/git_branch": git.get("branch", ""),
+            "eval/config_hash": CacheManager.compute_hash(cfg),
+            "eval/data_config_hash": data_hash,
+            "eval/cache_hash": self._cache_hash,
+            "eval/cache_object_index_sha256": (
+                manifest_prov.get("object_index_sha256")
+            ),
+            "eval/cache_git_commit": manifest_prov.get("git_commit"),
+            "eval/state_repr": state_repr,
+            "eval/action_policy": action_policy,
+            "eval/controller": self._controller_meta,
+            "eval/num_workers_requested": self.num_workers,
+            "eval/num_workers_effective": dict(self._effective_workers_by_suite),
+            "eval/max_steps_per_suite": {
+                suite: SUITE_MAX_STEPS[suite] for suite in self.suites
+            },
+            "eval/num_steps_wait": self.num_steps_wait,
+            "eval/hard_reset": self.hard_reset,
+            "eval/render_observations": self.render_observations,
+            "eval/episodes_per_suite": episodes_per_suite,
+            "eval/versions": _library_versions(),
+        }
 
     def run(self) -> dict[str, Any]:
         """Run rollout evaluation across all configured suites.
 
         Returns:
             Dict with per-suite success rates, per-task breakdowns,
-            and an overall average across suites.
+            an overall average across suites, and full provenance metadata.
         """
         all_results: dict[str, Any] = {}
         all_suite_rates: list[float] = []
+        self._effective_workers_by_suite: dict[str, int] = {}
 
         resolved_workers = _resolve_num_workers(
-            self.num_workers, self.num_episodes_per_task
+            self.num_workers, max(self.num_episodes_per_task, 1)
         )
         if self.num_workers <= 0:
             logger.info(
@@ -490,11 +894,15 @@ class RolloutEvaluator:
 
         for suite_name in self.suites:
             episodes_per_task = self._episodes_for_suite(suite_name)
+            effective_workers = _resolve_num_workers(
+                self.num_workers, episodes_per_task
+            )
+            self._effective_workers_by_suite[suite_name] = effective_workers
             logger.info(
                 "Evaluating suite %s (%d episodes/task, %d worker(s))…",
                 suite_name,
                 episodes_per_task,
-                resolved_workers,
+                effective_workers,
             )
             suite_results = self.evaluate_suite(
                 suite_name, num_episodes_per_task=episodes_per_task
@@ -505,7 +913,22 @@ class RolloutEvaluator:
                 all_suite_rates.append(float(suite_results[rate_key]))
 
         if all_suite_rates:
-            all_results["eval/success_rate"] = float(np.mean(all_suite_rates))
+            suite_weights = {
+                suite: self._episodes_for_suite(suite) for suite in self.suites
+            }
+            total_weight = sum(suite_weights.values())
+            all_results["eval/success_rate"] = float(
+                sum(
+                    float(all_results[f"eval/success_rate/{suite}"])
+                    * suite_weights[suite]
+                    for suite in self.suites
+                    if f"eval/success_rate/{suite}" in all_results
+                )
+                / total_weight
+            )
+            all_results["eval/overall_aggregation"] = (
+                "episode-weighted mean of suite success rates"
+            )
 
         all_results["eval/seed"] = self.cfg.project.seed
         all_results["eval/num_episodes_per_task"] = self.num_episodes_per_task
@@ -515,5 +938,9 @@ class RolloutEvaluator:
             suite: SUITE_ID_OOD_ROLES.get(suite, "unclassified")
             for suite in self.suites
         }
+        # E9: per-suite episode counts + full provenance (checkpoint hash,
+        # git commit, config/data/cache hashes, versions, controller,
+        # action policy, effective settings).
+        all_results.update(self._provenance())
 
         return all_results

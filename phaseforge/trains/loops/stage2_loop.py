@@ -83,13 +83,17 @@ class Stage2Trainer(BaseTrainer):
 
         Reuses the forward outputs for both the loss metrics and the routing
         metrics so validation stays a single forward pass per batch.
+
+        Loss metrics are aggregated sample-weighted (see
+        :meth:`BaseTrainer._batch_sample_count`), so a short final validation
+        batch does not weigh as much as a full one.
         """
         if self.val_loader is None:
             return {}
             
         self.model.eval()
         agg_metrics: dict[str, float] = {}
-        num_batches = 0
+        total_samples = 0
 
         expert_indices_all: list[torch.Tensor] = []
         phases_all: list[torch.Tensor] = []
@@ -101,9 +105,12 @@ class Stage2Trainer(BaseTrainer):
             out = self.model(batch)
             _, metrics = self._compute_loss(batch, out=out)
 
+            n = self._batch_sample_count(batch)
+            if n == 0:
+                continue
             for k, v in metrics.items():
-                agg_metrics[k] = agg_metrics.get(k, 0.0) + v
-            num_batches += 1
+                agg_metrics[k] = agg_metrics.get(k, 0.0) + v * n
+            total_samples += n
 
             if out.expert_indices is not None:
                 expert_indices_all.append(out.expert_indices.detach().cpu())
@@ -111,9 +118,9 @@ class Stage2Trainer(BaseTrainer):
             if out.gate_logits is not None:
                 gate_logits_all.append(out.gate_logits.detach().cpu())
 
-        if num_batches == 0:
+        if total_samples == 0:
             return {}
-        agg_metrics = {k: v / num_batches for k, v in agg_metrics.items()}
+        agg_metrics = {k: v / total_samples for k, v in agg_metrics.items()}
 
         # Routing diagnostics: balance-vs-specialization trajectory (C3).
         if expert_indices_all:
@@ -124,7 +131,16 @@ class Stage2Trainer(BaseTrainer):
                 phases, expert_indices
             )
 
-            num_experts = int(expert_indices.max().item()) + 1
+            # Use the CONFIGURED expert count (gate-logit width), never the
+            # largest observed index: an unused expert must still count as
+            # dead, otherwise collapse/balance look healthy while an expert
+            # never fires. Note the balance/collapse diagnostics count all
+            # top-k assignments, whereas the training balance loss uses
+            # top-1 assignments (documented in TopKRouter._compute_balance_loss).
+            if gate_logits_all:
+                num_experts = gate_logits_all[0].size(-1)
+            else:
+                num_experts = int(expert_indices.max().item()) + 1
             fractions = expert_utilization.expert_utilization(expert_indices, num_experts)
             agg_metrics["val/balance_score"] = (
                 expert_utilization.expert_utilization_balance(fractions)

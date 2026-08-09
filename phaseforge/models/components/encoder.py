@@ -22,7 +22,10 @@ class StateEncoder(nn.Module):
         latent_dim:   Output latent dimension.
         activation:   Activation function name (``"gelu"``, ``"relu"``, ``"silu"``).
         dropout:      Dropout rate applied after each hidden layer.
-        use_residual: Add residual connections between layers of the same width.
+        use_residual: Add a residual shortcut from the input to the output.
+            When ``input_dim != latent_dim`` a learned projection
+            (``res_proj``) bridges the dims; ``res_proj`` is ``Identity``
+            when the dims already match.
     """
 
     def __init__(
@@ -52,9 +55,12 @@ class StateEncoder(nn.Module):
         self.hidden = nn.Sequential(*layers)
         self.output_proj = nn.Linear(in_dim, latent_dim)
 
-        # Residual shortcut (only when input_dim == latent_dim, else project)
-        self.use_residual = use_residual and (input_dim == latent_dim)
-        if use_residual and input_dim != latent_dim:
+        # Residual shortcut from the input to the output. A learned
+        # projection bridges the dims when they differ; previously the flag
+        # silently disabled the residual (and kept a dead projection layer)
+        # whenever input_dim != latent_dim (e.g. 151 -> 128).
+        self.use_residual = bool(use_residual)
+        if self.use_residual and input_dim != latent_dim:
             self.res_proj: nn.Module = nn.Linear(input_dim, latent_dim)
         else:
             self.res_proj = nn.Identity()

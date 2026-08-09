@@ -1,4 +1,11 @@
-"""Expert utilization and load balancing metrics."""
+"""Expert utilization and load balancing metrics.
+
+Terminology (issues register E9): ``expert_utilization`` counts the
+**top-k routing assignments** (every selected expert index contributes
+one assignment), whereas ``phase_expert_nmi`` in :mod:`phase_alignment`
+uses only the **top-1** assignment. Both are valid; the distinction is
+deliberate and documented.
+"""
 
 from __future__ import annotations
 
@@ -9,13 +16,33 @@ from torch import Tensor
 def expert_utilization(expert_indices: Tensor, num_experts: int) -> Tensor:
     """Compute the fraction of items routed to each expert.
 
+    Counts every **top-k** assignment in ``expert_indices`` (see module
+    docstring for the top-k vs top-1 distinction).
+
     Args:
         expert_indices: Tensor of shape (B, K) containing chosen expert indices.
         num_experts: Total number of experts (E).
 
     Returns:
         Tensor of shape (E,) representing the fraction [0, 1] of routing assignments.
+
+    Raises:
+        ValueError: If ``num_experts < 1``, ``expert_indices`` is empty,
+            or any index is outside ``[0, num_experts)``.
     """
+    if int(num_experts) < 1:
+        raise ValueError(f"num_experts must be >= 1, got {num_experts}")
+    if expert_indices.numel() == 0:
+        raise ValueError("expert_indices must not be empty")
+    if expert_indices.is_floating_point():
+        raise ValueError("expert_indices must be integer indices")
+    flat = expert_indices.view(-1)
+    if flat.min() < 0 or flat.max() >= num_experts:
+        raise ValueError(
+            f"expert_indices outside [0, {num_experts}): "
+            f"min={flat.min().item()}, max={flat.max().item()}"
+        )
+
     # Flatten indices to 1D
     indices_flat = expert_indices.view(-1)
     
@@ -40,11 +67,22 @@ def expert_utilization_balance(fractions: Tensor) -> float:
 
     Returns:
         Float score in [0, 1].
+
+    Raises:
+        ValueError: If ``fractions`` is empty or contains negative values.
     """
     E = fractions.size(0)
     if E <= 1:
         return 1.0
-        
+    if fractions.numel() == 0:
+        raise ValueError("fractions must not be empty")
+    if (fractions < 0).any():
+        raise ValueError("fractions must be non-negative")
+    if not torch.isfinite(fractions).all():
+        raise ValueError("fractions contains non-finite values")
+    if float(fractions.sum()) <= 0.0:
+        raise ValueError("fractions must sum to a positive value")
+
     # Clamp for numerical stability
     probs = fractions.clamp(min=1e-8)
     
@@ -72,11 +110,21 @@ def collapse_rate(fractions: Tensor, threshold_factor: float = 5.0) -> float:
 
     Returns:
         Float rate in [0, 1]. E.g., if 3 out of 6 experts are collapsed, returns 0.5.
+
+    Raises:
+        ValueError: If ``threshold_factor <= 0``, ``fractions`` is empty
+            or contains negative/non-finite values.
     """
+    if float(threshold_factor) <= 0.0:
+        raise ValueError(
+            f"threshold_factor must be > 0, got {threshold_factor}"
+        )
     E = fractions.size(0)
     if E == 0:
         return 0.0
-        
+    if (fractions < 0).any() or not torch.isfinite(fractions).all():
+        raise ValueError("fractions must be finite and non-negative")
+
     threshold = 1.0 / (threshold_factor * E)
     collapsed_count = (fractions < threshold).sum().item()
     

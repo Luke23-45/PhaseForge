@@ -68,14 +68,22 @@ def action_mse(
     return float(((predicted_actions - target_actions) ** 2).mean())
 
 
-def boundary_smoothness(
+def boundary_action_smoothness(
     predicted_actions: Tensor, phases: Tensor, boundary_window: int = 3
 ) -> float:
-    """Measure the prediction error specifically at phase boundaries.
+    """Measure the temporal smoothness of predicted actions at phase boundaries.
+
+    .. note::
+       Despite its historical name ("boundary smoothness"), this metric
+       does NOT measure an error against target actions. It reports the
+       mean per-step temporal change (L2 of ``pred[t] - pred[t-1]``) of
+       the *predicted* actions restricted to a window around detected
+       phase transitions. A target-based boundary error requires
+       trajectory-aligned targets and is not implemented.
 
     Phase transitions are the hardest parts of long-horizon tasks. This metric
-    isolates the L2 error of the action predictions immediately surrounding
-    a phase boundary.
+    isolates the temporal change of the predicted actions immediately
+    surrounding a phase boundary.
 
     Args:
         predicted_actions: Tensor of shape (B, T, A).
@@ -83,12 +91,25 @@ def boundary_smoothness(
         boundary_window: Number of timesteps before and after the boundary to include.
 
     Returns:
-        Mean L2 error at the boundaries, or float('nan') if no boundaries exist.
+        Mean L2 temporal difference at the boundaries, or float('nan') if no
+        boundaries exist.
+
+    Raises:
+        ValueError: If ``boundary_window < 0``, inputs are empty, or the
+            tensors contain non-finite values.
     """
+    if int(boundary_window) < 0:
+        raise ValueError(f"boundary_window must be >= 0, got {boundary_window}")
     if predicted_actions.ndim != 3 or phases.ndim != 2:
         # Require sequence dimension to detect boundaries
         return float('nan')
-        
+    if predicted_actions.numel() == 0 or phases.numel() == 0:
+        raise ValueError("predicted_actions/phases must not be empty")
+    if not torch.isfinite(predicted_actions).all():
+        raise ValueError("predicted_actions contains non-finite values")
+    if not torch.isfinite(phases.to(torch.float32)).all():
+        raise ValueError("phases contains non-finite values")
+
     B, T, _ = predicted_actions.shape
     if T < 2:
         return float('nan')

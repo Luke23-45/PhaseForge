@@ -48,6 +48,8 @@ router:
 expert:
   _target_: phaseforge.models.components.expert.ExpertMLP
   input_dim: 128
-  hidden_dims: [256, 256]
+  # Single hidden layer matching action_head.hidden_dim so the Stage 1
+  # ActionHead can be copied into the experts exactly (strict warm start).
+  hidden_dims: [256]
   output_dim: 7
   activation: "gelu"

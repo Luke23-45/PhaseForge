@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 import hydra
 import torch
@@ -48,31 +49,66 @@ def _resolve_device(cfg: DictConfig) -> torch.device:
     return torch.device(requested)
 
 
-def _log_state_dict_mismatch(
-    result,
+def _unused_stage1_head_prefixes(model: torch.nn.Module) -> tuple[str, ...]:
+    """Stage 1 head prefixes the target model does not use at all.
+
+    The Stage 1 checkpoint of a phase-supervised cell (``phaseforge``)
+    contains ``phase_head`` weights. A Stage 2 cell without a phase head
+    (e.g. ``phase_pretrain_random_router``) legitimately drops them; a cell
+    that routes by the phase head (``phaseforge``, ``teacher_forced``) must
+    always load them exactly. Heads the target model owns are therefore
+    never droppable.
+    """
+    return tuple(
+        prefix
+        for prefix in ("phase_head",)
+        if not any(key.startswith(prefix) for key in model.state_dict())
+    )
+
+
+def _load_state_dict_checked(
+    model: torch.nn.Module,
+    state_dict: dict,
     context: str,
     expected_unexpected_prefixes: tuple[str, ...] = (),
 ) -> None:
-    """Surface weights silently skipped by ``strict=False`` checkpoint loads.
+    """Load a checkpoint state dict and hard-fail on any unexpected mismatch.
 
     ``strict=False`` exists so a Stage 1 checkpoint can be loaded into a
     Stage 2 model before bootstrapping (the MoE block is legitimately
-    absent), but it ALSO silently tolerates a model config that differs
-    from the checkpoint's training config — the policy then runs on
-    random/unloaded weights and LIBERO rollouts score 0% with no error.
-    Log the skipped keys explicitly so a mismatch is visible.
+    absent). Everything else is a config mismatch: silently skipping it
+    leaves the policy on random weights (a common cause of 0% LIBERO
+    success with no error), so mismatched weights stop the run instead.
+
+    Args:
+        model: The model to load into.
+        state_dict: The checkpoint's ``model_state_dict``.
+        context: Human-readable label for error messages.
+        expected_unexpected_prefixes: Parameter-name prefixes that are
+            legitimately different between the checkpoint and target model.
+            This covers both missing target keys and unexpected checkpoint
+            keys (e.g. ``moe_layer`` when loading a BC Stage 1 checkpoint
+            into a Stage 2 MoE model).
     """
+    result = model.load_state_dict(state_dict, strict=False)
+    expected_missing = [
+        key
+        for key in result.missing_keys
+        if any(key.startswith(prefix) for prefix in expected_unexpected_prefixes)
+    ]
+    missing = [key for key in result.missing_keys if key not in expected_missing]
     unexpected = [
         key
         for key in result.unexpected_keys
         if not any(key.startswith(prefix) for prefix in expected_unexpected_prefixes)
     ]
-    expected_count = len(result.unexpected_keys) - len(unexpected)
-    missing = list(result.missing_keys)
 
+    expected_count = len(expected_missing) + (
+        len(result.unexpected_keys) - len(unexpected)
+    )
     if expected_count and not missing and not unexpected:
         logger.info(
-            "%s: %d key(s) not in the checkpoint (prefix(es) %s) — expected, "
+            "%s: %d key(s) differ under prefix(es) %s — expected, "
             "skipped.",
             context, expected_count, ", ".join(expected_unexpected_prefixes) or "-",
         )
@@ -80,18 +116,14 @@ def _log_state_dict_mismatch(
     if not missing and not unexpected:
         return
 
-    logger.warning(
-        "%s: checkpoint/model mismatch — %d missing, %d unexpected key(s). "
-        "Missing (first 8): %s. Unexpected (first 8): %s.",
-        context, len(missing), len(unexpected),
-        missing[:8] or "-", unexpected[:8] or "-",
-    )
-    logger.warning(
-        "%s: mismatched weights are skipped silently. If the eval model config "
-        "differs from the checkpoint's training config, the policy runs on "
-        "random/unloaded weights (a common cause of 0%% success in LIBERO "
-        "rollouts). Verify eval config == train config.",
-        context,
+    raise RuntimeError(
+        f"{context}: checkpoint/model mismatch — {len(missing)} "
+        f"missing, {len(unexpected)} unexpected key(s) outside the allowed "
+        f"prefix(es) {expected_unexpected_prefixes or '-'}. "
+        f"Missing (first 8): {missing[:8] or '-'}. "
+        f"Unexpected (first 8): {unexpected[:8] or '-'}. "
+        "Refusing to continue with randomly initialized weights — fix the "
+        "eval/training model config to match the checkpoint's training config."
     )
 
 
@@ -100,6 +132,11 @@ def train(cfg: DictConfig) -> None:
     """Main training entry point."""
     # 1. Setup
     set_seed(cfg.project.seed)
+    # Resolve once and write the effective device back into the config so
+    # bootstrap, trainer construction, and run metadata all use the same
+    # CPU fallback when CUDA is unavailable.
+    effective_device = _resolve_device(cfg)
+    cfg.project.device = str(effective_device)
 
     # Per-model override: baselines without Stage 1 pretraining (scratch_moe,
     # oracle_moe) must train their encoder in Stage 2. Apply before the
@@ -160,6 +197,7 @@ def train(cfg: DictConfig) -> None:
                 auto_ckpt = find_latest_checkpoint(
                     source_model, stage=1, base=cfg.project.output_dir,
                     resolve_alias=False, seed=cfg.project.get("seed"),
+                    require_seed=cfg.project.get("seed") is not None,
                 )
                 if auto_ckpt is not None:
                     ckpt_path = str(auto_ckpt)
@@ -175,10 +213,13 @@ def train(cfg: DictConfig) -> None:
 
             logger.info(f"Loading Stage 1 checkpoint from {ckpt_path}...")
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            _log_state_dict_mismatch(
-                model.load_state_dict(ckpt["model_state_dict"], strict=False),
+            _load_state_dict_checked(
+                model,
+                ckpt["model_state_dict"],
                 "Stage 1 -> Stage 2 bootstrap load",
-                expected_unexpected_prefixes=("moe_layer",),
+                expected_unexpected_prefixes=(
+                    "moe_layer",
+                ) + _unused_stage1_head_prefixes(model),
             )
 
             model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
@@ -197,13 +238,6 @@ def train(cfg: DictConfig) -> None:
     )
 
     # 6. Callbacks
-    trainer.add_callback(CheckpointCallback(
-        output_dir=output_dir / "checkpoints",
-        every_n_epochs=cfg.train.checkpoint.every_n_epochs,
-        monitor=cfg.train.checkpoint.monitor,
-        mode=cfg.train.checkpoint.mode,
-        save_top_k=cfg.train.checkpoint.save_top_k,
-    ))
     trainer.add_callback(MetricTrackerCallback())
 
     if hasattr(cfg.train, "early_stopping") or "early_stopping" in cfg.train:
@@ -215,10 +249,33 @@ def train(cfg: DictConfig) -> None:
                 min_delta=cfg.train.early_stopping.min_delta,
             ))
 
+    # Save after metric tracking and early stopping have processed the epoch,
+    # so checkpoint resume restores their post-epoch state.
+    trainer.add_callback(CheckpointCallback(
+        output_dir=output_dir / "checkpoints",
+        every_n_epochs=cfg.train.checkpoint.every_n_epochs,
+        monitor=cfg.train.checkpoint.monitor,
+        mode=cfg.train.checkpoint.mode,
+        save_top_k=cfg.train.checkpoint.save_top_k,
+    ))
+
     if cfg.project.wandb.mode != "disabled":
         trainer.add_callback(WandbLoggerCallback())
 
-    # 7. Go!
+    # 7. Resume (optional): restore model/optimizer/scheduler/RNG/callback
+    # state from an interrupted run before training continues.
+    resume_path = cfg.train.get("resume_from")
+    if resume_path:
+        resume_ckpt = Path(resume_path)
+        if not resume_ckpt.is_file():
+            raise FileNotFoundError(
+                f"train.resume_from={resume_path} is not a file. "
+                "Set it to a checkpoint saved by CheckpointCallback or remove it."
+            )
+        logger.info(f"Resuming training from {resume_ckpt}")
+        trainer.resume(resume_ckpt)
+
+    # 8. Go!
     trainer.fit()
 
     if wandb is not None and wandb.run is not None:
@@ -241,9 +298,8 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
     if ckpt_path:
         logger.info(f"Loading checkpoint from {ckpt_path}...")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        _log_state_dict_mismatch(
-            model.load_state_dict(ckpt["model_state_dict"], strict=False),
-            "Evaluation checkpoint load",
+        _load_state_dict_checked(
+            model, ckpt["model_state_dict"], "Evaluation checkpoint load"
         )
         # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
         # so load_state_dict() leaves it at the __init__ default (1).

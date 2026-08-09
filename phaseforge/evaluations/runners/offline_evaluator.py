@@ -1,9 +1,24 @@
-"""Offline evaluator runner."""
+"""Offline evaluator runner.
+
+Computes offline metrics over a validation/test dataset. Static metrics
+(routing entropy, expert utilization, phase-expert NMI, action MSE) pool
+all samples; **temporal** metrics (``routing_entropy_variance``,
+``time_to_stable_routing``, ``boundary_action_smoothness``) are computed
+PER TRAJECTORY and then averaged — never across task/trajectory
+boundaries (issues register E9).
+
+Trajectory boundaries come from the collator keys ``trajectory_id`` /
+``trajectory_position`` (``PhaseAwareCollator`` / ``StateOnlyDataset``).
+When a dataloader does not provide them, the temporal metrics are
+skipped with a loud warning and recorded in ``eval/skipped_metrics`` —
+they are NEVER computed on a merged step stream.
+"""
 
 from __future__ import annotations
 
 import logging
 import math
+from typing import Any
 
 import torch
 from omegaconf import DictConfig
@@ -20,6 +35,29 @@ from phaseforge.models.base import BaseManipulationModel
 logger = logging.getLogger(__name__)
 
 
+def _regroup_by_trajectory(
+    trajectory_ids: torch.Tensor,
+    trajectory_positions: torch.Tensor,
+    values: torch.Tensor,
+) -> list[torch.Tensor]:
+    """Split a pooled tensor back into per-trajectory, time-ordered tensors.
+
+    ``values`` is (N, ...) aligned row-wise with ``trajectory_ids`` (N,).
+    Returns one tensor per trajectory (rows sorted by ``trajectory_position``),
+    so shuffled loaders still reconstruct the exact episode order.
+    """
+    ids = trajectory_ids.tolist()
+    positions = trajectory_positions.tolist()
+    groups: dict[int, list[tuple[int, torch.Tensor]]] = {}
+    for row_idx, (tid, pos) in enumerate(zip(ids, positions)):
+        groups.setdefault(tid, []).append((pos, values[row_idx]))
+    out: list[torch.Tensor] = []
+    for tid in sorted(groups):
+        ordered = sorted(groups[tid], key=lambda item: item[0])
+        out.append(torch.stack([v for _, v in ordered]))
+    return out
+
+
 class OfflineEvaluator:
     """Runs a comprehensive offline evaluation over a validation/test dataset.
 
@@ -31,15 +69,30 @@ class OfflineEvaluator:
     ) -> None:
         self.cfg = cfg
         self.metrics_cfg = cfg.eval
-        self.device = torch.device(cfg.project.get("device", "cuda"))
+        requested_device = str(cfg.project.get("device", "cuda"))
+        if requested_device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning(
+                "Device '%s' requested but CUDA is unavailable. Falling back to CPU.",
+                requested_device,
+            )
+            requested_device = "cpu"
+        self.device = torch.device(requested_device)
         self.model = model.to(self.device)
         self.dataloader = dataloader
 
+    def _metric_enabled(self, group: str, name: str) -> bool:
+        """Read an enabled flag defensively (missing group -> metric off)."""
+        section = self.metrics_cfg.get(group, None)
+        if section is None:
+            return False
+        entry = section.get(name, None)
+        return bool(entry.get("enabled", False)) if entry is not None else False
+
     @torch.no_grad()
-    def run(self) -> dict[str, float]:
+    def run(self) -> dict[str, Any]:
         """Execute the evaluation loop and return aggregated metrics."""
         self.model.eval()
-        
+
         all_action_preds = []
         all_action_targets = []
         all_phases = []
@@ -47,34 +100,65 @@ class OfflineEvaluator:
         all_expert_indices = []
         all_gate_logits = []
         all_masks = []
-        
+        all_traj_ids = []
+        all_traj_positions = []
+        has_trajectory_ids = True
+
         # 1. Collect all outputs
         for batch in self.dataloader:
-            batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
-            
+            has_trajectory_ids = has_trajectory_ids and (
+                "trajectory_id" in batch and "trajectory_position" in batch
+            )
+            # Trajectory identity is evaluation bookkeeping, not model input:
+            # pop it before the forward pass so no model sees these keys.
+            if "trajectory_id" in batch:
+                all_traj_ids.append(batch.pop("trajectory_id").cpu())
+            if "trajectory_position" in batch:
+                all_traj_positions.append(batch.pop("trajectory_position").cpu())
+
+            batch = {
+                k: v.to(self.device)
+                for k, v in batch.items()
+                if isinstance(v, torch.Tensor)
+            }
+
             out = self.model(batch)
-            
+
             all_action_preds.append(out.action_pred.detach().cpu())
             all_action_targets.append(batch["action"].cpu())
             all_phases.append(batch["phase"].cpu())
-            
+
             mask = batch.get("padding_mask")
             if mask is not None:
                 all_masks.append(mask.cpu())
-            
+
             if out.routing_weights is not None:
                 all_routing_weights.append(out.routing_weights.detach().cpu())
             if out.expert_indices is not None:
                 all_expert_indices.append(out.expert_indices.detach().cpu())
             if out.gate_logits is not None:
                 all_gate_logits.append(out.gate_logits.detach().cpu())
-                
-        # 2. Concatenate (flattening batch dim if needed, or keeping it depending on metrics)
+
+        # 2. Fail clearly on an empty loader (never return a hollow results dict).
+        if not all_action_preds:
+            raise RuntimeError(
+                "Offline evaluation produced NO batches — the validation/test "
+                "dataloader is empty. Refusing to report metrics over zero data."
+            )
+        # Inconsistent output lists (batch counts must match for the required
+        # outputs; per-batch concatenation must never misalign).
+        if len(all_phases) != len(all_action_preds):
+            raise RuntimeError(
+                f"Inconsistent output collection: {len(all_action_preds)} action "
+                f"batches vs {len(all_phases)} phase batches."
+            )
+
+        # 2b. Concatenate (flattening batch dim if needed, or keeping it depending on metrics)
         action_preds = torch.cat(all_action_preds, dim=0)
         action_targets = torch.cat(all_action_targets, dim=0)
         phases = torch.cat(all_phases, dim=0)
 
-        # 2b. Decisive signal first, logged IMMEDIATELY: raw action error. If a
+        # 2c. Decisive signal first, logged IMMEDIATELY: raw action error. If a
         #     later metric is slow (e.g. the routing metrics) and the run gets
         #     interrupted, this line is what distinguishes "the model cannot
         #     reproduce the training actions" (0% LIBERO success is expected)
@@ -85,9 +169,12 @@ class OfflineEvaluator:
             "  eval/action_mse: %.6f (RMSE %.4f)",
             mse, math.sqrt(max(mse, 0.0)),
         )
-        results = {"eval/action_mse": mse}
+        # The payload intentionally mixes floats with the definitions record.
+        results: dict[str, Any] = {"eval/action_mse": mse}
 
         is_moe = len(all_expert_indices) > 0
+        expert_indices: torch.Tensor | None
+        gate_logits: torch.Tensor | None
         if is_moe:
             expert_indices = torch.cat(all_expert_indices, dim=0)
             gate_logits = torch.cat(all_gate_logits, dim=0)
@@ -95,11 +182,20 @@ class OfflineEvaluator:
             expert_indices = None
             gate_logits = None
 
+        traj_ids: torch.Tensor | None
+        traj_positions: torch.Tensor | None
+        if has_trajectory_ids:
+            traj_ids = torch.cat(all_traj_ids, dim=0)
+            traj_positions = torch.cat(all_traj_positions, dim=0)
+        else:
+            traj_ids = None
+            traj_positions = None
+
         # 3. Compute Metrics
-        # (results already contains eval/action_mse from step 2b)
-        
+        # (results already contains eval/action_mse from step 2c)
+
         # Task Metrics
-        if self.metrics_cfg.task.success_rate.enabled:
+        if self._metric_enabled("task", "success_rate"):
             threshold = self.metrics_cfg.task.success_rate.l2_threshold
             results["eval/success_rate"] = task_metrics.success_rate(
                 action_preds, action_targets, threshold
@@ -108,33 +204,39 @@ class OfflineEvaluator:
                 "  eval/success_rate (L2 <= %.2f): %.4f",
                 threshold, results["eval/success_rate"],
             )
-            
-        if self.metrics_cfg.task.boundary_smoothness.enabled:
-            window = self.metrics_cfg.task.boundary_smoothness.boundary_window
-            val = task_metrics.boundary_smoothness(action_preds, phases, window)
-            if not torch.isnan(torch.tensor(val)):
-                results["eval/boundary_smoothness"] = val
-                
+
+        boundary_key = "boundary_action_smoothness"
+        if self._metric_enabled("task", boundary_key):
+            window = self.metrics_cfg.task.boundary_action_smoothness.boundary_window
+            val = self._boundary_smoothness_trajectory_wise(
+                action_preds, phases, window, traj_ids, traj_positions
+            )
+            if val is not None:
+                results["eval/boundary_action_smoothness"] = val
+
         # MoE Metrics
         if is_moe:
+            # mypy narrowing + runtime guard: these are only set when is_moe.
+            assert expert_indices is not None and gate_logits is not None
             num_experts = gate_logits.size(-1)
-            
-            if self.metrics_cfg.mechanism.routing_entropy.enabled:
+
+            if self._metric_enabled("mechanism", "routing_entropy"):
                 results["eval/routing_entropy"] = (
                     routing_stability.routing_entropy(gate_logits, normalize=True).item()
                 )
 
-            if self.metrics_cfg.mechanism.routing_entropy_variance.enabled:
+            # Temporal routing metrics: per-trajectory, never across boundaries.
+            if self._metric_enabled("mechanism", "routing_entropy_variance"):
                 window = self.metrics_cfg.mechanism.routing_entropy_variance.get(
                     "window_size", 100
                 )
-                results["eval/routing_entropy_variance"] = (
-                    routing_stability.routing_entropy_variance(
-                        gate_logits, window_size=window
-                    ).item()
+                val = self._per_trajectory_routing_variance(
+                    gate_logits, window, traj_ids, traj_positions
                 )
+                if val is not None:
+                    results["eval/routing_entropy_variance"] = val
 
-            if self.metrics_cfg.mechanism.time_to_stable_routing.enabled:
+            if self._metric_enabled("mechanism", "time_to_stable_routing"):
                 window = self.metrics_cfg.mechanism.routing_entropy_variance.get(
                     "window_size", 100
                 )
@@ -148,16 +250,14 @@ class OfflineEvaluator:
                         "consecutive_windows", 5
                     )
                 )
-                results["eval/time_to_stable_routing"] = (
-                    routing_stability.time_to_stable_routing(
-                        gate_logits,
-                        window_size=window,
-                        variance_threshold=var_threshold,
-                        consecutive_windows=consecutive,
-                    ).item()
+                val = self._per_trajectory_time_to_stable(
+                    gate_logits, window, var_threshold, consecutive,
+                    traj_ids, traj_positions,
                 )
+                if val is not None:
+                    results["eval/time_to_stable_routing"] = val
 
-            if self.metrics_cfg.mechanism.expert_utilization.enabled:
+            if self._metric_enabled("mechanism", "expert_utilization"):
                 fractions = expert_utilization.expert_utilization(
                     expert_indices, num_experts
                 )
@@ -166,15 +266,155 @@ class OfflineEvaluator:
                     expert_utilization.expert_utilization_balance(fractions)
                 )
 
-                if self.metrics_cfg.mechanism.collapse_rate.enabled:
+                if self._metric_enabled("mechanism", "collapse_rate"):
                     factor = self.metrics_cfg.mechanism.collapse_rate.threshold_factor
                     results["eval/collapse_rate"] = (
                         expert_utilization.collapse_rate(fractions, factor)
                     )
 
-            if self.metrics_cfg.mechanism.phase_expert_nmi.enabled:
+            if self._metric_enabled("mechanism", "phase_expert_nmi"):
                 results["eval/phase_expert_nmi"] = (
                     phase_alignment.phase_expert_nmi(phases, expert_indices)
                 )
 
+        # 4. Metric-definition record (E9): every reported routing metric is
+        #    explicitly labeled so results cannot be misread downstream.
+        results["eval/metric_definitions"] = {
+            "eval/routing_entropy": (
+                "Shannon entropy of the PRE-TOP-K softmax gate probabilities "
+                "over all experts (normalized by log(E)); 1 = uniform, 0 = "
+                "fully peaked."
+            ),
+            "eval/routing_entropy_variance": (
+                "Mean over trajectories of the within-window variance of "
+                "per-step pre-top-k routing entropy; computed per trajectory "
+                "from collator trajectory_id, never across episode boundaries."
+            ),
+            "eval/time_to_stable_routing": (
+                "Mean over trajectories of the step index at which routing "
+                "becomes stable (per-trajectory; see above)."
+            ),
+            "eval/balance_score": (
+                "Normalized entropy of expert usage counted over ALL top-k "
+                "routing assignments (top-k counts), 1 = uniform usage."
+            ),
+            "eval/phase_expert_nmi": (
+                "NMI between phase labels and the TOP-1 routing assignment "
+                "(top-1 only; distinct from the top-k balance counts)."
+            ),
+            "eval/boundary_action_smoothness": (
+                "Mean L2 temporal change of PREDICTED actions in a window "
+                "around phase transitions (NOT an error vs target actions); "
+                "computed per trajectory."
+            ),
+        }
+
+        # 5. Honest skip record: temporal metrics that COULD not be computed
+        #    because the loader carried no trajectory identity.
+        if traj_ids is None:
+            skipped = [
+                name
+                for name in (
+                    "routing_entropy_variance",
+                    "time_to_stable_routing",
+                    "boundary_action_smoothness",
+                )
+                if name in results or self._enabled_any(name)
+            ]
+            if skipped:
+                logger.warning(
+                    "Dataloader provides no trajectory_id/trajectory_position "
+                    "keys — trajectory-based metrics SKIPPED: %s. Use "
+                    "StateOnlyDataset + PhaseAwareCollator for offline eval.",
+                    skipped,
+                )
+                results["eval/skipped_metrics"] = skipped
+
         return results
+
+    def _enabled_any(self, name: str) -> bool:
+        if name == "boundary_action_smoothness":
+            return self._metric_enabled("task", name)
+        return self._metric_enabled("mechanism", name)
+
+    def _trajectory_sequences(
+        self,
+        values: torch.Tensor,
+        traj_ids: torch.Tensor | None,
+        traj_positions: torch.Tensor | None,
+    ) -> list[torch.Tensor] | None:
+        """Per-trajectory row-sorted sequences, or None when ids are absent."""
+        if traj_ids is None or traj_positions is None:
+            return None
+        return _regroup_by_trajectory(traj_ids, traj_positions, values)
+
+    def _per_trajectory_routing_variance(
+        self,
+        gate_logits: torch.Tensor,
+        window: int,
+        traj_ids: torch.Tensor | None,
+        traj_positions: torch.Tensor | None,
+    ) -> float | None:
+        sequences = self._trajectory_sequences(gate_logits, traj_ids, traj_positions)
+        if sequences is None:
+            return None
+        variances = [
+            routing_stability.routing_entropy_variance(seq, window_size=window)
+            for seq in sequences
+        ]
+        return float(torch.stack(variances).mean().item())
+
+    def _per_trajectory_time_to_stable(
+        self,
+        gate_logits: torch.Tensor,
+        window: int,
+        var_threshold: float,
+        consecutive: int,
+        traj_ids: torch.Tensor | None,
+        traj_positions: torch.Tensor | None,
+    ) -> float | None:
+        sequences = self._trajectory_sequences(gate_logits, traj_ids, traj_positions)
+        if sequences is None:
+            return None
+        steps = [
+            routing_stability.time_to_stable_routing(
+                seq,
+                window_size=window,
+                variance_threshold=var_threshold,
+                consecutive_windows=consecutive,
+            )
+            for seq in sequences
+        ]
+        return float(torch.stack(steps).to(torch.float32).mean().item())
+
+    def _boundary_smoothness_trajectory_wise(
+        self,
+        action_preds: torch.Tensor,
+        phases: torch.Tensor,
+        window: int,
+        traj_ids: torch.Tensor | None,
+        traj_positions: torch.Tensor | None,
+    ) -> float | None:
+        """Per-trajectory boundary-action smoothness (mean of valid values).
+
+        Requires trajectory identity; returns None (-> metric skipped) when
+        the loader carries no trajectory keys.
+        """
+        sequences = self._trajectory_sequences(action_preds, traj_ids, traj_positions)
+        phase_sequences = self._trajectory_sequences(phases, traj_ids, traj_positions)
+        if sequences is None or phase_sequences is None:
+            return None
+        values = [
+            task_metrics.boundary_action_smoothness(
+                seq.unsqueeze(0), phase_seq.unsqueeze(0), window
+            )
+            for seq, phase_seq in zip(sequences, phase_sequences)
+        ]
+        valid = [v for v in values if not math.isnan(v)]
+        if not valid:
+            logger.warning(
+                "boundary_action_smoothness: no phase boundaries found in any "
+                "trajectory — metric omitted (not fabricated)."
+            )
+            return None
+        return float(sum(valid) / len(valid))

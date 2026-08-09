@@ -92,6 +92,7 @@ class FakeStateEnv:
         self.num_steps_wait = num_steps_wait
         self.hard_reset = hard_reset
         self.task_description = f"task_{suite_name}_{task_id}"
+        self.num_init_states = 50
         self.closed = False
         self.actions_received: list[np.ndarray] = []
 
@@ -125,11 +126,14 @@ class FakeSuite:
 
 
 class FakeBenchmark:
-    def __init__(self, n_tasks: int = 2) -> None:
-        self.n_tasks = n_tasks
+    """Task counts must match the protocol's SUITE_N_TASKS — the evaluator
+    asserts the installed benchmark's n_tasks against the protocol (E9)."""
 
     def get_benchmark_dict(self) -> dict[str, callable]:
-        return {name: lambda: FakeSuite(self.n_tasks) for name in SUITE_NAMES}
+        return {
+            name: (lambda name=name: FakeSuite(re_mod.SUITE_N_TASKS[name]))
+            for name in SUITE_NAMES
+        }
 
 
 SUITE_NAMES = [
@@ -231,15 +235,17 @@ def test_evaluate_suite_aggregates_successes(
 
     results = evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=3)
 
-    # 2 tasks x 3 episodes; task 0 always succeeds, task 1 never does.
-    assert results["eval/success_rate/libero_spatial"] == pytest.approx(0.5)
-    assert results["eval/total_episodes/libero_spatial"] == 6
+    # 10 tasks x 3 episodes; task 0 always succeeds, the rest never do.
+    assert results["eval/success_rate/libero_spatial"] == pytest.approx(0.1)
+    assert results["eval/total_episodes/libero_spatial"] == 30
     assert results["eval/total_successes/libero_spatial"] == 3
     per_task = results["eval/per_task/libero_spatial"]
-    assert per_task["task_libero_spatial_0"]["success_rate"] == pytest.approx(1.0)
-    assert per_task["task_libero_spatial_0"]["successes"] == 3
-    assert per_task["task_libero_spatial_1"]["success_rate"] == pytest.approx(0.0)
-    assert per_task["task_libero_spatial_1"]["successes"] == 0
+    assert set(per_task) == {str(t) for t in range(10)}  # numeric task-id keys
+    assert per_task["0"]["description"] == "task_libero_spatial_0"
+    assert per_task["0"]["success_rate"] == pytest.approx(1.0)
+    assert per_task["0"]["successes"] == 3
+    assert per_task["1"]["success_rate"] == pytest.approx(0.0)
+    assert per_task["1"]["successes"] == 0
 
 
 def test_state_normalized_before_inference_and_action_raw(
@@ -254,7 +260,7 @@ def test_state_normalized_before_inference_and_action_raw(
 
     evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=2)
 
-    assert len(model.seen_states) == 4  # 2 tasks x 2 episodes
+    assert len(model.seen_states) == 20  # 10 tasks x 2 episodes
     for seen in model.seen_states:
         assert seen.shape == (1, STATE_DIM)
         assert torch.allclose(seen, torch.full((1, STATE_DIM), 5.0), atol=1e-5)
@@ -276,7 +282,7 @@ def test_actions_passed_to_env_are_raw_float64(
     monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", RecordingFakeEnv)
     evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
 
-    assert len(received) == 2  # one step per episode
+    assert len(received) == 10  # one step per episode, 10 tasks
     for action in received:
         assert action.shape == (ACTION_DIM,)
         assert action.dtype == np.float64
@@ -307,7 +313,7 @@ def test_envs_are_closed_after_suite(
     monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", factory)
     evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
 
-    assert len(created) == 2
+    assert len(created) == 10  # one env per task
     assert all(env.closed for env in created)
 
 
@@ -351,6 +357,24 @@ def test_rollout_mode_without_environment_keys_uses_defaults(
     assert evaluator.num_workers == 0  # auto: one worker per logical CPU
 
 
+def test_unsupported_suite_names_rejected_at_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Suites without a full protocol definition (e.g. the ``libero_long``
+    legacy alias) must be rejected up front — not KeyError mid-evaluation."""
+    cfg = make_cfg(suites=["libero_long"])
+    with pytest.raises(ValueError, match="Unknown or unsupported suite name"):
+        _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
+
+    bogus = make_cfg(suites=["not_a_suite"])
+    with pytest.raises(ValueError, match="Unknown or unsupported suite name"):
+        _make_evaluator(tmp_path, bogus, monkeypatch=monkeypatch)
+
+    good = make_cfg(suites=["libero_10", "libero_90"])
+    evaluator = _make_evaluator(tmp_path, good, monkeypatch=monkeypatch)
+    assert evaluator.suites == ["libero_10", "libero_90"]
+
+
 def test_env_factory_receives_hard_reset_setting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_libero
 ) -> None:
@@ -376,7 +400,7 @@ def test_env_factory_receives_hard_reset_setting(
     monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", factory)
     evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
 
-    assert received == [False, False]
+    assert received == [False] * 10
 
 
 # ---------------------------------------------------------------------------
@@ -422,32 +446,39 @@ def test_resolve_num_workers_auto_uses_cpu_count(
 def test_merge_worker_results_matches_serial_aggregation() -> None:
     """Two workers split 50 episodes; task 0 succeeds only in worker 0's
     half — the merged result must equal the serial 25/50. This is exactly
-    the chain evaluate_suite's parallel branch runs: merge -> finalize."""
+    the chain evaluate_suite's parallel branch runs: merge -> finalize.
+    Task IDs are numeric keys (E9); the merged dict carries the description
+    per task."""
     worker_results = [
         {
             "worker_idx": 0,
             "task_results": {
-                "t0": {"successes": 25, "episodes": 25},
-                "t1": {"successes": 0, "episodes": 25},
+                "0": {"successes": 25, "episodes": 25},
+                "1": {"successes": 0, "episodes": 25},
             },
         },
         {
             "worker_idx": 1,
             "task_results": {
-                "t0": {"successes": 0, "episodes": 25},
-                "t1": {"successes": 0, "episodes": 25},
+                "0": {"successes": 0, "episodes": 25},
+                "1": {"successes": 0, "episodes": 25},
             },
         },
     ]
     merged = re_mod._merge_worker_results(worker_results)
-    assert merged == {"t0": 25, "t1": 0}
+    assert merged == {
+        0: {"description": "", "successes": 25},
+        1: {"description": "", "successes": 0},
+    }
 
-    results = re_mod._finalize_suite_results("libero_spatial", merged, 50)
+    results = re_mod._finalize_suite_results(
+        "libero_spatial", merged, 50, expected_tasks=2
+    )
     assert results["eval/success_rate/libero_spatial"] == pytest.approx(0.25)
     assert results["eval/total_episodes/libero_spatial"] == 100
     assert results["eval/total_successes/libero_spatial"] == 25
-    assert results["eval/per_task/libero_spatial"]["t0"]["successes"] == 25
-    assert results["eval/per_task/libero_spatial"]["t0"]["success_rate"] == pytest.approx(0.5)
+    assert results["eval/per_task/libero_spatial"]["0"]["successes"] == 25
+    assert results["eval/per_task/libero_spatial"]["0"]["success_rate"] == pytest.approx(0.5)
 
 
 def test_render_observations_flag_plumbed_to_env(
@@ -467,7 +498,7 @@ def test_render_observations_flag_plumbed_to_env(
     monkeypatch.setattr(re_mod, "StateOnlyLiberoEnv", RecordingFakeEnv)
     evaluator.evaluate_suite("libero_spatial", num_episodes_per_task=1)
 
-    assert len(kwargs_seen) == 2  # 2 tasks
+    assert len(kwargs_seen) == 10  # one env per task
     assert all(kw.get("render_observations") is True for kw in kwargs_seen)
 
 

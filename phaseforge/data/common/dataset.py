@@ -22,7 +22,9 @@ class StateOnlyDataset(Dataset):
             - ``"phase"``:   Tensor (T,) int64
             - ``"task_id"``: int
         sequence_length: Number of consecutive timesteps per sample.
-            If 1, each timestep is a single sample (squeezes time dim).
+            Only ``1`` (single-step) is supported: sequence-aware training
+            (batches with a time dimension) is not implemented for the MoE
+            models and training loops, and any other value raises.
         stride: Step between consecutive samples within a trajectory.
     """
 
@@ -33,8 +35,18 @@ class StateOnlyDataset(Dataset):
         stride: int = 1,
     ) -> None:
         super().__init__()
+        if sequence_length != 1:
+            raise ValueError(
+                f"sequence_length={sequence_length} is not supported: "
+                "sequence-aware training (batch tensors with a time dimension) "
+                "is not implemented for the MoE models and training loops "
+                "(MoELayer expects 2D latents, and the Stage 1/2 losses do not "
+                "handle (B, T, P) logits consistently). Keep "
+                "data.sequence_length=1 (single-step) until sequence support "
+                "is implemented end to end."
+            )
         self.trajectories = trajectories
-        self.sequence_length = sequence_length
+        self.sequence_length = 1
         self.stride = stride
         self._index_map = self._build_index_map()
 
@@ -60,6 +72,15 @@ class StateOnlyDataset(Dataset):
         phase = traj["phase"][start_t:end_t]     # (seq_len,)
         task_id = torch.tensor(traj["task_id"], dtype=torch.long)
 
+        # Trajectory identity (offline-eval contract, issues register E9):
+        # every sample carries its source trajectory id plus its position
+        # within it, so single-step batches can be regrouped into episodes
+        # for trajectory-based metrics (routing_entropy_variance,
+        # time_to_stable_routing, boundary_action_smoothness) even when the
+        # DataLoader shuffles the stream.
+        trajectory_id = torch.tensor(traj_idx, dtype=torch.long)
+        trajectory_position = torch.tensor(start_t, dtype=torch.long)
+
         if self.sequence_length == 1:
             # Squeeze the time dimension for single-step training
             return {
@@ -67,10 +88,14 @@ class StateOnlyDataset(Dataset):
                 "action": action.squeeze(0), # (A,)
                 "phase": phase.squeeze(0),   # scalar
                 "task_id": task_id,
+                "trajectory_id": trajectory_id,
+                "trajectory_position": trajectory_position,
             }
         return {
             "state": state,
             "action": action,
             "phase": phase,
             "task_id": task_id,
+            "trajectory_id": trajectory_id,
+            "trajectory_position": trajectory_position,
         }

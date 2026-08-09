@@ -28,6 +28,14 @@ class PhaseAwareCollator:
                 "action": torch.stack([b["action"] for b in batch]),   # (B, A)
                 "phase": torch.stack([b["phase"] for b in batch]),     # (B,)
                 "task_id": torch.stack([b["task_id"] for b in batch]), # (B,)
+                # Trajectory identity (issues register E9): lets offline
+                # evaluation regroup single-step batches into episodes.
+                "trajectory_id": torch.stack(
+                    [b["trajectory_id"] for b in batch]
+                ),  # (B,)
+                "trajectory_position": torch.stack(
+                    [b["trajectory_position"] for b in batch]
+                ),  # (B,)
             }
 
         # Multi-step: pad to max length
@@ -53,5 +61,11 @@ class PhaseAwareCollator:
             "action": action_padded,        # (B, max_T, A)
             "phase": phase_padded,          # (B, max_T)
             "task_id": torch.stack([b["task_id"] for b in batch]),  # (B,)
+            "trajectory_id": torch.stack(
+                [b["trajectory_id"] for b in batch]
+            ),  # (B,)
+            "trajectory_position": torch.stack(
+                [b["trajectory_position"] for b in batch]
+            ),  # (B,)
             "padding_mask": mask,           # (B, max_T) — True = valid
         }

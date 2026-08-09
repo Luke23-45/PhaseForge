@@ -10,20 +10,43 @@ source of truth for:
   is ~8.2 h);
 - parsing a single seed's ``eval_results.json`` into a :class:`SeedResult`
   where a missing/failed value is ``None`` — never a fabricated ``0.0``
-  (a crashed seed must stay distinguishable from "the policy scored 0%");
+  (a crashed seed must stay distinguishable from "the policy scored 0%").
+  The per-task payload is validated STRICTLY (task count, per-task episode
+  count, successes range, episode-sum and rate consistency): a seed that
+  fails any check is rejected wholesale, never partially accepted;
 - per-cell aggregation with honest statistics: ``mean +/- std`` (ddof=1)
   plus a 95% percentile bootstrap CI over task-level rates, following the
   few-run guidance of Agarwal et al. 2021 ("Deep RL at the Edge of the
-  Statistical Precipice", rliable).
+  Statistical Precipice", rliable). The across-suite overall can be
+  episode-weighted so libero_10's 100 episodes cannot outvote libero_90's
+  4500; head-to-head comparisons only use suites where EVERY common seed
+  has per-task data in BOTH cells (paired design, never a silently
+  reduced seed grid, never silent truncation of task lists).
 
 The orchestration script ``scripts/run_multi_seed_eval.py`` is a thin
 subprocess layer on top of this module; tests import this module directly.
+
+Protocol caveats (professor review items 21-23) — written verbatim into
+every ``final_results.json`` so the numbers cannot be read out of
+context::
+
+- n=3 seeds per cell is PRELIMINARY, not a definitive benchmark;
+- there is NO official LIBERO score: libero_90 (in-distribution,
+  pretraining-ID sanity) and libero_10 (zero-shot downstream row) must
+  never be merged into one number and compared against published
+  leaderboards;
+- libero_10's 10 episodes/task sits below OpenVLA's 500 rollouts/3 seeds
+  (~16.7 episodes/task); any comparison against OpenVLA numbers carries
+  that episode-count footnote.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
+import numbers
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +95,21 @@ SUITES: dict[str, SuiteSpec] = {
 
 MIN_SEEDS_FOR_SUMMARY = 3  # B5: paper tables require 3 seeds.
 
+# Protocol caveats (professor review items 21-23). The orchestration script
+# writes these into every final_results.json payload.
+PROTOCOL_NOTES: list[str] = [
+    "PRELIMINARY: n=3 seeds per cell is a few-run estimate, not a definitive "
+    "benchmark (Agarwal et al. 2021, rliable). Report the bootstrap CI, never "
+    "just the mean.",
+    "There is NO official LIBERO score: libero_90 (in-distribution, "
+    "pretraining-ID sanity) and libero_10 (zero-shot downstream row) must "
+    "never be merged into a single number and compared against published "
+    "leaderboards; every table keeps the ID/ZS role labels.",
+    "libero_10 uses 10 episodes/task (100 total) per seed, below OpenVLA's "
+    "500 rollouts / 3 seeds (~16.7 episodes/task). Any comparison against "
+    "OpenVLA numbers must carry this episode-count footnote.",
+]
+
 # Timeout sizing. Measured on free Colab T4 with 2 workers: ~13.1 s/episode
 # (F3 register: libero_spatial 500 eps / 6539 s). Independent reference:
 # vla-eval (arXiv 2603.13966) reports ~14 h for 2000 *vision* episodes;
@@ -86,10 +124,20 @@ def estimated_timeout_s(
     suite: SuiteSpec,
     workers: int = DEFAULT_WORKERS,
     buffer: float = TIMEOUT_BUFFER,
+    seconds_per_episode: float = SECONDS_PER_EPISODE_ESTIMATE,
 ) -> int:
-    """Size a subprocess timeout to the suite's real workload."""
-    raw = suite.n_episodes * SECONDS_PER_EPISODE_ESTIMATE / max(int(workers), 1)
-    return int(raw * buffer)
+    """Size a subprocess timeout to the suite's real workload.
+
+    ``seconds_per_episode`` is the per-worker wall-clock estimate, so
+    ``--seconds-per-episode`` on the orchestration script is threaded
+    through here (review item 7) instead of being ignored.
+    """
+    if seconds_per_episode <= 0:
+        raise ValueError(
+            f"seconds_per_episode must be positive, got {seconds_per_episode}"
+        )
+    raw = suite.n_episodes * float(seconds_per_episode) / max(int(workers), 1)
+    return int(raw * float(buffer))
 
 
 @dataclass
@@ -116,6 +164,14 @@ def parse_seed_result(
     Every failure mode (missing file, malformed JSON, missing rate key,
     ``eval/seed`` mismatch, episode-count mismatch) returns
     ``success_rate=None`` with the reason in ``error``.
+
+    The per-task payload is validated STRICTLY (review item 10): the task
+    count must equal ``suite.n_tasks``, every task must have
+    ``episodes == suite.episodes_per_task`` and ``successes`` in
+    ``[0, episodes]``, per-task episodes must sum to the declared total,
+    and the successes sum must be consistent with the headline rate
+    (within float tolerance). A seed failing any check is rejected
+    wholesale — never partially accepted.
     """
     base = SeedResult(
         seed=expected_seed,
@@ -145,7 +201,7 @@ def parse_seed_result(
     except (TypeError, ValueError):
         base.error = f"{rate_key!r} is not numeric in {results_path.name}"
         return base
-    if not 0.0 <= rate <= 1.0:
+    if not math.isfinite(rate) or not 0.0 <= rate <= 1.0:
         base.error = f"{rate_key!r}={rate} out of [0, 1] in {results_path.name}"
         return base
 
@@ -158,20 +214,104 @@ def parse_seed_result(
         return base
 
     n_eps = payload.get(f"eval/total_episodes/{suite.name}")
-    if n_eps != suite.n_episodes:
-        base.n_episodes_run = int(n_eps) if isinstance(n_eps, int) else None
+    if (
+        isinstance(n_eps, bool)
+        or not isinstance(n_eps, numbers.Integral)
+        or int(n_eps) != suite.n_episodes
+    ):
+        base.n_episodes_run = (
+            int(n_eps)
+            if isinstance(n_eps, numbers.Integral)
+            and not isinstance(n_eps, bool)
+            else None
+        )
         base.error = (
             f"ran {n_eps!r}/{suite.n_episodes} episodes — incomplete "
             f"({results_path.name})"
         )
         return base
 
-    per_task = payload.get(f"eval/per_task/{suite.name}", {}) or {}
+    per_task = payload.get(f"eval/per_task/{suite.name}")
+    if not isinstance(per_task, dict):
+        base.error = (
+            f"eval/per_task/{suite.name} is missing or not a dict "
+            f"in {results_path.name}"
+        )
+        return base
+    if len(per_task) != suite.n_tasks:
+        base.error = (
+            f"eval/per_task/{suite.name} has {len(per_task)} task entries, "
+            f"expected {suite.n_tasks} ({results_path.name})"
+        )
+        return base
+
+    expected_task_ids = {str(i) for i in range(suite.n_tasks)}
+    if set(per_task) != expected_task_ids:
+        base.error = (
+            f"task IDs must be exactly 0..{suite.n_tasks - 1}, got "
+            f"{sorted(per_task)} ({results_path.name})"
+        )
+        return base
+
     per_task_rates: list[float] = []
-    for stats in per_task.values():
-        episodes = stats.get("episodes", 0)
-        if episodes:
-            per_task_rates.append(float(stats.get("successes", 0)) / float(episodes))
+    total_successes = 0
+    total_episodes = 0
+    for task_id, stats in per_task.items():
+        if not isinstance(stats, dict):
+            base.error = (
+                f"task {task_id!r} entry is not a dict in {results_path.name}"
+            )
+            return base
+        try:
+            episodes_raw = stats.get("episodes")
+            successes_raw = stats.get("successes")
+            if episodes_raw is None or successes_raw is None:
+                raise TypeError
+            if (
+                isinstance(episodes_raw, bool)
+                or not isinstance(episodes_raw, numbers.Integral)
+                or isinstance(successes_raw, bool)
+                or not isinstance(successes_raw, numbers.Integral)
+            ):
+                raise TypeError
+            episodes = int(episodes_raw)
+            successes = int(successes_raw)
+        except (TypeError, ValueError):
+            base.error = (
+                f"task {task_id!r}: episodes/successes not integers "
+                f"in {results_path.name}"
+            )
+            return base
+        if episodes != suite.episodes_per_task:
+            base.error = (
+                f"task {task_id!r}: episodes={episodes}, expected "
+                f"{suite.episodes_per_task} ({results_path.name})"
+            )
+            return base
+        if not 0 <= successes <= episodes:
+            base.error = (
+                f"task {task_id!r}: successes={successes} out of "
+                f"[0, {episodes}] ({results_path.name})"
+            )
+            return base
+        per_task_rates.append(successes / episodes)
+        total_successes += successes
+        total_episodes += episodes
+
+    if total_episodes != suite.n_episodes:
+        base.error = (
+            f"per-task episodes sum to {total_episodes}, expected "
+            f"{suite.n_episodes} ({results_path.name})"
+        )
+        return base
+    derived = total_successes / total_episodes
+    if abs(derived - rate) > 1e-6:
+        base.error = (
+            f"eval/per_task successes sum to {total_successes}/{total_episodes} "
+            f"(={derived:.6f}), inconsistent with {rate_key}={rate:.6f} "
+            f"({results_path.name})"
+        )
+        return base
 
     base.success_rate = rate
     base.n_episodes_run = int(n_eps)
@@ -195,17 +335,25 @@ def _bootstrap_suite_samples(
     exists to avoid.
 
     A suite is only present when at least 2 seeds contribute per-task
-    data; per-task lists are truncated to the shortest one so every seed
-    covers the same task grid.
+    data. All contributing seeds must cover the SAME task grid: a length
+    mismatch raises :class:`ValueError` instead of silently truncating
+    the longer lists (review item 19) — callers are responsible for
+    filtering partial seeds first.
     """
     samples: dict[str, np.ndarray] = {}
     for name, seed_task_lists in per_suite_task_lists.items():
         usable = [t for t in seed_task_lists if t]
         if len(usable) < 2:
             continue
-        n_tasks = min(len(t) for t in usable)
-        arr = np.asarray([t[:n_tasks] for t in usable], dtype=float)
-        n_seeds, _ = arr.shape
+        lengths = {len(t) for t in usable}
+        if len(lengths) > 1:
+            raise ValueError(
+                f"suite {name!r}: per-task list lengths {sorted(lengths)} "
+                "across seeds — refusing to truncate silently; drop the "
+                "incomplete seeds before bootstrapping"
+            )
+        arr = np.asarray(usable, dtype=float)
+        n_seeds, n_tasks = arr.shape
         boot = np.empty(n_boot)
         for i in range(n_boot):
             run_idx = rng.integers(0, n_seeds, size=n_seeds)
@@ -215,15 +363,37 @@ def _bootstrap_suite_samples(
     return samples
 
 
-def _overall_samples(samples: dict[str, np.ndarray]) -> np.ndarray:
-    """Per-replicate overall aggregate: unweighted mean of suite means.
+def _overall_samples(
+    samples: dict[str, np.ndarray],
+    weights: Mapping[str, float] | None = None,
+) -> np.ndarray:
+    """Per-replicate overall aggregate across suite sample distributions.
 
-    Empty when no suite produced samples (caller treats that as NaN).
+    Unweighted mean of suite means by default. With ``weights`` (e.g.
+    episode counts per suite, review item 20) the overall is the
+    weighted mean, so libero_10's 100 episodes can never outvote
+    libero_90's 4500. Empty when no suite produced samples (caller
+    treats that as NaN).
     """
     arrays = list(samples.values())
     if not arrays:
         return np.array([])
-    return np.stack(arrays).mean(axis=0)
+    stacked = np.stack(arrays)
+    if weights is None:
+        return stacked.mean(axis=0)
+    w = []
+    for name in samples:
+        if name not in weights:
+            raise ValueError(f"missing weight for suite {name!r}")
+        value = float(weights[name])
+        if value <= 0:
+            raise ValueError(
+                f"weight for suite {name!r} must be positive, got {value}"
+            )
+        w.append(value)
+    w_arr = np.asarray(w)
+    w_arr = w_arr / w_arr.sum()
+    return np.sum(stacked * w_arr[:, None], axis=0)
 
 
 def _percentile_ci(samples: np.ndarray, ci: float) -> tuple[float, float]:
@@ -237,24 +407,28 @@ def bootstrap_cis(
     n_boot: int = 10_000,
     ci: float = 0.95,
     rng_seed: int = 0,
+    weights: Mapping[str, float] | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Joint stratified bootstrap CIs over task-level success rates.
 
     ``per_task_by_seed`` maps suite name -> list (one entry per valid
     seed) of per-task success rates, aligned by task order within each
-    seed.
+    seed. All lists of a suite must have the SAME length — a mismatch
+    raises instead of being truncated silently (review item 19).
 
     Runs (seeds) and tasks are both resampled with replacement per
     replicate (rliable's stratified bootstrap, Agarwal et al. 2021);
-    the suite rate and the overall rate (unweighted mean of suite rates)
-    are recomputed per replicate.
+    the suite rate and the overall rate are recomputed per replicate.
+    ``weights`` (e.g. episode counts) make the overall the episode-
+    weighted mean of suite means (review item 20); default is the
+    unweighted mean.
 
     Returns ``{suite_name: (lo, hi), "overall": (lo, hi)}``. Pairs are
     NaN when fewer than 2 seeds contribute per-task data for a suite.
     """
     rng = np.random.default_rng(rng_seed)
     samples = _bootstrap_suite_samples(per_task_by_seed, n_boot, rng)
-    overall = _overall_samples(samples)
+    overall = _overall_samples(samples, weights=weights)
 
     out: dict[str, tuple[float, float]] = {}
     for name in per_task_by_seed:
@@ -271,15 +445,18 @@ def probability_of_improvement(
     b_per_suite: dict[str, list[list[float]]],
     n_boot: int = 10_000,
     rng_seed: int = 0,
+    weights: Mapping[str, float] | None = None,
 ) -> float:
     """rliable-style probability of improvement: P(aggregate(A) > aggregate(B)).
 
     Both cells are resampled from the same stratified-bootstrap grid
     (rliable's procedure, see :func:`_bootstrap_suite_samples`) and their
-    overall aggregates (unweighted mean of suite means) compared
-    replicate-by-replicate. The two cells draw from INDEPENDENT streams
-    so that two identical cells yield P ~ 0.5 rather than a degenerate
-    0 or 1; results stay deterministic for a fixed ``rng_seed``.
+    overall aggregates (unweighted mean of suite means, or the
+    episode-weighted mean when ``weights`` is given — review item 20)
+    compared replicate-by-replicate. The two cells draw from INDEPENDENT
+    streams so that two identical cells yield P ~ 0.5 rather than a
+    degenerate 0 or 1; results stay deterministic for a fixed
+    ``rng_seed``.
     This is the few-runs comparison statistic of Agarwal et al. 2021
     (rliable's probability of improvement), and the honest answer to
     "is cell A actually better than cell B" at n=3.
@@ -289,10 +466,12 @@ def probability_of_improvement(
     rng_a = np.random.default_rng(rng_seed)
     rng_b = np.random.default_rng(rng_seed + 1_000_003)
     a_samples = _overall_samples(
-        _bootstrap_suite_samples(a_per_suite, n_boot, rng_a)
+        _bootstrap_suite_samples(a_per_suite, n_boot, rng_a),
+        weights=weights,
     )
     b_samples = _overall_samples(
-        _bootstrap_suite_samples(b_per_suite, n_boot, rng_b)
+        _bootstrap_suite_samples(b_per_suite, n_boot, rng_b),
+        weights=weights,
     )
     if a_samples.size == 0 or b_samples.size == 0:
         return float("nan")
@@ -325,16 +504,21 @@ def compare_cells(
     b_task_rates_by_suite: dict[str, dict[int, list[float]]],
     n_boot: int = 10_000,
     rng_seed: int = 0,
+    episodes_by_suite: dict[str, int] | None = None,
 ) -> dict:
     """Head-to-head comparison of two cells on the overall aggregate.
 
     ``a_seed_rates`` / ``b_seed_rates`` map seed -> per-seed overall
     rate; ``*_task_rates_by_suite`` map suite -> {seed: per-task rates}.
     Only seeds valid in EVERY suite of BOTH cells are used — a crashed
-    seed must never tilt a comparison. ``prob_a_over_b`` is the
-    rliable-style probability of improvement; ``mann_whitney_u`` is the
-    U test on the per-seed aggregate rates. Both are ``None`` when fewer
-    than 2 common seeds exist.
+    seed must never tilt a comparison. A suite is only bootstrapped when
+    EVERY common seed has per-task data in BOTH cells (paired design,
+    review item 18); otherwise the suite is skipped ENTIRELY — never a
+    silently reduced seed grid. ``episodes_by_suite`` makes the
+    aggregate episode-weighted (review item 20). ``prob_a_over_b`` is
+    the rliable-style probability of improvement; ``mann_whitney_u`` is
+    the U test on the per-seed aggregate rates. Both are ``None`` when
+    fewer than 2 common seeds exist.
     """
     common = sorted(set(a_seed_rates) & set(b_seed_rates))
     result: dict = {
@@ -362,27 +546,37 @@ def compare_cells(
     result["margin_a_minus_b"] = result["mean_a"] - result["mean_b"]
 
     shared_suites = sorted(set(a_task_rates_by_suite) & set(b_task_rates_by_suite))
-    a_per_suite = {
-        name: [
-            a_task_rates_by_suite[name][s]
-            for s in common
-            if s in a_task_rates_by_suite[name] and a_task_rates_by_suite[name][s]
-        ]
+    paired_suites = [
+        name
         for name in shared_suites
+        if all(
+            a_task_rates_by_suite[name].get(s) and b_task_rates_by_suite[name].get(s)
+            for s in common
+        )
+    ]
+    result["suites_compared"] = paired_suites
+    a_per_suite = {
+        name: [a_task_rates_by_suite[name][s] for s in common]
+        for name in paired_suites
     }
     b_per_suite = {
-        name: [
-            b_task_rates_by_suite[name][s]
-            for s in common
-            if s in b_task_rates_by_suite[name] and b_task_rates_by_suite[name][s]
-        ]
-        for name in shared_suites
+        name: [b_task_rates_by_suite[name][s] for s in common]
+        for name in paired_suites
     }
-    if all(len(v) >= 2 for v in a_per_suite.values()) and all(
+    if not paired_suites:
+        result["note"] = (
+            "no suite has per-task data for every common seed in BOTH cells — "
+            "probability of improvement not computed"
+        )
+    elif all(len(v) >= 2 for v in a_per_suite.values()) and all(
         len(v) >= 2 for v in b_per_suite.values()
     ):
         result["prob_a_over_b"] = probability_of_improvement(
-            a_per_suite, b_per_suite, n_boot=n_boot, rng_seed=rng_seed
+            a_per_suite,
+            b_per_suite,
+            n_boot=n_boot,
+            rng_seed=rng_seed,
+            weights=episodes_by_suite,
         )
         p = result["prob_a_over_b"]
         result["prob_b_over_a"] = 1.0 - p if p == p else None
@@ -448,15 +642,18 @@ def summarize_cell(
     summary["mean"] = float(np.mean(rates))
     summary["std"] = float(np.std(rates, ddof=1)) if n_valid > 1 else None
 
-    complete_task_lists = [r.per_task_rates for r in valid if r.per_task_rates]
+    complete_task_lists = [
+        r.per_task_rates for r in valid if len(r.per_task_rates) == suite.n_tasks
+    ]
     if n_valid > 1 and len(complete_task_lists) >= 2:
         cis = bootstrap_cis({suite.name: complete_task_lists})
         summary["ci95"] = list(cis[suite.name])
     elif n_valid > 1:
         logger.warning(
             "cell=%s suite=%s: bootstrap CI skipped — per-task data missing "
-            "for %d seed(s)",
-            cell, suite.name, n_valid - len(complete_task_lists),
+            "or truncated (expected %d tasks per seed) for %d seed(s)",
+            cell, suite.name, suite.n_tasks,
+            n_valid - len(complete_task_lists),
         )
     return summary
 
@@ -466,15 +663,46 @@ def summarize_overall(
     suite_summaries: list[dict],
     per_suite_seed_results: dict[str, list[SeedResult]],
     min_seeds: int = MIN_SEEDS_FOR_SUMMARY,
+    episodes_by_suite: dict[str, int] | None = None,
 ) -> dict:
-    """Across-suite cell summary: unweighted mean of suite means.
+    """Across-suite cell summary.
+
+    Default: unweighted mean of suite means. With ``episodes_by_suite``
+    (suite name -> episode count, review item 20) the per-seed overall is
+    the episode-weighted aggregate — libero_10's 100 episodes can never
+    outvote libero_90's 4500 — and the bootstrap overall uses the same
+    weights; the summary records ``weighting`` and the weights used.
+    ``episodes_by_suite`` must cover every suite or :class:`ValueError`
+    is raised.
 
     A seed contributes to the overall only if it has a valid rate in
     EVERY suite (never padded with 0.0); ``seeds_valid`` counts exactly
     those seeds. The overall CI is the joint stratified bootstrap across
-    all suites.
+    all suites (weighted when ``episodes_by_suite`` is given).
     """
     suite_names = [s["suite"] for s in suite_summaries]
+    effective_weights: dict[str, float] | None = None
+    if episodes_by_suite is not None:
+        missing = [sn for sn in suite_names if sn not in episodes_by_suite]
+        if missing:
+            raise ValueError(
+                f"episodes_by_suite missing suites {missing} (from {suite_names})"
+            )
+        for name, value in episodes_by_suite.items():
+            if not isinstance(value, (int, float)) or value <= 0:
+                raise ValueError(
+                    f"episodes_by_suite values must be positive numbers, "
+                    f"got {value!r}"
+                )
+        effective_weights = {
+            name: float(value) for name, value in episodes_by_suite.items()
+        }
+    weighted = effective_weights is not None
+    total_episodes = (
+        sum(effective_weights[sn] for sn in suite_names)
+        if effective_weights is not None
+        else 0.0
+    )
     seeds_requested = max(
         (s["seeds_requested"] for s in suite_summaries), default=0
     )
@@ -498,26 +726,38 @@ def summarize_overall(
                     f"{suite_name}: {r.error or 'failed'}"
                 )
 
+    def _seed_overall(seed: int) -> float:
+        if effective_weights is not None:
+            return (
+                sum(
+                    per_seed_rates[seed][sn] * effective_weights[sn]
+                    for sn in suite_names
+                )
+                / total_episodes
+            )
+        return float(np.mean([per_seed_rates[seed][sn] for sn in suite_names]))
+
     summary: dict = {
         "cell": cell,
         "suite": "overall",
-        "suite_role": "unweighted mean of suite means",
+        "suite_role": (
+            "episode-weighted aggregate (sum of suite rate x suite episodes "
+            "over total episodes)" if weighted else "unweighted mean of suite means"
+        ),
+        "weighting": "episode-weighted" if weighted else "unweighted",
         "seeds_requested": seeds_requested,
         "seeds_valid": len(complete_seeds),
         "complete": len(complete_seeds) >= min_seeds,
         "mean": None,
         "std": None,
         "ci95": None,
-        "per_seed": {
-            str(s): float(
-                np.mean([per_seed_rates[s][sn] for sn in suite_names])
-            )
-            for s in complete_seeds
-        },
+        "per_seed": {str(s): _seed_overall(s) for s in complete_seeds},
         "seed_errors": {
             s: " | ".join(errs) for s, errs in sorted(seed_errors.items())
         },
     }
+    if effective_weights is not None:
+        summary["episodes_by_suite"] = dict(effective_weights)
     if not complete_seeds:
         return summary
     if len(complete_seeds) < min_seeds:
@@ -536,10 +776,12 @@ def summarize_overall(
             for r in per_suite_seed_results[sn]
             if r.success_rate is not None
             and r.seed in complete_seeds
-            and r.per_task_rates
+            and len(r.per_task_rates) > 0
         ]
         for sn in suite_names
     }
     if len(rates) > 1 and all(len(v) >= 2 for v in task_data.values()):
-        summary["ci95"] = list(bootstrap_cis(task_data)["overall"])
+        summary["ci95"] = list(
+            bootstrap_cis(task_data, weights=episodes_by_suite)["overall"]
+        )
     return summary

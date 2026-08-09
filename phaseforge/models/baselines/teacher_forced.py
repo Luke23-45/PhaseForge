@@ -40,7 +40,10 @@ from torch.utils.data import DataLoader
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
-from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.expert import (
+    ExpertMLP,
+    warm_start_experts_from_action_head,
+)
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.router import TopKRouter
@@ -85,6 +88,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         self.moe_layer = MoELayer(router=router, experts=expert)
 
         self._stage = 1
+        self._encoder_frozen = False
         self._last_gate_logits: Tensor | None = None
 
     @property
@@ -102,13 +106,25 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         """Freeze the Stage 1 bundle (encoder + phase predictor) for Stage 2.
 
         Only the experts train in Stage 2 — the supervision regime is the
-        ONLY thing that differs from ``phaseforge``.
+        ONLY thing that differs from ``phaseforge``. Frozen modules are also
+        kept in eval mode so dropout stays off during training.
         """
         for param in self.encoder.parameters():
             param.requires_grad = False
         for param in self.phase_head.parameters():
             param.requires_grad = False
+        self._encoder_frozen = True
+        self.encoder.eval()
+        self.phase_head.eval()
         logger.info("Encoder and phase predictor frozen (shared Stage 1 bundle).")
+
+    def train(self, mode: bool = True) -> TeacherForcedMoEModel:
+        """Override so the frozen Stage 1 bundle stays deterministic."""
+        super().train(mode)
+        if mode and self._encoder_frozen:
+            self.encoder.eval()
+            self.phase_head.eval()
+        return self
 
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         """Forward pass depends on the active stage and the mode.
@@ -159,8 +175,14 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         B = latent.size(0)
         E = self.moe_layer.router.num_experts
 
-        # Clamp to available experts (fallback for out-of-range labels)
-        expert_indices = torch.clamp(expert_indices, max=E - 1).unsqueeze(-1)  # (B, 1)
+        if expert_indices.numel() and (
+            expert_indices.min() < 0 or expert_indices.max() >= E
+        ):
+            raise ValueError(
+                f"Teacher-forced phase labels must map to experts in [0, {E - 1}], "
+                f"got range [{int(expert_indices.min())}, {int(expert_indices.max())}]."
+            )
+        expert_indices = expert_indices.unsqueeze(-1)  # (B, 1)
 
         routing_weights = torch.ones((B, 1), device=latent.device)
 
@@ -229,22 +251,15 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         logger.info("TeacherForcedMoE: router kept at init (routing by phase head).")
 
         # 2. Initialize Experts with ActionHead weights (identical warm start
-        #    to every other cell).
-        action_head_state_dict = self.action_head.state_dict()
-        mapping = {
-            "trunk.0.weight": "hidden.0.weight",
-            "trunk.0.bias": "hidden.0.bias",
-            "mean_head.weight": "output_proj.weight",
-            "mean_head.bias": "output_proj.bias",
-        }
+        #    to every other cell: exact strict copy + symmetry-breaking jitter).
+        warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
 
-        for i, expert in enumerate(self.moe_layer.experts):
-            expert_dict = expert.state_dict()
-            new_dict = {}
-            for src_k, dst_k in mapping.items():
-                if src_k in action_head_state_dict and dst_k in expert_dict:
-                    new_dict[dst_k] = action_head_state_dict[src_k].clone()
-            expert.load_state_dict(new_dict, strict=False)
+        # The Stage 1 action head is unused in Stage 2 (and the phase head is
+        # frozen with the encoder bundle); exclude both from the optimizer.
+        for param in self.action_head.parameters():
+            param.requires_grad = False
+        for param in self.phase_head.parameters():
+            param.requires_grad = False
 
         logger.info("TeacherForcedMoE: initialized all experts with Stage 1 ActionHead weights.")
 

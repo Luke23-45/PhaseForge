@@ -11,7 +11,10 @@ from torch.utils.data import DataLoader
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
-from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.expert import (
+    ExpertMLP,
+    warm_start_experts_from_action_head,
+)
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.router import TopKRouter
@@ -60,6 +63,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         
         # Internal state to track which stage the model is currently configured for
         self._stage = 1
+        self._encoder_frozen = False
         
         # Storage for the most recent routing information for metrics tracking
         self._last_gate_logits: Tensor | None = None
@@ -76,10 +80,28 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         logger.info(f"PhaseBootstrappedMoE transitioned to Stage {value}.")
 
     def freeze_encoder(self) -> None:
-        """Freeze the encoder for Stage 2 training."""
+        """Freeze the encoder for Stage 2 training.
+
+        Disables gradients AND keeps the encoder in eval mode: a frozen
+        encoder must not apply dropout, or its latent representation stays
+        stochastic during training despite being frozen.
+        """
         for param in self.encoder.parameters():
             param.requires_grad = False
-        logger.info("Encoder weights frozen.")
+        self._encoder_frozen = True
+        self.encoder.eval()
+        logger.info("Encoder weights frozen; encoder kept in eval mode (no dropout).")
+
+    def train(self, mode: bool = True) -> PhaseBootstrappedMoE:
+        """Override so a frozen encoder stays deterministic during Stage 2.
+
+        The training loop calls ``model.train()`` every epoch, which would
+        otherwise re-enable the encoder's dropout.
+        """
+        super().train(mode)
+        if mode and self._encoder_frozen:
+            self.encoder.eval()
+        return self
 
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         """Forward pass depends on the active stage.
@@ -201,8 +223,19 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             phase_counts += counts
 
         # Compute mean
-        # Avoid division by zero for unused phases (should be rare)
-        phase_counts = torch.clamp(phase_counts, min=1.0)
+        # An absent phase would produce a zero centroid reported as if it had
+        # one sample — that silently corrupts the router init, so it is a
+        # hard failure instead.
+        absent = phase_counts == 0
+        if absent.any():
+            raise ValueError(
+                "Phase centroid bootstrap: "
+                f"{int(absent.sum().item())} phase(s) have zero samples in the "
+                f"bootstrap dataloader (missing: "
+                f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
+                "Refusing to bootstrap with zero centroids; every phase must "
+                "be present in the training data."
+            )
         centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
 
         logger.info(f"Computed latent centroids for {num_phases} phases.")
@@ -210,10 +243,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             logger.debug(f"  Phase {p} count: {phase_counts[p].item()}")
 
         # 2. Initialize Router
-        # The router's gate_linear computes logits: L = x @ W^T + b
-        # If we set W = centroids, then x @ W^T is the dot product (cosine sim proxy).
-        # We can normalize centroids to make it strict cosine similarity, but standard
-        # dot product works perfectly and preserves magnitude information.
+        # The router's gate computes logits: L = x @ W^T + b. The centroids
+        # are unit-normalized and the router is configured with
+        # normalize_input=True, so L is a true cosine similarity between the
+        # (normalized) latent and each (unit-norm) centroid — not a raw dot
+        # product with an unnormalized latent.
         
         # We normalize centroids to ensure stable initial logits
         centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
@@ -232,27 +266,19 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
         # 3. Initialize Experts with ActionHead weights
         # This provides the "warm start" for the experts, so they don't destroy
-        # the performance achieved in Stage 1.
-        action_head_state_dict = self.action_head.state_dict()
+        # the performance achieved in Stage 1. The copy is exact and strict
+        # (architecturally compatible ExpertMLP required) plus a small
+        # symmetry-breaking jitter so the router can learn to differentiate
+        # experts from the action loss.
+        warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
         
-        for i, expert in enumerate(self.moe_layer.experts):
-            # The ExpertMLP structure mimics the ActionHead trunk + mean_head
-            expert_dict = expert.state_dict()
-            
-            # Map ActionHead keys to ExpertMLP keys
-            mapping = {
-                "trunk.0.weight": "hidden.0.weight",
-                "trunk.0.bias": "hidden.0.bias",
-                "mean_head.weight": "output_proj.weight",
-                "mean_head.bias": "output_proj.bias",
-            }
-            
-            new_dict = {}
-            for src_k, dst_k in mapping.items():
-                if src_k in action_head_state_dict and dst_k in expert_dict:
-                    new_dict[dst_k] = action_head_state_dict[src_k].clone()
-                    
-            expert.load_state_dict(new_dict, strict=False)
+        # Stage 1 heads are not part of the Stage 2 computation graph; exclude
+        # them from the optimizer so trainable-parameter counts and optimizer
+        # state reflect the Stage 2 architecture.
+        for param in self.action_head.parameters():
+            param.requires_grad = False
+        for param in self.phase_head.parameters():
+            param.requires_grad = False
             
         logger.info("Initialized all experts with Stage 1 ActionHead weights.")
         

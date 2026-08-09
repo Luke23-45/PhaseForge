@@ -93,6 +93,15 @@ def _git_info() -> dict[str, str]:
     return info
 
 
+def git_info() -> dict[str, str]:
+    """Public accessor for the current git commit/branch (eval provenance).
+
+    Returns ``{"commit": ..., "branch": ...}`` with empty strings when git
+    is unavailable or the repo cannot be resolved.
+    """
+    return _git_info()
+
+
 def write_run_meta(output_dir: Path, cfg: DictConfig) -> None:
     """Write a lightweight JSON metadata file for quick run inspection."""
     git = _git_info()
@@ -342,6 +351,7 @@ def find_latest_checkpoint(
     base: str | Path = "outputs",
     resolve_alias: bool = True,
     seed: int | None = None,
+    require_seed: bool = False,
 ) -> Path | None:
     """Find the most recent *best* checkpoint for a model+stage combo.
 
@@ -357,12 +367,21 @@ def find_latest_checkpoint(
             checkpoint.  Set to ``False`` when the caller has already
             performed resolution.
         seed: If provided, prefer a checkpoint whose ``run_meta.json``
-            records this training seed (multi-seed runs). Falls back to
-            the newest run when no seed match exists (e.g. legacy runs
-            written before seeds were recorded).
+            records this training seed (multi-seed runs). Without
+            ``require_seed``, falls back to the newest run when no seed match
+            exists (e.g. legacy runs written before seeds were recorded).
+        require_seed: If ``True`` and ``seed`` is provided, a missing
+            seed-specific checkpoint raises :class:`FileNotFoundError`
+            instead of silently falling back to a different seed — the
+            multi-seed protocol must never mix seeds (Stage 2 for seed 43
+            silently loading Stage 1 from seed 42 corrupts the sweep).
 
     Returns:
         Absolute path to the latest ``checkpoint_best.pt``, or ``None``.
+
+    Raises:
+        FileNotFoundError: When ``require_seed`` is set and no checkpoint
+            records the requested seed.
     """
     source = resolve_checkpoint_source(model_name) if resolve_alias else model_name
     checkpoints = scan_checkpoints(source, stage, base)
@@ -372,4 +391,12 @@ def find_latest_checkpoint(
         for info in checkpoints:
             if info.seed == seed:
                 return info.path
+        if require_seed:
+            base_dir = _project_root() / Path(base) / source / f"stage{stage}"
+            raise FileNotFoundError(
+                f"No Stage {stage} checkpoint found for '{source}' with seed "
+                f"{seed} under {base_dir}. The multi-seed protocol requires a "
+                "seed-exact checkpoint; refusing to silently fall back to a "
+                "different seed."
+            )
     return checkpoints[0].path

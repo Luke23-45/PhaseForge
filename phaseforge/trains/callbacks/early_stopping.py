@@ -82,3 +82,15 @@ class EarlyStoppingCallback(Callback):
                     self.patience,
                 )
                 trainer.should_stop = True
+
+    def state_dict(self) -> dict:
+        """Serialize early-stopping state for checkpoint resume."""
+        return {
+            "wait_count": self.wait_count,
+            "best_score": self.best_score,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore early-stopping state from a checkpoint."""
+        self.wait_count = int(state.get("wait_count", self.wait_count))
+        self.best_score = state.get("best_score", self.best_score)

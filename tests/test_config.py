@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from omegaconf import DictConfig
 
 from phaseforge.utils.config import (
@@ -56,6 +57,19 @@ def test_find_latest_checkpoint_legacy_run_fallback(tmp_path: Path) -> None:
     ckpt = find_latest_checkpoint("bc", stage=1, base=tmp_path, resolve_alias=False, seed=42)
     assert ckpt is not None
     assert "aaaa0001" in str(ckpt)
+
+
+def test_find_latest_checkpoint_require_seed_fails_hard(tmp_path: Path) -> None:
+    # Only a seed-42 run exists; requesting seed 43 with require_seed=True
+    # must raise instead of silently falling back to a different seed (the
+    # multi-seed protocol never mixes seeds between stages).
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
+
+    with pytest.raises(FileNotFoundError, match="seed 43"):
+        find_latest_checkpoint(
+            "bc", stage=1, base=tmp_path, resolve_alias=False,
+            seed=43, require_seed=True,
+        )
 
 
 def test_scan_checkpoints_reports_seed(tmp_path: Path) -> None:

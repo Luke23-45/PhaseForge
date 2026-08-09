@@ -8,7 +8,9 @@ train/eval routing split, and Stage 1 checkpoint-source aliases.
 
 from __future__ import annotations
 
+import pytest
 import torch
+import torch.nn as nn
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
 
@@ -22,9 +24,14 @@ from phaseforge.models.baselines.plain_encoder_phase_bootstrap import (
 from phaseforge.models.baselines.scratch_moe import ScratchMoEModel
 from phaseforge.models.baselines.teacher_forced import TeacherForcedMoEModel
 from phaseforge.models.components.encoder import StateEncoder
-from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.expert import (
+    ExpertMLP,
+    warm_start_experts_from_action_head,
+)
+from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.router import TopKRouter
+from phaseforge.models.phase_moe import PhaseBootstrappedMoE
 from phaseforge.utils.config import resolve_checkpoint_source
 from phaseforge.utils.registry import build_model
 
@@ -208,6 +215,7 @@ def test_phase_pretrain_random_router_keeps_random_router() -> None:
 
     router_before = model.moe_layer.router.gate_linear.weight.data.clone()
 
+    torch.manual_seed(1234)
     model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
 
     # Router must be untouched: the ONLY difference vs phaseforge is the
@@ -216,9 +224,16 @@ def test_phase_pretrain_random_router_keeps_random_router() -> None:
     assert torch.allclose(model.moe_layer.router.gate_linear.weight.data, router_before)
 
     # Experts must be warm-started from the action head (mapping check).
+    # The bootstrap adds a small symmetry-breaking jitter (std 0.02), so the
+    # copy matches within tolerance rather than bit-for-bit.
     expert0 = model.moe_layer.experts[0]
-    assert torch.allclose(expert0.hidden[0].weight, action_head.trunk[0].weight)
-    assert torch.allclose(expert0.output_proj.weight, action_head.mean_head.weight)
+    assert torch.allclose(expert0.hidden[0].weight, action_head.trunk[0].weight, atol=0.1)
+    assert torch.allclose(expert0.output_proj.weight, action_head.mean_head.weight, atol=0.1)
+    # ...but the jitter must break the bit-identical symmetry between experts.
+    assert not torch.allclose(
+        model.moe_layer.experts[0].output_proj.weight,
+        model.moe_layer.experts[1].output_proj.weight,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +263,7 @@ def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
     expected = phase_sums / phase_counts.unsqueeze(1)
     expected = torch.nn.functional.normalize(expected, p=2, dim=-1)
 
+    torch.manual_seed(1234)
     model.bootstrap_moe(dataloader=dataloader, device="cpu")
 
     assert model.stage == 2
@@ -257,9 +273,17 @@ def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
         model.moe_layer.router.gate_linear.bias.data, torch.zeros(4), atol=1e-6
     )
 
-    # Experts warm-started from the action head.
+    # Experts warm-started from the action head (within the symmetry-breaking
+    # jitter tolerance; same reasoning as the random-router test above).
     assert torch.allclose(
-        model.moe_layer.experts[0].hidden[0].weight, action_head.trunk[0].weight
+        model.moe_layer.experts[0].hidden[0].weight,
+        action_head.trunk[0].weight,
+        atol=0.1,
+    )
+    assert torch.allclose(
+        model.moe_layer.experts[0].output_proj.weight,
+        action_head.mean_head.weight,
+        atol=0.1,
     )
 
 
@@ -333,3 +357,150 @@ def test_teacher_forced_freezes_stage1_bundle() -> None:
     assert all(not p.requires_grad for p in model.phase_head.parameters())
     # Experts still trainable.
     assert any(p.requires_grad for p in model.moe_layer.experts[0].parameters())
+
+
+# ---------------------------------------------------------------------------
+# Warm start & bootstrap hardening
+# ---------------------------------------------------------------------------
+
+
+def test_warm_start_exact_copy_when_jitter_disabled() -> None:
+    _, action_head, _, _, _ = _make_components()
+    expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
+    warm_start_experts_from_action_head(
+        nn.ModuleList([expert]), action_head, jitter_std=0.0
+    )
+    assert torch.equal(expert.hidden[0].weight, action_head.trunk[0].weight)
+    assert torch.equal(expert.output_proj.weight, action_head.mean_head.weight)
+
+
+def test_warm_start_rejects_architecture_mismatch() -> None:
+    _, action_head, _, _, _ = _make_components()
+    # A two-hidden-layer expert cannot be filled by the single-hidden-layer
+    # ActionHead: the warm start must fail loudly, not copy partially.
+    deep_expert = ExpertMLP(input_dim=32, hidden_dims=[64, 64], output_dim=7)
+    with pytest.raises(ValueError, match="cannot fill"):
+        warm_start_experts_from_action_head(
+            nn.ModuleList([deep_expert]), action_head
+        )
+
+
+def test_warm_start_rejects_negative_jitter() -> None:
+    _, action_head, _, _, _ = _make_components()
+    expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
+    with pytest.raises(ValueError, match="jitter_std"):
+        warm_start_experts_from_action_head(
+            nn.ModuleList([expert]), action_head, jitter_std=-0.1
+        )
+
+
+def test_warm_started_experts_are_independent_copies() -> None:
+    encoder, action_head, router, expert, _ = _make_components()
+    model = PhasePretrainRandomRouterModel(
+        encoder=encoder, action_head=action_head, router=router, expert=expert
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+
+    before = model.moe_layer.experts[1].output_proj.weight.detach().clone()
+    with torch.no_grad():
+        model.moe_layer.experts[0].output_proj.weight.mul_(0.0)
+    # Clones share no storage: perturbing expert 0 must leave expert 1 intact.
+    assert torch.allclose(model.moe_layer.experts[1].output_proj.weight, before)
+
+
+def test_moe_layer_clones_have_independent_storage() -> None:
+    router = TopKRouter(latent_dim=32, num_experts=4, top_k=2)
+    expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
+    layer = MoELayer(router=router, experts=expert)
+    assert len(layer.experts) == 4
+    template_ptr = expert.hidden[0].weight.data_ptr()
+    for clone in layer.experts:
+        assert clone is not expert
+        # Re-initialized deepcopy: separate storage from the template.
+        assert clone.hidden[0].weight.data_ptr() != template_ptr
+
+
+def test_plain_bootstrap_rejects_absent_phase() -> None:
+    encoder, action_head, router, expert, _ = _make_components()
+    model = PlainEncoderPhaseBootstrapModel(
+        encoder=encoder, action_head=action_head, router=router, expert=expert,
+        num_phases=3,
+    )
+    # Restrict the phases to {0, 1}: phase 2 never appears.
+    dataset = _DictDataset(num=64, seed=1)
+    dataset.phases.clamp_(max=1)
+    dataloader = DataLoader(dataset, batch_size=16)
+    with pytest.raises(ValueError, match="zero samples"):
+        model.bootstrap_moe(dataloader=dataloader, device="cpu")
+    # The bootstrap aborted before the stage transition.
+    assert model.stage == 1
+
+
+def test_bootstrap_freezes_unused_stage1_heads() -> None:
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder, action_head=action_head, phase_head=phase_head,
+        router=router, expert=expert,
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model.stage == 2
+    assert all(not p.requires_grad for p in model.action_head.parameters())
+    assert all(not p.requires_grad for p in model.phase_head.parameters())
+    # Experts remain trainable for Stage 2.
+    assert any(p.requires_grad for p in model.moe_layer.experts[0].parameters())
+
+
+def test_frozen_encoder_stays_in_eval_after_train() -> None:
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder, action_head=action_head, phase_head=phase_head,
+        router=router, expert=expert,
+    )
+    model.freeze_encoder()
+    assert all(not p.requires_grad for p in model.encoder.parameters())
+    assert not encoder.training
+    model.train()
+    # The override keeps the frozen encoder deterministic (dropout off) even
+    # though the rest of the model is in training mode.
+    assert model.training
+    assert not encoder.training
+
+
+def test_oracle_requires_phase_labels() -> None:
+    encoder, _, router, expert, _ = _make_components()
+    model = OraclePhaseMoEModel(
+        encoder=encoder, router=router, expert=expert, num_phases=3
+    )
+    with pytest.raises(RuntimeError, match="requires ground-truth"):
+        model({"state": torch.randn(4, 151)})
+
+
+def test_router_rejects_invalid_configs() -> None:
+    with pytest.raises(ValueError, match="positive int"):
+        TopKRouter(latent_dim=32, num_experts=0, top_k=1)
+    with pytest.raises(ValueError, match="positive int"):
+        TopKRouter(latent_dim=32, num_experts=4, top_k=0)
+    with pytest.raises(ValueError, match="cannot exceed"):
+        TopKRouter(latent_dim=32, num_experts=4, top_k=5)
+    with pytest.raises(ValueError, match="noise_std"):
+        TopKRouter(latent_dim=32, num_experts=4, noise_std=-0.1)
+    with pytest.raises(ValueError, match="balance_coeff"):
+        TopKRouter(latent_dim=32, num_experts=4, balance_coeff=-1.0)
+
+
+def test_router_normalize_input_produces_cosine_logits() -> None:
+    torch.manual_seed(0)
+    x = torch.randn(8, 32)
+    centroids = torch.nn.functional.normalize(torch.randn(4, 32), dim=-1)
+    router = TopKRouter(
+        latent_dim=32, num_experts=4, top_k=2, noise_std=0.0,
+        normalize_input=True,
+    )
+    router.gate_linear.weight.data.copy_(centroids)
+    router.gate_linear.bias.data.zero_()
+    router.eval()
+
+    out = router(x)
+    # Unit-norm latents x unit-norm centroid weights => true cosine logits.
+    expected = torch.nn.functional.normalize(x, dim=-1) @ centroids.T
+    assert torch.allclose(out.gate_logits, expected, atol=1e-6)

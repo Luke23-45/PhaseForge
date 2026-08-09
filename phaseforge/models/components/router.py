@@ -31,10 +31,17 @@ class TopKRouter(nn.Module):
     Args:
         latent_dim: Dimension of the input latent vector.
         num_experts: Total number of experts (E) to route to.
-        top_k: Number of experts to select per input (K).
+        top_k: Number of experts to select per input (K). Must be in
+            ``[1, num_experts]``.
         noise_std: Standard deviation of the routing noise added during training.
             If 0.0, routing is purely deterministic.
         balance_coeff: Multiplier for the auxiliary balance loss.
+        normalize_input: If ``True``, L2-normalize the latent vector before
+            the gate projection. Combined with unit-norm centroids loaded
+            into ``gate_linear.weight`` (see the bootstrap), the gate logits
+            become true cosine similarities between the latent and each
+            centroid — the ``phaseforge`` / ``plain_encoder_phase_bootstrap``
+            cells. ``False`` keeps raw dot products.
     """
 
     def __init__(
@@ -44,13 +51,31 @@ class TopKRouter(nn.Module):
         top_k: int = 2,
         noise_std: float = 0.1,
         balance_coeff: float = 0.01,
+        normalize_input: bool = False,
     ) -> None:
         super().__init__()
+        if not isinstance(latent_dim, int) or latent_dim < 1:
+            raise ValueError(f"latent_dim must be a positive int, got {latent_dim!r}")
+        if not isinstance(num_experts, int) or num_experts < 1:
+            raise ValueError(f"num_experts must be a positive int, got {num_experts!r}")
+        if not isinstance(top_k, int) or top_k < 1:
+            raise ValueError(f"top_k must be a positive int, got {top_k!r}")
+        if top_k > num_experts:
+            raise ValueError(
+                f"top_k ({top_k}) cannot exceed num_experts ({num_experts}). "
+                "The config routes to more experts than exist."
+            )
+        if noise_std < 0.0:
+            raise ValueError(f"noise_std must be >= 0.0, got {noise_std}")
+        if balance_coeff < 0.0:
+            raise ValueError(f"balance_coeff must be >= 0.0, got {balance_coeff}")
+
         self.latent_dim = latent_dim
         self.num_experts = num_experts
-        self.top_k = min(top_k, num_experts)
+        self.top_k = top_k
         self.noise_std = noise_std
         self.balance_coeff = balance_coeff
+        self.normalize_input = bool(normalize_input)
 
         self.gate_linear = nn.Linear(latent_dim, num_experts)
         
@@ -85,6 +110,10 @@ class TopKRouter(nn.Module):
             RouterOutput containing weights, indices, logits, and balance loss.
         """
         # (B, E) raw gating logits
+        if self.normalize_input:
+            # Unit-norm latents + unit-norm centroid weights (set by the
+            # bootstrap) => gate logits are true cosine similarities.
+            latent = F.normalize(latent, p=2, dim=-1)
         gate_logits = self.gate_linear(latent)
 
         # Add exploration noise during training
@@ -124,7 +153,18 @@ class TopKRouter(nn.Module):
         L_balance = E * sum(f_i * p_i) for i in 1..E
         where f_i is the fraction of items routed to expert i (based on top-1)
         and p_i is the mean routing probability for expert i.
-        
+
+        .. note:: Routing semantics — this loss is computed on the *top-1*
+            hard assignment (``argmax`` of the gate logits, as in Switch
+            Transformer), while the utilization diagnostics reported during
+            validation/offline evaluation count *all* top-k assignments
+            (see ``expert_utilization``). This is intentional: the loss
+            penalizes the primary-choice imbalance that drives dead experts,
+            whereas the reported metrics measure full dispatch load. The
+            balance score therefore does NOT measure exactly what the
+            optimization loss minimizes — interpret them side by side, not
+            interchangeably.
+
         Args:
             routing_probs: (B, E) softmax probabilities
             gate_logits: (B, E) raw logits before softmax

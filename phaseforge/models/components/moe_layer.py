@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import torch
 import torch.nn as nn
@@ -45,14 +45,25 @@ class MoELayer(nn.Module):
         
         # Handle expert instantiation
         if isinstance(experts, nn.ModuleList):
-            self.experts = experts
+            self.experts: nn.ModuleList[ExpertMLP] = experts  # type: ignore[type-arg]
         elif isinstance(experts, list):
             self.experts = nn.ModuleList(experts)
         elif isinstance(experts, ExpertMLP):
-            # Clone the single expert template E times
+            # Clone the single expert template E times.
             self.experts = nn.ModuleList([
                 copy.deepcopy(experts) for _ in range(router.num_experts)
             ])
+            # Re-initialize every clone independently: bit-identical clones
+            # make the combined output invariant to the router's weights
+            # (top-k weights sum to 1), so the router would receive no
+            # action-based specialization signal at initialization.
+            for expert in self.experts:
+                if not isinstance(expert, ExpertMLP):
+                    raise TypeError(
+                        f"All experts must be ExpertMLP instances, "
+                        f"got {type(expert).__name__}"
+                    )
+                expert.reset_parameters()
         else:
             raise TypeError("experts must be an ExpertMLP, list[ExpertMLP], or nn.ModuleList")
 
@@ -71,6 +82,13 @@ class MoELayer(nn.Module):
         Returns:
             MoEOutput containing the combined predictions and routing metadata.
         """
+        if latent.ndim != 2:
+            raise ValueError(
+                f"MoELayer expects 2D latents of shape (B, latent_dim), got "
+                f"{tuple(latent.shape)}. Sequence-aware training "
+                "(sequence_length > 1) is not implemented — the data pipeline "
+                "rejects it; keep data.sequence_length=1."
+            )
         B, D = latent.shape
 
         # 1. Route inputs
@@ -79,7 +97,7 @@ class MoELayer(nn.Module):
         indices = router_out.indices    # (B, K)
 
         # Retrieve the output dimension from the first expert to preallocate
-        out_dim = self.experts[0].output_dim
+        out_dim = cast(ExpertMLP, self.experts[0]).output_dim
         
         # Final combined output tensor: (B, out_dim)
         combined_output = torch.zeros(
