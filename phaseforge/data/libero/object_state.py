@@ -65,6 +65,15 @@ JOINT_FIXED = "fixed"  # static pose; no qpos entry
 
 _JOINT_TYPES = (JOINT_FREE, JOINT_HINGE, JOINT_SLIDE, JOINT_FIXED)
 
+#: Suffix the LIBERO mirror appends to every task file (``foo_demo.hdf5``).
+#: Verified: 100% of files in both libero_90/ and libero_10/ end with this
+#: (see the download script's manifest). The canonical task name used as
+#: the ObjectIndex key is the benchmark name — the stem WITHOUT this
+#: suffix — because the ingest side consumes HDF5 stems while the eval
+#: side consumes benchmark task names; the chokepoint in :meth:`table`
+#: accepts both forms.
+DEMO_SUFFIX = "_demo"
+
 
 # ---------------------------------------------------------------------------
 # Quaternion helpers (w-first, MuJoCo convention)
@@ -113,6 +122,17 @@ def rotate_vec_by_quat(v: np.ndarray, q: np.ndarray) -> np.ndarray:
     return v + 2.0 * (s * cross + np.cross(u, cross))
 
 
+def _canonical_task_name(task_name: str) -> str:
+    """Strip the mirror's ``_demo`` filename suffix when present.
+
+    Idempotent: benchmark task names never end in ``_demo``, so canonical
+    queries pass through unchanged.
+    """
+    if task_name.endswith(DEMO_SUFFIX):
+        return task_name[: -len(DEMO_SUFFIX)]
+    return task_name
+
+
 def _normalize_quat(q: np.ndarray) -> np.ndarray:
     return q / np.linalg.norm(q, axis=-1, keepdims=True)
 
@@ -157,7 +177,9 @@ class TaskObjectTable:
     """Decode table for one task.
 
     Attributes:
-        task_name:  HDF5 filename stem, e.g. ``"KITCHEN_SCENE1_open_drawer_demo"``.
+        task_name:  Canonical task name — the benchmark name, i.e. the
+                    HDF5 filename stem minus the ``_demo`` suffix (e.g.
+                    ``"KITCHEN_SCENE1_open_drawer"``).
         nq:         Number of ``qpos`` entries in the task's ``states``
                     array (the qpos half length; qvel half = total - nq).
         objects:    Object entries in fixed slot order (names sorted);
@@ -380,9 +402,16 @@ class ObjectIndex:
     # ------------------------------------------------------------------
 
     def table(self, task_name: str) -> TaskObjectTable:
-        """Return the decode table for a task, raising a helpful error."""
+        """Return the decode table for a task, raising a helpful error.
+
+        Accepts either the canonical task name or the HDF5 filename stem
+        (with the ``_demo`` suffix) — both forms appear in the codebase
+        (the ingest side keys by stem, the eval side by benchmark name),
+        and this chokepoint canonicalizes them so the two can never miss.
+        """
+        key = _canonical_task_name(task_name)
         try:
-            return self.tasks[task_name]
+            return self.tasks[key]
         except KeyError as exc:
             known = sorted(self.tasks)[:5]
             raise KeyError(
@@ -412,7 +441,8 @@ class ObjectIndex:
         """Decode the object-state block from a task's ``states`` array.
 
         Args:
-            task_name: HDF5 filename stem of the task.
+            task_name: Canonical task name (benchmark name; the ``_demo``
+                       filename suffix is stripped automatically).
             states:    ``(T, S)`` array — the demo's ``states`` dataset
                        (flattened sim state: ``qpos`` then ``qvel``).
 

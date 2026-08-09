@@ -395,7 +395,12 @@ def build_index(
             f"b6_steps_per_demo must be >= 1, got {b6_steps_per_demo}"
         )
 
-    from phaseforge.data.libero.object_state import ObjectEntry, ObjectIndex, TaskObjectTable
+    from phaseforge.data.libero.object_state import (
+        DEMO_SUFFIX,
+        ObjectEntry,
+        ObjectIndex,
+        TaskObjectTable,
+    )
     from phaseforge.data.paths import libero_object_index_path
 
     if out_path is None:
@@ -417,7 +422,12 @@ def build_index(
         logger.info("Suite %s: %d task file(s)", suite, len(hdf5_files))
 
         for path in hdf5_files:
-            task_name = path.stem
+            # The mirror filenames carry the ``_demo`` suffix, but the
+            # benchmark task names (and the eval env's lookups) do not.
+            # Strip it so both the benchmark resolution and the stored
+            # ObjectIndex keys use the canonical name (object_state.py
+            # accepts both forms defensively).
+            task_name = path.stem.removesuffix(DEMO_SUFFIX)
             with h5py.File(path, "r") as f:
                 demos = sorted(f["data"].keys())
                 if not demos:

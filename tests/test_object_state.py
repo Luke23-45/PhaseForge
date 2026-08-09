@@ -125,6 +125,31 @@ def test_decode_rejects_objects_exceeding_k_slots() -> None:
         index.decode("TASK_A", make_states())
 
 
+def test_lookup_accepts_both_demo_suffixed_stem_and_canonical_name() -> None:
+    """The ingest side queries by HDF5 stem (``..._demo``) and the eval
+    side by the benchmark task name — both must resolve the same table
+    (the census ``_demo`` suffix fix)."""
+    index = make_index()
+    assert index.object_names("TASK_A") == ["cube_0", "cube_1"]
+    assert index.object_names("TASK_A_demo") == ["cube_0", "cube_1"]
+    assert index.table("TASK_A_demo") is index.table("TASK_A")
+
+    states = make_states()
+    canonical_block, canonical_mask = index.decode("TASK_A", states)
+    suffixed_block, suffixed_mask = index.decode("TASK_A_demo", states)
+    assert np.array_equal(canonical_block, suffixed_block)
+    assert np.array_equal(canonical_mask, suffixed_mask)
+
+    with pytest.raises(KeyError, match="TASK_B"):
+        index.table("TASK_B_demo")
+
+
+def test_lookup_rejects_unknown_task_with_helpful_error() -> None:
+    index = make_index()
+    with pytest.raises(KeyError, match="must be rebuilt"):
+        index.table("MISSING_TASK")
+
+
 def test_decode_rejects_states_narrower_than_nq() -> None:
     index = make_index()
     with pytest.raises(ValueError, match="nq"):

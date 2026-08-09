@@ -63,7 +63,7 @@ def test_b6_gate_accepts_multiple_demos_and_timesteps() -> None:
 
     error = _run_b6_gate(
         env,
-        "TASK_A_demo",
+        "TASK_A",  # canonical name (census strips the ``_demo`` stem suffix)
         [_entry()],
         [states, second],
         max_demos=2,
@@ -85,7 +85,7 @@ def test_b6_gate_rejects_non_unit_quaternion() -> None:
     with pytest.raises(ValueError, match="quaternion.*norm"):
         _run_b6_gate(
             env,
-            "TASK_A_demo",
+            "TASK_A",
             [_entry()],
             [states],
             max_demos=1,
