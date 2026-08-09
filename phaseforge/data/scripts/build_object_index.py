@@ -113,6 +113,33 @@ def _model_arrays(env) -> dict[str, np.ndarray]:
     }
 
 
+def _live_observations(env) -> dict[str, np.ndarray]:
+    """Read the live observation dict across supported LIBERO wrappers.
+
+    LIBERO versions expose the robosuite observation method differently:
+    some put ``_get_observations`` on ``OffScreenRenderEnv`` itself, while
+    others keep it on the wrapped robosuite environment at ``._env`` (and
+    older builds used ``.env``). The census must use the same live
+    observation source in both the object census and B6 parity gate.
+    """
+    candidates = [env, getattr(env, "_env", None), getattr(env, "env", None)]
+    for candidate in candidates:
+        getter = getattr(candidate, "_get_observations", None)
+        if callable(getter):
+            observations = getter()
+            if not isinstance(observations, dict):
+                raise TypeError(
+                    f"{type(candidate).__name__}._get_observations() returned "
+                    f"{type(observations).__name__}, expected dict"
+                )
+            return observations
+    raise AttributeError(
+        "Could not locate _get_observations() on OffScreenRenderEnv or its "
+        "wrapped environment (._env/.env). Check the installed LIBERO/"
+        "robosuite version and wrapper structure."
+    )
+
+
 def _resolve_body_id(m: dict, name: str) -> int | None:
     """Find the MuJoCo body id for an object name, defensively."""
     names = m["body_names"]
@@ -157,7 +184,7 @@ def _object_entries_from_env(env, task_name: str, states: np.ndarray) -> list[di
             task_name, width, nq + nv, width - (nq + nv),
         )
 
-    obs = env._get_observations()
+    obs = _live_observations(env)
     object_names = sorted(
         {
             key[: -len(_POS_SUFFIX)]
@@ -288,7 +315,7 @@ def _run_b6_gate(
         )
         for t in steps:
             env.set_init_state(states[t])
-            live_obs = env._get_observations()
+            live_obs = _live_observations(env)
             # Materialize the sequence before passing it to NumPy.  Recent
             # NumPy versions reject a generator as the first argument to
             # concatenate (and this gate must fail on a real mismatch, not

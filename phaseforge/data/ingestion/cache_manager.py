@@ -124,12 +124,26 @@ class CacheManager:
                 )
 
                 suite_dir = libero_suite_dir(str(suite))
+                manifest_path = libero_manifest_path()
+                download_manifest: dict[str, Any] | None = None
+                if manifest_path.exists():
+                    try:
+                        download_manifest = json.loads(
+                            manifest_path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        logger.warning(
+                            "Could not read dataset manifest %s while computing "
+                            "the cache identity.",
+                            manifest_path,
+                        )
                 if not suite_dir.exists():
                     logger.warning(
                         "Raw suite dir %s not found while computing the "
                         "cache identity — the cache key will not include "
-                        "the raw dataset. If the data exists elsewhere, "
-                        "set PHASEFORGE_DATA_DIR.",
+                        "the raw dataset unless MANIFEST.json contains its "
+                        "file inventory. If the data exists elsewhere, set "
+                        "PHASEFORGE_DATA_DIR.",
                         suite_dir,
                     )
                 files = sorted(suite_dir.glob("*.hdf5"))
@@ -138,23 +152,28 @@ class CacheManager:
                     for p in files
                 ]
 
-                try:
-                    manifest_path = libero_manifest_path()
-                    if manifest_path.exists():
-                        manifest = json.loads(
-                            manifest_path.read_text(encoding="utf-8")
+                if download_manifest is not None:
+                    commit = download_manifest.get("commit_sha")
+                    if commit:
+                        ctx["dataset_commit"] = str(commit)
+
+                    # Cache transfers intentionally omit the raw HDF5 files.
+                    # Reconstruct the same cheap identity used when those
+                    # files were present from MANIFEST.json's file inventory.
+                    if not files:
+                        suite_meta = (download_manifest.get("suites") or {}).get(
+                            str(suite), {}
                         )
-                        commit = manifest.get("commit_sha")
-                        if commit:
-                            ctx["dataset_commit"] = str(commit)
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "Could not read the LIBERO download manifest while "
-                        "computing the cache identity — falling back to "
-                        "per-file mtimes (the cache will NOT be portable "
-                        "across machines in this state).",
-                        exc_info=True,
-                    )
+                        manifest_files = suite_meta.get("files") or []
+                        if manifest_files:
+                            ctx["raw_files"] = [
+                                {
+                                    "name": str(entry["name"]),
+                                    "size": int(entry["size_bytes"]),
+                                }
+                                for entry in manifest_files
+                                if "name" in entry and "size_bytes" in entry
+                            ]
                 if "dataset_commit" not in ctx:
                     # No manifest: keep the mtime-based fingerprint as the
                     # same-machine identity (the download script always
