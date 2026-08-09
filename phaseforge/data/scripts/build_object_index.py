@@ -8,12 +8,13 @@ Run ONCE on the machine that has the LIBERO mirror AND the ``libero`` /
 What it does
 ------------
 For every task HDF5 file the script:
-  1. Reads the demo ``states`` array and verifies its width is at least
-     the task's MuJoCo ``nq + nv`` (the flattened-sim-state convention;
-     LIBERO issues #26/#71). The mirror may append extra trailing dims
-     (observed nq+nv+1 in KITCHEN scenes) — the qpos block (first ``nq``
-     columns) is what the decode reads, and the B6 gate verifies it
-     against live observations.
+  1. Reads the demo ``states`` array and derives the candidate qpos-block
+     offsets from its width. Robosuite's flattened sim state is
+     ``[time, qpos, qvel]`` — the LEADING simulation-time scalar plus the
+     ``nq`` qpos dims and ``nv`` qvel dims, ``1 + nq + nv`` columns total
+     (LIBERO issues #26/#71). Mirrors recorded without the time scalar
+     store ``[qpos, qvel]`` (``nq + nv`` columns). Any other width is
+     fatal — the census never guesses the layout.
   2. Loads the task's real environment, reads the LIVE observation dict,
      and derives the object set from the ``{name}_pos`` / ``{name}_quat``
      keys (the BDDL-defined observation list — exactly what the eval side
@@ -27,8 +28,11 @@ For every task HDF5 file the script:
      the LIVE robosuite observations at that exact sim state, and verifies
      every decoded quaternion is normalized. Any mismatch beyond float
      rounding fails the task (and the census), because it would silently
-     corrupt every ingested trajectory. Coverage is tunable with
-     ``--b6-max-demos`` (default 3) and ``--b6-steps-per-demo`` (default 7).
+     corrupt every ingested trajectory. The gate runs once per candidate
+     qpos offset; the offset whose decode matches live FK wins — on real
+     LIBERO mirrors that is the time-first layout (offset 1). Coverage is
+     tunable with ``--b6-max-demos`` (default 3) and
+     ``--b6-steps-per-demo`` (default 7).
 
 Output
 ------
@@ -89,6 +93,42 @@ def _normalize(v: np.ndarray) -> np.ndarray:
     if n < 1e-12:
         raise ValueError(f"cannot normalize near-zero vector {v}")
     return v / n
+
+
+# ---------------------------------------------------------------------------
+# Flattened-sim-state layout (qpos block offset)
+# ---------------------------------------------------------------------------
+
+
+def _infer_offset_candidates(width: int, nq: int, nv: int) -> tuple[int, ...]:
+    """Candidate qpos-block offsets for a given ``states`` width.
+
+    Robosuite's flattened sim state is ``sim.get_state().flatten()`` =
+    ``[time, qpos, qvel]``: a LEADING simulation-time scalar, then the
+    ``nq`` qpos dims, then the ``nv`` qvel dims (``1 + nq + nv`` total).
+    Mirrors recorded without the time scalar store ``[qpos, qvel]``
+    (``nq + nv`` total).
+
+    For the ``nq + nv`` width the only candidate is offset 0; for the
+    canonical ``1 + nq + nv`` width both 0 and 1 are returned and the B6
+    gate arbitrates (on real mirrors the time-first layout wins). Any
+    other width is not a flattened sim state — the census fails rather
+    than guess the layout.
+    """
+    if width == nq + nv:
+        return (0,)
+    if width == nq + nv + 1:
+        return (0, 1)
+    if width < nq + nv:
+        raise ValueError(
+            f"states width {width} < nq({nq}) + nv({nv}) — the 'states' key "
+            "is not the flattened sim state for this mirror revision."
+        )
+    raise ValueError(
+        f"states width {width} is neither nq+nv ({nq + nv}) nor "
+        f"nq+nv+1 ({nq + nv + 1}) — unknown flattened-state layout; "
+        "refusing to guess the qpos block offset."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -167,34 +207,13 @@ def _is_relative_object_observable(name: str) -> bool:
     return "_to_robot" in name
 
 
-def _object_entries_from_env(env, task_name: str, states: np.ndarray) -> list[dict]:
+def _object_entries_from_env(env, task_name: str) -> list[dict]:
     """Build the ObjectEntry dicts for a task from its LIVE obs + model.
 
     Returns the list of entry dicts. Raises ValueError with a clear message
     if an object cannot be resolved (the census must be all-or-nothing).
     """
     m = _model_arrays(env)
-    nq, nv = m["nq"], m["nv"]
-    width = states.shape[-1]
-    # The mirror's ``states`` can carry extra trailing dims beyond the
-    # flattened sim state (qpos + qvel) — observed nq+nv+1 in the KITCHEN
-    # scenes. The decode only ever reads the first ``nq`` columns (the
-    # qpos block), and the B6 gate validates that assumption against live
-    # robosuite observations, so trailing extras are safe. A width BELOW
-    # nq+nv cannot be the flattened sim state and is fatal.
-    if width < nq + nv:
-        raise ValueError(
-            f"{task_name}: states width {width} < nq({nq}) + nv({nv}) — "
-            f"the 'states' key is not the flattened sim state for this "
-            f"mirror revision."
-        )
-    if width != nq + nv:
-        logger.info(
-            "  %s: states width %d vs nq+nv=%d (%d extra trailing dim(s)); "
-            "the qpos block is still validated by the B6 gate",
-            task_name, width, nq + nv, width - (nq + nv),
-        )
-
     obs = _live_observations(env)
     object_names = sorted(
         {
@@ -278,6 +297,7 @@ def _run_b6_gate(
     task_name: str,
     table_entries: list[dict],
     demo_states: list[np.ndarray],
+    qpos_offset: int = 0,
     max_demos: int = 3,
     steps_per_demo: int = 7,
 ) -> float:
@@ -288,6 +308,12 @@ def _run_b6_gate(
     t=T-1). Also verifies every decoded quaternion is normalized, because
     the free-joint decoder copies the stored qpos quaternion verbatim and
     would silently propagate a non-unit quaternion otherwise.
+
+    ``qpos_offset`` is the column where the qpos block starts in the
+    stored states (1 for the time-first LIBERO layout, 0 otherwise); the
+    live observations always reflect the TRUE physics, so the gate fails
+    any candidate offset whose decode does not match — this is what
+    arbitrates the per-task layout.
 
     Returns the max absolute error across all (demo, timestep) checks.
     Raises ValueError on any mismatch beyond float rounding.
@@ -309,6 +335,7 @@ def _run_b6_gate(
     table = TaskObjectTable(
         task_name=task_name,
         nq=env.sim.model.nq,
+        qpos_offset=qpos_offset,
         objects=[ObjectEntry(**e) for e in table_entries],
     )
     if not table.objects:
@@ -359,11 +386,22 @@ def _run_b6_gate(
             max_err = max(max_err, err)
             n_checks += 1
             if err > 1e-4:
+                diff = np.abs(
+                    decoded[0].reshape(-1, POS_QUAT_DIM)
+                    - reference.reshape(-1, POS_QUAT_DIM)
+                )
+                worst_obj = int(np.argmax(np.max(diff, axis=1)))
+                worst_comp = int(np.argmax(diff[worst_obj]))
+                comp_name = "pos" if worst_comp < 3 else "quat"
                 raise ValueError(
                     f"B6 gate FAILED for {task_name} (demo {demo_idx}, "
-                    f"t={t}): max |decode - live obs| = {err:.3e} (> 1e-4). "
-                    "The decode is NOT identical to robosuite FK for this "
-                    "task; do not ingest."
+                    f"t={t}, qpos_offset={qpos_offset}): "
+                    f"max |decode - live obs| = {err:.3e} (> 1e-4); worst "
+                    f"object {table_entries[worst_obj]['name']!r}, "
+                    f"{comp_name} component (error "
+                    f"{float(np.max(diff[worst_obj])):.3e}). The decode is "
+                    "NOT identical to robosuite FK for this task; do not "
+                    "ingest."
                 )
             # Quaternion normalization check: free-joint decode copies the
             # stored qpos quaternion verbatim, so a non-unit stored quat
@@ -377,16 +415,83 @@ def _run_b6_gate(
                 if abs(float(np.linalg.norm(quat)) - 1.0) > 1e-4:
                     raise ValueError(
                         f"B6 gate FAILED for {task_name} (demo {demo_idx}, "
-                        f"t={t}): decoded quaternion of {name!r} has norm "
+                        f"t={t}, qpos_offset={qpos_offset}): decoded "
+                        f"quaternion of {name!r} has norm "
                         f"{float(np.linalg.norm(quat)):.6f} (must be 1 within "
                         "1e-4). The stored qpos quaternion is not normalized."
                     )
     logger.info(
-        "  %s: B6 gate OK (%d checks across %d demo(s), "
+        "  %s: B6 gate OK (qpos_offset=%d, %d checks across %d demo(s), "
         "max |decode - live| = %.2e)",
-        task_name, n_checks, min(max_demos, len(demo_states)), max_err,
+        task_name, qpos_offset, n_checks, min(max_demos, len(demo_states)),
+        max_err,
     )
     return max_err
+
+
+def _select_qpos_offset(
+    env,
+    task_name: str,
+    table_entries: list[dict],
+    demo_states: list[np.ndarray],
+    candidates: tuple[int, ...],
+    max_demos: int = 3,
+    steps_per_demo: int = 7,
+) -> tuple[int, float]:
+    """Run the B6 gate per candidate offset; the passing one wins.
+
+    The live observations reflect the TRUE physics, so exactly the offset
+    that aligns the decode with robosuite FK passes (on real mirrors that
+    is the time-first layout, offset 1). When several pass — impossible
+    on real data, only on contrived synthetic inputs — the canonical
+    time-first candidate is preferred with a warning. When none pass, the
+    per-candidate errors are aggregated into a single loud failure.
+
+    Returns ``(qpos_offset, max_err)`` of the winning candidate.
+    """
+    if not candidates:
+        raise ValueError(f"{task_name}: no qpos-offset candidates to test")
+    results: list[tuple[int, float | None, Exception | None]] = []
+    for offset in candidates:
+        try:
+            err = _run_b6_gate(
+                env,
+                task_name,
+                table_entries,
+                demo_states,
+                qpos_offset=offset,
+                max_demos=max_demos,
+                steps_per_demo=steps_per_demo,
+            )
+            results.append((offset, err, None))
+        except ValueError as exc:
+            results.append((offset, None, exc))
+
+    passing = [r for r in results if r[1] is not None]
+    if len(passing) == 1:
+        offset, err, _ = passing[0]
+        return offset, err
+    if len(passing) > 1:
+        # Contrived synthetic data only: prefer the canonical time-first
+        # offset (the last candidate, i.e. 1 for the nq+nv+1 width).
+        offset = passing[-1][0]
+        logger.warning(
+            "  %s: multiple qpos offsets passed the B6 gate (%s); using the "
+            "canonical time-first offset %d",
+            task_name, [o for o, _, _ in passing], offset,
+        )
+        return offset, passing[-1][1]
+
+    details = "\n".join(
+        f"    offset {o}: {exc}"
+        for o, _err, exc in results
+        if exc is not None
+    )
+    raise ValueError(
+        f"{task_name}: B6 gate failed for every candidate qpos offset "
+        f"{candidates} — the numpy decode does not match live robosuite "
+        f"FK for this mirror revision; do not ingest.\n{details}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +610,16 @@ def build_index(
                     f["data"][key]["states"][:] for key in demos[: b6_max_demos]
                 ]
 
+            # Every demo of a task must share one flattened-state layout.
+            widths = {s.shape[-1] for s in demo_states}
+            if len(widths) != 1:
+                raise ValueError(
+                    f"{task_name}: demo states have inconsistent widths "
+                    f"{sorted(widths)} — mixed mirrors cannot share one "
+                    "decode layout."
+                )
+            width = demo_states[0].shape[-1]
+
             env, task = _load_env(suite, task_name)
             if task.name != task_name:
                 raise ValueError(
@@ -513,21 +628,34 @@ def build_index(
                     "task names must agree."
                 )
             try:
-                entries = _object_entries_from_env(env, task_name, demo_states[0])
-                max_err = _run_b6_gate(
+                nq = int(env.sim.model.nq)
+                nv = int(env.sim.model.nv)
+                candidates = _infer_offset_candidates(width, nq, nv)
+                logger.info(
+                    "  %s: states width %d (%s nq=%d, nv=%d); qpos-block "
+                    "offset candidates %s (the B6 gate arbitrates)",
+                    task_name, width, "1 +" if width == nq + nv + 1 else "",
+                    nq, nv, candidates,
+                )
+                entries = _object_entries_from_env(env, task_name)
+                qpos_offset, max_err = _select_qpos_offset(
                     env,
                     task_name,
                     entries,
                     demo_states,
+                    candidates,
                     max_demos=b6_max_demos,
                     steps_per_demo=b6_steps_per_demo,
                 )
-                nq = int(env.sim.model.nq)
             finally:
                 env.close()
 
             nq_values.append(nq)
-            all_tables[task_name] = {"nq": nq, "objects": entries}
+            all_tables[task_name] = {
+                "nq": nq,
+                "qpos_offset": qpos_offset,
+                "objects": entries,
+            }
             b6_errors[task_name] = max_err
 
     k_slots = max((len(t["objects"]) for t in all_tables.values()), default=1)
@@ -536,6 +664,7 @@ def build_index(
             name: TaskObjectTable(
                 task_name=name,
                 nq=t["nq"],
+                qpos_offset=t["qpos_offset"],
                 objects=[ObjectEntry(**e) for e in t["objects"]],
             )
             for name, t in all_tables.items()

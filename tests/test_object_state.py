@@ -114,6 +114,55 @@ def test_decode_include_mask_false_omits_mask_dims() -> None:
     assert index.state_block_size == K_SLOTS * DIM_PER_OBJECT
 
 
+def test_decode_time_first_states_respect_qpos_offset() -> None:
+    """LIBERO mirrors store ``sim.get_state().flatten()`` = ``[time, qpos,
+    qvel]`` (time FIRST). A table with qpos_offset=1 must read the qpos
+    block from columns [1, 1+nq), not [:nq] — the misalignment that broke
+    the B6 gate on the KITCHEN scenes."""
+    table = TaskObjectTable(
+        task_name="TASK_C",
+        nq=NQ,
+        qpos_offset=1,
+        objects=[
+            make_entry("cube_0", qpos_start=9),
+            make_entry("cube_1", qpos_start=16),
+        ],
+    )
+    index = ObjectIndex(
+        tasks={"TASK_C": table},
+        k_slots=K_SLOTS,
+        dim_per_object=DIM_PER_OBJECT,
+        include_mask=True,
+    )
+
+    nv = NQ - 6
+    states = np.zeros((T, 1 + NQ + nv), dtype=np.float32)
+    states[:, 0] = np.arange(T, dtype=np.float32)  # sim time — must be skipped
+    states[:, 1 : 1 + NQ] = make_states()[:, :NQ]  # true qpos block
+
+    block, mask = index.decode("TASK_C", states)
+    np.testing.assert_allclose(block[:, 0:7], states[:, 10:17], rtol=0, atol=0)
+    np.testing.assert_allclose(block[:, 7:14], states[:, 17:24], rtol=0, atol=0)
+    np.testing.assert_allclose(mask[:, :2], np.ones((T, 2)), rtol=0, atol=0)
+    np.testing.assert_allclose(mask[:, 2:], np.zeros((T, 2)), rtol=0, atol=0)
+
+
+def test_json_round_trip_preserves_qpos_offset(tmp_path) -> None:
+    index = make_index()
+    index.tasks["TASK_A"].qpos_offset = 1
+    path = tmp_path / "object_index.json"
+    index.save(path)
+
+    loaded = ObjectIndex.load(path)
+    assert loaded.table("TASK_A").qpos_offset == 1
+    # Decoding time-first states with the loaded table matches the source.
+    nv = NQ - 6
+    states = np.zeros((T, 1 + NQ + nv), dtype=np.float32)
+    states[:, 1 : 1 + NQ] = make_states()[:, :NQ]
+    block, _ = loaded.decode("TASK_A", states)
+    np.testing.assert_allclose(block[:, 0:7], states[:, 10:17], rtol=0, atol=0)
+
+
 def test_state_block_size_respects_include_mask() -> None:
     assert make_index(include_mask=True).state_block_size == 28 + 4
     assert make_index(include_mask=False).state_block_size == 28

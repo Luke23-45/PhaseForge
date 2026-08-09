@@ -37,7 +37,12 @@ KEY_DIMS = {
 
 
 def make_fake_obs() -> dict[str, np.ndarray]:
-    """Observation dict in LIBERO's robosuite naming; values are distinct."""
+    """Observation dict in LIBERO's robosuite naming; values are distinct.
+
+    Object ``{name}_quat`` values are xyzw (the robosuite observable
+    convention); ``_extract_state`` converts them to wxyz (the training
+    state contract), which ``expected_state_vector`` mirrors.
+    """
     obs: dict[str, np.ndarray] = {}
     v = 1.0
     for key, dim in KEY_DIMS.items():
@@ -57,7 +62,12 @@ def expected_state_vector() -> np.ndarray:
     The joint-velocity block (7:14) is ZERO: the eval wrapper derives it
     as a finite difference of joint positions (first frame = 0), which
     matches the ingest-side ``np.diff(..., prepend=first_row)`` at t=0.
+
+    Object quaternions hold the wxyz form of the xyzw fake-observation
+    values (identical to ``_extract_state``'s boundary conversion).
     """
+    from phaseforge.data.libero.object_state import robosuite_quat_to_wxyz
+
     parts = []
     v = 1.0
     for key, dim in KEY_DIMS.items():
@@ -69,9 +79,12 @@ def expected_state_vector() -> np.ndarray:
             v += dim
     # Object block: proprio ends at value 24, so bowl = 24..30, cup = 31..37.
     obj_block = np.zeros(OBJECT_K_SLOTS * OBJECT_DIM, dtype=np.float32)
-    obj_block[: len(OBJECT_NAMES) * OBJECT_DIM] = np.arange(
-        24.0, 24.0 + len(OBJECT_NAMES) * OBJECT_DIM
-    )
+    for i in range(len(OBJECT_NAMES)):
+        start = i * OBJECT_DIM
+        pos = np.arange(24.0 + start, 24.0 + start + 3, dtype=np.float32)
+        quat_xyzw = np.arange(27.0 + start, 27.0 + start + 4, dtype=np.float64)
+        obj_block[start : start + 3] = pos
+        obj_block[start + 3 : start + 7] = robosuite_quat_to_wxyz(quat_xyzw)
     parts.append(obj_block)
     mask = np.zeros(OBJECT_K_SLOTS, dtype=np.float32)
     mask[: len(OBJECT_NAMES)] = 1.0
@@ -184,18 +197,31 @@ def test_joint_velocity_is_finite_difference_matching_ingest() -> None:
 
 
 def test_object_state_appended_with_zero_pad_and_mask() -> None:
-    """Objects go into slot 0..2 (world_bowl=24..30, world_cup=31..37),
-    slots 2..15 are zero-padded, and the mask marks filled slots."""
+    """Objects go into slot 0..2 (world_bowl=24..30, world_cup=31..37 —
+    quats converted xyzw -> wxyz), slots 2..15 are zero-padded, and the
+    mask marks filled slots."""
+    from phaseforge.data.libero.object_state import robosuite_quat_to_wxyz
+
     env = _make_env(FakeRobosuiteEnv())
     state = env._extract_state(make_fake_obs())
     obj_start, obj_end = 23, 23 + OBJECT_K_SLOTS * OBJECT_DIM
     mask_start = obj_end
     assert state.shape == (151,)
     np.testing.assert_allclose(
-        state[obj_start:obj_start + 7], np.arange(24.0, 31.0), rtol=0, atol=0
+        state[obj_start:obj_start + 3],
+        np.arange(24.0, 27.0), rtol=0, atol=0,
     )
     np.testing.assert_allclose(
-        state[obj_start + 7:obj_start + 14], np.arange(31.0, 38.0), rtol=0, atol=0
+        state[obj_start + 3:obj_start + 7],
+        robosuite_quat_to_wxyz(np.arange(27.0, 31.0)), rtol=0, atol=0,
+    )
+    np.testing.assert_allclose(
+        state[obj_start + 7:obj_start + 10],
+        np.arange(31.0, 34.0), rtol=0, atol=0,
+    )
+    np.testing.assert_allclose(
+        state[obj_start + 10:obj_start + 14],
+        robosuite_quat_to_wxyz(np.arange(34.0, 38.0)), rtol=0, atol=0,
     )
     np.testing.assert_allclose(
         state[obj_start + 14:obj_end], np.zeros(14 * 7), rtol=0, atol=0
@@ -273,11 +299,13 @@ def test_train_decode_matches_eval_extract_state() -> None:
 
     for t in (0, 1):
         obs = make_fake_obs()
-        # Robosuite would report exactly these values for the same qpos.
+        # Robosuite would report exactly these values for the same qpos —
+        # object quats as xyzw (the eval wrapper converts them to wxyz).
         for i, name in enumerate(OBJECT_NAMES):
             start = i * OBJECT_DIM
             obs[f"{name}_pos"] = block[t, start : start + 3]
-            obs[f"{name}_quat"] = block[t, start + 3 : start + 7]
+            wxyz = block[t, start + 3 : start + 7]
+            obs[f"{name}_quat"] = np.concatenate((wxyz[1:], wxyz[:1]))
 
         eval_state = env._extract_state(obs)
         train_state = np.concatenate(

@@ -1,13 +1,18 @@
 """Decode per-object world poses from LIBERO HDF5 ``states`` arrays (numpy-only).
 
 The ``states`` dataset at the demo root of every LIBERO HDF5 file is the
-flattened MuJoCo simulation state, ``env.sim.get_state().flatten()``, i.e.
-the concatenation of the model's ``qpos`` (``nq`` dims) and ``qvel`` (``nv``
-dims). The dimension is task-specific (LIBERO issue #26, #71), so every task
-needs its own index table that maps object bodies to their joint's ``qpos``
-slice. Those tables are produced once per mirror revision by
-``scripts/build_object_index.py`` (the patch-0 census) and validated there
-against live robosuite observations (the B6 gate).
+flattened MuJoCo simulation state, ``env.sim.get_state().flatten()``.
+Robosuite defines that flattened state as ``[time, qpos, qvel]`` — a
+LEADING simulation-time scalar, then the model's ``qpos`` (``nq`` dims)
+and ``qvel`` (``nv`` dims), ``1 + nq + nv`` columns total (LIBERO issues
+#26, #71). Mirrors recorded without the time scalar store ``[qpos, qvel]``
+(``nq + nv`` columns). The dimension is task-specific, so every task needs
+its own index table that maps object bodies to their joint's ``qpos``
+slice; ``TaskObjectTable.qpos_offset`` records the column where that qpos
+block starts (1 for the time-first layout, 0 otherwise). Tables are
+produced once per mirror revision by ``scripts/build_object_index.py``
+(the patch-0 census) and validated there against live robosuite
+observations (the B6 gate), which arbitrates the per-task offset.
 
 Why this decode is EXACT (train <-> eval parity, E3)
 ----------------------------------------------------
@@ -197,13 +202,22 @@ class TaskObjectTable:
                     HDF5 filename stem minus the ``_demo`` suffix (e.g.
                     ``"KITCHEN_SCENE1_open_drawer"``).
         nq:         Number of ``qpos`` entries in the task's ``states``
-                    array (the qpos half length; qvel half = total - nq).
+                    array (the qpos block length; qvel block = width -
+                    qpos_offset - nq).
+        qpos_offset: Column index where the qpos block starts in the
+                    ``states`` array. Robosuite's flattened sim state is
+                    ``[time, qpos, qvel]`` with the time scalar FIRST, so
+                    the canonical LIBERO mirror value is 1; mirrors
+                    recorded without the time scalar use 0. The census
+                    infers candidates from the observed width and the B6
+                    gate confirms the winner against live robosuite FK.
         objects:    Object entries in fixed slot order (names sorted);
                     slot index == list index, zero-padded to ``k_slots``.
     """
 
     task_name: str
     nq: int
+    qpos_offset: int = 0
     objects: list[ObjectEntry] = field(default_factory=list)
 
 
@@ -256,6 +270,11 @@ class ObjectIndex:
                 )
             if table.nq <= 0:
                 raise ValueError(f"Task {task_name}: nq must be >= 1, got {table.nq}")
+            if table.qpos_offset < 0:
+                raise ValueError(
+                    f"Task {task_name}: qpos_offset must be >= 0, got "
+                    f"{table.qpos_offset}"
+                )
             seen: set[str] = set()
             for entry in table.objects:
                 if entry.name in seen:
@@ -352,6 +371,7 @@ class ObjectIndex:
             tasks[str(task_name)] = TaskObjectTable(
                 task_name=str(task_name),
                 nq=int(raw_table.get("nq", -1)),
+                qpos_offset=int(raw_table.get("qpos_offset", 0)),
                 objects=entries,
             )
 
@@ -377,6 +397,7 @@ class ObjectIndex:
         for task_name, table in self.tasks.items():
             payload["tasks"][task_name] = {
                 "nq": table.nq,
+                "qpos_offset": table.qpos_offset,
                 "objects": [
                     {
                         "name": e.name,
@@ -460,7 +481,9 @@ class ObjectIndex:
             task_name: Canonical task name (benchmark name; the ``_demo``
                        filename suffix is stripped automatically).
             states:    ``(T, S)`` array — the demo's ``states`` dataset
-                       (flattened sim state: ``qpos`` then ``qvel``).
+                       (flattened sim state ``[time, qpos, qvel]`` when the
+                       table's ``qpos_offset`` is 1, plain ``[qpos, qvel]``
+                       when it is 0).
 
         Returns:
             ``(object_block, mask)`` with shapes ``(T, k_slots*7)`` and
@@ -475,10 +498,12 @@ class ObjectIndex:
             raise ValueError(
                 f"Task {task_name}: states must be (T, S), got shape {states.shape}"
             )
-        if states.shape[-1] < table.nq:
+        if states.shape[-1] < table.qpos_offset + table.nq:
             raise ValueError(
                 f"Task {task_name}: states has {states.shape[-1]} dims but the "
-                f"table expects at least nq={table.nq} (qpos half)."
+                f"table expects qpos_offset={table.qpos_offset} + nq="
+                f"{table.nq} (qpos block columns [{table.qpos_offset}, "
+                f"{table.qpos_offset + table.nq}))."
             )
         n_objects = len(table.objects)
         if n_objects > self.k_slots:
@@ -489,7 +514,9 @@ class ObjectIndex:
             )
 
         T = states.shape[0]
-        qpos = states[:, : table.nq]
+        qpos = states[
+            :, table.qpos_offset : table.qpos_offset + table.nq
+        ]
         block = np.zeros((T, self.k_slots * self.dim_per_object), dtype=np.float32)
         mask = np.zeros(
             (T, self.k_slots if self.include_mask else 0), dtype=np.float32
