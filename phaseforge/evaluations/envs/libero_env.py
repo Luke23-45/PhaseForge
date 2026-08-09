@@ -205,10 +205,14 @@ class StateOnlyLiberoEnv:
             )
             if oscfg.get("enabled", True):
                 from phaseforge.data.libero.object_state import ObjectIndex
-                from phaseforge.data.paths import libero_object_index_path
+                from phaseforge.data.paths import resolve_object_index_path
 
-                index_path = oscfg.get("index_path")
-                path = Path(index_path) if index_path else libero_object_index_path()
+                # Same resolver as the cache identity, ingest FSM and
+                # manifest provenance — one source of truth for the index
+                # location, so train and eval can never drift apart.
+                path = resolve_object_index_path(
+                    OmegaConf.create({"object_state": oscfg})
+                )
                 object_index = ObjectIndex.load(path)
                 self._object_index = object_index
                 self._object_names = object_index.object_names(self._task.name)
@@ -262,6 +266,11 @@ class StateOnlyLiberoEnv:
         # (LIBERO semantics); False = fall back to explicit check_success().
         self._success_via_done: bool | None = None
 
+        # Joint-velocity finite-difference history (parity contract, E3):
+        # None means "no previous position" -> t=0 velocity is zeros,
+        # exactly like the ingest-side np.diff(prepend=first_row).
+        self._prev_joint_pos: np.ndarray | None = None
+
     @property
     def task_description(self) -> str:
         """Human-readable task description from the benchmark."""
@@ -272,6 +281,31 @@ class StateOnlyLiberoEnv:
         """Number of available initial-state configurations."""
         return len(self._init_states)
 
+    #: Joint-velocity convention (parity contract, E3): the ingest side
+    #: derives ``robot0_joint_vel`` as the finite difference of joint
+    #: positions with ``prepend=first_row`` (vision_stripper.py). The
+    #: simulator's raw ``qvel`` is a physical rad/s velocity and would NOT
+    #: match that per-timestep delta, silently shifting 7 of 23 proprio
+    #: dims between training and rollout. To guarantee train <-> eval
+    #: parity, the wrapper therefore OVERWRITES the observed joint velocity
+    #: with the same finite difference before building the state vector
+    #: (first frame -> zeros, exactly like ``prepend`` at t=0).
+    _PREV_JOINT_POS_ATTR = "_prev_joint_pos"
+
+    def _apply_joint_vel_fd(self, obs: dict[str, np.ndarray]) -> np.ndarray:
+        """Return the joint-vel block as ``pos[t] - pos[t-1]`` (first = 0).
+
+        Reads ``robot0_joint_pos``, compares against the previously
+        returned joint position and stores the current one for the next
+        call. ``None`` previous (i.e. right after reset) yields zeros,
+        mirroring the training-side ``prepend`` convention.
+        """
+        pos = np.asarray(obs["robot0_joint_pos"], dtype=np.float32)
+        prev = getattr(self, self._PREV_JOINT_POS_ATTR, None)
+        vel = np.zeros(pos.shape, dtype=np.float32) if prev is None else pos - prev
+        setattr(self, self._PREV_JOINT_POS_ATTR, pos)
+        return vel
+
     def _extract_state(self, obs: dict[str, np.ndarray]) -> np.ndarray:
         """Concatenate the state vector from the observation dict.
 
@@ -280,11 +314,13 @@ class StateOnlyLiberoEnv:
 
         Object poses come from the ``{name}_pos`` / ``{name}_quat``
         observables (kept enabled for this task's objects); empty slots are
-        zero-padded and the occupancy mask is appended.
+        zero-padded and the occupancy mask is appended. The joint-velocity
+        block is the finite-difference convention of the ingest side (see
+        :meth:`_apply_joint_vel_fd`) — never the raw simulator ``qvel``.
         """
         parts = [
             obs["robot0_joint_pos"],    # 7
-            obs["robot0_joint_vel"],    # 7
+            self._apply_joint_vel_fd(obs),  # 7 — finite-diff, matches ingest
             obs["robot0_eef_pos"],      # 3
             obs["robot0_eef_quat"],     # 4
             obs["robot0_gripper_qpos"], # 2
@@ -324,6 +360,10 @@ class StateOnlyLiberoEnv:
         for _ in range(self.num_steps_wait):
             obs, _, _, _ = self._env.step(dummy)
         self._elapsed_steps = 0
+        # Parity contract: joint velocity is a finite difference, so the
+        # "previous" position must not leak across episodes (t=0 -> zeros,
+        # exactly like the ingest-side `prepend`).
+        setattr(self, self._PREV_JOINT_POS_ATTR, None)
         return self._extract_state(obs)
 
     def step(

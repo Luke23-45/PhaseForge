@@ -247,6 +247,40 @@ def test_load_object_index_disabled_returns_none(tmp_path) -> None:
     assert fsm._load_object_index() is None
 
 
+# ---------------------------------------------------------------------------
+# Shared object-index path resolution (paths.resolve_object_index_path)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_object_index_path_explicit_overrides_default(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """cache identity, ingest FSM and provenance must all resolve the SAME
+    path: index_path from the config wins, else the default under the data
+    root."""
+    from phaseforge.data.paths import resolve_object_index_path
+
+    monkeypatch.setenv("PHASEFORGE_DATA_DIR", str(tmp_path))
+
+    explicit = tmp_path / "custom_index.json"
+    cfg = OmegaConf.create(
+        {
+            "object_state": {
+                "enabled": True,
+                "index_path": str(explicit),
+            }
+        }
+    )
+    assert resolve_object_index_path(cfg) == explicit
+
+    default_cfg = OmegaConf.create({"object_state": {"enabled": True}})
+    expected_default = tmp_path / "raw" / "libero" / "object_index.json"
+    assert resolve_object_index_path(default_cfg) == expected_default
+
+    no_obj_cfg = OmegaConf.create({})
+    assert resolve_object_index_path(no_obj_cfg) == expected_default
+
+
 def test_object_mask_dims_none_when_index_has_no_mask(tmp_path) -> None:
     """Without mask dims there is nothing to exclude from normalization."""
     index_path = str(tmp_path / "object_index.json")

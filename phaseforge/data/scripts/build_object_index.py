@@ -19,11 +19,13 @@ For every task HDF5 file the script:
      (free: 7; hinge/slide: 1; fixed: none) plus, for constrained joints,
      the world-frame constants needed for the closed-form numpy decode:
      anchor point, axis direction, and rest pose (captured at reset).
-  4. Runs the B6 gate on sampled timesteps: ``set_init_state(states[t])``
-     then compares the decoded pose against the LIVE robosuite
-     observations at that exact sim state. Any mismatch beyond float
+  4. Runs the B6 gate on sampled timesteps across MULTIPLE demos:
+     ``set_init_state(states[t])`` then compares the decoded pose against
+     the LIVE robosuite observations at that exact sim state, and verifies
+     every decoded quaternion is normalized. Any mismatch beyond float
      rounding fails the task (and the census), because it would silently
-     corrupt every ingested trajectory.
+     corrupt every ingested trajectory. Coverage is tunable with
+     ``--b6-max-demos`` (default 3) and ``--b6-steps-per-demo`` (default 7).
 
 Output
 ------
@@ -216,12 +218,32 @@ def _object_entries_from_env(env, task_name: str, states: np.ndarray) -> list[di
 # ---------------------------------------------------------------------------
 
 
-def _run_b6_gate(env, task_name: str, table_entries: list[dict], states: np.ndarray) -> float:
+def _run_b6_gate(
+    env,
+    task_name: str,
+    table_entries: list[dict],
+    demo_states: list[np.ndarray],
+    max_demos: int = 3,
+    steps_per_demo: int = 7,
+) -> float:
     """Verify the numpy decode against live observations.
 
-    Returns the max absolute error across all sampled (demo, timestep)
-    checks. Raises ValueError on any mismatch beyond float rounding.
+    Checks ``max_demos`` demonstrations (all of them when fewer exist) at
+    ``steps_per_demo`` evenly spaced timesteps each (including t=0 and
+    t=T-1). Also verifies every decoded quaternion is normalized, because
+    the free-joint decoder copies the stored qpos quaternion verbatim and
+    would silently propagate a non-unit quaternion otherwise.
+
+    Returns the max absolute error across all (demo, timestep) checks.
+    Raises ValueError on any mismatch beyond float rounding.
     """
+    if max_demos <= 0:
+        raise ValueError(f"max_demos must be >= 1, got {max_demos}")
+    if steps_per_demo <= 0:
+        raise ValueError(f"steps_per_demo must be >= 1, got {steps_per_demo}")
+    if not demo_states:
+        raise ValueError(f"{task_name}: B6 gate received no demo states")
+
     from phaseforge.data.libero.object_state import (
         ObjectEntry,
         ObjectIndex,
@@ -241,29 +263,63 @@ def _run_b6_gate(env, task_name: str, table_entries: list[dict], states: np.ndar
         include_mask=False,
     )
 
-    T = states.shape[0]
     max_err = 0.0
-    for t in {0, T // 2, T - 1}:
-        env.set_init_state(states[t])
-        live_obs = env._get_observations()
-        reference = np.concatenate(
-            [
-                live_obs[f"{e['name']}_pos"],
-                live_obs[f"{e['name']}_quat"],
-            ]
-            for e in table_entries
+    n_checks = 0
+    for demo_idx, states in enumerate(demo_states[:max_demos]):
+        T = states.shape[0]
+        steps = sorted(
+            set(int(round(i)) for i in np.linspace(0, T - 1, steps_per_demo))
         )
-        decoded, _ = probe.decode(task_name, states[t : t + 1])
-        err = float(np.max(np.abs(decoded[0] - reference)))
-        max_err = max(max_err, err)
-        if err > 1e-4:
-            raise ValueError(
-                f"B6 gate FAILED for {task_name} (t={t}): "
-                f"max |decode - live obs| = {err:.3e} (> 1e-4). The "
-                "decode is NOT identical to robosuite FK for this task; "
-                "do not ingest."
+        for t in steps:
+            env.set_init_state(states[t])
+            live_obs = env._get_observations()
+            # Materialize the sequence before passing it to NumPy.  Recent
+            # NumPy versions reject a generator as the first argument to
+            # concatenate (and this gate must fail on a real mismatch, not
+            # because of the audit code itself).
+            reference = np.concatenate(
+                [
+                    np.concatenate(
+                        [
+                            live_obs[f"{e['name']}_pos"],
+                            live_obs[f"{e['name']}_quat"],
+                        ]
+                    )
+                    for e in table_entries
+                ]
             )
-    logger.info("  %s: B6 gate OK (max |decode - live| = %.2e)", task_name, max_err)
+            decoded, _ = probe.decode(task_name, states[t : t + 1])
+            err = float(np.max(np.abs(decoded[0] - reference)))
+            max_err = max(max_err, err)
+            n_checks += 1
+            if err > 1e-4:
+                raise ValueError(
+                    f"B6 gate FAILED for {task_name} (demo {demo_idx}, "
+                    f"t={t}): max |decode - live obs| = {err:.3e} (> 1e-4). "
+                    "The decode is NOT identical to robosuite FK for this "
+                    "task; do not ingest."
+                )
+            # Quaternion normalization check: free-joint decode copies the
+            # stored qpos quaternion verbatim, so a non-unit stored quat
+            # would corrupt the state channel silently.
+            # ``decoded`` is a flattened [pos(3), quat(4)] block per object;
+            # reshape first so each quaternion contains all four components.
+            decoded_quats = decoded[0].reshape(-1, POS_QUAT_DIM)[:, 3:]
+            for name, quat in zip(
+                [e["name"] for e in table_entries], decoded_quats
+            ):
+                if abs(float(np.linalg.norm(quat)) - 1.0) > 1e-4:
+                    raise ValueError(
+                        f"B6 gate FAILED for {task_name} (demo {demo_idx}, "
+                        f"t={t}): decoded quaternion of {name!r} has norm "
+                        f"{float(np.linalg.norm(quat)):.6f} (must be 1 within "
+                        "1e-4). The stored qpos quaternion is not normalized."
+                    )
+    logger.info(
+        "  %s: B6 gate OK (%d checks across %d demo(s), "
+        "max |decode - live| = %.2e)",
+        task_name, n_checks, min(max_demos, len(demo_states)), max_err,
+    )
     return max_err
 
 
@@ -328,8 +384,17 @@ def build_index(
     suites: list[str],
     data_root: str | None = None,
     out_path: str | None = None,
+    b6_max_demos: int = 3,
+    b6_steps_per_demo: int = 7,
 ) -> Path:
     """Run the census and write the object index JSON."""
+    if b6_max_demos <= 0:
+        raise ValueError(f"b6_max_demos must be >= 1, got {b6_max_demos}")
+    if b6_steps_per_demo <= 0:
+        raise ValueError(
+            f"b6_steps_per_demo must be >= 1, got {b6_steps_per_demo}"
+        )
+
     from phaseforge.data.libero.object_state import ObjectEntry, ObjectIndex, TaskObjectTable
     from phaseforge.data.paths import libero_object_index_path
 
@@ -357,7 +422,12 @@ def build_index(
                 demos = sorted(f["data"].keys())
                 if not demos:
                     raise ValueError(f"{task_name}: no demos in file")
-                states = f["data"][demos[0]]["states"][:]
+                # B6 gate now samples MULTIPLE demos per task (not just
+                # demo_0) so decode parity is validated across the variety
+                # of initial states the mirror actually contains.
+                demo_states = [
+                    f["data"][key]["states"][:] for key in demos[: b6_max_demos]
+                ]
 
             env, task = _load_env(suite, task_name)
             if task.name != task_name:
@@ -367,8 +437,15 @@ def build_index(
                     "task names must agree."
                 )
             try:
-                entries = _object_entries_from_env(env, task_name, states)
-                max_err = _run_b6_gate(env, task_name, entries, states)
+                entries = _object_entries_from_env(env, task_name, demo_states[0])
+                max_err = _run_b6_gate(
+                    env,
+                    task_name,
+                    entries,
+                    demo_states,
+                    max_demos=b6_max_demos,
+                    steps_per_demo=b6_steps_per_demo,
+                )
                 nq = int(env.sim.model.nq)
             finally:
                 env.close()
@@ -452,9 +529,24 @@ def main() -> int:
         "--out", default=None,
         help="Output JSON path (default: {data_root}/raw/libero/object_index.json)",
     )
+    parser.add_argument(
+        "--b6-max-demos", type=int, default=3,
+        help="Max demos per task sampled by the B6 parity gate (default 3).",
+    )
+    parser.add_argument(
+        "--b6-steps-per-demo", type=int, default=7,
+        help="Timesteps sampled per demo by the B6 parity gate, evenly "
+             "spaced incl. endpoints (default 7).",
+    )
     args = parser.parse_args()
     try:
-        build_index(suites=args.suites, data_root=args.data_root, out_path=args.out)
+        build_index(
+            suites=args.suites,
+            data_root=args.data_root,
+            out_path=args.out,
+            b6_max_demos=args.b6_max_demos,
+            b6_steps_per_demo=args.b6_steps_per_demo,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error("Census FAILED: %s", exc)
         return 1

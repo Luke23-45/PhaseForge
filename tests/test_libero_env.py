@@ -52,12 +52,21 @@ def make_fake_obs() -> dict[str, np.ndarray]:
 
 
 def expected_state_vector() -> np.ndarray:
-    """The 151-dim concatenation in the training-data key order."""
+    """The 151-dim concatenation in the training-data key order.
+
+    The joint-velocity block (7:14) is ZERO: the eval wrapper derives it
+    as a finite difference of joint positions (first frame = 0), which
+    matches the ingest-side ``np.diff(..., prepend=first_row)`` at t=0.
+    """
     parts = []
     v = 1.0
-    for dim in KEY_DIMS.values():
-        parts.append(np.arange(v, v + dim, dtype=np.float32))
-        v += dim
+    for key, dim in KEY_DIMS.items():
+        if key == "robot0_joint_vel":
+            parts.append(np.zeros(dim, dtype=np.float32))  # t=0: no previous
+            v += dim
+        else:
+            parts.append(np.arange(v, v + dim, dtype=np.float32))
+            v += dim
     # Object block: proprio ends at value 24, so bowl = 24..30, cup = 31..37.
     obj_block = np.zeros(OBJECT_K_SLOTS * OBJECT_DIM, dtype=np.float32)
     obj_block[: len(OBJECT_NAMES) * OBJECT_DIM] = np.arange(
@@ -141,12 +150,38 @@ def test_state_vector_matches_training_state_keys() -> None:
     """The concatenation order must match config/data/common.yaml state_keys."""
     env = _make_env(FakeRobosuiteEnv())
     state = env._extract_state(make_fake_obs())
-    # joint_pos (7) + joint_vel (7) + eef_pos (3) + eef_quat (4) + gripper (2)
+    # joint_pos (7) + joint_vel (7, finite-diff => 0 at t=0) + eef_pos (3)
+    # + eef_quat (4) + gripper (2)
     assert state[:7].tolist() == list(range(1, 8))
-    assert state[7:14].tolist() == list(range(8, 15))
+    assert state[7:14].tolist() == [0.0] * 7
     assert state[14:17].tolist() == list(range(15, 18))
     assert state[17:21].tolist() == list(range(18, 22))
     assert state[21:23].tolist() == list(range(22, 24))
+
+
+def test_joint_velocity_is_finite_difference_matching_ingest() -> None:
+    """Parity contract (E3): eval joint velocity == ingest-side finite
+    difference — never the raw simulator qvel. t=0 is zeros (prepend),
+    then vel[t] = joint_pos[t] - joint_pos[t-1], and reset() clears the
+    history so episodes never leak velocity across resets."""
+    fake = FakeRobosuiteEnv()
+    env = _make_env(fake)
+    obs = make_fake_obs()
+
+    s0 = env._extract_state(obs)
+    np.testing.assert_allclose(s0[7:14], 0.0)
+
+    obs["robot0_joint_pos"] = obs["robot0_joint_pos"] + 0.5
+    s1 = env._extract_state(obs)
+    np.testing.assert_allclose(s1[7:14], 0.5)
+
+    obs["robot0_joint_pos"] = obs["robot0_joint_pos"] - 0.2
+    s2 = env._extract_state(obs)
+    np.testing.assert_allclose(s2[7:14], -0.2, atol=1e-6)
+
+    env.reset(episode_idx=0)
+    s3 = env._extract_state(fake.obs)
+    np.testing.assert_allclose(s3[7:14], 0.0)
 
 
 def test_object_state_appended_with_zero_pad_and_mask() -> None:

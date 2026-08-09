@@ -58,6 +58,12 @@ class RuleBasedPhaseLabeler:
         self.num_phases = num_phases
         self.gripper_closed_threshold = gripper_closed_threshold
         self.gripper_open_threshold = gripper_open_threshold
+        if not self.gripper_closed_threshold < self.gripper_open_threshold:
+            raise ValueError(
+                f"gripper_closed_threshold={gripper_closed_threshold} must be "
+                f"strictly below gripper_open_threshold={gripper_open_threshold} "
+                "for the hysteresis band to exist."
+            )
         self.eef_velocity_threshold = eef_velocity_threshold
         self.min_phase_duration = min_phase_duration
         self.median_filter_size = median_filter_size
@@ -101,8 +107,23 @@ class RuleBasedPhaseLabeler:
             np.diff(eef_pos, axis=0, prepend=eef_pos[:1]), axis=-1
         )  # (T,)
 
-        # Binary gripper state
-        gripper_closed = gripper_aperture < self.gripper_closed_threshold  # (T,) bool
+        # Binary gripper state via HYSTERESIS: aperture below the closed
+        # threshold -> closed, above the open threshold -> open, and between
+        # the two -> hold the previous state (defaults to open on the first
+        # frame). This gives BOTH configured thresholds a meaning and keeps
+        # sensor noise around a single cutoff from flipping the state.
+        gripper_closed = np.zeros(T, dtype=bool)
+        prev_closed: bool | None = None
+        for t in range(T):
+            a = gripper_aperture[t]
+            if a < self.gripper_closed_threshold:
+                cur = True
+            elif a > self.gripper_open_threshold:
+                cur = False
+            else:
+                cur = prev_closed if prev_closed is not None else False
+            gripper_closed[t] = cur
+            prev_closed = cur
 
         # -------------------------------------------------------------------
         # Detect gripper events

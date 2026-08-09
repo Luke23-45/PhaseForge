@@ -1,16 +1,52 @@
-"""Config-hash-based persistent cache manager."""
+"""Config-hash-based persistent cache manager with full provenance tracking."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
 import torch
 from omegaconf import DictConfig, OmegaConf
+
+logger = logging.getLogger(__name__)
+
+#: The pinned LIBERO mirror this project consumes (see download_libero.py).
+DATASET_REPO = "yifengzhu-hf/LIBERO-datasets"
+
+
+def git_commit() -> str:
+    """Best-effort HEAD SHA of the repo containing this module ('' when N/A)."""
+    try:
+        repo = Path(__file__).resolve().parents[3]
+        result = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
+    """Streaming SHA-256 of a file (handles multi-GB HDF5 files)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            block = f.read(chunk)
+            if not block:
+                break
+            h.update(block)
+    return h.hexdigest()
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 class CacheManager:
@@ -23,12 +59,20 @@ class CacheManager:
             ├── manifest.json
             ├── norm_stats.pt
             ├── splits.json
+            ├── task_index.json
+            ├── train_tasks.txt
+            ├── validation_tasks.txt
             └── trajectories/
                 ├── 000000.pt   # {"state": (T,S), "action": (T,A), "phase": (T,), "task_id": int}
                 └── ...
 
-    The config_hash is the SHA-256 of the canonical YAML of the data config.
-    Any change to phase thresholds, state keys, or split ratios invalidates the cache.
+    The config_hash is the SHA-256 of the canonical YAML of the data config
+    PLUS a cheap provenance context (git commit, object-index content hash,
+    raw dataset file names/sizes). Any change to phase thresholds, state
+    keys, split ratios, code revision, the object index, or the raw dataset
+    invalidates the cache. Full content provenance (per-file SHA-256,
+    schema, task names) is persisted in ``manifest.json`` so a result can
+    be audited later.
     """
 
     def __init__(self, cache_root: Path) -> None:
@@ -39,10 +83,79 @@ class CacheManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def compute_hash(data_cfg: DictConfig) -> str:
-        """SHA-256 of the data config YAML (first 16 chars)."""
-        yaml_str = OmegaConf.to_yaml(data_cfg, resolve=True)
-        return hashlib.sha256(yaml_str.encode("utf-8")).hexdigest()[:16]
+    def provenance_context(data_cfg: DictConfig) -> dict:
+        """Cheap inputs to the cache identity (never reads file contents).
+
+        Folds in code revision and data identity so a stale cache cannot be
+        silently reused after the raw dataset or object index changes.
+        Content-level hashes (expensive) live in the manifest instead.
+        """
+        ctx: dict[str, Any] = {"git_commit": git_commit()}
+
+        # Object-index content hash (small file, safe to read).
+        try:
+            oscfg = data_cfg.get("object_state")
+            if oscfg is None or oscfg.get("enabled", True):
+                from phaseforge.data.paths import resolve_object_index_path
+
+                p = resolve_object_index_path(data_cfg)
+                if p.exists():
+                    ctx["object_index_sha256"] = sha256_bytes(p.read_bytes())
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Could not hash the object index for the cache identity — "
+                "the cache key will not depend on it.",
+                exc_info=True,
+            )
+
+        # Raw dataset identity: names + sizes (cheap). Content hashes are
+        # recorded in the manifest during save().
+        try:
+            suite = data_cfg.get("libero", {}).get("suite")
+            if suite:
+                from phaseforge.data.paths import libero_suite_dir
+
+                suite_dir = libero_suite_dir(str(suite))
+                if not suite_dir.exists():
+                    logger.warning(
+                        "Raw suite dir %s not found while computing the "
+                        "cache identity — the cache key will not include "
+                        "the raw dataset. If the data exists elsewhere, "
+                        "set PHASEFORGE_DATA_DIR.",
+                        suite_dir,
+                    )
+                files = sorted(suite_dir.glob("*.hdf5"))
+                ctx["raw_files"] = [
+                    {
+                        "name": p.name,
+                        "size": p.stat().st_size,
+                        "mtime_ns": p.stat().st_mtime_ns,
+                    }
+                    for p in files
+                ]
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Could not fingerprint the raw dataset for the cache "
+                "identity — the cache key will not depend on it.",
+                exc_info=True,
+            )
+        return ctx
+
+    @staticmethod
+    def compute_hash(data_cfg: DictConfig, extra_context: dict | None = None) -> str:
+        """SHA-256 of the data config YAML + provenance context (first 16 chars).
+
+        ``extra_context`` (if given) is merged over the automatic
+        :meth:`provenance_context` so callers can pin additional identity
+        inputs.
+        """
+        context = CacheManager.provenance_context(data_cfg)
+        if extra_context:
+            context = {**context, **extra_context}
+        payload = OmegaConf.to_yaml(data_cfg, resolve=True)
+        if context:
+            payload += "\n" + json.dumps(context, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def cache_dir(self, config_hash: str) -> Path:
         return self.cache_root / config_hash
@@ -73,6 +186,7 @@ class CacheManager:
         norm_stats: dict[str, torch.Tensor],
         splits: dict[str, list[int]],
         task_index: dict[str, int] | None = None,
+        provenance: dict[str, Any] | None = None,
     ) -> None:
         """Atomically write all processed data to the cache.
 
@@ -82,6 +196,12 @@ class CacheManager:
         Args:
             task_index: Optional ``{task_name: int_id}`` mapping to persist
                 alongside the cache for auditability.
+            provenance: Optional dict with the audit trail recorded in
+                ``manifest.json``: dataset repo/commit, per-file SHA-256,
+                object-index hash, code git commit, state schema,
+                normalization method, phase-labeler config and split task
+                names (the latter are also written as human-readable
+                ``train_tasks.txt`` / ``validation_tasks.txt``).
         """
         final_dir = self.cache_dir(config_hash)
         tmp_dir = self.cache_root / f"{config_hash}_tmp"
@@ -107,6 +227,20 @@ class CacheManager:
         if task_index is not None:
             (tmp_dir / "task_index.json").write_text(json.dumps(task_index, indent=2))
 
+        # Human-readable split task names (Gate 7 audit)
+        split_task_names = (
+            (provenance or {}).get("split_task_names") if provenance else None
+        )
+        if split_task_names:
+            for fname, key in (
+                ("train_tasks.txt", "train"),
+                ("validation_tasks.txt", "val"),
+            ):
+                names = sorted(split_task_names.get(key, []))
+                (tmp_dir / fname).write_text(
+                    "\n".join(names) + ("\n" if names else ""), encoding="utf-8"
+                )
+
         # Manifest
         manifest = {
             "config_hash": config_hash,
@@ -116,6 +250,8 @@ class CacheManager:
             "created_at": time.time(),
             "complete": True,
         }
+        if provenance:
+            manifest["provenance"] = provenance
         (tmp_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
         # Atomic rename

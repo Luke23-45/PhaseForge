@@ -24,6 +24,7 @@ Design notes (bugs fixed here, each proven by simulation)
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -31,21 +32,27 @@ from typing import Any
 
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from phaseforge.data.common.collator import PhaseAwareCollator
 from phaseforge.data.common.dataset import StateOnlyDataset
 from phaseforge.data.common.normalizer import RunningStatNormalizer
-from phaseforge.data.ingestion.cache_manager import CacheManager
+from phaseforge.data.ingestion.cache_manager import (
+    DATASET_REPO,
+    CacheManager,
+    git_commit,
+    sha256_file,
+)
 from phaseforge.data.ingestion.states import PipelineState
 from phaseforge.data.libero.object_state import ObjectIndex
 from phaseforge.data.libero.task_index import build_task_index
 from phaseforge.data.paths import (
     EXPECTED_FILE_COUNTS,
-    libero_object_index_path,
+    libero_manifest_path,
     libero_suite_dir,
     processed_cache_root,
+    resolve_object_index_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +93,7 @@ class DataPipelineStateMachine:
         self._trajectories: list[dict[str, Any]] = []
         self._norm_stats: dict[str, torch.Tensor] = {}
         self._splits: dict[str, list[int]] = {}
+        self._raw_dir: Path | None = None
 
         # Eval (LIBERO-LONG) loader is built lazily and kept out of run()'s
         # return dict because cli.py only reads "train"/"val".
@@ -162,8 +170,7 @@ class DataPipelineStateMachine:
         oscfg = self.data_cfg.get("object_state")
         if oscfg is None or not oscfg.get("enabled", True):
             return None
-        raw_path = oscfg.get("index_path")
-        path = Path(raw_path) if raw_path else libero_object_index_path()
+        path = resolve_object_index_path(self.data_cfg)
         index = ObjectIndex.load(path)
 
         cfg_k_slots = oscfg.get("k_slots")
@@ -408,6 +415,7 @@ class DataPipelineStateMachine:
             state_keys=list(self.data_cfg.state_keys),
             task_index=self._task_index,
             object_index=object_index,
+            action_dim=int(self.data_cfg.get("action_dim", 7)),
         )
         eef_slice, gripper_slice = self._proprio_slices()
         labeler: RuleBasedPhaseLabeler = instantiate(
@@ -426,6 +434,7 @@ class DataPipelineStateMachine:
             stripped = stripper.strip(hdf5_path)
             for traj in stripped:
                 phase_labels = labeler.label(traj)
+                self._validate_phase_labels(hdf5_path.name, traj, phase_labels)
                 traj["phase"] = phase_labels
                 all_trajs.append(traj)
 
@@ -433,6 +442,124 @@ class DataPipelineStateMachine:
         self._check_state_dim_consistency(all_trajs)
         self._trajectories = all_trajs
         self._state = PipelineState.NORMALIZE_AND_SAVE
+
+    def _validate_phase_labels(
+        self, source: str, traj: dict[str, Any], phases: np.ndarray
+    ) -> None:
+        """Guard: phase labels must align with the state length and range.
+
+        The labeler runs after stripping; a length mismatch or out-of-range
+        phase would corrupt training (cross-entropy / scatter / bincount)
+        silently. This makes it a loud per-trajectory failure instead.
+        """
+        T = int(traj["state"].shape[0])
+        if phases.shape[0] != T:
+            raise PipelineError(
+                f"{source} (demo {traj.get('demo_key', '?')}): phase labels "
+                f"have length {phases.shape[0]} but state has T={T}. "
+                "Labeler and stripper disagree on the trajectory length."
+            )
+        num_phases = int(self.libero_cfg.phase_labeler.num_phases)
+        if phases.size and (int(phases.min()) < 0 or int(phases.max()) >= num_phases):
+            raise PipelineError(
+                f"{source} (demo {traj.get('demo_key', '?')}): phase labels "
+                f"out of range [0, {num_phases}): observed [{phases.min()}, "
+                f"{phases.max()}]."
+            )
+
+    def _provenance(
+        self,
+        splits: dict[str, list[int]],
+        object_index: ObjectIndex | None,
+    ) -> dict[str, Any]:
+        """Build the manifest audit trail for the final cache (Gate 8).
+
+        Includes full-content SHA-256 of every raw HDF5 file (streamed, so
+        multi-GB files are fine — one-time cost per data version), the
+        object-index hash, the code git commit, the state schema, the
+        normalization method, the phase-labeler config and the split task
+        names. Enough to prove exactly which dataset produced a result.
+        """
+        split_task_names: dict[str, list[str]] = {}
+        id_to_name = {v: k for k, v in self._task_index.items()}
+        for split_name, indices in splits.items():
+            split_task_names[split_name] = sorted(
+                {id_to_name[int(self._trajectories[i]["task_id"])] for i in indices}
+            )
+
+        raw_files: list[dict[str, Any]] = []
+        if self._raw_dir is not None and self._raw_dir.exists():
+            for path in sorted(self._raw_dir.glob("*.hdf5")):
+                logger.info("  Provenance: SHA-256 of %s …", path.name)
+                stat = path.stat()
+                raw_files.append(
+                    {
+                        "name": path.name,
+                        "size": stat.st_size,
+                        "mtime_ns": stat.st_mtime_ns,
+                        "sha256": sha256_file(path),
+                    }
+                )
+
+        # Dataset revision: record the download script's MANIFEST.json
+        # (repo id + pinned commit SHA) verbatim when present.
+        dataset_manifest: dict[str, Any] | None = None
+        try:
+            manifest_path = libero_manifest_path()
+            if manifest_path.exists():
+                dataset_manifest = json.loads(
+                    manifest_path.read_text(encoding="utf-8")
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Could not read the LIBERO download manifest for provenance.",
+                exc_info=True,
+            )
+
+        object_index_sha = None
+        try:
+            oscfg = self.data_cfg.get("object_state")
+            if oscfg is None or oscfg.get("enabled", True):
+                path = resolve_object_index_path(self.data_cfg)
+                if path.exists():
+                    object_index_sha = sha256_file(path)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not hash object index.", exc_info=True)
+
+        state_schema = {
+            "keys": [
+                {"key": str(e["key"]), "dim": int(e["dim"])}
+                for e in self.data_cfg.state_keys
+            ],
+            "state_dim": int(self.data_cfg.get("state_dim", 0)),
+            "action_dim": int(self.data_cfg.get("action_dim", 7)),
+        }
+
+        return {
+            "dataset_repo": DATASET_REPO,
+            "dataset_manifest": dataset_manifest,
+            "code_git_commit": git_commit(),
+            "raw_files": raw_files,
+            "object_index_sha256": object_index_sha,
+            "state_schema": state_schema,
+            "normalization": {
+                "strategy": str(self.data_cfg.get("normalization_strategy", "zscore")),
+                "ddof": 1,
+                "excluded_dims": sorted(
+                    self._object_mask_dims(object_index) or []
+                ),
+                "train_split_only": True,
+            },
+            "phase_labeler": OmegaConf.to_container(
+                self.libero_cfg.phase_labeler, resolve=True
+            ),
+            "sampling": {
+                "sequence_length": int(self.data_cfg.get("sequence_length", 1)),
+                "stride": int(self.data_cfg.get("stride", 1)),
+            },
+            "split_task_names": split_task_names,
+            "configuration": OmegaConf.to_yaml(self.data_cfg, resolve=True),
+        }
 
     def _normalize_and_save(self) -> None:
         logger.info("NORMALIZE_AND_SAVE: computing statistics and persisting cache…")
@@ -471,6 +598,7 @@ class DataPipelineStateMachine:
             norm_stats=norm_stats,
             splits=splits,
             task_index=self._task_index,
+            provenance=self._provenance(splits, object_index),
         )
         self._norm_stats = norm_stats
         self._splits = splits
@@ -573,6 +701,7 @@ class DataPipelineStateMachine:
             state_keys=list(self.data_cfg.state_keys),
             task_index=task_index,
             object_index=object_index,
+            action_dim=int(self.data_cfg.get("action_dim", 7)),
         )
         eef_slice, gripper_slice = self._proprio_slices()
         labeler: RuleBasedPhaseLabeler = instantiate(
@@ -584,7 +713,9 @@ class DataPipelineStateMachine:
         trajs: list[dict[str, Any]] = []
         for hdf5_path in sorted(raw_dir.glob("*.hdf5")):
             for traj in stripper.strip(hdf5_path):
-                traj["phase"] = labeler.label(traj)
+                phase_labels = labeler.label(traj)
+                self._validate_phase_labels(hdf5_path.name, traj, phase_labels)
+                traj["phase"] = phase_labels
                 trajs.append(traj)
         self._check_state_dim_consistency(trajs)
         return trajs

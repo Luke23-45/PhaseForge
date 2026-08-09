@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Environment variable name and default
@@ -188,6 +189,31 @@ def libero_object_index_path(data_root: str | os.PathLike | None = None) -> Path
     to the HDF5 files it describes and travels with the data volume.
     """
     return libero_raw_root(data_root) / "object_index.json"
+
+
+def resolve_object_index_path(
+    data_cfg: Any,
+    data_root: str | os.PathLike | None = None,
+) -> Path:
+    """Resolve the object-index path exactly as the pipeline would.
+
+    Single source of truth shared by the cache identity
+    (``CacheManager.provenance_context``), the ingest FSM
+    (``state_machine._load_object_index``) and the manifest provenance
+    (``state_machine._provenance``) so the three can never drift apart:
+    ``data.object_state.index_path`` when set, else the default
+    ``{data_root}/raw/libero/object_index.json``.
+
+    Args:
+        data_cfg: Config object exposing ``data.object_state`` (OmegaConf
+            DictConfig or plain dict). ``index_path=None``/absent means the
+            default path.
+    """
+    oscfg = data_cfg.get("object_state")
+    raw = oscfg.get("index_path") if oscfg is not None else None
+    if raw:
+        return Path(raw)
+    return libero_object_index_path(data_root)
 
 
 def processed_cache_root(data_root: str | os.PathLike | None = None) -> Path:

@@ -126,6 +126,8 @@ class VisionStripper:
             object-state channel. When set, each trajectory's state is
             ``[proprio (23) | object_block | mask]`` (the mask is omitted
             when the index has ``include_mask=False``).
+        action_dim: Expected action width (default 7). Mismatches are
+            fatal — a silently resized action space would corrupt training.
     """
 
     def __init__(
@@ -133,6 +135,7 @@ class VisionStripper:
         state_keys: list[Any],
         task_index: dict[str, int] | None = None,
         object_index: ObjectIndex | None = None,
+        action_dim: int = 7,
     ) -> None:
         self._key_specs: list[tuple[str, int | None]] = []
         for entry in state_keys:
@@ -149,6 +152,7 @@ class VisionStripper:
             )
         self._task_index = task_index
         self.object_index = object_index
+        self._action_dim = int(action_dim)
 
     def strip(self, hdf5_path: Path) -> list[dict[str, np.ndarray]]:
         """Extract state-only data from one HDF5 file.
@@ -158,10 +162,18 @@ class VisionStripper:
 
         Returns:
             List of trajectory dicts. Each dict contains:
-            - ``"state"``:   np.ndarray (T, state_dim)
-            - ``"action"``:  np.ndarray (T, action_dim)
-            - ``"task_id"``: int (derived from filename)
-            - ``"traj_id"``: int (demo index)
+            - ``"state"``:      np.ndarray (T, state_dim)
+            - ``"action"``:     np.ndarray (T, action_dim)
+            - ``"task_id"``:    int (derived from filename)
+            - ``"traj_id"``:    int (demo index)
+            - ``"task_name"``:  str (HDF5 filename stem)
+            - ``"source_file"``: str (HDF5 path, for audit)
+            - ``"demo_key"``:   str (e.g. "demo_3")
+
+        Validation is STRICT: a malformed demo (missing key, dimension
+        mismatch, length mismatch, non-finite value, wrong action width)
+        raises instead of being silently dropped. Silently omitting even
+        one demo changes the dataset distribution and biases the experiment.
         """
         task_name = hdf5_path.stem
         task_id = self._task_id_from_path(hdf5_path)
@@ -179,42 +191,58 @@ class VisionStripper:
                 demo = data_group[demo_key]
                 obs = demo.get("obs")
                 if obs is None:
-                    logger.warning(f"  Demo {demo_key} has no 'obs'. Skipping.")
-                    continue
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: missing 'obs' group."
+                    )
 
                 # Build the proprioceptive state vector
                 state_arrays: list[np.ndarray] = []
-                missing_keys: list[str] = []
-
                 for key, expected_dim in self._key_specs:
                     arr = _resolve_key(obs, demo, key)
                     if arr is None:
-                        missing_keys.append(key)
-                        continue
-                    # Safety: skip if it looks like vision data
-                    if _is_vision_key(key):
-                        logger.error(
-                            f"State key '{key}' looks like a vision key! Skipping."
+                        raise ValueError(
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: missing required state key "
+                            f"{key!r}."
                         )
-                        continue
+                    if _is_vision_key(key):
+                        raise ValueError(
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: state key {key!r} looks like a "
+                            "vision key; the state schema must not contain "
+                            "image data."
+                        )
+                    if arr.ndim != 2:
+                        raise ValueError(
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: key {key!r} must have shape "
+                            f"(T, dim), observed {arr.shape}."
+                        )
                     if expected_dim is not None and arr.shape[-1] != expected_dim:
-                        logger.warning(
-                            f"Key '{key}' dim mismatch: "
-                            f"expected {expected_dim}, got {arr.shape[-1]}. Using actual."
+                        raise ValueError(
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: key {key!r} dim mismatch: "
+                            f"expected {expected_dim}, observed "
+                            f"{arr.shape[-1]}."
                         )
                     state_arrays.append(arr)
 
-                if missing_keys:
-                    logger.debug(
-                        f"  Demo {demo_key}: missing keys {missing_keys}. "
-                        "They will be absent from state vector."
+                if len({arr.shape[0] for arr in state_arrays}) != 1:
+                    shapes = {key: arr.shape for key, arr in zip(self._key_specs, state_arrays)}
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: state arrays have inconsistent "
+                        f"timesteps: {shapes}. All proprio keys must have "
+                        "the same T."
                     )
-
-                if not state_arrays:
-                    logger.warning(
-                        f"  Demo {demo_key}: no state arrays found. Skipping."
+                if state_arrays[0].shape[0] < 1:
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: empty trajectory (T=0). A zero-length "
+                        "demo would pollute the cache with a sample-less "
+                        "trajectory — re-download or drop the file."
                     )
-                    continue
 
                 state = np.concatenate(state_arrays, axis=-1)  # (T, 23)
 
@@ -222,11 +250,24 @@ class VisionStripper:
                 if self.object_index is not None:
                     if "states" not in demo:
                         raise ValueError(
-                            f"Demo {demo_key}: object_state is enabled but "
-                            "'states' is missing at the demo root of "
-                            f"{hdf5_path.name}. Re-download the dataset."
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: object_state is enabled but "
+                            "'states' is missing at the demo root. "
+                            "Re-download the dataset."
                         )
                     states = demo["states"][:].astype(np.float32)  # (T, S)
+                    if states.ndim != 2:
+                        raise ValueError(
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: 'states' must have shape (T, S), "
+                            f"observed {states.shape}."
+                        )
+                    if states.shape[0] != state.shape[0]:
+                        raise ValueError(
+                            f"Task '{task_name}' ({hdf5_path.name}), demo "
+                            f"{demo_key}: 'states' has T={states.shape[0]} "
+                            f"but proprio has T={state.shape[0]}."
+                        )
                     obj_block, obj_mask = self.object_index.decode(task_name, states)
                     # obj_mask is (T, k_slots) when the index has
                     # include_mask=True, else (T, 0) — a no-op on
@@ -234,11 +275,40 @@ class VisionStripper:
                     state = np.concatenate([state, obj_block, obj_mask], axis=-1)
 
                 if "actions" not in demo:
-                    logger.warning(
-                        f"  Demo {demo_key}: no 'actions'. Skipping."
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: missing 'actions'."
                     )
-                    continue
                 action = demo["actions"][:].astype(np.float32)
+                if action.ndim != 2:
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: 'actions' must have shape (T, A), "
+                        f"observed {action.shape}."
+                    )
+                if action.shape[0] != state.shape[0]:
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: actions T={action.shape[0]} but state "
+                        f"T={state.shape[0]}."
+                    )
+                if action.shape[-1] != self._action_dim:
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: action dim {action.shape[-1]} != "
+                        f"expected {self._action_dim}."
+                    )
+
+                if not np.isfinite(state).all():
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: non-finite values in state vector."
+                    )
+                if not np.isfinite(action).all():
+                    raise ValueError(
+                        f"Task '{task_name}' ({hdf5_path.name}), demo "
+                        f"{demo_key}: non-finite values in actions."
+                    )
 
                 traj_id = int(
                     demo_key.replace("demo_", "").lstrip("0") or "0"
@@ -250,6 +320,9 @@ class VisionStripper:
                         "action": action,
                         "task_id": task_id,
                         "traj_id": traj_id,
+                        "task_name": task_name,
+                        "source_file": str(hdf5_path),
+                        "demo_key": demo_key,
                     }
                 )
 
