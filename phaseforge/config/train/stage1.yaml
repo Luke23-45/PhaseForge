@@ -25,7 +25,8 @@ checkpoint:
   save_top_k: 1
 
 early_stopping:
-  enabled: true
+  enabled: false          # Locked protocol (A4/C5): full-length 100-epoch runs;
+                          # ad-hoc runs must opt IN via train.early_stopping.enabled=true
   monitor: "val/loss_total"
   mode: "min"
   patience: 10
@@ -35,4 +36,3 @@ early_stopping:
 # Stage 2 does not apply here; this key is just defined for schema consistency
 stage1_ckpt_path: null
 freeze_encoder: false
-balance_coeff: 0.0        # Not used in Stage 1

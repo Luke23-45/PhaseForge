@@ -46,7 +46,7 @@ def make_cfg(
             "eval": {
                 "mode": "rollout",
                 "environment": {
-                    "suites": suites or ["libero_spatial"],
+                    "suites": suites or ["libero_90"],
                     "num_steps_wait": 2,
                     "num_workers": 1,  # force serial path with fake envs
                 },
@@ -343,7 +343,7 @@ def test_rollout_mode_without_environment_keys_uses_defaults(
     del cfg.eval["environment"]
     del cfg.eval["evaluation"]
     evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
-    assert evaluator.suites == ["libero_spatial"]
+    assert evaluator.suites == ["libero_90"]  # Decision 2 (A2): ID core only
     assert evaluator.num_episodes_per_task == 50
     assert evaluator.num_steps_wait == 10
     assert evaluator.render_observations is False

@@ -197,7 +197,9 @@ class RolloutEvaluator:
 
     Settings are read defensively so that setting ``eval.mode=rollout``
     without the full rollout.yaml still works:
-        - ``eval.environment.suites`` (default ``["libero_spatial"]``)
+        - ``eval.environment.suites`` (default ``["libero_90"]`` —
+          the in-distribution core per Decision 2, issues register A2;
+          spatial/object/goal are NOT valid fallbacks)
         - ``eval.environment.num_steps_wait`` (default 10)
         - ``eval.environment.render_observations`` (default False)
         - ``eval.environment.hard_reset`` (default True: rebuild the sim
@@ -226,7 +228,7 @@ class RolloutEvaluator:
         eval_cfg = cfg.eval
         env_cfg = eval_cfg.get("environment", None) or {}
         eval_settings = eval_cfg.get("evaluation", None) or {}
-        self.suites: list[str] = list(env_cfg.get("suites", ["libero_spatial"]))
+        self.suites: list[str] = list(env_cfg.get("suites", ["libero_90"]))
         self.num_steps_wait: int = int(env_cfg.get("num_steps_wait", 10))
         self.render_observations: bool = bool(
             env_cfg.get("render_observations", False)

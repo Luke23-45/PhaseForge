@@ -179,6 +179,79 @@ def test_no_object_state_when_not_configured() -> None:
     np.testing.assert_allclose(state, expected_state_vector()[:23], rtol=0, atol=0)
 
 
+def test_train_decode_matches_eval_extract_state() -> None:
+    """B7 parity lock: ObjectIndex.decode (ingest/train side) must produce
+    exactly the object block the eval env reads from live robosuite obs.
+
+    Both sides consume the same census-built table, so slot order,
+    zero-padding and mask must agree row-for-row for every joint type
+    (free + hinge here). If either side ever reorders/slices differently,
+    this test fails before any rollout can be trusted.
+    """
+    from phaseforge.data.libero.object_state import (
+        ObjectEntry,
+        ObjectIndex,
+        TaskObjectTable,
+    )
+
+    task_name = "fake_task"
+    table = TaskObjectTable(
+        task_name=task_name,
+        nq=14,
+        objects=[
+            ObjectEntry(
+                name="world_bowl", joint_type="free", qpos_start=0, qpos_len=7
+            ),
+            ObjectEntry(
+                name="world_cup",
+                joint_type="hinge",
+                qpos_start=7,
+                qpos_len=1,
+                anchor_world=np.array([0.3, 0.4, 0.5]),
+                axis_world=np.array([0.0, 0.0, 1.0]),
+                rest_pos=np.array([0.6, 0.7, 0.5]),
+                rest_quat=np.array([1.0, 0.0, 0.0, 0.0]),
+            ),
+        ],
+    )
+    index = ObjectIndex(
+        tasks={task_name: table},
+        k_slots=OBJECT_K_SLOTS,
+        dim_per_object=OBJECT_DIM,
+        include_mask=True,
+    )
+
+    qpos = np.array(
+        [
+            [0.5, 0.2, 0.9, 1.0, 0.0, 0.0, 0.0, 1.2],   # t0: bowl pose, hinge angle
+            [-0.3, 0.8, 0.4, 0.0, 0.0, 0.0, 1.0, -0.6],  # t1
+        ],
+        dtype=np.float64,
+    )
+    # decode() reads states[:, :nq]; pad to the table's full nq width.
+    states = np.zeros((2, table.nq), dtype=np.float64)
+    states[:, : qpos.shape[1]] = qpos
+    block, mask = index.decode(task_name, states)
+    assert block.shape == (2, OBJECT_K_SLOTS * OBJECT_DIM)
+    assert mask.shape == (2, OBJECT_K_SLOTS)
+
+    env = _make_env(FakeRobosuiteEnv(), object_names=list(OBJECT_NAMES))
+
+    for t in (0, 1):
+        obs = make_fake_obs()
+        # Robosuite would report exactly these values for the same qpos.
+        for i, name in enumerate(OBJECT_NAMES):
+            start = i * OBJECT_DIM
+            obs[f"{name}_pos"] = block[t, start : start + 3]
+            obs[f"{name}_quat"] = block[t, start + 3 : start + 7]
+
+        eval_state = env._extract_state(obs)
+        train_state = np.concatenate(
+            [expected_state_vector()[:23], block[t], mask[t]]
+        ).astype(np.float32)
+        np.testing.assert_allclose(eval_state, train_state, rtol=1e-6, atol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Reset sequence (official LIBERO protocol)
 # ---------------------------------------------------------------------------

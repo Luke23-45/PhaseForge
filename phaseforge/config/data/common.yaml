@@ -41,7 +41,11 @@ object_state:
   include_mask: true
   index_path: null       # null -> {data_root}/raw/libero/object_index.json
 
-# Computed: 23 (proprio) + 16*7 (objects) + 16 (mask)
+# Must equal 23 (proprio) + k_slots*7 (objects) + k_slots (mask).
+# Manually maintained here and in every model config (input_dim); it is
+# NOT derived automatically — the ingest pipeline validates it at runtime
+# (state_machine._load_object_index / _check_state_dim_consistency) and
+# fails loudly on mismatch.
 state_dim: 151
 
 # Cache root (relative to project output_dir or absolute)

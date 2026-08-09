@@ -9,9 +9,11 @@
 - `FIXED` — resolved; commit or mechanism noted
 - `PARTIAL` — mitigated but not fully resolved
 
-**As of:** 2026-08-07 · Repo HEAD: `c3fbb1d` (pushed to origin/master) · Tests: 69/69, ruff clean
+**As of:** 2026-08-08 · Repo HEAD: `b90f14d` (pushed to origin/master) + uncommitted Patch 2 (see below) · Tests: 118/118, ruff clean
 
-**Latest round (Patch 1 + Batch A/B, this session):** P-Stage 1 object-state channel implemented (state_dim 151, object index census + B6 gate); 2×2 cells + teacher-forced cell (C1/C7/E8) implemented with tests; C3 per-epoch NMI-vs-balance logging + sweep script; B4 ID/OOD declaration. Tests: **113/113**. Statuses below updated to reflect code-level completion; Colab execution steps remain OPEN.
+**Latest round (Patch 1 + Batch A/B):** P-Stage 1 object-state channel implemented (state_dim 151, object index census + B6 gate); 2×2 cells + teacher-forced cell (C1/C7/E8) implemented with tests; C3 per-epoch NMI-vs-balance logging + sweep script; B4 ID/OOD declaration. Tests: **117/117**. Statuses updated to reflect code-level completion; Colab execution steps remain OPEN.
+
+**Patch 2 (this session, uncommitted):** closes the residual code-level gaps from the Patch-1 audit — (a) `rollout_evaluator.py` fallback suite default changed `["libero_spatial"]` → `["libero_90"]` so omitting `eval.environment.suites` can no longer silently resurface the A2 zero-shot confound; (b) `early_stopping.enabled` defaults flipped to `false` in `config/train/stage1.yaml` + `stage2.yaml` (full-length schedules for ANY invocation path, incl. ad-hoc runs — the runners' `enabled=false` overrides are now redundant but harmless; opt-in via `train.early_stopping.enabled=true`); (c) dead config `train.balance_coeff` removed from both stage YAMLs (live knob is `models.router.balance_coeff`); (d) B7 parity lock test added — `ObjectIndex.decode` (ingest side) vs eval `_extract_state` cross-asserted on a synthetic free+hinge task; (e) `common.yaml` state_dim comment corrected (manually maintained, runtime-validated, not auto-computed).
 
 ---
 
@@ -91,7 +93,7 @@
 ### C3. Specialization–balance dilemma — `FIXED (code)` ⚠ sweep execution pending
 - Balance loss (coeff 0.01) enforces balance ≥ 0.98 but NMI = 0.0 for all learned models — the documented "pseudo-balancing" pattern; balance masks washed-out phase signal.
 - Action: sweep balance weight (e.g., 0 / 0.01 / 0.1); log balance score vs NMI over training.
-- **Fix (implemented):** `Stage2Trainer` now logs `val/phase_expert_nmi`, `val/balance_score`, `val/collapse_rate`, `val/routing_entropy` every epoch (single forward pass, reused outputs); `scripts/run_balance_sweep.py` runs phaseforge stage-2 at balance weight 0 / 0.01 / 0.1 × 3 seeds. NOTE: the effective knob is `models.router.balance_coeff` (applied inside `TopKRouter`); `train.balance_coeff` in `stage2.yaml` is dead config. Sweep execution pending (Batch C).
+- **Fix (implemented):** `Stage2Trainer` now logs `val/phase_expert_nmi`, `val/balance_score`, `val/collapse_rate`, `val/routing_entropy` every epoch (single forward pass, reused outputs); `scripts/run_balance_sweep.py` runs phaseforge stage-2 at balance weight 0 / 0.01 / 0.1 × 3 seeds. NOTE: the effective knob is `models.router.balance_coeff` (applied inside `TopKRouter`); the dead `train.balance_coeff` was removed from `stage2.yaml` in Patch 2. Sweep execution pending (Batch C).
 
 ### C4. Phase-label quality unvalidated — `FIXED (code)` ⚠ real-data run pending
 - Rule-based labeler (`RuleBasedPhaseLabeler`: gripper 0.02/0.04, eef-vel 0.01, min-duration 5, median-7) feeds: stage-1 phase loss, centroid bootstrap, NMI, and the oracle itself. Errors at transitions (e.g., carry→place in drawer tasks) propagate everywhere.
@@ -223,6 +225,7 @@ The general claim "phase/skill structure helps MoE specialize in manipulation" i
 - **Frozen-encoder jitter** (Stage 2, cached embeddings): R3M/VC-1-style frozen features can produce jitterier trajectories than joint training — validate on ONE suite before committing the sweep.
 - **Cached-embedding equivalence** (Stage 2): cached ≠ end-to-end vision quality; plan a compare vs unfrozen encoder on a single suite.
 - **LIBERO-PRO overestimation**: standard protocol overestimates generalization (perturbation collapse) — note as limitation in writeup.
+- **π0 proprioception ablation (REPORT #2 §3.1)**: the "≈1.4pp (94.2% → 92.8%)" figure is attributed to the professor's citation; it could not be independently confirmed from the π0 paper's public tables (arXiv 2410.24164) during the 2026-08-08 online audit — verify the exact numbers against the paper before it lands in the final writeup.
 - **Dataset revision pinning**: `lerobot`/HF datasets can be re-uploaded — pin revisions for reproducibility (already manifest-pinned by our downloader).
 - **Re-ingestion cost**: ~66 GB libero_90 re-ingest on Colab — time and disk budget needed; HDF5s already downloaded (no re-download if cache kept).
 

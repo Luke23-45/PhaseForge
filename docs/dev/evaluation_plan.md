@@ -449,7 +449,10 @@ class RolloutEvaluator:
         }
 
     def run(self) -> dict[str, Any]:
-        suites = self.cfg.eval.environment.get("suites", ["libero_spatial"])
+        # Decision 2 (issues register A2, 2026-08-07): libero_90 is the
+        # in-distribution core; libero_10 is the labeled zero-shot row.
+        # Spatial/object/goal are NOT fallback defaults.
+        suites = self.cfg.eval.environment.get("suites", ["libero_90"])
         num_ep = self.cfg.eval.evaluation.get("num_episodes_per_task", 50)
 
         all_results: dict[str, Any] = {}
@@ -566,13 +569,18 @@ def evaluate(cfg: DictConfig) -> None:
 mode: "rollout"
 
 environment:
-  suites: ["libero_spatial", "libero_object", "libero_goal", "libero_10"]
+  # Decision 2 (issues register A2, 2026-08-07): libero_90 (ID) +
+  # libero_10 (labeled zero-shot row) ONLY. Spatial/object/goal are
+  # separate transfer-study benchmarks, not eval suites for a
+  # libero_90-trained agent.
+  suites: ["libero_90", "libero_10"]
   control_mode: "relative"
-  episode_length: null                # use suite defaults (220/280/300/520)
+  episode_length: null                # use suite defaults (libero_10=520, libero_90=400)
   num_steps_wait: 10                  # wait steps for sim objects to settle
 
 evaluation:
   num_episodes_per_task: 50           # standard: 50, minimum: 10 (LeRobot)
+  episodes_per_suite: {libero_90: 50, libero_10: 10}  # E5: 10 eps on the zero-shot row
   seeds: [42, 43, 44]                 # 3 seeds for statistical significance
   record_video: false
   video_dir: null
