@@ -156,6 +156,17 @@ def _resolve_body_id(m: dict, name: str) -> int | None:
     return None
 
 
+def _is_relative_object_observable(name: str) -> bool:
+    """Return whether an observable is relative to the robot, not world pose.
+
+    Robosuite exposes paired sensors such as
+    ``akita_black_bowl_1_to_robot0_eef_pos`` and ``..._quat``. These are
+    derived relative-coordinate sensors and have no corresponding MuJoCo
+    body, so they must never become entries in the world-object index.
+    """
+    return "_to_robot" in name
+
+
 def _object_entries_from_env(env, task_name: str, states: np.ndarray) -> list[dict]:
     """Build the ObjectEntry dicts for a task from its LIVE obs + model.
 
@@ -191,6 +202,7 @@ def _object_entries_from_env(env, task_name: str, states: np.ndarray) -> list[di
             for key in obs
             if key.endswith(_POS_SUFFIX)
             and not key.startswith(_ROBOT_PREFIX)
+            and not _is_relative_object_observable(key[: -len(_POS_SUFFIX)])
             and key[: -len(_POS_SUFFIX)] + _QUAT_SUFFIX in obs
         }
     )
