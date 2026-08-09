@@ -522,8 +522,8 @@ def test_eval_config_groups_compose() -> None:
         assert rollout_cfg.eval.environment.num_workers == 0  # auto
         assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50
         assert rollout_cfg.eval.environment.object_state.enabled is True
-        assert rollout_cfg.eval.environment.object_state.k_slots == 16
-        assert rollout_cfg.data.state_dim == 151
+        assert rollout_cfg.eval.environment.object_state.k_slots == 8
+        assert rollout_cfg.data.state_dim == 87
 
         default_cfg = compose(config_name="main")
         assert default_cfg.eval.mode == "offline"
@@ -538,5 +538,7 @@ def test_bc_model_builds_and_acts_on_state_vector() -> None:
         cfg = compose(config_name="main", overrides=["models=baselines/bc"])
     model = build_model(cfg)
     model.eval()
-    action = model.get_action(torch.randn(1, STATE_DIM))
+    state_dim = int(cfg.data.state_dim)
+    action = model.get_action(torch.randn(1, state_dim))
     assert action.shape == (1, ACTION_DIM)
+    assert state_dim == 87  # 23 proprio + 8*7 objects + 8 mask

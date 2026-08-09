@@ -36,7 +36,7 @@ action_dim: 7
 # The mask dims are excluded from normalization (already binary).
 object_state:
   enabled: true
-  k_slots: 16            # census-tightened after patch 0; decoder fails loud if exceeded
+  k_slots: 8             # census-tightened (patch 0 rebuild: max 8 objects, B6-gated); decoder fails loud if exceeded
   dim_per_object: 7      # world pos (3) + quat (4) — must match object_state.py
   include_mask: true
   index_path: null       # null -> {data_root}/raw/libero/object_index.json
@@ -46,7 +46,7 @@ object_state:
 # NOT derived automatically — the ingest pipeline validates it at runtime
 # (state_machine._load_object_index / _check_state_dim_consistency) and
 # fails loudly on mismatch.
-state_dim: 151
+state_dim: 87
 
 # Cache root (relative to project output_dir or absolute)
 cache_root: "cache"

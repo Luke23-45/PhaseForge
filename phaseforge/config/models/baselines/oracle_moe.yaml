@@ -10,7 +10,7 @@ freeze_encoder: false
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder
-  input_dim: 151          # Matches data.state_dim (23 + 16*7 objects + 16 mask)
+  input_dim: 87           # Matches data.state_dim (23 + 8*7 objects + 8 mask)
   hidden_dims: [256, 256, 256]
   latent_dim: 128
   activation: "gelu"

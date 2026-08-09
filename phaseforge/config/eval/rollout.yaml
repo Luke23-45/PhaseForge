@@ -44,7 +44,7 @@ environment:
   # config/data/common.yaml object_state.
   object_state:
     enabled: true
-    k_slots: 16
+    k_slots: 8
     dim_per_object: 7
     include_mask: true
     index_path: null         # null -> {data_root}/raw/libero/object_index.json
