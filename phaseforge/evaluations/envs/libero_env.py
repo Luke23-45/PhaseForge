@@ -323,9 +323,15 @@ class StateOnlyLiberoEnv:
         ]
         n_objects = len(self._object_names)
         if n_objects:
+            from phaseforge.data.libero.object_state import robosuite_quat_to_wxyz
+
             for name in self._object_names:
                 parts.append(obs[f"{name}_pos"])
-                parts.append(obs[f"{name}_quat"])
+                # Robosuite emits object quaternions as xyzw; the training
+                # HDF5 qpos/object decoder state contract is wxyz.
+                parts.append(
+                    robosuite_quat_to_wxyz(obs[f"{name}_quat"])
+                )
             pad = self._object_k_slots - n_objects
             if pad > 0:
                 parts.append(np.zeros(pad * self._object_dim, dtype=np.float32))

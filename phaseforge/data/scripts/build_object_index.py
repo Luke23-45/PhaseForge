@@ -303,6 +303,7 @@ def _run_b6_gate(
         ObjectEntry,
         ObjectIndex,
         TaskObjectTable,
+        robosuite_quat_to_wxyz,
     )
 
     table = TaskObjectTable(
@@ -345,7 +346,9 @@ def _run_b6_gate(
                     np.concatenate(
                         [
                             live_obs[f"{e['name']}_pos"],
-                            live_obs[f"{e['name']}_quat"],
+                            robosuite_quat_to_wxyz(
+                                live_obs[f"{e['name']}_quat"]
+                            ),
                         ]
                     )
                     for e in table_entries

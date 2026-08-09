@@ -54,7 +54,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 #: Dimensionality of one decoded object slot: world pos (3) + quat (4).
-#: Mirrors the robosuite ``{name}_pos`` / ``{name}_quat`` observables.
+#: The stored state channel uses MuJoCo/HDF5 quaternion order (w, x, y, z).
+#: Robosuite object observables are converted from xyzw at the boundary.
 POS_QUAT_DIM = 7
 
 #: Joint types understood by the decoder.
@@ -64,6 +65,21 @@ JOINT_SLIDE = "slide"  # qpos is 1 scalar distance; pose via axis translation
 JOINT_FIXED = "fixed"  # static pose; no qpos entry
 
 _JOINT_TYPES = (JOINT_FREE, JOINT_HINGE, JOINT_SLIDE, JOINT_FIXED)
+
+
+def robosuite_quat_to_wxyz(quat: np.ndarray) -> np.ndarray:
+    """Convert robosuite object-observation quaternions from xyzw to wxyz.
+
+    MuJoCo free-joint qpos and processed HDF5 ``states`` use w-first
+    quaternions. Robosuite's object observables use xyzw, so this conversion
+    is required at both ingestion/evaluation parity boundaries.
+    """
+    value = np.asarray(quat)
+    if value.shape[-1] != 4:
+        raise ValueError(
+            f"Expected a quaternion with final dimension 4, got {value.shape}"
+        )
+    return np.concatenate((value[..., 3:], value[..., :3]), axis=-1)
 
 #: Suffix the LIBERO mirror appends to every task file (``foo_demo.hdf5``).
 #: Verified: 100% of files in both libero_90/ and libero_10/ end with this
