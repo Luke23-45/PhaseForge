@@ -109,11 +109,19 @@ class CacheManager:
             )
 
         # Raw dataset identity: names + sizes (cheap). Content hashes are
-        # recorded in the manifest during save().
+        # recorded in the manifest during save(). When the download script's
+        # MANIFEST.json is present, its pinned dataset-revision commit SHA is
+        # the identity — reproducible on ANY machine, unlike per-file mtimes
+        # (which differ between downloads). The mtime fingerprint is only a
+        # last resort for raw data that arrived without a manifest; a cache
+        # keyed that way is NOT portable across machines.
         try:
             suite = data_cfg.get("libero", {}).get("suite")
             if suite:
-                from phaseforge.data.paths import libero_suite_dir
+                from phaseforge.data.paths import (
+                    libero_manifest_path,
+                    libero_suite_dir,
+                )
 
                 suite_dir = libero_suite_dir(str(suite))
                 if not suite_dir.exists():
@@ -126,13 +134,40 @@ class CacheManager:
                     )
                 files = sorted(suite_dir.glob("*.hdf5"))
                 ctx["raw_files"] = [
-                    {
-                        "name": p.name,
-                        "size": p.stat().st_size,
-                        "mtime_ns": p.stat().st_mtime_ns,
-                    }
+                    {"name": p.name, "size": p.stat().st_size}
                     for p in files
                 ]
+
+                try:
+                    manifest_path = libero_manifest_path()
+                    if manifest_path.exists():
+                        manifest = json.loads(
+                            manifest_path.read_text(encoding="utf-8")
+                        )
+                        commit = manifest.get("commit_sha")
+                        if commit:
+                            ctx["dataset_commit"] = str(commit)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Could not read the LIBERO download manifest while "
+                        "computing the cache identity — falling back to "
+                        "per-file mtimes (the cache will NOT be portable "
+                        "across machines in this state).",
+                        exc_info=True,
+                    )
+                if "dataset_commit" not in ctx:
+                    # No manifest: keep the mtime-based fingerprint as the
+                    # same-machine identity (the download script always
+                    # writes MANIFEST.json, so the documented workflow is
+                    # the portable one).
+                    ctx["raw_files"] = [
+                        {
+                            "name": p.name,
+                            "size": p.stat().st_size,
+                            "mtime_ns": p.stat().st_mtime_ns,
+                        }
+                        for p in files
+                    ]
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Could not fingerprint the raw dataset for the cache "

@@ -80,6 +80,79 @@ def test_hash_changes_when_raw_dataset_changes(
     assert h1 != h2, "raw dataset change must invalidate the cache"
 
 
+def test_hash_portable_across_machine_mtimes_when_manifest_present(
+    fake_data_root: Path,
+) -> None:
+    """With MANIFEST.json present the identity is the pinned dataset commit
+    — different download mtimes must NOT change the cache key (this is what
+    makes the HF-uploaded cache usable on other machines)."""
+    import os
+    import time
+
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+    from phaseforge.data.paths import libero_manifest_path
+
+    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
+    demo = suite_dir / "TASK_A_demo.hdf5"
+    _write_dummy_hdf5(demo)
+    cfg = _data_cfg(suite_dir=suite_dir)
+    manifest = libero_manifest_path()
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps(
+            {"source": "huggingface", "commit_sha": "f13aa24a" * 5},
+            indent=2,
+        )
+    )
+
+    h1 = CacheManager.compute_hash(cfg)
+    # Simulate a re-download on another machine: same content, new mtime.
+    os.utime(demo, (time.time() - 86400, time.time() - 86400))
+    h2 = CacheManager.compute_hash(cfg)
+
+    assert h1 == h2, "mtimes must not enter the key when the manifest exists"
+
+
+def test_hash_sensitive_to_manifest_commit(fake_data_root: Path) -> None:
+    """A different pinned dataset revision must invalidate the cache."""
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+    from phaseforge.data.paths import libero_manifest_path
+
+    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
+    _write_dummy_hdf5(suite_dir / "TASK_A_demo.hdf5")
+    cfg = _data_cfg(suite_dir=suite_dir)
+    manifest = libero_manifest_path()
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest.write_text(json.dumps({"commit_sha": "a" * 40}, indent=2))
+    h1 = CacheManager.compute_hash(cfg)
+    manifest.write_text(json.dumps({"commit_sha": "b" * 40}, indent=2))
+    h2 = CacheManager.compute_hash(cfg)
+
+    assert h1 != h2, "dataset revision change must invalidate the cache"
+
+
+def test_hash_sensitive_to_mtime_without_manifest(
+    fake_data_root: Path,
+) -> None:
+    """Without MANIFEST.json the legacy mtime fingerprint still applies."""
+    import os
+    import time
+
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
+    demo = suite_dir / "TASK_A_demo.hdf5"
+    _write_dummy_hdf5(demo)
+    cfg = _data_cfg(suite_dir=suite_dir)
+
+    h1 = CacheManager.compute_hash(cfg)
+    os.utime(demo, (time.time() - 86400, time.time() - 86400))
+    h2 = CacheManager.compute_hash(cfg)
+
+    assert h1 != h2, "no-manifest fallback must stay mtime-sensitive"
+
+
 def test_hash_stable_without_data(tmp_path: Path) -> None:
     cfg = _data_cfg(index_path=str(tmp_path / "missing_index.json"))
     from phaseforge.data.ingestion.cache_manager import CacheManager
