@@ -5,15 +5,32 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from phaseforge.data.scripts.build_object_index import _run_b6_gate
+from phaseforge.data.scripts.build_object_index import (
+    _object_entries_from_env,
+    _run_b6_gate,
+)
+
+
+class _FakeData:
+    body_xpos = np.zeros((2, 3))
+    body_xquat = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
 
 
 class _FakeModel:
     nq = 16
+    nv = 6
+    body_names = ["robot0", "cube"]
+    body_parentid = np.array([0, 0])
+    body_jntadr = np.array([0, 0])
+    jnt_type = np.array([0, 0])  # free joints
+    jnt_qposadr = np.array([0, 9])
+    jnt_pos = np.zeros((2, 3))
+    jnt_axis = np.zeros((2, 3))
 
 
 class _FakeSim:
     model = _FakeModel()
+    data = _FakeData()
 
 
 class _FakeEnv:
@@ -91,3 +108,20 @@ def test_b6_gate_rejects_non_unit_quaternion() -> None:
             max_demos=1,
             steps_per_demo=1,
         )
+
+
+def test_states_width_tolerates_extra_trailing_dims() -> None:
+    """The mirror stores nq+nv+1-wide states in KITCHEN scenes; the census
+    must accept widths >= nq+nv (the B6 gate arbitrates the qpos block)."""
+    env = _FakeEnv(_states())
+    entries = _object_entries_from_env(env, "TASK_A", np.zeros((3, 22), dtype=np.float32))
+    assert [e["name"] for e in entries] == ["cube"]
+
+    # nq(16) + nv(6) + 1 trailing dim — must pass like the real mirror.
+    env = _FakeEnv(_states())
+    entries = _object_entries_from_env(env, "TASK_A", np.zeros((3, 23), dtype=np.float32))
+    assert [e["name"] for e in entries] == ["cube"]
+
+    # Below nq+nv cannot be a flattened sim state — must fail loudly.
+    with pytest.raises(ValueError, match="not the flattened sim state"):
+        _object_entries_from_env(env, "TASK_A", np.zeros((3, 21), dtype=np.float32))

@@ -8,9 +8,12 @@ Run ONCE on the machine that has the LIBERO mirror AND the ``libero`` /
 What it does
 ------------
 For every task HDF5 file the script:
-  1. Reads the demo ``states`` array and verifies its width S equals the
-     task's MuJoCo ``nq + nv`` (the flattened-sim-state convention;
-     LIBERO issues #26/#71).
+  1. Reads the demo ``states`` array and verifies its width is at least
+     the task's MuJoCo ``nq + nv`` (the flattened-sim-state convention;
+     LIBERO issues #26/#71). The mirror may append extra trailing dims
+     (observed nq+nv+1 in KITCHEN scenes) — the qpos block (first ``nq``
+     columns) is what the decode reads, and the B6 gate verifies it
+     against live observations.
   2. Loads the task's real environment, reads the LIVE observation dict,
      and derives the object set from the ``{name}_pos`` / ``{name}_quat``
      keys (the BDDL-defined observation list — exactly what the eval side
@@ -134,11 +137,24 @@ def _object_entries_from_env(env, task_name: str, states: np.ndarray) -> list[di
     """
     m = _model_arrays(env)
     nq, nv = m["nq"], m["nv"]
-    if states.shape[-1] != nq + nv:
+    width = states.shape[-1]
+    # The mirror's ``states`` can carry extra trailing dims beyond the
+    # flattened sim state (qpos + qvel) — observed nq+nv+1 in the KITCHEN
+    # scenes. The decode only ever reads the first ``nq`` columns (the
+    # qpos block), and the B6 gate validates that assumption against live
+    # robosuite observations, so trailing extras are safe. A width BELOW
+    # nq+nv cannot be the flattened sim state and is fatal.
+    if width < nq + nv:
         raise ValueError(
-            f"{task_name}: states width {states.shape[-1]} != nq({nq}) + "
-            f"nv({nv}) — the 'states' key is not the flattened sim state "
-            f"for this mirror revision."
+            f"{task_name}: states width {width} < nq({nq}) + nv({nv}) — "
+            f"the 'states' key is not the flattened sim state for this "
+            f"mirror revision."
+        )
+    if width != nq + nv:
+        logger.info(
+            "  %s: states width %d vs nq+nv=%d (%d extra trailing dim(s)); "
+            "the qpos block is still validated by the B6 gate",
+            task_name, width, nq + nv, width - (nq + nv),
         )
 
     obs = env._get_observations()
