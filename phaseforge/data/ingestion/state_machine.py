@@ -353,14 +353,20 @@ class DataPipelineStateMachine:
 
     def _check_cache(self) -> None:
         logger.info("CHECK_PERSISTENT_CACHE: looking for cached data…")
-        if self.cache_manager.cache_exists(self.config_hash):
-            logger.info("Cache hit. Loading from disk.")
+        enforce_strict = self.data_cfg.get("enforce_strict_cache", True)
+        found_hash = self.cache_manager.find_cache(self.config_hash, enforce_strict)
+        
+        if found_hash:
+            logger.info(f"Cache hit (hash: {found_hash}). Loading from disk.")
             (
                 self._trajectories,
                 self._norm_stats,
                 self._splits,
                 self._task_index,
-            ) = self.cache_manager.load(self.config_hash)
+            ) = self.cache_manager.load(found_hash)
+            
+            # Use the loaded hash so it doesn't mismatch later if we need it
+            self.config_hash = found_hash
             self._state = PipelineState.READY
         else:
             logger.info("Cache miss. Proceeding to validate source.")

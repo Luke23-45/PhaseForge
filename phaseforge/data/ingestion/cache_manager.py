@@ -215,10 +215,10 @@ class CacheManager:
         return self.cache_root / config_hash
 
     # ------------------------------------------------------------------
-    # Existence check
+    # Existence check and Fallback
     # ------------------------------------------------------------------
 
-    def cache_exists(self, config_hash: str) -> bool:
+    def _is_valid_cache(self, config_hash: str) -> bool:
         """Return True only if the cache directory and a valid manifest exist."""
         manifest = self.cache_dir(config_hash) / "manifest.json"
         if not manifest.exists():
@@ -228,6 +228,36 @@ class CacheManager:
             return meta.get("complete", False)
         except (json.JSONDecodeError, KeyError):
             return False
+
+    def cache_exists(self, config_hash: str) -> bool:
+        """Return True only if the cache directory and a valid manifest exist."""
+        return self._is_valid_cache(config_hash)
+
+    def find_cache(self, config_hash: str, enforce_strict: bool = True) -> str | None:
+        """Find a valid cache to load.
+
+        If enforce_strict is True, only an exact match for config_hash is valid.
+        If False, falls back to ANY available valid cache in the cache_root if
+        the exact match fails.
+        Returns the hash of the matched cache, or None.
+        """
+        # 1. Try exact match first
+        if self._is_valid_cache(config_hash):
+            return config_hash
+            
+        # 2. Try fallback if allowed
+        if not enforce_strict:
+            if self.cache_root.exists():
+                for d in self.cache_root.iterdir():
+                    if d.is_dir() and not d.name.endswith("_tmp"):
+                        if self._is_valid_cache(d.name):
+                            logger.warning(
+                                f"Strict cache mismatch. Using fallback cache '{d.name}' "
+                                f"instead of expected '{config_hash}' because "
+                                "data.enforce_strict_cache is False."
+                            )
+                            return d.name
+        return None
 
     # ------------------------------------------------------------------
     # Save
