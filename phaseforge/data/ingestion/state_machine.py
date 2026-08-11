@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -320,11 +321,16 @@ class DataPipelineStateMachine:
             sequence_length=int(self.data_cfg.sequence_length),
             stride=int(self.data_cfg.stride),
         )
+        # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns
+        num_workers = int(self.data_cfg.num_workers)
+        if hasattr(os, "cpu_count") and os.cpu_count() is not None:
+            num_workers = min(num_workers, os.cpu_count())
+
         self._eval_loader = DataLoader(
             dataset,
             batch_size=int(self.data_cfg.batch_size),
             shuffle=False,
-            num_workers=int(self.data_cfg.num_workers),
+            num_workers=num_workers,
             pin_memory=bool(self.data_cfg.pin_memory),
             collate_fn=PhaseAwareCollator(),
             drop_last=False,
@@ -746,11 +752,17 @@ class DataPipelineStateMachine:
                 stride=int(data_cfg.stride),
             )
             is_train = split_name == "train"
+            
+            # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns
+            num_workers = int(data_cfg.num_workers)
+            if hasattr(os, "cpu_count") and os.cpu_count() is not None:
+                num_workers = min(num_workers, os.cpu_count())
+                
             loader = DataLoader(
                 dataset,
                 batch_size=int(data_cfg.batch_size),
                 shuffle=is_train,
-                num_workers=int(data_cfg.num_workers),
+                num_workers=num_workers,
                 pin_memory=bool(data_cfg.pin_memory),
                 collate_fn=PhaseAwareCollator(),
                 drop_last=is_train,

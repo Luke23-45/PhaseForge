@@ -1,7 +1,7 @@
 # config/data/common.yaml — Shared data parameters
 
 batch_size: 256
-num_workers: 4
+num_workers: 2
 pin_memory: true
 persistent_workers: true
 prefetch_factor: 2
