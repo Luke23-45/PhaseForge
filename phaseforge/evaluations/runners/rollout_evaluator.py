@@ -407,13 +407,23 @@ class RolloutEvaluator:
         cache_root = processed_cache_root()
         cache_mgr = CacheManager(cache_root)
         self._cache_hash = CacheManager.compute_hash(self.cfg.data)
-        try:
-            _, norm_stats, _, _ = cache_mgr.load(self._cache_hash)
-        except FileNotFoundError as exc:
+        
+        enforce_strict = self.cfg.data.get("enforce_strict_cache", True)
+        found_hash = cache_mgr.find_cache(self._cache_hash, enforce_strict)
+        
+        if found_hash:
+            self._cache_hash = found_hash
+            try:
+                _, norm_stats, _, _ = cache_mgr.load(self._cache_hash)
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    f"Cache corrupted for hash {self._cache_hash}"
+                ) from exc
+        else:
             raise RuntimeError(
                 f"No cached dataset found for config_hash={self._cache_hash}. "
                 "Run training (which builds the cache) before rollout evaluation."
-            ) from exc
+            )
         # Manifest provenance: object-index hash, git commit, state schema —
         # recorded so the eval result can be audited against the cache.
         manifest_path = cache_mgr.cache_dir(self._cache_hash) / "manifest.json"
