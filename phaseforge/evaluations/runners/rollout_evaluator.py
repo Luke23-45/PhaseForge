@@ -228,6 +228,11 @@ def _run_suite_worker(
         format="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # Suppress redundant setup logs from the worker processes to avoid console spam.
+    # The parent process already logged the cache warnings and checkpoint loading.
+    logging.getLogger("phaseforge.data.ingestion.cache_manager").setLevel(logging.ERROR)
+    logging.getLogger("phaseforge.cli").setLevel(logging.WARNING)
+
     from phaseforge.cli import _resolve_device, build_eval_model
     from phaseforge.utils.seed import set_seed
 
