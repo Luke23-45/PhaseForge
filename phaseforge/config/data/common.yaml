@@ -54,4 +54,4 @@ cache_root: "cache"
 # When true, the data ingestion pipeline requires an exact cache hash match.
 # When false, it will fall back to using any valid complete cache found in the cache_root
 # if the expected hash misses (useful when using downloaded pre-processed caches).
-enforce_strict_cache: falses
+enforce_strict_cache: false
