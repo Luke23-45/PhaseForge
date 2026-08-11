@@ -641,6 +641,13 @@ class RolloutEvaluator:
         """
         bench_key = SUITE_BENCHMARK_NAMES[suite_name]
 
+        # Prevent LIBERO interactive prompt hanging in non-interactive environments
+        from pathlib import Path
+        libero_cfg = Path.home() / ".libero" / "config.yaml"
+        if not libero_cfg.exists():
+            libero_cfg.parent.mkdir(parents=True, exist_ok=True)
+            libero_cfg.write_text("DATASET_PATH: ''\n")
+
         try:
             from libero.libero import benchmark
         except ImportError as exc:

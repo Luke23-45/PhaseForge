@@ -167,6 +167,12 @@ class StateOnlyLiberoEnv:
         hard_reset: bool = True,
         object_state_cfg: Any = None,
     ) -> None:
+        # Prevent LIBERO interactive prompt hanging in non-interactive environments
+        libero_cfg = Path.home() / ".libero" / "config.yaml"
+        if not libero_cfg.exists():
+            libero_cfg.parent.mkdir(parents=True, exist_ok=True)
+            libero_cfg.write_text("DATASET_PATH: ''\n")
+
         try:
             from libero.libero import benchmark, get_libero_path
             from libero.libero.envs import OffScreenRenderEnv
