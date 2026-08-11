@@ -326,6 +326,10 @@ class RolloutEvaluator:
         self.normalizer = self._load_normalizer()
         self._controller_meta: dict[str, Any] | None = None
         self._action_policy_recorded = False
+        # Set by _evaluate_task with the per-task timing breakdown (phase
+        # seconds, env sub-phases, outcomes) — consumed by the profiling
+        # script and any diagnostic tooling.
+        self._last_task_breakdown: dict[str, Any] = {}
 
         # Resolve rollout settings defensively so that setting
         # ``eval.mode=rollout`` without the full rollout.yaml still works.
@@ -602,16 +606,34 @@ class RolloutEvaluator:
             task_id + 1, num_tasks, task_desc, len(episode_indices),
         )
 
+        # Phase wall-clock accumulation for the per-task timing summary
+        # (reset vs env.step vs inference vs everything else).
+        reset_secs = 0.0
+        step_secs = 0.0
+        infer_secs = 0.0
+        episode_secs: list[float] = []
+        episode_steps: list[int] = []
+        outcomes = {"success": 0, "timeout": 0, "early_term": 0}
+
         try:
             for shard_pos, episode_idx in enumerate(episode_indices):
+                t_ep = time.perf_counter()
+                t0 = time.perf_counter()
                 state = env.reset(episode_idx=episode_idx)
+                reset_secs += time.perf_counter() - t0
                 self._validate_state(state)
                 episode_success = False
+                steps_taken = 0
 
                 for _ in range(max_steps):
+                    t1 = time.perf_counter()
                     action = self._get_action(state)
+                    infer_secs += time.perf_counter() - t1
+                    t2 = time.perf_counter()
                     state, _, terminated, truncated, info = env.step(action)
+                    step_secs += time.perf_counter() - t2
                     self._validate_state(state)
+                    steps_taken += 1
 
                     if terminated or truncated:
                         if info.get("is_success", False):
@@ -621,15 +643,92 @@ class RolloutEvaluator:
                 if episode_success:
                     task_successes += 1
 
-                # Log progress every 10 episodes of this shard
+                episode_secs.append(time.perf_counter() - t_ep)
+                episode_steps.append(steps_taken)
+                outcomes[
+                    "success"
+                    if episode_success
+                    else ("timeout" if steps_taken >= max_steps else "early_term")
+                ] += 1
+
+                # Log progress every 10 episodes of this shard (timing gives
+                # a live ETA: mean wall-seconds and mean steps per episode
+                # over the rolling window).
                 if (shard_pos + 1) % 10 == 0:
+                    window = episode_secs[-10:]
+                    win_steps = episode_steps[-10:]
                     logger.info(
-                        "    episode %d/%d — running SR: %.1f%%",
+                        "    episode %d/%d — running SR: %.1f%% — "
+                        "mean %.1fs/ep (%.0f steps/ep)",
                         shard_pos + 1, len(episode_indices),
                         100.0 * task_successes / (shard_pos + 1),
+                        sum(window) / len(window),
+                        sum(win_steps) / len(win_steps),
                     )
         finally:
             env.close()
+
+        # Per-task timing summary (serial and worker paths both log it).
+        n_eps = len(episode_secs)
+        total = sum(episode_secs)
+        mean_ep = total / n_eps if n_eps else 0.0
+        mean_steps = sum(episode_steps) / n_eps if n_eps else 0.0
+        other = max(total - reset_secs - step_secs - infer_secs, 0.0)
+
+        def _pct(secs: float) -> float:
+            return 100.0 * secs / total if total else 0.0
+
+        logger.info(
+            "  [%d/%d] task done: %s — SR %.1f%% (%d/%d) [%.0fs] — "
+            "mean %.1fs/ep, %.0f steps/ep — reset %.1f%% | step %.1f%% | "
+            "infer %.1f%% | other %.1f%% | %d ok / %d timeout / %d early",
+            task_id + 1, num_tasks, task_desc,
+            100.0 * task_successes / max(n_eps, 1),
+            task_successes, n_eps, total,
+            mean_ep, mean_steps,
+            _pct(reset_secs), _pct(step_secs), _pct(infer_secs), _pct(other),
+            outcomes["success"], outcomes["timeout"], outcomes["early_term"],
+        )
+        env_timings = env.timings()
+        if env_timings:
+            in_env = env_timings.get("step_total", {}).get("seconds", 0.0) + env_timings.get(
+                "reset_total", {}
+            ).get("seconds", 0.0)
+
+            def _env_pct(key: str) -> float:
+                return (
+                    100.0 * env_timings.get(key, {}).get("seconds", 0.0) / in_env
+                    if in_env
+                    else 0.0
+                )
+
+            logger.info(
+                "    env breakdown: physics %.1f%% | check_success %.1f%% | "
+                "state_extract %.1f%% | sim_reset %.1f%% | set_init %.1f%% | "
+                "wait_steps %.1f%% (of %.0fs in-env)",
+                _env_pct("physics_step"), _env_pct("check_success"),
+                _env_pct("extract_state"), _env_pct("reset_construct"),
+                _env_pct("set_init_state"), _env_pct("wait_steps"),
+                in_env,
+            )
+
+        # Structured breakdown for the profiling script (and any consumer).
+        self._last_task_breakdown = {
+            "task_id": task_id,
+            "description": task_desc,
+            "episodes": n_eps,
+            "total_seconds": total,
+            "mean_episode_seconds": mean_ep,
+            "mean_steps": mean_steps,
+            "phases": {
+                "reset_seconds": reset_secs,
+                "step_seconds": step_secs,
+                "infer_seconds": infer_secs,
+                "other_seconds": other,
+            },
+            "env_phases": env_timings,
+            "outcomes": outcomes,
+        }
 
         return task_id, task_desc, task_successes
 
@@ -686,7 +785,8 @@ class RolloutEvaluator:
         if num_workers <= 1:
             per_task_successes: dict[int, dict[str, Any]] = {}
             for task_id in range(num_tasks):
-                task_start = time.monotonic()
+                # Per-task timing summary (including SR) is logged inside
+                # _evaluate_task for both the serial and worker paths.
                 task_id_out, task_desc, task_successes = self._evaluate_task(
                     suite_name,
                     task_id,
@@ -697,13 +797,6 @@ class RolloutEvaluator:
                     "description": task_desc,
                     "successes": task_successes,
                 }
-                elapsed = time.monotonic() - task_start
-                logger.info(
-                    "  [%d/%d] task: %s — SR: %.1f%% (%d/%d) [%.0fs]",
-                    task_id + 1, num_tasks, task_desc,
-                    100.0 * task_successes / max(num_episodes_per_task, 1),
-                    task_successes, num_episodes_per_task, elapsed,
-                )
         else:
             per_task_successes = self._evaluate_suite_parallel(
                 suite_name, num_tasks, num_episodes_per_task, num_workers

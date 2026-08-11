@@ -10,13 +10,46 @@ mirror's ``states`` arrays). All image observations are discarded.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+class _PhaseTimings:
+    """Cheap wall-clock accumulators for per-phase rollout profiling.
+
+    Overhead is one ``perf_counter`` pair per measured call (~1 µs)
+    against multi-millisecond physics steps, so the counters are always
+    on and read on demand via :meth:`snapshot`.
+    """
+
+    __slots__ = ("_acc", "_counts")
+
+    def __init__(self) -> None:
+        self._acc: dict[str, float] = {}
+        self._counts: dict[str, int] = {}
+
+    @contextlib.contextmanager
+    def phase(self, name: str) -> Any:
+        t0 = time.perf_counter()
+        try:
+            yield
+        finally:
+            dt = time.perf_counter() - t0
+            self._acc[name] = self._acc.get(name, 0.0) + dt
+            self._counts[name] = self._counts.get(name, 0) + 1
+
+    def snapshot(self) -> dict[str, dict[str, float | int]]:
+        return {
+            name: {"seconds": self._acc[name], "calls": self._counts[name]}
+            for name in self._acc
+        }
 
 SUITE_MAX_STEPS: dict[str, int] = {
     "libero_spatial": 280,
@@ -277,11 +310,22 @@ class StateOnlyLiberoEnv:
         # None means "no previous position" -> t=0 velocity is zeros,
         # exactly like the ingest-side np.diff(prepend=first_row).
         self._prev_joint_pos: np.ndarray | None = None
+        # Per-phase wall-clock profiling (always on, ~1 µs/call overhead).
+        self._timings = _PhaseTimings()
 
     @property
     def task_description(self) -> str:
         """Human-readable task description from the benchmark."""
         return self._task.language
+
+    def _phase_timings(self) -> _PhaseTimings:
+        """Accessor for the phase timer (created lazily so instances built
+        without ``__init__`` — e.g. the unit-test fakes — still work)."""
+        timings = getattr(self, "_timings", None)
+        if timings is None:
+            timings = _PhaseTimings()
+            self._timings = timings
+        return timings
 
     @property
     def num_init_states(self) -> int:
@@ -366,18 +410,23 @@ class StateOnlyLiberoEnv:
                 f"episode_idx={episode_idx} out of range "
                 f"(available init states={len(self._init_states)})"
             )
-        self._env.seed(self.seed)
-        self._env.reset()
-        obs = self._env.set_init_state(self._init_states[episode_idx])
-        dummy = np.array([0.0] * 7, dtype=np.float32)
-        for _ in range(self.num_steps_wait):
-            obs, _, _, _ = self._env.step(dummy)
-        self._elapsed_steps = 0
-        # Parity contract: joint velocity is a finite difference, so the
-        # "previous" position must not leak across episodes (t=0 -> zeros,
-        # exactly like the ingest-side `prepend`).
-        setattr(self, self._PREV_JOINT_POS_ATTR, None)
-        return self._extract_state(obs)
+        with self._phase_timings().phase("reset_total"):
+            with self._phase_timings().phase("reset_construct"):
+                self._env.seed(self.seed)
+                self._env.reset()
+            with self._phase_timings().phase("set_init_state"):
+                obs = self._env.set_init_state(self._init_states[episode_idx])
+            with self._phase_timings().phase("wait_steps"):
+                dummy = np.array([0.0] * 7, dtype=np.float32)
+                for _ in range(self.num_steps_wait):
+                    obs, _, _, _ = self._env.step(dummy)
+            self._elapsed_steps = 0
+            # Parity contract: joint velocity is a finite difference, so the
+            # "previous" position must not leak across episodes (t=0 -> zeros,
+            # exactly like the ingest-side `prepend`).
+            setattr(self, self._PREV_JOINT_POS_ATTR, None)
+            with self._phase_timings().phase("extract_state"):
+                return self._extract_state(obs)
 
     def step(
         self, action: np.ndarray
@@ -403,14 +452,18 @@ class StateOnlyLiberoEnv:
         below is the authoritative source for ``is_success``.
         """
         action = np.asarray(action, dtype=np.float32).flatten()
-        obs, reward, done, info = self._env.step(action)
-        self._elapsed_steps += 1
-        # Explicit success check every step — official wrapper semantics
-        # (LeRobot libero.py), no inference from `done`.
-        is_success = bool(self._env.check_success())
-        terminated = bool(done) or bool(is_success)
-        truncated = False
-        state = self._extract_state(obs)
+        with self._phase_timings().phase("step_total"):
+            with self._phase_timings().phase("physics_step"):
+                obs, reward, done, info = self._env.step(action)
+            self._elapsed_steps += 1
+            # Explicit success check every step — official wrapper semantics
+            # (LeRobot libero.py), no inference from `done`.
+            with self._phase_timings().phase("check_success"):
+                is_success = bool(self._env.check_success())
+            terminated = bool(done) or bool(is_success)
+            truncated = False
+            with self._phase_timings().phase("extract_state"):
+                state = self._extract_state(obs)
         return (
             state,
             float(reward),
@@ -418,6 +471,17 @@ class StateOnlyLiberoEnv:
             truncated,
             {"is_success": is_success, "elapsed_steps": self._elapsed_steps},
         )
+
+    def timings(self) -> dict[str, dict[str, float | int]]:
+        """Per-phase wall-clock totals (seconds) and call counts.
+
+        Phases: ``reset_construct`` (sim XML rebuild on hard reset),
+        ``set_init_state``, ``wait_steps``, ``physics_step`` (sim + obs
+        build), ``check_success`` (BDDL predicate), ``extract_state``,
+        and the ``*_total`` wrappers. Read after ``close()``; values
+        remain valid.
+        """
+        return self._phase_timings().snapshot()
 
     def close(self) -> None:
         """Clean up the underlying environment."""
