@@ -654,7 +654,13 @@ class RolloutEvaluator:
             libero_cfg.write_text("DATASET_PATH: ''\n")
 
         try:
-            from libero.libero import benchmark
+            from libero.libero import benchmark, get_libero_path
+            import os, contextlib
+            # Pre-fetch the tiny BDDL/init_state assets silently in the main process
+            # so the workers don't all download them simultaneously and spam the console.
+            with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+                get_libero_path("bddl_files")
+                get_libero_path("init_states")
         except ImportError as exc:
             raise RuntimeError(
                 "libero package not installed. Run: pip install libero"
