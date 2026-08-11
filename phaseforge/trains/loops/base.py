@@ -192,7 +192,25 @@ class BaseTrainer(ABC):
     def _train_epoch(self) -> None:
         self.model.train()
         
-        for batch_idx, batch in enumerate(self.train_loader):
+        use_pbar = self.train_cfg.get("rich_progressbar", False)
+        
+        if use_pbar:
+            try:
+                from tqdm.rich import tqdm
+            except ImportError:
+                from tqdm import tqdm
+                
+            pbar = tqdm(
+                self.train_loader, 
+                desc=f"Epoch {self.current_epoch}/{self.epochs} [Train]",
+                leave=False
+            )
+            iterable = pbar
+        else:
+            pbar = None
+            iterable = self.train_loader
+            
+        for batch_idx, batch in enumerate(iterable):
             # Move batch to device
             batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
             
@@ -230,6 +248,11 @@ class BaseTrainer(ABC):
             
             if self.global_step % self.log_every_n_steps == 0:
                 self._trigger_callbacks("on_train_step", step=self.global_step, metrics=metrics)
+                
+            if pbar is not None:
+                postfix = {k: f"{v:.4f}" for k, v in metrics.items()}
+                postfix["loss"] = f"{loss.item():.4f}"
+                pbar.set_postfix(postfix)
 
     def _batch_sample_count(self, batch: dict[str, torch.Tensor]) -> int:
         """Number of valid samples a batch contributes to the losses.
@@ -251,12 +274,34 @@ class BaseTrainer(ABC):
         agg_metrics: dict[str, float] = {}
         total_samples = 0
         
-        for batch in self.val_loader:
+        use_pbar = self.train_cfg.get("rich_progressbar", False)
+        
+        if use_pbar:
+            try:
+                from tqdm.rich import tqdm
+            except ImportError:
+                from tqdm import tqdm
+                
+            pbar = tqdm(
+                self.val_loader, 
+                desc=f"Epoch {self.current_epoch}/{self.epochs} [Val]",
+                leave=False
+            )
+            iterable = pbar
+        else:
+            pbar = None
+            iterable = self.val_loader
+            
+        for batch in iterable:
             batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
             
             # We don't backprop, just compute losses for logging
             _, metrics = self._compute_loss(batch)
             
+            if pbar is not None:
+                postfix = {k: f"{v:.4f}" for k, v in metrics.items()}
+                pbar.set_postfix(postfix)
+                
             # Weight per-batch metrics by the number of valid samples so the
             # final (short) validation batch does not get the same weight as a
             # full batch (validation uses drop_last=False).
