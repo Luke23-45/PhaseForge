@@ -1,8 +1,9 @@
 """CPU-only tests for the Stage 2 trainer routing diagnostics (C3).
 
 Verifies that every epoch's validation records the balance-vs-specialization
-trajectory (``val/phase_expert_nmi``, ``val/balance_score``,
-``val/collapse_rate``, ``val/routing_entropy``) and that validation reuses
+trajectory (``val/phase_expert_nmi``, ``val/topk_balance_score``,
+``val/topk_collapse_rate``, ``val/top1_balance_score``,
+``val/top1_collapse_rate``, ``val/routing_entropy``) and that validation reuses
 the model forward outputs (no double forward pass).
 """
 
@@ -145,9 +146,11 @@ def test_validate_reports_routing_diagnostics() -> None:
     # near-uniform usage => high balance score.
     assert "val/phase_expert_nmi" in val_metrics
     assert val_metrics["val/phase_expert_nmi"] > 0.99
-    assert "val/balance_score" in val_metrics
-    assert val_metrics["val/balance_score"] > 0.9
-    assert "val/collapse_rate" in val_metrics
+    assert "val/topk_balance_score" in val_metrics
+    assert val_metrics["val/topk_balance_score"] > 0.9
+    assert "val/top1_balance_score" in val_metrics
+    assert "val/topk_collapse_rate" in val_metrics
+    assert "val/top1_collapse_rate" in val_metrics
     assert "val/routing_entropy" in val_metrics
     # Loss metrics still reported.
     assert "loss_total" in val_metrics
@@ -192,7 +195,7 @@ def test_expert_count_uses_configured_count_not_max_index() -> None:
 
     val_metrics = trainer._validate()
 
-    assert val_metrics["val/collapse_rate"] == pytest.approx(1.0 / 3.0, abs=1e-6)
+    assert val_metrics["val/topk_collapse_rate"] == pytest.approx(1.0 / 3.0, abs=1e-6)
 
 
 def test_fit_with_epoch_progressbar_completes() -> None:

@@ -22,7 +22,9 @@ class Stage2Trainer(BaseTrainer):
 
     Every epoch also logs the routing diagnostics (C3: balance-vs-NMI
     trajectory) over the validation set — ``val/phase_expert_nmi``,
-    ``val/balance_score``, ``val/collapse_rate``, ``val/routing_entropy`` —
+    ``val/topk_balance_score``, ``val/topk_collapse_rate``,
+    ``val/top1_balance_score``, ``val/top1_collapse_rate``,
+    ``val/routing_entropy`` —
     so pseudo-balancing (balance high while NMI collapses to 0) is visible
     at training time instead of only in offline evaluation.
     """
@@ -143,11 +145,24 @@ class Stage2Trainer(BaseTrainer):
                 num_experts = gate_logits_all[0].size(-1)
             else:
                 num_experts = int(expert_indices.max().item()) + 1
-            fractions = expert_utilization.expert_utilization(expert_indices, num_experts)
-            agg_metrics["val/balance_score"] = (
-                expert_utilization.expert_utilization_balance(fractions)
+            topk_fractions = expert_utilization.expert_utilization(
+                expert_indices, num_experts
             )
-            agg_metrics["val/collapse_rate"] = expert_utilization.collapse_rate(fractions)
+            top1_fractions = expert_utilization.expert_utilization_top1(
+                expert_indices, num_experts
+            )
+            agg_metrics["val/topk_balance_score"] = (
+                expert_utilization.expert_utilization_balance(topk_fractions)
+            )
+            agg_metrics["val/top1_balance_score"] = (
+                expert_utilization.expert_utilization_balance(top1_fractions)
+            )
+            agg_metrics["val/topk_collapse_rate"] = expert_utilization.collapse_rate(
+                topk_fractions
+            )
+            agg_metrics["val/top1_collapse_rate"] = expert_utilization.collapse_rate(
+                top1_fractions
+            )
 
         if gate_logits_all:
             gate_logits = torch.cat(gate_logits_all, dim=0)
@@ -156,11 +171,14 @@ class Stage2Trainer(BaseTrainer):
             )
 
         logger.info(
-            "Epoch %d routing diagnostics: NMI=%.4f balance=%.4f collapse=%.4f entropy=%.4f",
+            "Epoch %d routing diagnostics: NMI=%.4f topk_balance=%.4f "
+            "top1_balance=%.4f topk_collapse=%.4f top1_collapse=%.4f entropy=%.4f",
             self.current_epoch,
             agg_metrics.get("val/phase_expert_nmi", float("nan")),
-            agg_metrics.get("val/balance_score", float("nan")),
-            agg_metrics.get("val/collapse_rate", float("nan")),
+            agg_metrics.get("val/topk_balance_score", float("nan")),
+            agg_metrics.get("val/top1_balance_score", float("nan")),
+            agg_metrics.get("val/topk_collapse_rate", float("nan")),
+            agg_metrics.get("val/top1_collapse_rate", float("nan")),
             agg_metrics.get("val/routing_entropy", float("nan")),
         )
 

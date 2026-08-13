@@ -6,13 +6,14 @@ import torch
 from torch import Tensor
 
 
-def success_rate(
+def action_l2_threshold_rate(
     predicted_actions: Tensor, target_actions: Tensor, l2_threshold: float = 0.05
 ) -> float:
-    """Offline proxy for success rate based on action L2 error threshold.
+    """Fraction of individual action vectors within an L2 error threshold.
 
-    Since offline metrics cannot directly measure task success (which requires an environment),
-    we use the percentage of actions that fall within a strict L2 error bound as a proxy.
+    This is an offline action-reproduction diagnostic, not task success. True
+    success requires a closed-loop environment rollout and must be reported by
+    the rollout evaluator under a separate metric name.
 
     Args:
         predicted_actions: Tensor of shape (B, A) or (B, T, A).
@@ -20,7 +21,7 @@ def success_rate(
         l2_threshold: Maximum allowed L2 distance to be considered "successful".
 
     Returns:
-        Float success rate in [0, 1].
+        Float action-threshold rate in [0, 1].
     """
     if predicted_actions.numel() == 0:
         return 0.0
@@ -33,6 +34,17 @@ def success_rate(
     total = l2_errors.numel()
     
     return successes / total
+
+
+def success_rate(
+    predicted_actions: Tensor, target_actions: Tensor, l2_threshold: float = 0.05
+) -> float:
+    """Deprecated compatibility alias for :func:`action_l2_threshold_rate`.
+
+    The old name was misleading because offline action agreement is not task
+    success. New evaluation code must use ``action_l2_threshold_rate``.
+    """
+    return action_l2_threshold_rate(predicted_actions, target_actions, l2_threshold)
 
 
 def action_mse(

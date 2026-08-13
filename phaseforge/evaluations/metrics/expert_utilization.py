@@ -56,6 +56,20 @@ def expert_utilization(expert_indices: Tensor, num_experts: int) -> Tensor:
     return fractions
 
 
+def expert_utilization_top1(expert_indices: Tensor, num_experts: int) -> Tensor:
+    """Compute utilization from only the top-1 assignment per item.
+
+    ``expert_utilization`` intentionally counts every selected top-k expert.
+    This companion metric is needed when comparing utilization with
+    top-1-only diagnostics such as phase/expert NMI. For a 1-D index tensor,
+    each element is already treated as one item's top-1 assignment.
+    """
+    if expert_indices.ndim == 0:
+        raise ValueError("expert_indices must have at least one dimension")
+    top1 = expert_indices if expert_indices.ndim == 1 else expert_indices[..., 0]
+    return expert_utilization(top1, num_experts)
+
+
 def expert_utilization_balance(fractions: Tensor) -> float:
     """Compute the balance score (normalized entropy) of expert usage.
 

@@ -14,6 +14,7 @@ from phaseforge.evaluations.metrics.routing_stability import (
     routing_entropy,
     routing_entropy_variance,
     time_to_stable_routing,
+    time_to_stable_routing_result,
 )
 
 
@@ -99,6 +100,26 @@ def test_time_to_stable_routing_short_sequence_returns_T() -> None:
     logits = torch.randn(10, 4)
     t = time_to_stable_routing(logits, window_size=100, consecutive_windows=5)
     assert t.item() == 10
+
+
+def test_time_to_stable_result_marks_horizon_as_censored() -> None:
+    logits = torch.zeros(10, 4)
+    result = time_to_stable_routing_result(
+        logits, window_size=100, consecutive_windows=5
+    )
+    assert result.step == 10
+    assert result.stabilized is False
+
+
+def test_time_to_stable_result_marks_observed_convergence() -> None:
+    result = time_to_stable_routing_result(
+        _peak_logits(1000, 4),
+        window_size=100,
+        variance_threshold=0.001,
+        consecutive_windows=5,
+    )
+    assert result.stabilized is True
+    assert result.step < 1000
 
 
 def _reference_time_to_stable(

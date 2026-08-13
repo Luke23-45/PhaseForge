@@ -22,16 +22,20 @@ mechanism:
 
   routing_entropy_variance:
     enabled: true
-    window_size: 100
+    window_size: 10
     # Temporal metric — computed per trajectory (E9). A window_size that
     # exceeds the trajectory length falls back to the full-trajectory
     # variance (documented behavior).
 
   time_to_stable_routing:
     enabled: true
+    window_size: 10
     variance_threshold: 0.001
-    consecutive_windows: 5
-    # Temporal metric — computed per trajectory (E9).
+    consecutive_windows: 3
+    # Temporal metric — computed per trajectory (E9). The window is kept
+    # below the shortest Lift pilot trajectory so the metric is observable;
+    # trajectories that never stabilize are reported via
+    # eval/routing_stability_fraction, not as a fake time at the horizon.
 
   expert_utilization:
     enabled: true
@@ -50,9 +54,10 @@ mechanism:
     # eval/metric_definitions).
 
 task:
-  success_rate:
-    enabled: true
-    l2_threshold: 0.05        # Max L2 error for offline success proxy
+  action_l2_threshold_rate:
+    enabled: false
+    l2_threshold: 0.05        # Offline action-agreement diagnostic only
+    # This is intentionally disabled by default: it is not rollout success.
 
   completion_rate:
     # Disabled: the offline evaluator processes a flattened step stream and

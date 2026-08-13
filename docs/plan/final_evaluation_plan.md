@@ -199,7 +199,11 @@ Before the main experiment, verify:
 - transition locations;
 - sensitivity to the label thresholds;
 - phase-prediction accuracy from permitted observations;
-- absence of future-state leakage.
+- absence of deployment leakage: labels must not be supplied to the policy at
+  inference, and any learned phase predictor must use only its declared
+  permitted observation history. The current adaptive percentile calibration
+  uses the complete demonstration, so the labels are offline annotations and
+  must not be described as causal online labels.
 
 At inference, PhaseForge must not receive the ground-truth phase label.
 

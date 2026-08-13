@@ -15,8 +15,10 @@ for parallel-jaw grippers and cannot separate open from closed. The
 configured absolute thresholds are only fallbacks for degenerate
 demonstrations with a (nearly) constant aperture. Labels are computed offline
 during ingestion (like the train-split normalization statistics); the phase
-state machine and its smoothing remain causal, so a label at time ``t`` never
-depends on the phase values after ``t``.
+state machine and its smoothing are causal conditional on those thresholds.
+Because calibration uses the complete demonstration, these are offline
+auxiliary annotations rather than causal online labels; they are never
+supplied to PhaseForge at inference.
 """
 
 from __future__ import annotations
@@ -34,7 +36,9 @@ class RuleBasedPhaseLabeler:
 
     The labeler only reads the configured end-effector position and gripper
     slices from the unnormalized state. It deliberately does not inspect
-    actions, future phase values, object state, or task metadata.
+    actions, object state, or task metadata. Its adaptive calibration is an
+    offline full-trajectory operation, so its outputs are not causal online
+    annotations.
     """
 
     def __init__(
@@ -174,9 +178,9 @@ class RuleBasedPhaseLabeler:
             phases[t] = phase
 
         if T > self.filter_size:
-            # scipy.ndimage.median_filter uses a centered window by default,
-            # which would leak future observations into the auxiliary labels.
-            # Apply the same median idea causally using only [t-size+1, t].
+            # scipy.ndimage.median_filter uses a centered window by default.
+            # Apply the same median idea causally conditional on the offline
+            # calibrated thresholds, using only [t-size+1, t].
             causal = np.empty_like(phases, dtype=np.float32)
             for t in range(T):
                 start = max(0, t - self.filter_size + 1)

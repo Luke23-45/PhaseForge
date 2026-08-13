@@ -2,7 +2,8 @@
 
 Tests the pseudo-balancing mechanism: balance weight beta in {0, 0.01, 0.1}
 on the proposed method, logging the balance-vs-NMI trajectory per epoch
-(Stage2Trainer now logs ``val/phase_expert_nmi`` vs ``val/balance_score``
+(Stage2Trainer now logs ``val/phase_expert_nmi`` versus explicitly named
+``val/topk_balance_score`` and ``val/top1_balance_score``
 every epoch). If balance kills NMI at ALL weights, the bootstrap claim needs
 the orthogonal-basis direction (SMP) or decoupling (AdaMoE).
 

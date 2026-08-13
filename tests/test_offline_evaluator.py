@@ -39,7 +39,10 @@ def _make_cfg() -> OmegaConf:
             "project": {"device": "cpu"},
             "eval": {
                 "task": {
-                    "success_rate": {"enabled": True, "l2_threshold": 0.05},
+                    "action_l2_threshold_rate": {
+                        "enabled": True,
+                        "l2_threshold": 0.05,
+                    },
                     "boundary_action_smoothness": {"enabled": False},
                 },
             },
@@ -99,6 +102,7 @@ def test_run_reports_and_logs_action_mse_immediately(caplog) -> None:
 
     assert results["eval/action_mse"] == pytest.approx(expected_mse)
     assert "eval/action_mse" in caplog.text
-    assert "eval/success_rate" in caplog.text
-    assert "eval/success_rate" in results
+    assert "eval/action_l2_threshold_rate" in caplog.text
+    assert "eval/action_l2_threshold_rate" in results
+    assert "eval/success_rate" not in results
     assert results["eval/action_mse"] > 0.0  # the fake model is wrong on purpose

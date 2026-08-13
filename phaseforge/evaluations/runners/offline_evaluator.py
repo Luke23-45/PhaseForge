@@ -195,15 +195,26 @@ class OfflineEvaluator:
         # 3. Compute Metrics
         # (results already contains eval/action_mse from step 2c)
 
-        # Task Metrics
-        if self._metric_enabled("task", "success_rate"):
-            threshold = self.metrics_cfg.task.success_rate.l2_threshold
-            results["eval/success_rate"] = task_metrics.success_rate(
-                action_preds, action_targets, threshold
+        # Task Metrics.  Offline action agreement is deliberately not called
+        # "success": true task success requires a closed-loop rollout.
+        task_cfg = self.metrics_cfg.get("task", {})
+        action_threshold_cfg = task_cfg.get("action_l2_threshold_rate")
+        # Read the legacy config key so old experiment files remain runnable,
+        # but always emit the unambiguous result key below.
+        if action_threshold_cfg is None:
+            action_threshold_cfg = task_cfg.get("success_rate")
+        if action_threshold_cfg is not None and bool(
+            action_threshold_cfg.get("enabled", False)
+        ):
+            threshold = action_threshold_cfg.get("l2_threshold", 0.05)
+            results["eval/action_l2_threshold_rate"] = (
+                task_metrics.action_l2_threshold_rate(
+                    action_preds, action_targets, threshold
+                )
             )
             logger.info(
-                "  eval/success_rate (L2 <= %.2f): %.4f",
-                threshold, results["eval/success_rate"],
+                "  eval/action_l2_threshold_rate (L2 <= %.2f): %.4f",
+                threshold, results["eval/action_l2_threshold_rate"],
             )
 
         boundary_key = "boundary_action_smoothness"
@@ -238,7 +249,7 @@ class OfflineEvaluator:
                     results["eval/routing_entropy_variance"] = val
 
             if self._metric_enabled("mechanism", "time_to_stable_routing"):
-                window = self.metrics_cfg.mechanism.routing_entropy_variance.get(
+                window = self.metrics_cfg.mechanism.time_to_stable_routing.get(
                     "window_size", 100
                 )
                 var_threshold = (
@@ -251,26 +262,37 @@ class OfflineEvaluator:
                         "consecutive_windows", 5
                     )
                 )
-                val = self._per_trajectory_time_to_stable(
+                val, stability_fraction = self._per_trajectory_time_to_stable(
                     gate_logits, window, var_threshold, consecutive,
                     traj_ids, traj_positions,
                 )
+                if stability_fraction is not None:
+                    results["eval/routing_stability_fraction"] = stability_fraction
                 if val is not None:
                     results["eval/time_to_stable_routing"] = val
 
             if self._metric_enabled("mechanism", "expert_utilization"):
-                fractions = expert_utilization.expert_utilization(
+                topk_fractions = expert_utilization.expert_utilization(
+                    expert_indices, num_experts
+                )
+                top1_fractions = expert_utilization.expert_utilization_top1(
                     expert_indices, num_experts
                 )
 
-                results["eval/balance_score"] = (
-                    expert_utilization.expert_utilization_balance(fractions)
+                results["eval/topk_balance_score"] = (
+                    expert_utilization.expert_utilization_balance(topk_fractions)
+                )
+                results["eval/top1_balance_score"] = (
+                    expert_utilization.expert_utilization_balance(top1_fractions)
                 )
 
                 if self._metric_enabled("mechanism", "collapse_rate"):
                     factor = self.metrics_cfg.mechanism.collapse_rate.threshold_factor
-                    results["eval/collapse_rate"] = (
-                        expert_utilization.collapse_rate(fractions, factor)
+                    results["eval/topk_collapse_rate"] = (
+                        expert_utilization.collapse_rate(topk_fractions, factor)
+                    )
+                    results["eval/top1_collapse_rate"] = (
+                        expert_utilization.collapse_rate(top1_fractions, factor)
                     )
 
             if self._metric_enabled("mechanism", "phase_expert_nmi"):
@@ -292,12 +314,34 @@ class OfflineEvaluator:
                 "from collator trajectory_id, never across episode boundaries."
             ),
             "eval/time_to_stable_routing": (
-                "Mean over trajectories of the step index at which routing "
-                "becomes stable (per-trajectory; see above)."
+                "Mean step index among trajectories that reach the requested "
+                "stability run; trajectories that do not reach it are right-"
+                "censored and summarized separately by routing_stability_fraction."
             ),
-            "eval/balance_score": (
+            "eval/routing_stability_fraction": (
+                "Fraction of trajectories for which the requested consecutive "
+                "stable windows were observed before the trajectory ended."
+            ),
+            "eval/topk_balance_score": (
                 "Normalized entropy of expert usage counted over ALL top-k "
-                "routing assignments (top-k counts), 1 = uniform usage."
+                "routing assignments; 1 = uniform usage."
+            ),
+            "eval/top1_balance_score": (
+                "Normalized entropy of expert usage counted from only the "
+                "top-1 assignment per item; 1 = uniform usage."
+            ),
+            "eval/topk_collapse_rate": (
+                "Fraction of experts below the collapse threshold using ALL "
+                "top-k assignments."
+            ),
+            "eval/top1_collapse_rate": (
+                "Fraction of experts below the collapse threshold using only "
+                "top-1 assignments."
+            ),
+            "eval/action_l2_threshold_rate": (
+                "Fraction of individual action vectors within the configured "
+                "L2 threshold of the demonstration action; offline action "
+                "agreement only, NOT rollout task success."
             ),
             "eval/phase_expert_nmi": (
                 "NMI between phase labels and the TOP-1 routing assignment "
@@ -373,12 +417,12 @@ class OfflineEvaluator:
         consecutive: int,
         traj_ids: torch.Tensor | None,
         traj_positions: torch.Tensor | None,
-    ) -> float | None:
+    ) -> tuple[float | None, float | None]:
         sequences = self._trajectory_sequences(gate_logits, traj_ids, traj_positions)
         if sequences is None:
-            return None
-        steps = [
-            routing_stability.time_to_stable_routing(
+            return None, None
+        observations = [
+            routing_stability.time_to_stable_routing_result(
                 seq,
                 window_size=window,
                 variance_threshold=var_threshold,
@@ -386,7 +430,11 @@ class OfflineEvaluator:
             )
             for seq in sequences
         ]
-        return float(torch.stack(steps).to(torch.float32).mean().item())
+        stabilized_steps = [r.step for r in observations if r.stabilized]
+        stability_fraction = len(stabilized_steps) / len(observations)
+        if not stabilized_steps:
+            return None, stability_fraction
+        return float(sum(stabilized_steps) / len(stabilized_steps)), stability_fraction
 
     def _boundary_smoothness_trajectory_wise(
         self,

@@ -8,9 +8,25 @@ certainty, not the entropy of the discrete top-k assignment.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import torch
 import torch.nn.functional as F
 from torch import Tensor
+
+
+class RoutingStabilityResult(NamedTuple):
+    """Result of a per-trajectory routing-stability analysis.
+
+    ``step`` is the first step at which the requested stability run is
+    complete, or the trajectory length when the run is not observed.  The
+    explicit ``stabilized`` flag is essential: a trajectory ending at its
+    horizon is censored, not evidence that stability was reached at the last
+    step.
+    """
+
+    step: int
+    stabilized: bool
 
 
 def _validate_logits(gate_logits: Tensor, name: str = "gate_logits") -> None:
@@ -132,12 +148,36 @@ def time_to_stable_routing(
     Returns:
         Int tensor: step index (end of the window at which stability was
         reached). Returns ``T`` (the sequence length) if routing never
-        becomes stable within the available steps.
+        becomes stable within the available steps. Use
+        :func:`time_to_stable_routing_result` when the caller must distinguish
+        a true stabilization from right-censoring at the trajectory horizon.
 
     Raises:
         ValueError: If ``window_size < 1``, ``consecutive_windows < 1``,
             ``variance_threshold < 0``, or ``gate_logits`` is empty /
             non-finite.
+    """
+    result = time_to_stable_routing_result(
+        gate_logits,
+        window_size=window_size,
+        variance_threshold=variance_threshold,
+        consecutive_windows=consecutive_windows,
+    )
+    return torch.tensor(result.step, dtype=torch.int64, device=gate_logits.device)
+
+
+def time_to_stable_routing_result(
+    gate_logits: Tensor,
+    window_size: int = 100,
+    variance_threshold: float = 0.001,
+    consecutive_windows: int = 5,
+) -> RoutingStabilityResult:
+    """Return routing stabilization time together with its censoring status.
+
+    The legacy scalar metric returns ``T`` both when stability is reached at
+    the final available step and when it is never observed.  This structured
+    result removes that ambiguity for aggregate evaluation: ``stabilized`` is
+    true only when the complete run of stable windows was observed.
     """
     if int(window_size) < 1:
         raise ValueError(f"window_size must be >= 1, got {window_size}")
@@ -155,30 +195,24 @@ def time_to_stable_routing(
     entropy = -(probs * log_probs).sum(dim=-1)  # (T,)
     T = entropy.numel()
 
-    if T < window_size * consecutive_windows:
-        return torch.tensor(T, dtype=torch.int64, device=gate_logits.device)
+    # A run of N windows needs one full window plus N-1 additional steps,
+    # not N full windows. This matters for short demonstrations.
+    if T < window_size + consecutive_windows - 1:
+        return RoutingStabilityResult(step=T, stabilized=False)
 
-    windows = entropy.unfold(0, window_size, 1)  # (T - window_size + 1, window_size)
+    windows = entropy.unfold(0, window_size, 1)
     variances = windows.var(dim=-1)
-
-    # Find the first run of `consecutive_windows` consecutive stable windows.
-    # Vectorized sliding-sum instead of a Python loop (the loop cost O(T)
-    # pure-Python iterations per evaluation on the full validation set).
     stable = (variances < variance_threshold).to(torch.int64)
     if stable.numel() >= consecutive_windows:
         counts = stable.unfold(0, consecutive_windows, 1).sum(dim=-1)
         hits = (counts == consecutive_windows).nonzero()
         if hits.numel() > 0:
-            # Window at index `hits[0]` starts the run; the window at
-            # `hits[0] + consecutive_windows - 1` completes it, and the
-            # original loop returns (last window index) + 1.
-            return torch.tensor(
-                int(hits[0].item()) + consecutive_windows,
-                dtype=torch.int64,
-                device=gate_logits.device,
+            return RoutingStabilityResult(
+                step=int(hits[0].item()) + consecutive_windows,
+                stabilized=True,
             )
 
-    return torch.tensor(T, dtype=torch.int64, device=gate_logits.device)
+    return RoutingStabilityResult(step=T, stabilized=False)
 
 
 class RoutingEntropyTracker:
