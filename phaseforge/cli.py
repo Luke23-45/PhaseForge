@@ -49,7 +49,7 @@ def _apply_log_level(cfg: DictConfig) -> None:
         logger.warning("Unknown log_level %r — falling back to WARNING.", level_name)
         level = logging.WARNING
     logging.getLogger().setLevel(level)
-    logger.warning(
+    logger.info(
         "Log level: %s (override with project.log_level=INFO or DEBUG).",
         logging.getLevelName(level),
     )

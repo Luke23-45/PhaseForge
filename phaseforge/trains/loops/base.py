@@ -193,22 +193,59 @@ class BaseTrainer(ABC):
         logger.info(f"Starting training for {self.epochs} epochs on {self.device}.")
         self._trigger_callbacks("on_train_start")
 
-        for epoch in range(self.current_epoch + 1, self.epochs + 1):
-            self.current_epoch = epoch
-            self._trigger_callbacks("on_epoch_start")
+        epoch_pbar = None
+        epoch_iter = range(self.current_epoch + 1, self.epochs + 1)
+        if self.train_cfg.get("epoch_progressbar", False):
+            from tqdm.auto import tqdm
 
-            self._train_epoch()
-            val_metrics = self._validate()
+            models_cfg = self.cfg.get("models")
+            model_name = str(
+                models_cfg.get("name", type(self.model).__name__)
+                if models_cfg is not None
+                else type(self.model).__name__
+            )
+            stage_name = self.train_cfg.get(
+                "stage", getattr(self.model, "stage", "?")
+            )
+            epoch_pbar = tqdm(
+                epoch_iter,
+                total=max(0, self.epochs - self.current_epoch),
+                desc=f"{model_name} stage {stage_name}",
+                unit="epoch",
+                dynamic_ncols=True,
+                leave=True,
+                mininterval=1.0,
+            )
+            epoch_iter = epoch_pbar
 
-            self._trigger_callbacks("on_epoch_end", val_metrics=val_metrics)
-            
-            # Step the scheduler at the end of the epoch
-            if self.scheduler:
-                self.scheduler.step()
+        try:
+            for epoch in epoch_iter:
+                self.current_epoch = epoch
+                self._trigger_callbacks("on_epoch_start")
 
-            if self.should_stop:
-                logger.info(f"Early stopping triggered at epoch {epoch}.")
-                break
+                self._train_epoch()
+                val_metrics = self._validate()
+
+                self._trigger_callbacks("on_epoch_end", val_metrics=val_metrics)
+
+                # Step the scheduler at the end of the epoch
+                if self.scheduler:
+                    self.scheduler.step()
+
+                if epoch_pbar is not None:
+                    postfix: dict[str, str | int] = {"step": self.global_step}
+                    if "loss_total" in val_metrics:
+                        postfix["val_loss"] = f"{val_metrics['loss_total']:.4f}"
+                    if "loss_action" in val_metrics:
+                        postfix["val_action"] = f"{val_metrics['loss_action']:.4f}"
+                    epoch_pbar.set_postfix(postfix)
+
+                if self.should_stop:
+                    logger.info(f"Early stopping triggered at epoch {epoch}.")
+                    break
+        finally:
+            if epoch_pbar is not None:
+                epoch_pbar.close()
 
         self._trigger_callbacks("on_train_end")
         logger.info("Training complete.")

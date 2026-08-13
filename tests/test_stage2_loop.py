@@ -195,6 +195,24 @@ def test_expert_count_uses_configured_count_not_max_index() -> None:
     assert val_metrics["val/collapse_rate"] == pytest.approx(1.0 / 3.0, abs=1e-6)
 
 
+def test_fit_with_epoch_progressbar_completes() -> None:
+    """The epoch-level tqdm progressbar path runs a full fit() cleanly.
+
+    The progressbar wraps the epoch iterator, formats the postfix from
+    validation metrics, and must be closed even on the normal path.
+    """
+    model = CountingMoEModel(num_experts=3)
+    trainer = _make_trainer(
+        model, DataLoader(_DictDataset(num=16, seed=7), batch_size=8)
+    )
+    trainer.train_cfg.epoch_progressbar = True
+
+    trainer.fit()
+
+    assert trainer.current_epoch == 1
+    assert model.forward_calls > 0
+
+
 def test_validate_losses_are_sample_weighted() -> None:
     # 7 samples in batches of 4 + 3: the short final batch must not weigh
     # as much as a full one. The reported loss is the mean over ALL samples.

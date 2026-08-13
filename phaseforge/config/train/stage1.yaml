@@ -6,6 +6,9 @@ grad_clip_norm: 1.0
 lambda_phase: 1.0         # Weight on the auxiliary phase classification loss
 log_every_n_steps: 50
 rich_progressbar: false
+# One compact progress line for epochs; the batch-level bar above remains
+# opt-in so cloud logs do not become noisy.
+epoch_progressbar: true
 
 optimizer:
   _target_: torch.optim.AdamW

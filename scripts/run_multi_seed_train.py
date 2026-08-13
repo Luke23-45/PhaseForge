@@ -61,20 +61,43 @@ def run_train(model_cfg: str, stage: int, seed: int) -> None:
         # truncate the protocol runs — disable it explicitly.
         "train.early_stopping.enabled=false",
     ]
-    print(f"\n>>> Running: {' '.join(cmd)}")
+    print(
+        f"[seed {seed}] START model={model_cfg} stage={stage}",
+        flush=True,
+    )
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        print(f"!!! FAILED (rc={result.returncode}): {' '.join(cmd)}")
+        print(
+            f"[seed {seed}] FAILED model={model_cfg} stage={stage} "
+            f"(return code {result.returncode})",
+            flush=True,
+        )
         sys.exit(result.returncode or 1)
+    print(
+        f"[seed {seed}] COMPLETE model={model_cfg} stage={stage}",
+        flush=True,
+    )
 
 
 def main() -> None:
-    for seed in SEEDS:
-        print(f"\n{'='*70}\nSEED {seed}\n{'='*70}")
+    for seed_index, seed in enumerate(SEEDS, start=1):
+        print(
+            f"\n[multi-seed {seed_index}/{len(SEEDS)}] START seed={seed}",
+            flush=True,
+        )
         for model_name, (model_cfg, stages) in MODEL_STAGES.items():
-            print(f"\n--- Model: {model_name} ---")
+            print(f"[seed {seed}] MODEL {model_name}", flush=True)
             for stage in stages:
                 run_train(model_cfg, stage, seed)
+        if seed_index < len(SEEDS):
+            next_seed = SEEDS[seed_index]
+            print(
+                f"[multi-seed] COMPLETE seed={seed}; starting next seed={next_seed}",
+                flush=True,
+            )
+        else:
+            print(f"[multi-seed] COMPLETE seed={seed}", flush=True)
+    print("[multi-seed] ALL SEEDS COMPLETE", flush=True)
 
 
 if __name__ == "__main__":
