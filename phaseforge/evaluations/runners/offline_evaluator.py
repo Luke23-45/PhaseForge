@@ -161,7 +161,8 @@ class OfflineEvaluator:
         # 2c. Decisive signal first, logged IMMEDIATELY: raw action error. If a
         #     later metric is slow (e.g. the routing metrics) and the run gets
         #     interrupted, this line is what distinguishes "the model cannot
-        #     reproduce the training actions" (0% LIBERO success is expected)
+        #     reproduce the training actions" (rollout success would be
+        #     expected to remain near zero in that case)
         #     from "the eval path is broken" (low MSE but 0% rollouts).
         mask = torch.cat(all_masks, dim=0) if all_masks else None
         mse = task_metrics.action_mse(action_preds, action_targets, mask)

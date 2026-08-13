@@ -2,7 +2,6 @@
 
 defaults:
   - data: common
-  - data/libero: libero90
   - models: phaseforge
   - train: stage1
   - eval: metrics

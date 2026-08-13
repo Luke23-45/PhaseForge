@@ -41,7 +41,7 @@ def action_mse(
     """Mean squared error between predicted and target actions.
 
     The single most informative offline diagnostic: if a policy that scores
-    0% in LIBERO rollouts cannot even reproduce the demonstration actions
+    0% rollout success cannot even reproduce the demonstration actions
     (high MSE), the rollout result reflects model capability rather than an
     evaluation bug.
 

@@ -1,7 +1,15 @@
-"""Cache identity + provenance tests (review blocker 2).
+"""Cache identity + provenance tests (review blocker 2, generic source schema).
 
-- compute_hash folds in cheap provenance context (object-index content,
-  raw dataset names/sizes) so a stale cache can never be silently reused.
+The raw-dataset identity is read from the generic ``data.source`` block::
+
+    data:
+      source:
+        dir: {data_root}/raw/{source}      # dataset files
+        manifest_path: null                # null -> {dir}/MANIFEST.json
+
+- compute_hash folds in cheap provenance context (git commit, raw dataset
+  names/sizes, pinned dataset commit from MANIFEST.json) so a stale cache
+  can never be silently reused.
 - save() persists a full audit manifest: per-file SHA-256, git commit,
   schema, split task names — and writes human-readable split files.
 """
@@ -16,18 +24,14 @@ import pytest
 from omegaconf import OmegaConf
 
 
-def _data_cfg(suite_dir: Path | None = None, index_path: str | None = None):
+def _data_cfg(source_dir: Path | None = None) -> OmegaConf:
     cfg = {
-        "state_dim": 151,
+        "state_dim": 23,
         "action_dim": 7,
         "state_keys": [{"key": "robot0_joint_pos", "dim": 7}],
-        "object_state": {"enabled": True, "k_slots": 16, "dim_per_object": 7},
-        "libero": {"phase_labeler": {"num_phases": 6}},
     }
-    if index_path is not None:
-        cfg["object_state"]["index_path"] = index_path
-    if suite_dir is not None:
-        cfg["libero"]["suite"] = suite_dir.name
+    if source_dir is not None:
+        cfg["source"] = {"dir": str(source_dir)}
     return OmegaConf.create(cfg)
 
 
@@ -36,9 +40,19 @@ def _write_dummy_hdf5(path: Path) -> None:
     path.write_bytes(b"dummy-hdf5-content")
 
 
+def _write_source_manifest(src_dir: Path, commit: str, files: list[dict]) -> None:
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "MANIFEST.json").write_text(
+        json.dumps(
+            {"source": "robomimic", "commit_sha": commit, "files": files},
+            indent=2,
+        )
+    )
+
+
 @pytest.fixture
 def fake_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point PHASEFORGE_DATA_DIR at a tmp root so suite paths are local."""
+    """Point PHASEFORGE_DATA_DIR at a tmp root so source paths are local."""
     monkeypatch.setenv("PHASEFORGE_DATA_DIR", str(tmp_path))
     return tmp_path
 
@@ -48,33 +62,17 @@ def fake_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_hash_changes_when_object_index_content_changes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    idx = tmp_path / "object_index.json"
-    idx.write_text(json.dumps({"version": 1, "k_slots": 16, "tasks": {}}))
-    cfg = _data_cfg(index_path=str(idx))
-
-    from phaseforge.data.ingestion.cache_manager import CacheManager
-
-    h1 = CacheManager.compute_hash(cfg)
-    idx.write_text(json.dumps({"version": 1, "k_slots": 8, "tasks": {}}))
-    h2 = CacheManager.compute_hash(cfg)
-
-    assert h1 != h2, "object-index change must invalidate the cache"
-
-
 def test_hash_changes_when_raw_dataset_changes(
-    tmp_path: Path, fake_data_root: Path
+    fake_data_root: Path,
 ) -> None:
-    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
-    _write_dummy_hdf5(suite_dir / "TASK_A_demo.hdf5")
-    cfg = _data_cfg(suite_dir=suite_dir)
+    src_dir = fake_data_root / "raw" / "robomimic" / "lift"
+    _write_dummy_hdf5(src_dir / "demo_1.hdf5")
+    cfg = _data_cfg(source_dir=src_dir)
 
     from phaseforge.data.ingestion.cache_manager import CacheManager
 
     h1 = CacheManager.compute_hash(cfg)
-    _write_dummy_hdf5(suite_dir / "TASK_B_demo.hdf5")
+    _write_dummy_hdf5(src_dir / "demo_2.hdf5")
     h2 = CacheManager.compute_hash(cfg)
 
     assert h1 != h2, "raw dataset change must invalidate the cache"
@@ -85,25 +83,21 @@ def test_hash_portable_across_machine_mtimes_when_manifest_present(
 ) -> None:
     """With MANIFEST.json present the identity is the pinned dataset commit
     — different download mtimes must NOT change the cache key (this is what
-    makes the HF-uploaded cache usable on other machines)."""
+    makes a cache transferred to another machine reusable)."""
     import os
     import time
 
     from phaseforge.data.ingestion.cache_manager import CacheManager
-    from phaseforge.data.paths import libero_manifest_path
 
-    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
-    demo = suite_dir / "TASK_A_demo.hdf5"
+    src_dir = fake_data_root / "raw" / "robomimic" / "lift"
+    demo = src_dir / "demo_1.hdf5"
     _write_dummy_hdf5(demo)
-    cfg = _data_cfg(suite_dir=suite_dir)
-    manifest = libero_manifest_path()
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(
-        json.dumps(
-            {"source": "huggingface", "commit_sha": "f13aa24a" * 5},
-            indent=2,
-        )
+    _write_source_manifest(
+        src_dir,
+        commit="f13aa24a" * 5,
+        files=[{"name": "demo_1.hdf5", "size_bytes": len(b"dummy-hdf5-content")}],
     )
+    cfg = _data_cfg(source_dir=src_dir)
 
     h1 = CacheManager.compute_hash(cfg)
     # Simulate a re-download on another machine: same content, new mtime.
@@ -116,35 +110,57 @@ def test_hash_portable_across_machine_mtimes_when_manifest_present(
 def test_hash_sensitive_to_manifest_commit(fake_data_root: Path) -> None:
     """A different pinned dataset revision must invalidate the cache."""
     from phaseforge.data.ingestion.cache_manager import CacheManager
-    from phaseforge.data.paths import libero_manifest_path
 
-    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
-    _write_dummy_hdf5(suite_dir / "TASK_A_demo.hdf5")
-    cfg = _data_cfg(suite_dir=suite_dir)
-    manifest = libero_manifest_path()
-    manifest.parent.mkdir(parents=True, exist_ok=True)
+    src_dir = fake_data_root / "raw" / "robomimic" / "lift"
+    _write_dummy_hdf5(src_dir / "demo_1.hdf5")
+    _write_source_manifest(src_dir, commit="a" * 40, files=[])
+    cfg = _data_cfg(source_dir=src_dir)
 
-    manifest.write_text(json.dumps({"commit_sha": "a" * 40}, indent=2))
     h1 = CacheManager.compute_hash(cfg)
-    manifest.write_text(json.dumps({"commit_sha": "b" * 40}, indent=2))
+    _write_source_manifest(src_dir, commit="b" * 40, files=[])
     h2 = CacheManager.compute_hash(cfg)
 
     assert h1 != h2, "dataset revision change must invalidate the cache"
 
 
-def test_hash_sensitive_to_mtime_without_manifest(
+def test_hash_reconstructs_identity_from_manifest_inventory(
     fake_data_root: Path,
 ) -> None:
-    """Without MANIFEST.json the legacy mtime fingerprint still applies."""
+    """Cache transfers omit the raw HDF5 files; the identity must be
+    reconstructed from MANIFEST.json's file inventory so a machine without
+    the raw data still produces the SAME cache key."""
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    src_dir = fake_data_root / "raw" / "robomimic" / "lift"
+    _write_dummy_hdf5(src_dir / "demo_1.hdf5")
+    _write_source_manifest(
+        src_dir,
+        commit="c" * 40,
+        files=[{"name": "demo_1.hdf5", "size_bytes": len(b"dummy-hdf5-content")}],
+    )
+    cfg = _data_cfg(source_dir=src_dir)
+
+    h_with_files = CacheManager.compute_hash(cfg)
+
+    # Machine B: same config + manifest, raw files deleted.
+    for f in src_dir.glob("*.hdf5"):
+        f.unlink()
+    h_without_files = CacheManager.compute_hash(cfg)
+
+    assert h_with_files == h_without_files
+
+
+def test_hash_sensitive_to_mtime_without_manifest(fake_data_root: Path) -> None:
+    """Without MANIFEST.json the fallback mtime fingerprint applies."""
     import os
     import time
 
     from phaseforge.data.ingestion.cache_manager import CacheManager
 
-    suite_dir = fake_data_root / "raw" / "libero" / "libero_90"
-    demo = suite_dir / "TASK_A_demo.hdf5"
+    src_dir = fake_data_root / "raw" / "robomimic" / "lift"
+    demo = src_dir / "demo_1.hdf5"
     _write_dummy_hdf5(demo)
-    cfg = _data_cfg(suite_dir=suite_dir)
+    cfg = _data_cfg(source_dir=src_dir)
 
     h1 = CacheManager.compute_hash(cfg)
     os.utime(demo, (time.time() - 86400, time.time() - 86400))
@@ -154,8 +170,9 @@ def test_hash_sensitive_to_mtime_without_manifest(
 
 
 def test_hash_stable_without_data(tmp_path: Path) -> None:
-    cfg = _data_cfg(index_path=str(tmp_path / "missing_index.json"))
     from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    cfg = _data_cfg(source_dir=tmp_path / "missing_source")
 
     assert CacheManager.compute_hash(cfg) == CacheManager.compute_hash(cfg)
 
@@ -173,21 +190,19 @@ def test_save_manifest_records_full_provenance(tmp_path: Path) -> None:
     config_hash = CacheManager.compute_hash(cfg)
 
     provenance = {
-        "dataset_repo": "yifengzhu-hf/LIBERO-datasets",
-        "dataset_commit": None,
+        "dataset_manifest": {"source": "robomimic", "commit_sha": "a" * 40},
         "code_git_commit": "deadbeef",
         "raw_files": [
-            {"name": "TASK_A_demo.hdf5", "size": 123, "sha256": "a" * 64}
+            {"name": "demo_1.hdf5", "size": 123, "sha256": "a" * 64}
         ],
-        "object_index_sha256": "b" * 64,
         "state_schema": {
             "keys": [{"key": "robot0_joint_pos", "dim": 7}],
-            "state_dim": 151,
+            "state_dim": 23,
             "action_dim": 7,
         },
         "split_task_names": {
-            "train": ["TASK_A_demo"],
-            "val": ["TASK_B_demo"],
+            "train": ["lift"],
+            "val": ["can"],
             "eval": [],
         },
     }
@@ -196,7 +211,7 @@ def test_save_manifest_records_full_provenance(tmp_path: Path) -> None:
         trajectories=[],
         norm_stats={},
         splits={"train": [], "val": [], "eval": []},
-        task_index={"TASK_A_demo": 0, "TASK_B_demo": 1},
+        task_index={"lift": 0, "can": 1},
         provenance=provenance,
     )
 
@@ -206,11 +221,14 @@ def test_save_manifest_records_full_provenance(tmp_path: Path) -> None:
     assert manifest["complete"] is True
     assert manifest["provenance"]["raw_files"][0]["sha256"] == "a" * 64
     assert manifest["provenance"]["code_git_commit"] == "deadbeef"
+    assert (
+        manifest["provenance"]["dataset_manifest"]["commit_sha"] == "a" * 40
+    )
 
     train_tasks = (cache_dir / "train_tasks.txt").read_text().splitlines()
     val_tasks = (cache_dir / "validation_tasks.txt").read_text().splitlines()
-    assert train_tasks == ["TASK_A_demo"]
-    assert val_tasks == ["TASK_B_demo"]
+    assert train_tasks == ["lift"]
+    assert val_tasks == ["can"]
 
 
 def test_save_without_provenance_still_works(tmp_path: Path) -> None:

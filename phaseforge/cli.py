@@ -35,9 +35,9 @@ logger = logging.getLogger(__name__)
 def _resolve_device(cfg: DictConfig) -> torch.device:
     """Resolve the compute device with a graceful CPU fallback.
 
-    LIBERO rollouts are reproducible on CPU; requiring a hard crash when
-    ``project.device=cuda`` is unavailable (e.g. local dev boxes) makes
-    the evaluator unusable. A warning is logged when falling back.
+    Offline evaluation is reproducible on CPU; requiring a hard crash when
+    ``project.device=cuda`` is unavailable makes local development brittle.
+    A warning is logged when falling back.
     """
     requested = str(cfg.project.get("device", "cuda"))
     if requested.startswith("cuda") and not torch.cuda.is_available():
@@ -77,8 +77,8 @@ def _load_state_dict_checked(
     ``strict=False`` exists so a Stage 1 checkpoint can be loaded into a
     Stage 2 model before bootstrapping (the MoE block is legitimately
     absent). Everything else is a config mismatch: silently skipping it
-    leaves the policy on random weights (a common cause of 0% LIBERO
-    success with no error), so mismatched weights stop the run instead.
+    leaves the policy on random weights (which can produce meaningless
+    rollout results with no error), so mismatched weights stop the run instead.
 
     Args:
         model: The model to load into.
@@ -315,7 +315,7 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
 
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def evaluate(cfg: DictConfig) -> None:
-    """Evaluate a trained model (offline metrics or LIBERO rollouts)."""
+    """Evaluate a trained model with the currently supported offline metrics."""
     set_seed(cfg.project.seed)
     output_dir = get_eval_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -350,10 +350,13 @@ def evaluate(cfg: DictConfig) -> None:
     model.to(device)
 
     if eval_mode == "rollout":
-        logger.info("Running rollout evaluation in LIBERO environment…")
-        from phaseforge.evaluations.runners.rollout_evaluator import RolloutEvaluator
-
-        evaluator = RolloutEvaluator(cfg=cfg, model=model, device=device)
+        raise ValueError(
+            "Rollout evaluation is not implemented for the current protocol. "
+            "The robomimic/robosuite protocol requires a separate simulator "
+            "adapter, reset distribution, success predicate, and paired test "
+            "episode runner. Use `eval.mode: offline` until that evaluator is "
+            "implemented and validated."
+        )
     else:
         logger.info("Running offline evaluation on validation data…")
         from phaseforge.evaluations.runners.offline_evaluator import OfflineEvaluator

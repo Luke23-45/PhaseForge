@@ -1,7 +1,7 @@
 """CPU-only tests for the offline evaluator and its decisive action-MSE metric.
 
 ``eval/action_mse`` is the fast diagnostic that distinguishes "the model
-cannot reproduce the demonstration actions" (0% LIBERO rollout success is
+cannot reproduce the demonstration actions" (rollout success is
 expected) from "the eval path is broken" — and it is logged immediately so
 an interrupted run (e.g. inside the slower routing metrics) still shows the
 decisive number.

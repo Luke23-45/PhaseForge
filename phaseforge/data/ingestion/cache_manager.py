@@ -16,9 +16,6 @@ from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
-#: The pinned LIBERO mirror this project consumes (see download_libero.py).
-DATASET_REPO = "yifengzhu-hf/LIBERO-datasets"
-
 
 def git_commit() -> str:
     """Best-effort HEAD SHA of the repo containing this module ('' when N/A)."""
@@ -45,10 +42,6 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 class CacheManager:
     """Manages the persistent on-disk cache for processed dataset.
 
@@ -66,13 +59,12 @@ class CacheManager:
                 ├── 000000.pt   # {"state": (T,S), "action": (T,A), "phase": (T,), "task_id": int}
                 └── ...
 
-    The config_hash is the SHA-256 of the canonical YAML of the data config
-    PLUS a cheap provenance context (git commit, object-index content hash,
-    raw dataset file names/sizes). Any change to phase thresholds, state
-    keys, split ratios, code revision, the object index, or the raw dataset
-    invalidates the cache. Full content provenance (per-file SHA-256,
-    schema, task names) is persisted in ``manifest.json`` so a result can
-    be audited later.
+    The config_hash is the SHA-256 of the canonical serialized data config
+    PLUS a cheap provenance context (git commit, raw dataset file names/sizes
+    from ``data.source``). Any change to phase thresholds, state keys, split
+    ratios, code revision, or the raw dataset invalidates the cache. Full
+    content provenance (per-file SHA-256, schema, task names) is persisted in
+    ``manifest.json`` so a result can be audited later.
     """
 
     def __init__(self, cache_root: Path) -> None:
@@ -87,44 +79,45 @@ class CacheManager:
         """Cheap inputs to the cache identity (never reads file contents).
 
         Folds in code revision and data identity so a stale cache cannot be
-        silently reused after the raw dataset or object index changes.
-        Content-level hashes (expensive) live in the manifest instead.
+        silently reused after the raw dataset changes. Content-level hashes
+        (expensive) live in the manifest instead.
+
+        The raw-dataset identity is read from the generic ``data.source``
+        block::
+
+            data:
+              source:
+                dir: {data_root}/raw/{source}      # dataset files
+                manifest_path: null                # null -> {dir}/MANIFEST.json
+
+        When ``data.source`` is absent the key depends only on the data
+        config + git commit (no raw fingerprint). When ``MANIFEST.json``
+        pins a ``commit_sha`` the identity is portable across machines
+        (download mtimes never enter the key); without a manifest the
+        mtime fingerprint is a same-machine-only identity.
         """
         ctx: dict[str, Any] = {"git_commit": git_commit()}
 
-        # Object-index content hash (small file, safe to read).
-        try:
-            oscfg = data_cfg.get("object_state")
-            if oscfg is None or oscfg.get("enabled", True):
-                from phaseforge.data.paths import resolve_object_index_path
-
-                p = resolve_object_index_path(data_cfg)
-                if p.exists():
-                    ctx["object_index_sha256"] = sha256_bytes(p.read_bytes())
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Could not hash the object index for the cache identity — "
-                "the cache key will not depend on it.",
-                exc_info=True,
-            )
-
         # Raw dataset identity: names + sizes (cheap). Content hashes are
-        # recorded in the manifest during save(). When the download script's
-        # MANIFEST.json is present, its pinned dataset-revision commit SHA is
-        # the identity — reproducible on ANY machine, unlike per-file mtimes
-        # (which differ between downloads). The mtime fingerprint is only a
-        # last resort for raw data that arrived without a manifest; a cache
-        # keyed that way is NOT portable across machines.
+        # recorded in the manifest during save(). When the source's
+        # MANIFEST.json is present, its pinned dataset-revision commit SHA
+        # is the identity — reproducible on ANY machine, unlike per-file
+        # mtimes (which differ between downloads). The mtime fingerprint is
+        # only a last resort for raw data that arrived without a manifest; a
+        # cache keyed that way is NOT portable across machines.
         try:
-            suite = data_cfg.get("libero", {}).get("suite")
-            if suite:
-                from phaseforge.data.paths import (
-                    libero_manifest_path,
-                    libero_suite_dir,
+            source = data_cfg.get("source")
+            if source is not None and source.get("dir"):
+                src_dir = Path(str(source["dir"]))
+                manifest_path = Path(
+                    str(source.get("manifest_path") or src_dir / "MANIFEST.json")
                 )
+                files = sorted(src_dir.glob("*.hdf5")) if src_dir.exists() else []
+                ctx["raw_files"] = [
+                    {"name": p.name, "size": p.stat().st_size}
+                    for p in files
+                ]
 
-                suite_dir = libero_suite_dir(str(suite))
-                manifest_path = libero_manifest_path()
                 download_manifest: dict[str, Any] | None = None
                 if manifest_path.exists():
                     try:
@@ -137,21 +130,6 @@ class CacheManager:
                             "the cache identity.",
                             manifest_path,
                         )
-                if not suite_dir.exists():
-                    logger.warning(
-                        "Raw suite dir %s not found while computing the "
-                        "cache identity — the cache key will not include "
-                        "the raw dataset unless MANIFEST.json contains its "
-                        "file inventory. If the data exists elsewhere, set "
-                        "PHASEFORGE_DATA_DIR.",
-                        suite_dir,
-                    )
-                files = sorted(suite_dir.glob("*.hdf5"))
-                ctx["raw_files"] = [
-                    {"name": p.name, "size": p.stat().st_size}
-                    for p in files
-                ]
-
                 if download_manifest is not None:
                     commit = download_manifest.get("commit_sha")
                     if commit:
@@ -161,10 +139,7 @@ class CacheManager:
                     # Reconstruct the same cheap identity used when those
                     # files were present from MANIFEST.json's file inventory.
                     if not files:
-                        suite_meta = (download_manifest.get("suites") or {}).get(
-                            str(suite), {}
-                        )
-                        manifest_files = suite_meta.get("files") or []
+                        manifest_files = download_manifest.get("files") or []
                         if manifest_files:
                             ctx["raw_files"] = [
                                 {
@@ -176,9 +151,8 @@ class CacheManager:
                             ]
                 if "dataset_commit" not in ctx:
                     # No manifest: keep the mtime-based fingerprint as the
-                    # same-machine identity (the download script always
-                    # writes MANIFEST.json, so the documented workflow is
-                    # the portable one).
+                    # same-machine identity (the documented workflow writes
+                    # MANIFEST.json, so the portable path is the default).
                     ctx["raw_files"] = [
                         {
                             "name": p.name,
@@ -187,6 +161,15 @@ class CacheManager:
                         }
                         for p in files
                     ]
+                if not src_dir.exists():
+                    logger.warning(
+                        "Raw source dir %s not found while computing the "
+                        "cache identity — the cache key will not include "
+                        "the raw dataset unless MANIFEST.json contains its "
+                        "file inventory. If the data exists elsewhere, set "
+                        "PHASEFORGE_DATA_DIR.",
+                        src_dir,
+                    )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "Could not fingerprint the raw dataset for the cache "
@@ -206,9 +189,22 @@ class CacheManager:
         context = CacheManager.provenance_context(data_cfg)
         if extra_context:
             context = {**context, **extra_context}
-        payload = OmegaConf.to_yaml(data_cfg, resolve=True)
+        config = OmegaConf.to_container(
+            data_cfg, resolve=True, throw_on_missing=True
+        )
+        # The source location is machine-specific and must not make an
+        # otherwise identical cache unusable after moving the data root. Raw
+        # file identity is already represented by ``context`` above.
+        if isinstance(config, dict):
+            source_config = config.get("source")
+            if isinstance(source_config, dict):
+                if "dir" in source_config:
+                    source_config["dir"] = "<data.source.dir>"
+                if source_config.get("manifest_path") is not None:
+                    source_config["manifest_path"] = "<data.source.manifest_path>"
+        payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
         if context:
-            payload += "\n" + json.dumps(context, sort_keys=True)
+            payload += "\n" + json.dumps(context, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def cache_dir(self, config_hash: str) -> Path:
@@ -281,11 +277,11 @@ class CacheManager:
             task_index: Optional ``{task_name: int_id}`` mapping to persist
                 alongside the cache for auditability.
             provenance: Optional dict with the audit trail recorded in
-                ``manifest.json``: dataset repo/commit, per-file SHA-256,
-                object-index hash, code git commit, state schema,
-                normalization method, phase-labeler config and split task
-                names (the latter are also written as human-readable
-                ``train_tasks.txt`` / ``validation_tasks.txt``).
+                ``manifest.json``: dataset source/commit, per-file SHA-256,
+                code git commit, state schema, normalization method,
+                phase-labeler config and split task names (the latter are
+                also written as human-readable ``train_tasks.txt`` /
+                ``validation_tasks.txt``).
         """
         final_dir = self.cache_dir(config_hash)
         tmp_dir = self.cache_root / f"{config_hash}_tmp"

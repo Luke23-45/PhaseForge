@@ -10,7 +10,7 @@ freeze_encoder: false
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder
-  input_dim: 87           # Matches data.state_dim (23 + 8*7 objects + 8 mask)
+  input_dim: ${data.state_dim}
   hidden_dims: [256, 256, 256]
   latent_dim: 128
   activation: "gelu"
@@ -31,7 +31,7 @@ expert:
   # Single hidden layer: identical architecture across all cells so the
   # factorial comparison differs only in initialization, not capacity.
   hidden_dims: [256]
-  output_dim: 7
+  output_dim: ${data.action_dim}
   activation: "gelu"
 
 num_phases: 6

@@ -22,23 +22,14 @@ Layout under the data root::
 
     {data_root}/
     ├── raw/                      # write-once, never modified after download
-    │   └── libero/
-    │       ├── libero_90/        # 90 task HDF5 files (training / bootstrapping)
-    │       ├── libero_10/        # 10 task HDF5 files (LIBERO-Long, evaluation)
-    │       └── MANIFEST.json     # provenance: source, revision, counts, sha256
+    │   └── {source}/             # one dir per dataset source (e.g. robomimic)
     └── processed/                # config-hash-keyed normalized cache (FSM output)
-
-This layout intentionally mirrors the experiment design in the proposal:
-LIBERO-90 is the pretraining source and LIBERO-10 (LIBERO-Long) is the
-evaluation target, kept as physically separate folders so no code can
-accidentally mix them.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 
 # ---------------------------------------------------------------------------
 # Environment variable name and default
@@ -56,24 +47,6 @@ RAW_SUBDIR = "raw"
 
 #: Subdirectory under the data root holding normalized, cache-keyed output.
 PROCESSED_SUBDIR = "processed"
-
-#: Name of the LIBERO source under the raw subtree.
-LIBERO_SOURCE_NAME = "libero"
-
-#: Folder name for the LIBERO-90 task suite (pretraining / bootstrapping).
-LIBERO_90_DIRNAME = "libero_90"
-
-#: Folder name for the LIBERO-Long task suite (LIBERO-10, evaluation only).
-LIBERO_LONG_DIRNAME = "libero_10"
-
-#: Expected number of task files in each suite. These counts are the
-#: integrity check used by the official LIBERO benchmark
-#: (``check_libero_dataset`` in download_utils.py), so we mirror them here
-#: rather than inventing our own magic numbers.
-EXPECTED_FILE_COUNTS: dict[str, int] = {
-    LIBERO_90_DIRNAME: 90,
-    LIBERO_LONG_DIRNAME: 10,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -134,97 +107,13 @@ def ensure_data_dirs(data_root: str | os.PathLike | None = None) -> dict[str, Pa
     return {"data_root": root, "raw": raw, "processed": processed}
 
 
-# ---------------------------------------------------------------------------
-# LIBERO-specific convenience accessors
-# ---------------------------------------------------------------------------
-
-
-def libero_raw_root(data_root: str | os.PathLike | None = None) -> Path:
-    """Return ``{data_root}/raw/libero`` (not guaranteed to exist)."""
-    return get_data_root(data_root) / RAW_SUBDIR / LIBERO_SOURCE_NAME
-
-
-def libero_suite_dir(
-    suite: str,
-    data_root: str | os.PathLike | None = None,
-) -> Path:
-    """Return the directory for a LIBERO suite (``libero_90`` or ``libero_10``).
-
-    Args:
-        suite: One of :data:`LIBERO_90_DIRNAME` or :data:`LIBERO_LONG_DIRNAME`.
-        data_root: Optional override forwarded to :func:`get_data_root`.
-
-    Raises:
-        ValueError: If ``suite`` is not a recognized suite name.
-    """
-    if suite not in EXPECTED_FILE_COUNTS:
-        raise ValueError(
-            f"Unknown LIBERO suite {suite!r}. "
-            f"Expected one of {sorted(EXPECTED_FILE_COUNTS)}."
-        )
-    return libero_raw_root(data_root) / suite
-
-
-def libero_manifest_path(data_root: str | os.PathLike | None = None) -> Path:
-    """Return the path to the LIBERO provenance manifest.
-
-    The manifest is written by the download script and records the source
-    revision, download time, per-suite file counts, and optional SHA-256
-    digests.
-    """
-    return libero_raw_root(data_root) / "MANIFEST.json"
-
-
-def libero_object_index_path(data_root: str | os.PathLike | None = None) -> Path:
-    """Return the path to the per-task object decode tables.
-
-    The index maps each task filename stem to the ``qpos`` slices and hinge
-    constants needed to decode object world poses from the demo ``states``
-    arrays (see ``phaseforge.data.libero.object_state.ObjectIndex``). It is
-    produced once per mirror revision by the patch-0 census:
-
-        python -m phaseforge.data.scripts.build_object_index --suites libero_90
-
-    Defaults to ``{data_root}/raw/libero/object_index.json`` so it sits next
-    to the HDF5 files it describes and travels with the data volume.
-    """
-    return libero_raw_root(data_root) / "object_index.json"
-
-
-def resolve_object_index_path(
-    data_cfg: Any,
-    data_root: str | os.PathLike | None = None,
-) -> Path:
-    """Resolve the object-index path exactly as the pipeline would.
-
-    Single source of truth shared by the cache identity
-    (``CacheManager.provenance_context``), the ingest FSM
-    (``state_machine._load_object_index``) and the manifest provenance
-    (``state_machine._provenance``) so the three can never drift apart:
-    ``data.object_state.index_path`` when set, else the default
-    ``{data_root}/raw/libero/object_index.json``.
-
-    Args:
-        data_cfg: Config object exposing ``data.object_state`` (OmegaConf
-            DictConfig or plain dict). ``index_path=None``/absent means the
-            default path.
-    """
-    oscfg = data_cfg.get("object_state")
-    raw = oscfg.get("index_path") if oscfg is not None else None
-    if raw:
-        return Path(raw)
-    return libero_object_index_path(data_root)
-
-
 def processed_cache_root(data_root: str | os.PathLike | None = None) -> Path:
     """Return the shared, run-agnostic processed-cache root.
 
     Resolves to ``{data_root}/processed/cache``. This is intentionally
     UNDER THE DATA ROOT (not under the per-run ``outputs/`` directory) so
     that the config-hash-keyed cache built by :class:`CacheManager` is
-    reused across training runs. The previous implementation derived the
-    cache root from the timestamped ``outputs/${now:...}`` directory,
-    which silently recomputed and re-saved the entire cache on every run.
+    reused across training runs.
 
     Args:
         data_root: Optional override forwarded to :func:`get_data_root`.

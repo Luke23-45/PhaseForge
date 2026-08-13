@@ -10,16 +10,24 @@ CHECK_PERSISTENT_CACHE → (hit) READY
                                                 → NORMALIZE_AND_SAVE → READY
 
 Design notes (bugs fixed here, each proven by simulation)
----------------------------------------------------------
+----------------------------------------------------------
 - Bug 1: No more fictional box.com download. The FSM consumes pre-downloaded
-  data from the env-var-aware data root (paths.py). VALIDATE_SOURCE checks the
-  official LIBERO file count (90 / 10) before ingesting.
+  data from the env-var-aware data root (paths.py). VALIDATE_SOURCE checks
+  the configured ``data.source`` directory before ingesting.
 - Bug 4: The processed cache lives under {data_root}/processed/cache, NOT under
   the per-run outputs/ directory, so the config-hash cache is reused across runs.
-- Bug 5: Splits are done at the TASK level (no same-task leakage between train
-  and val), and val is guaranteed non-empty via a floor of max(1, ...). LIBERO-LONG
-  (role=eval) is exposed separately via get_eval_loader().
-- Bug 2: task_id is deterministic (sorted-name -> int) via task_index.
+- Bug 5: Splits are done at trajectory or task level according to the
+  protocol, never by timestep; the primary single-task config uses trajectory
+  splits so validation is available without trajectory leakage.
+- Bug 2: task_id is deterministic (sorted-name -> int); the ingester builds it.
+
+Benchmark contract (docs/plan/final_evaluation_plan.md, Gate 0)
+----------------------------------------------------------------
+The dataset-specific conversion (robomimic HDF5 -> trajectory dicts) lives in
+a pluggable ``data.ingester`` instantiated by :meth:`_ingest_source`. The
+former benchmark-specific ingestion is archived under ``legacy/`` and must
+not be resurrected here; the robomimic adapter defines its own observation
+schema, action contract, splits and phase labels.
 """
 
 from __future__ import annotations
@@ -40,23 +48,17 @@ from phaseforge.data.common.collator import PhaseAwareCollator
 from phaseforge.data.common.dataset import StateOnlyDataset
 from phaseforge.data.common.normalizer import RunningStatNormalizer
 from phaseforge.data.ingestion.cache_manager import (
-    DATASET_REPO,
     CacheManager,
     git_commit,
     sha256_file,
 )
 from phaseforge.data.ingestion.states import PipelineState
-from phaseforge.data.libero.object_state import ObjectIndex
-from phaseforge.data.libero.task_index import build_task_index
-from phaseforge.data.paths import (
-    EXPECTED_FILE_COUNTS,
-    libero_manifest_path,
-    libero_suite_dir,
-    processed_cache_root,
-    resolve_object_index_path,
-)
+from phaseforge.data.paths import processed_cache_root
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_VAL_RATIO = 0.1
+DEFAULT_SPLIT_SEED = 42
 
 
 class PipelineError(RuntimeError):
@@ -67,14 +69,13 @@ class DataPipelineStateMachine:
     """Autonomous data pipeline implemented as a finite state machine.
 
     Args:
-        cfg: Root Hydra config. The pipeline uses ``cfg.data`` and
-             ``cfg.data.libero``.
+        cfg: Root Hydra config. The pipeline uses ``cfg.data`` (including
+             the generic ``data.source`` and ``data.ingester`` blocks).
     """
 
     def __init__(self, cfg: DictConfig) -> None:
         self.cfg = cfg
         self.data_cfg = cfg.data
-        self.libero_cfg = cfg.data.libero
 
         # Bug 3 (latent): num_phases is repeated across data + model configs
         # with no validation. The phase-count ablation would silently break
@@ -96,11 +97,6 @@ class DataPipelineStateMachine:
         self._splits: dict[str, list[int]] = {}
         self._raw_dir: Path | None = None
 
-        # Eval (LIBERO-LONG) loader is built lazily and kept out of run()'s
-        # return dict because cli.py only reads "train"/"val".
-        self._eval_loader: DataLoader | None = None
-        self._eval_loaded: bool = False
-
     # ------------------------------------------------------------------
     # Config consistency
     # ------------------------------------------------------------------
@@ -109,19 +105,25 @@ class DataPipelineStateMachine:
         """Guard against the latent num_phases mismatch bug.
 
         The integer num_phases is repeated in:
-        - data.libero.phase_labeler.num_phases  (label generation)
-        - models.phase_head.num_phases          (classifier width)
-        - models.router.num_experts             (router width)
-        - models.num_phases                     (oracle model)
+        - data.phase_labeler.num_phases   (label generation, when present)
+        - models.phase_head.num_phases    (classifier width)
+        - models.router.num_experts       (router width)
+        - models.num_phases               (oracle model)
 
         Nothing validated they match. If they diverge, the labeler produces
         values the classifier/scatter/bincount cannot index. This guard makes
         the inconsistency a loud, early failure instead of a silent corruption.
 
         Only checks model fields that exist in the current config (so a
-        config that omits the oracle's top-level num_phases doesn't trip it).
+        config that omits the oracle's top-level num_phases doesn't trip it),
+        and is skipped entirely when the data config carries no phase-labeler
+        block.
         """
-        data_phases = int(self.libero_cfg.phase_labeler.num_phases)
+        labeler_cfg = self.data_cfg.get("phase_labeler")
+        if labeler_cfg is None or labeler_cfg.get("num_phases") is None:
+            return
+
+        data_phases = int(labeler_cfg.num_phases)
 
         models_cfg = self.cfg.get("models")
         if models_cfg is None:
@@ -146,121 +148,10 @@ class DataPipelineStateMachine:
         if mismatches:
             details = ", ".join(f"{n}={v}" for n, v in mismatches)
             raise PipelineError(
-                f"num_phases inconsistency: data.libero.phase_labeler.num_phases="
+                f"num_phases inconsistency: data.phase_labeler.num_phases="
                 f"{data_phases} but {details}. All must match, otherwise the "
                 "phase labels cannot be indexed by the classifier/router/scatter."
             )
-
-    # ------------------------------------------------------------------
-    # Object-state channel (P-Stage 1)
-    # ------------------------------------------------------------------
-
-    def _load_object_index(self) -> ObjectIndex | None:
-        """Load the per-task object decode tables, or None when disabled.
-
-        Reads ``data.object_state``; the index file defaults to
-        ``{data_root}/raw/libero/object_index.json`` (census output) unless
-        ``data.object_state.index_path`` is set explicitly.
-
-        Validates the config <-> index handshake: the config's
-        ``k_slots`` / ``dim_per_object`` / ``include_mask`` and the resulting
-        ``data.state_dim`` must match what the index actually produces.
-        Otherwise the decoded state vectors, the normalizer's mask exclusion
-        and the model encoder's ``input_dim`` would silently disagree.
-        """
-        oscfg = self.data_cfg.get("object_state")
-        if oscfg is None or not oscfg.get("enabled", True):
-            return None
-        path = resolve_object_index_path(self.data_cfg)
-        index = ObjectIndex.load(path)
-
-        cfg_k_slots = oscfg.get("k_slots")
-        if cfg_k_slots is not None and int(cfg_k_slots) != index.k_slots:
-            raise ValueError(
-                f"data.object_state.k_slots={cfg_k_slots} does not match the "
-                f"index at {path}: k_slots={index.k_slots}. Rebuild the index "
-                "with build_object_index or update the config, then re-ingest."
-            )
-        cfg_dim = oscfg.get("dim_per_object")
-        if cfg_dim is not None and int(cfg_dim) != index.dim_per_object:
-            raise ValueError(
-                f"data.object_state.dim_per_object={cfg_dim} does not match "
-                f"the index at {path}: dim_per_object={index.dim_per_object}."
-            )
-        cfg_include_mask = oscfg.get("include_mask", True)
-        if bool(cfg_include_mask) != index.include_mask:
-            raise ValueError(
-                f"data.object_state.include_mask={cfg_include_mask} does not "
-                f"match the index at {path}: include_mask={index.include_mask}."
-            )
-
-        # The model encoder is sized from data.state_dim; the decoded states
-        # are sized from the index. They must agree.
-        state_dim = self.data_cfg.get("state_dim")
-        if state_dim is not None:
-            proprio_dim = sum(int(e["dim"]) for e in self.data_cfg.state_keys)
-            expected = proprio_dim + index.state_block_size
-            if int(state_dim) != expected:
-                raise ValueError(
-                    f"data.state_dim={state_dim} does not match the object "
-                    f"layout: proprio {proprio_dim} + object-state block "
-                    f"{index.state_block_size} = {expected}. The model "
-                    "encoder input_dim would disagree with the decoded states."
-                )
-        return index
-
-    def _check_state_dim_consistency(self, trajs: list[dict[str, Any]]) -> None:
-        """Guard: every decoded state vector must match ``data.state_dim``.
-
-        ``data.state_dim`` sizes the model encoder's ``input_dim``, while the
-        decoded width is determined by the object index (k_slots, mask flag)
-        and by whether the object channel is enabled. A mismatch — e.g. the
-        channel disabled but a stale ``state_dim=151``, or index/config drift
-        — would otherwise surface only as a shape error at the first model
-        forward pass, after a useless 66GB re-ingest. Failing loud here
-        catches it at the source.
-        """
-        expected = int(self.data_cfg.get("state_dim", 0))
-        if expected <= 0:
-            return
-        bad = sorted(
-            {
-                int(traj["state"].shape[-1])
-                for traj in trajs
-                if traj["state"].shape[-1] != expected
-            }
-        )
-        if bad:
-            raise PipelineError(
-                f"Decoded state dims {bad} do not match data.state_dim="
-                f"{expected}. Fix data.object_state / the object index / "
-                "data.state_dim, then re-ingest — the model encoder "
-                "input_dim would disagree with the decoded states."
-            )
-
-    def _proprio_slices(self) -> tuple[tuple[int, int], tuple[int, int]]:
-        """Derive the labeler's EEF/gripper slices from the configured state_keys.
-
-        Single source of truth: the proprioceptive block is the concatenation
-        of ``state_keys`` (in config order), and the object block is appended
-        after it, so these slices are stable regardless of the object channel.
-        """
-        cursor = 0
-        by_key: dict[str, tuple[int, int]] = {}
-        for entry in self.data_cfg.state_keys:
-            key = entry["key"]
-            dim = int(entry["dim"])
-            by_key[key] = (cursor, cursor + dim)
-            cursor += dim
-        return by_key["robot0_eef_pos"], by_key["robot0_gripper_qpos"]
-
-    def _object_mask_dims(self, object_index: ObjectIndex | None) -> set[int] | None:
-        """State indices of the binary mask dims (excluded from normalization)."""
-        if object_index is None or not object_index.include_mask:
-            return None
-        proprio_dim = sum(int(e["dim"]) for e in self.data_cfg.state_keys)
-        obj_start = proprio_dim + object_index.k_slots * object_index.dim_per_object
-        return set(range(obj_start, obj_start + object_index.k_slots))
 
     # ------------------------------------------------------------------
     # Public API
@@ -271,8 +162,6 @@ class DataPipelineStateMachine:
 
         Returns:
             Dict of ``{"train": DataLoader, "val": DataLoader}``.
-            For a ``role=eval`` suite config this returns ``{}`` and the
-            data is instead available via :meth:`get_eval_loader`.
             Splits that have 0 samples return None in their slot.
         """
         logger.info(f"Pipeline starting. Config hash: {self.config_hash}")
@@ -285,59 +174,6 @@ class DataPipelineStateMachine:
 
         return self._build_dataloaders()
 
-    def get_eval_loader(self) -> DataLoader | None:
-        """Build and return the LIBERO-LONG evaluation DataLoader.
-
-        Returns None if the configured suite is not ``role=eval``. The
-        loader is built once and cached. This is intentionally separate
-        from :meth:`run` so the train pipeline never accidentally mixes
-        in evaluation data.
-        """
-        if self._eval_loaded:
-            return self._eval_loader
-        self._eval_loaded = True
-
-        role = str(self.libero_cfg.get("role", "train"))
-        if role != "eval":
-            self._eval_loader = None
-            return None
-
-        # Load + strip LIBERO-LONG without normalizing (eval uses the
-        # train-frozen normalizer). We ingest into a throwaway buffer.
-        eval_trajectories = self._ingest_suite_into(self.libero_cfg.suite)
-        frozen_norm = self._load_or_build_normalizer()
-        for traj in eval_trajectories:
-            state_t = torch.from_numpy(traj["state"]).float()
-            traj["state"] = frozen_norm.normalize(state_t)
-            traj["action"] = torch.from_numpy(traj["action"]).float()
-            traj["phase"] = torch.from_numpy(traj["phase"]).long()
-
-        if not eval_trajectories:
-            self._eval_loader = None
-            return None
-
-        dataset = StateOnlyDataset(
-            trajectories=eval_trajectories,
-            sequence_length=int(self.data_cfg.sequence_length),
-            stride=int(self.data_cfg.stride),
-        )
-        # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns
-        num_workers = int(self.data_cfg.num_workers)
-        if hasattr(os, "cpu_count") and os.cpu_count() is not None:
-            num_workers = min(num_workers, os.cpu_count())
-
-        self._eval_loader = DataLoader(
-            dataset,
-            batch_size=int(self.data_cfg.batch_size),
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=bool(self.data_cfg.pin_memory),
-            collate_fn=PhaseAwareCollator(),
-            drop_last=False,
-        )
-        logger.info(f"  eval: {len(dataset)} samples, {len(self._eval_loader)} batches")
-        return self._eval_loader
-
     # ------------------------------------------------------------------
     # State transitions
     # ------------------------------------------------------------------
@@ -349,7 +185,7 @@ class DataPipelineStateMachine:
             elif self._state == PipelineState.VALIDATE_SOURCE:
                 self._validate_source()
             elif self._state == PipelineState.INGEST_AND_STRIP:
-                self._ingest_and_strip()
+                self._ingest_source()
             elif self._state == PipelineState.NORMALIZE_AND_SAVE:
                 self._normalize_and_save()
         except Exception as exc:  # noqa: BLE001
@@ -361,7 +197,7 @@ class DataPipelineStateMachine:
         logger.info("CHECK_PERSISTENT_CACHE: looking for cached data…")
         enforce_strict = self.data_cfg.get("enforce_strict_cache", True)
         found_hash = self.cache_manager.find_cache(self.config_hash, enforce_strict)
-        
+
         if found_hash:
             logger.info(f"Cache hit (hash: {found_hash}). Loading from disk.")
             (
@@ -370,7 +206,7 @@ class DataPipelineStateMachine:
                 self._splits,
                 self._task_index,
             ) = self.cache_manager.load(found_hash)
-            
+
             # Use the loaded hash so it doesn't mismatch later if we need it
             self.config_hash = found_hash
             self._state = PipelineState.READY
@@ -378,125 +214,155 @@ class DataPipelineStateMachine:
             logger.info("Cache miss. Proceeding to validate source.")
             self._state = PipelineState.VALIDATE_SOURCE
 
-    def _validate_source(self) -> None:
-        """Bug 1 fix: consume pre-downloaded data and verify file count.
+    def _resolve_raw_dir(self) -> Path:
+        """Resolve the configured raw dataset directory (``data.source.dir``)."""
+        source = self.data_cfg.get("source")
+        if source is None or not source.get("dir"):
+            raise PipelineError(
+                "data.source.dir is not configured. The robomimic protocol "
+                "(docs/plan/final_evaluation_plan.md, Gate 0) requires a "
+                "source block with the raw dataset directory before the "
+                "pipeline can ingest. Legacy benchmark-specific data configs "
+                "are archived under legacy/ and are not part of the protocol."
+            )
+        return Path(str(source["dir"]))
 
-        Replaces the old ``_download_source`` that called fictional
-        box.com URLs. We look for the suite folder under the env-var-aware
-        data root and apply the official LIBERO file-count integrity check.
-        """
+    def _validate_source(self) -> None:
+        """Bug 1 fix: consume pre-downloaded data and verify it exists."""
         logger.info("VALIDATE_SOURCE: checking pre-downloaded raw data…")
-        suite = str(self.libero_cfg.suite)
-        raw_suite_dir = libero_suite_dir(suite)
+        raw_suite_dir = self._resolve_raw_dir()
 
         if not raw_suite_dir.exists():
             raise PipelineError(
-                f"Raw suite directory not found: {raw_suite_dir}. "
-                "Download the data first with: "
-                "python -m phaseforge.data.scripts.download_libero"
+                f"Raw source directory not found: {raw_suite_dir}. "
+                "Download the dataset first and set data.source.dir."
             )
 
-        # Official LIBERO integrity check = file count (see paths.EXPECTED_FILE_COUNTS).
-        actual = len(list(raw_suite_dir.glob("*.hdf5")))
-        expected = EXPECTED_FILE_COUNTS[suite]
-        if actual != expected:
+        hdf5_files = sorted(raw_suite_dir.glob("*.hdf5"))
+        if not hdf5_files:
             raise PipelineError(
-                f"Integrity check FAILED for suite '{suite}': expected "
-                f"{expected} .hdf5 files, found {actual} in {raw_suite_dir}. "
-                "Re-run: python -m phaseforge.data.scripts.download_libero"
+                f"No .hdf5 files found in {raw_suite_dir}. "
+                "The source adapter expects the dataset's HDF5 artifacts."
             )
         logger.info(
-            "  OK: suite '%s' has %d .hdf5 files at %s",
-            suite, actual, raw_suite_dir,
+            "  OK: source '%s' has %d .hdf5 files",
+            raw_suite_dir, len(hdf5_files),
         )
 
-        # Bug 2: build the deterministic task index once, here.
-        self._task_index = build_task_index(raw_suite_dir)
         self._raw_dir = raw_suite_dir
         self._state = PipelineState.INGEST_AND_STRIP
 
-    def _ingest_and_strip(self) -> None:
-        logger.info("INGEST_AND_STRIP: parsing HDF5, stripping vision, labeling phases…")
+    def _ingest_source(self) -> None:
+        """Delegate dataset conversion to the pluggable ``data.ingester``.
+
+        The ingester is a Hydra target receiving ``raw_dir`` and returning
+        ``(trajectories, task_index)`` where each trajectory carries
+        ``state`` (T, S), ``action`` (T, A), ``phase`` (T,) and ``task_id``.
+        """
         from hydra.utils import instantiate
 
-        from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
-        from phaseforge.data.libero.vision_stripper import VisionStripper
+        ingester_cfg = self.data_cfg.get("ingester")
+        if ingester_cfg is None:
+            raise PipelineError(
+                "data.ingester is not configured — the source adapter for the "
+                "robomimic/robosuite protocol (docs/plan/final_evaluation_plan.md, "
+                "Gate 0/1) is not implemented yet. The former benchmark-specific "
+                "ingestion stack was archived to legacy/ and must not be used."
+            )
 
-        object_index = self._load_object_index()
-        stripper = VisionStripper(
-            state_keys=list(self.data_cfg.state_keys),
-            task_index=self._task_index,
-            object_index=object_index,
-            action_dim=int(self.data_cfg.get("action_dim", 7)),
-        )
-        eef_slice, gripper_slice = self._proprio_slices()
-        labeler: RuleBasedPhaseLabeler = instantiate(
-            self.data_cfg.libero.phase_labeler,
-            eef_pos_slice=eef_slice,
-            gripper_qpos_slice=gripper_slice,
-        )
+        logger.info("INGEST_AND_STRIP: converting raw HDF5 to trajectories…")
+        ingester = instantiate(ingester_cfg, raw_dir=self._raw_dir)
+        trajectories, task_index = ingester.ingest()
 
-        hdf5_files = sorted(self._raw_dir.glob("*.hdf5"))
-        if not hdf5_files:
-            raise PipelineError(f"No .hdf5 files found in {self._raw_dir}")
+        if not trajectories:
+            raise PipelineError("The ingester produced no trajectories.")
 
-        all_trajs: list[dict[str, Any]] = []
-        for hdf5_path in hdf5_files:
-            logger.info(f"  Parsing {hdf5_path.name}")
-            stripped = stripper.strip(hdf5_path)
-            for traj in stripped:
-                phase_labels = labeler.label(traj)
-                self._validate_phase_labels(hdf5_path.name, traj, phase_labels)
-                traj["phase"] = phase_labels
-                all_trajs.append(traj)
+        num_phases = None
+        labeler_cfg = self.data_cfg.get("phase_labeler")
+        if labeler_cfg is not None and labeler_cfg.get("num_phases") is not None:
+            num_phases = int(labeler_cfg.num_phases)
+        phase_counts = None
+        if num_phases is not None:
+            phase_counts = np.zeros(num_phases, dtype=np.int64)
+        for traj in trajectories:
+            if "phase" not in traj:
+                raise PipelineError(
+                    f"(demo {traj.get('demo_key', '?')}): the ingester did not "
+                    "produce phase labels. PhaseForge training requires labels "
+                    "generated from permitted low-dimensional observations."
+                )
+            if num_phases is not None:
+                self._validate_phase_labels(traj, traj["phase"], num_phases)
+                phase_counts += np.bincount(
+                    np.asarray(traj["phase"], dtype=np.int64),
+                    minlength=num_phases,
+                )
 
-        logger.info(f"  Total trajectories after stripping: {len(all_trajs)}")
-        self._check_state_dim_consistency(all_trajs)
-        self._trajectories = all_trajs
+        if phase_counts is not None and np.any(phase_counts == 0):
+            missing = np.flatnonzero(phase_counts == 0).tolist()
+            raise PipelineError(
+                f"Phase labels contain no samples for phase(s) {missing}. "
+                "Revise the state-only label thresholds or the demonstrations "
+                "before attempting router centroid initialization."
+            )
+
+        self._check_state_dim_consistency(trajectories)
+        self._trajectories = trajectories
+        self._task_index = task_index or {}
         self._state = PipelineState.NORMALIZE_AND_SAVE
 
     def _validate_phase_labels(
-        self, source: str, traj: dict[str, Any], phases: np.ndarray
+        self, traj: dict[str, Any], phases: np.ndarray, num_phases: int
     ) -> None:
         """Guard: phase labels must align with the state length and range.
 
-        The labeler runs after stripping; a length mismatch or out-of-range
-        phase would corrupt training (cross-entropy / scatter / bincount)
-        silently. This makes it a loud per-trajectory failure instead.
+        A length mismatch or out-of-range phase would corrupt training
+        (cross-entropy / scatter / bincount) silently. This makes it a loud
+        per-trajectory failure instead.
         """
         T = int(traj["state"].shape[0])
+        if phases.ndim != 1:
+            raise PipelineError(
+                f"(demo {traj.get('demo_key', '?')}): phase labels must have "
+                f"shape (T,), got {phases.shape}."
+            )
         if phases.shape[0] != T:
             raise PipelineError(
-                f"{source} (demo {traj.get('demo_key', '?')}): phase labels "
-                f"have length {phases.shape[0]} but state has T={T}. "
-                "Labeler and stripper disagree on the trajectory length."
+                f"(demo {traj.get('demo_key', '?')}): phase labels have length "
+                f"{phases.shape[0]} but state has T={T}. Labeler and ingester "
+                "disagree on the trajectory length."
             )
-        num_phases = int(self.libero_cfg.phase_labeler.num_phases)
         if phases.size and (int(phases.min()) < 0 or int(phases.max()) >= num_phases):
             raise PipelineError(
-                f"{source} (demo {traj.get('demo_key', '?')}): phase labels "
-                f"out of range [0, {num_phases}): observed [{phases.min()}, "
-                f"{phases.max()}]."
+                f"(demo {traj.get('demo_key', '?')}): phase labels out of range "
+                f"[0, {num_phases}): observed [{phases.min()}, {phases.max()}]."
             )
 
-    def _provenance(
-        self,
-        splits: dict[str, list[int]],
-        object_index: ObjectIndex | None,
-    ) -> dict[str, Any]:
+    def _provenance(self, splits: dict[str, list[int]]) -> dict[str, Any]:
         """Build the manifest audit trail for the final cache (Gate 8).
 
         Includes full-content SHA-256 of every raw HDF5 file (streamed, so
-        multi-GB files are fine — one-time cost per data version), the
-        object-index hash, the code git commit, the state schema, the
-        normalization method, the phase-labeler config and the split task
-        names. Enough to prove exactly which dataset produced a result.
+        multi-GB files are fine — one-time cost per data version), the code
+        git commit, the state schema, the normalization method, the
+        phase-labeler config and the split task names. Enough to prove
+        exactly which dataset produced a result.
         """
         split_task_names: dict[str, list[str]] = {}
         id_to_name = {v: k for k, v in self._task_index.items()}
         for split_name, indices in splits.items():
             split_task_names[split_name] = sorted(
-                {id_to_name[int(self._trajectories[i]["task_id"])] for i in indices}
+                {
+                    str(
+                        self._trajectories[i].get(
+                            "task_name",
+                            id_to_name.get(
+                                int(self._trajectories[i]["task_id"]),
+                                self._trajectories[i]["task_id"],
+                            ),
+                        )
+                    )
+                    for i in indices
+                }
             )
 
         raw_files: list[dict[str, Any]] = []
@@ -513,58 +379,49 @@ class DataPipelineStateMachine:
                     }
                 )
 
-        # Dataset revision: record the download script's MANIFEST.json
-        # (repo id + pinned commit SHA) verbatim when present.
+        # Dataset revision: record the source's MANIFEST.json (repo id +
+        # pinned commit SHA) verbatim when present.
         dataset_manifest: dict[str, Any] | None = None
-        try:
-            manifest_path = libero_manifest_path()
-            if manifest_path.exists():
-                dataset_manifest = json.loads(
-                    manifest_path.read_text(encoding="utf-8")
-                )
-        except Exception:  # noqa: BLE001
-            logger.warning(
-                "Could not read the LIBERO download manifest for provenance.",
-                exc_info=True,
+        source = self.data_cfg.get("source")
+        if source is not None and source.get("dir"):
+            manifest_path = Path(
+                str(source.get("manifest_path") or Path(str(source["dir"])) / "MANIFEST.json")
             )
-
-        object_index_sha = None
-        try:
-            oscfg = self.data_cfg.get("object_state")
-            if oscfg is None or oscfg.get("enabled", True):
-                path = resolve_object_index_path(self.data_cfg)
-                if path.exists():
-                    object_index_sha = sha256_file(path)
-        except Exception:  # noqa: BLE001
-            logger.warning("Could not hash object index.", exc_info=True)
+            try:
+                if manifest_path.exists():
+                    dataset_manifest = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Could not read the source manifest for provenance.",
+                    exc_info=True,
+                )
 
         state_schema = {
+            "schema_version": str(self.data_cfg.get("schema_version", "")),
             "keys": [
                 {"key": str(e["key"]), "dim": int(e["dim"])}
                 for e in self.data_cfg.state_keys
             ],
             "state_dim": int(self.data_cfg.get("state_dim", 0)),
             "action_dim": int(self.data_cfg.get("action_dim", 7)),
+            "action_contract": OmegaConf.to_container(
+                self.data_cfg.get("action_contract", {}), resolve=True
+            ),
         }
 
-        return {
-            "dataset_repo": DATASET_REPO,
+        labeler_cfg = self.data_cfg.get("phase_labeler")
+        provenance: dict[str, Any] = {
             "dataset_manifest": dataset_manifest,
             "code_git_commit": git_commit(),
             "raw_files": raw_files,
-            "object_index_sha256": object_index_sha,
             "state_schema": state_schema,
             "normalization": {
                 "strategy": str(self.data_cfg.get("normalization_strategy", "zscore")),
                 "ddof": 1,
-                "excluded_dims": sorted(
-                    self._object_mask_dims(object_index) or []
-                ),
                 "train_split_only": True,
             },
-            "phase_labeler": OmegaConf.to_container(
-                self.libero_cfg.phase_labeler, resolve=True
-            ),
             "sampling": {
                 "sequence_length": int(self.data_cfg.get("sequence_length", 1)),
                 "stride": int(self.data_cfg.get("stride", 1)),
@@ -572,20 +429,21 @@ class DataPipelineStateMachine:
             "split_task_names": split_task_names,
             "configuration": OmegaConf.to_yaml(self.data_cfg, resolve=True),
         }
+        if labeler_cfg is not None:
+            provenance["phase_labeler"] = OmegaConf.to_container(
+                labeler_cfg, resolve=True
+            )
+        return provenance
 
     def _normalize_and_save(self) -> None:
         logger.info("NORMALIZE_AND_SAVE: computing statistics and persisting cache…")
-        split_cfg = self.data_cfg.libero.split
 
-        # Bug 5 fix: TASK-LEVEL split (no same-task leakage).
-        splits = self._build_task_level_splits(split_cfg)
+        # Split before normalization so validation never contributes to the
+        # fitted statistics.
+        splits = self._build_task_level_splits()
 
         # Compute normalization stats on TRAIN split only.
-        # Mask dims (object-slot occupancy, already binary) are excluded.
-        object_index = self._load_object_index()
-        normalizer = RunningStatNormalizer(
-            ignore_dims=self._object_mask_dims(object_index)
-        )
+        normalizer = RunningStatNormalizer()
         for idx in splits["train"]:
             traj = self._trajectories[idx]
             state_np = traj["state"]  # (T, S) numpy array
@@ -610,7 +468,7 @@ class DataPipelineStateMachine:
             norm_stats=norm_stats,
             splits=splits,
             task_index=self._task_index,
-            provenance=self._provenance(splits, object_index),
+            provenance=self._provenance(splits),
         )
         self._norm_stats = norm_stats
         self._splits = splits
@@ -620,24 +478,28 @@ class DataPipelineStateMachine:
     # Splitting
     # ------------------------------------------------------------------
 
-    def _build_task_level_splits(
-        self, split_cfg: DictConfig
-    ) -> dict[str, list[int]]:
-        """Group trajectories by task_id and split at the task level.
+    def _build_task_level_splits(self) -> dict[str, list[int]]:
+        """Build the configured task-level or within-task trajectory split.
 
-        Guarantees:
-        - No same-task leakage: every task's demos land entirely in train
-          OR entirely in val, never both.
-        - val is never empty for a train-role suite: a hard floor of
-          ``max(1, round(n_tasks * val_ratio))`` replaces the old
-          ``int(n * val_ratio)`` which rounded small val sets to 0.
+        ``strategy=task`` is appropriate for a multitask generalization test:
+        every task is entirely in train or validation. The primary protocol is
+        single-task, so ``strategy=trajectory`` holds out demonstrations from
+        each task and prevents the validation loader from silently becoming
+        empty.
 
-        For a role=eval suite, all trajectories go to "eval" and train/val
-        are empty (the data is exposed via get_eval_loader instead).
+        Reads ``data.split`` ({strategy, val_ratio, seed}) with safe defaults.
         """
-        role = str(self.libero_cfg.get("role", "train"))
-        if role == "eval":
-            return {"train": [], "val": [], "eval": list(range(len(self._trajectories)))}
+        split_cfg = self.data_cfg.get("split", {})
+        strategy = str(split_cfg.get("strategy", "task"))
+        val_ratio = float(split_cfg.get("val_ratio", DEFAULT_VAL_RATIO))
+        split_seed = int(split_cfg.get("seed", DEFAULT_SPLIT_SEED))
+        if strategy not in {"task", "trajectory"}:
+            raise PipelineError(
+                f"Unsupported data.split.strategy={strategy!r}; expected "
+                "'task' or 'trajectory'."
+            )
+        if not 0.0 <= val_ratio < 1.0:
+            raise PipelineError("data.split.val_ratio must be in [0, 1).")
 
         # Group trajectory indices by task_id
         by_task: dict[int, list[int]] = defaultdict(list)
@@ -645,13 +507,43 @@ class DataPipelineStateMachine:
             by_task[int(traj["task_id"])].append(i)
 
         task_ids = sorted(by_task.keys())
-        rng = np.random.default_rng(int(split_cfg.seed))
+        rng = np.random.default_rng(split_seed)
+
+        if strategy == "trajectory":
+            train_idx: list[int] = []
+            val_idx: list[int] = []
+            for task_id in task_ids:
+                indices = np.asarray(by_task[task_id], dtype=np.int64)
+                rng.shuffle(indices)
+                if len(indices) < 2:
+                    n_val = 0
+                else:
+                    n_val = min(
+                        len(indices) - 1,
+                        max(1, int(round(len(indices) * val_ratio))),
+                    ) if val_ratio > 0 else 0
+                val_idx.extend(int(i) for i in indices[:n_val])
+                train_idx.extend(int(i) for i in indices[n_val:])
+            logger.info(
+                "  Trajectory-level split: %d train trajectories, %d val "
+                "trajectories across %d tasks",
+                len(train_idx), len(val_idx), len(task_ids),
+            )
+            if val_ratio > 0 and task_ids and not val_idx:
+                raise PipelineError(
+                    "The trajectory split produced no validation trajectories. "
+                    "Provide at least two demonstrations for the single-task "
+                    "protocol or set val_ratio=0 only for an explicitly "
+                    "training-only pilot."
+                )
+            return {"train": train_idx, "val": val_idx}
+
         rng.shuffle(task_ids)
 
-        val_ratio = float(split_cfg.val_ratio)
         # Bug 5 fix: hard floor so val never collapses to zero tasks.
         n_val_tasks = max(1, round(len(task_ids) * val_ratio)) if task_ids else 0
-        # Edge case: if only one task exists, keep it in train.
+        # A task-level single-task split has no validation task. Callers that
+        # need validation for a single task must select strategy=trajectory.
         if len(task_ids) <= 1:
             n_val_tasks = 0
 
@@ -671,66 +563,7 @@ class DataPipelineStateMachine:
             len(train_tasks), len(train_idx),
             len(val_tasks), len(val_idx),
         )
-        return {"train": train_idx, "val": val_idx, "eval": []}
-
-    # ------------------------------------------------------------------
-    # Normalizer sharing (train -> eval)
-    # ------------------------------------------------------------------
-
-    def _load_or_build_normalizer(self):
-        """Return a frozen normalizer for the eval split.
-
-        Per the proposal, evaluation must use the TRAIN-frozen statistics
-        (never compute stats from eval data). We load them from the
-        processed cache if present; otherwise build from any cached train
-        data. If neither exists we raise — eval cannot invent its own stats.
-        """
-        if self._norm_stats:
-            from phaseforge.data.common.normalizer import FrozenNormalizer
-            return FrozenNormalizer(mean=self._norm_stats["mean"], std=self._norm_stats["std"])
-
-        if self.cache_manager.cache_exists(self.config_hash):
-            _, norm_stats, _, _ = self.cache_manager.load(self.config_hash)
-            from phaseforge.data.common.normalizer import FrozenNormalizer
-            return FrozenNormalizer(mean=norm_stats["mean"], std=norm_stats["std"])
-
-        raise PipelineError(
-            "Cannot build eval normalizer: no cached train statistics found. "
-            "Run the train-role pipeline first so the normalizer is persisted."
-        )
-
-    def _ingest_suite_into(self, suite: str) -> list[dict[str, Any]]:
-        """Ingest a suite folder into a fresh trajectory list (no caching)."""
-        from hydra.utils import instantiate
-
-        from phaseforge.data.libero.phase_labeler import RuleBasedPhaseLabeler
-        from phaseforge.data.libero.vision_stripper import VisionStripper
-
-        raw_dir = libero_suite_dir(suite)
-        task_index = build_task_index(raw_dir)
-        object_index = self._load_object_index()
-        stripper = VisionStripper(
-            state_keys=list(self.data_cfg.state_keys),
-            task_index=task_index,
-            object_index=object_index,
-            action_dim=int(self.data_cfg.get("action_dim", 7)),
-        )
-        eef_slice, gripper_slice = self._proprio_slices()
-        labeler: RuleBasedPhaseLabeler = instantiate(
-            self.data_cfg.libero.phase_labeler,
-            eef_pos_slice=eef_slice,
-            gripper_qpos_slice=gripper_slice,
-        )
-
-        trajs: list[dict[str, Any]] = []
-        for hdf5_path in sorted(raw_dir.glob("*.hdf5")):
-            for traj in stripper.strip(hdf5_path):
-                phase_labels = labeler.label(traj)
-                self._validate_phase_labels(hdf5_path.name, traj, phase_labels)
-                traj["phase"] = phase_labels
-                trajs.append(traj)
-        self._check_state_dim_consistency(trajs)
-        return trajs
+        return {"train": train_idx, "val": val_idx}
 
     # ------------------------------------------------------------------
     # DataLoader construction
@@ -752,12 +585,12 @@ class DataPipelineStateMachine:
                 stride=int(data_cfg.stride),
             )
             is_train = split_name == "train"
-            
+
             # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns
             num_workers = int(data_cfg.num_workers)
             if hasattr(os, "cpu_count") and os.cpu_count() is not None:
                 num_workers = min(num_workers, os.cpu_count())
-                
+
             loader = DataLoader(
                 dataset,
                 batch_size=int(data_cfg.batch_size),
@@ -773,3 +606,30 @@ class DataPipelineStateMachine:
             )
 
         return result
+
+    def _check_state_dim_consistency(self, trajs: list[dict[str, Any]]) -> None:
+        """Guard: every decoded state vector must match ``data.state_dim``.
+
+        ``data.state_dim`` sizes the model encoder's ``input_dim``. A
+        mismatch — e.g. the ingester producing a different width than the
+        config — would otherwise surface only as a shape error at the first
+        model forward pass, after a useless re-ingest. Failing loud here
+        catches it at the source.
+        """
+        expected = int(self.data_cfg.get("state_dim", 0))
+        if expected <= 0:
+            return
+        bad = sorted(
+            {
+                int(traj["state"].shape[-1])
+                for traj in trajs
+                if traj["state"].shape[-1] != expected
+            }
+        )
+        if bad:
+            raise PipelineError(
+                f"Decoded state dims {bad} do not match data.state_dim="
+                f"{expected}. Fix data.source / data.ingester / data.state_dim, "
+                "then re-ingest — the model encoder input_dim would disagree "
+                "with the decoded states."
+            )

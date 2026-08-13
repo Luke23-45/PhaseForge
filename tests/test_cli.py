@@ -3,8 +3,8 @@
 ``phaseforge.cli`` must stay importable without ``wandb`` installed (the
 import is lazy), and checkpoint loads must hard-fail on missing/unexpected
 weights instead of silently continuing on random weights — a mismatched
-eval model config otherwise runs on random weights and scores 0% in LIBERO
-rollouts with no error. The only allowed skip is the Stage 1 -> Stage 2
+eval model config otherwise runs on random weights and produces meaningless
+rollout results with no error. The only allowed skip is the Stage 1 -> Stage 2
 bootstrap (the ``moe_layer`` prefix), which is logged at INFO.
 """
 
@@ -121,7 +121,12 @@ def _build_model_for_test(name: str) -> torch.nn.Module:
         if name == "phaseforge"
         else f"phaseforge/config/models/baselines/{name}.yaml"
     )
-    return build_model(DictConfig({"models": OmegaConf.load(path)}))
+    # Model configs interpolate ${data.state_dim}/${data.action_dim}, so the
+    # data block must be present for the config to resolve — same as the CLI.
+    data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+    return build_model(
+        DictConfig({"models": OmegaConf.load(path), "data": data_cfg})
+    )
 
 
 def test_stage1_bootstrap_load_matrix_all_cells() -> None:

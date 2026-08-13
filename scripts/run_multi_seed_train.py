@@ -18,7 +18,7 @@ Usage:
     uv run python scripts/run_multi_seed_train.py
 
 Requires:
-    - Real LIBERO-90 data cache built by the data pipeline before the first
+    - Real robomimic low-dimensional data cache built by the data pipeline before the first
       training run (the pipeline prints the config hash; stage-2 lookups
       are seed-matched automatically).
     - CUDA machine (run on the GPU box, not a CPU laptop).

@@ -5,7 +5,7 @@ _target_: phaseforge.models.phase_moe.PhaseBootstrappedMoE
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder
-  input_dim: 87           # Matches data.state_dim (23 + 8*7 objects + 8 mask)
+  input_dim: ${data.state_dim}
   hidden_dims: [256, 256, 256]
   latent_dim: 128
   activation: "gelu"
@@ -15,7 +15,7 @@ encoder:
 action_head:
   _target_: phaseforge.models.components.action_head.ActionHead
   input_dim: 128
-  output_dim: 7           # Matches data.action_dim
+  output_dim: ${data.action_dim}
   head_type: "deterministic"
   hidden_dim: 256
 
@@ -40,5 +40,5 @@ expert:
   # Single hidden layer matching action_head.hidden_dim so the Stage 1
   # ActionHead can be copied into the experts exactly (strict warm start).
   hidden_dims: [256]
-  output_dim: 7
+  output_dim: ${data.action_dim}
   activation: "gelu"
