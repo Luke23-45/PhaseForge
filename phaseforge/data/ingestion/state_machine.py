@@ -386,7 +386,9 @@ class DataPipelineStateMachine:
             missing = np.flatnonzero(phase_counts == 0).tolist()
             if self._model_uses_phase_labels():
                 raise PipelineError(
-                    f"Phase labels contain no samples for phase(s) {missing}. "
+                    f"Phase labels contain no samples for phase(s) {missing} "
+                    f"(per-phase sample counts across all trajectories: "
+                    f"{phase_counts.tolist()}). "
                     "The selected model consumes phase labels (phase_head or "
                     "top-level num_phases); degenerate labels would silently "
                     "corrupt phase cross-entropy and router centroid "
