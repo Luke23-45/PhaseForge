@@ -2,6 +2,17 @@
 
 These labels are a training signal for the PhaseForge routing study. They are
 not environment annotations and are never supplied to the policy at inference.
+
+Threshold calibration is adaptive: the closed/open gripper levels are derived
+per demonstration from the observed aperture range (5-95 percentiles, with the
+grasp/transport-dominated middle of the demo disambiguating the sign), so any
+robosuite gripper convention labels correctly without per-env tuning — e.g.
+the Panda finger qpos range [-0.02, 0.02] (closed at either end) or a
+magnitude convention like [0, 0.04]. The configured absolute thresholds are
+only fallbacks for degenerate demonstrations with a (nearly) constant
+aperture. Labels are computed offline during ingestion (like the train-split
+normalization statistics); the phase state machine and its smoothing remain
+causal, so a label at time ``t`` never depends on the phase values after ``t``.
 """
 
 from __future__ import annotations
@@ -10,15 +21,16 @@ from typing import Any
 
 import numpy as np
 
+_MIN_SAMPLES_FOR_CALIBRATION = 8
+_MIN_SPAN_FOR_CALIBRATION = 1e-3
+
 
 class RuleBasedPhaseLabeler:
     """Assign coarse approach/grasp/transport/place/retract phases.
 
     The labeler only reads the configured end-effector position and gripper
     slices from the unnormalized state. It deliberately does not inspect
-    actions, future states, object state, or task metadata. Smoothing and
-    transitions are causal so a label at time ``t`` cannot depend on samples
-    after ``t``.
+    actions, future phase values, object state, or task metadata.
     """
 
     def __init__(
@@ -54,6 +66,43 @@ class RuleBasedPhaseLabeler:
         self.eef_pos_slice = tuple(int(v) for v in eef_pos_slice)
         self.gripper_slice = tuple(int(v) for v in gripper_qpos_slice)
 
+    def _calibrate_aperture(
+        self, aperture: np.ndarray
+    ) -> tuple[np.ndarray, float, float]:
+        """Return (signal, closed_level, open_level) for the hysteresis.
+
+        The levels are calibrated from the demonstration's observed aperture
+        range so the closed/open detection is independent of the gripper's
+        absolute scale and sign convention. The gripper is open at reset and
+        mostly closed through grasp/transport/place, so:
+
+        - ``lo``/``hi`` are the 5/95 percentiles of the aperture (robust to
+          contact spikes at the extremes);
+        - the middle-50% median tells which extreme the closed position is
+          on; when closed is the high side (e.g. Panda qpos with closed at
+          ``+0.02``), the signal is mirrored so the hysteresis can treat
+          closed as low;
+        - the hysteresis bands sit 30% inside the observed span, keeping
+          contact noise out of the levels.
+
+        Falls back to the configured absolute thresholds when the aperture is
+        (nearly) constant or the demonstration is too short to calibrate.
+        """
+        if aperture.size < _MIN_SAMPLES_FOR_CALIBRATION:
+            return aperture, self.closed_threshold, self.open_threshold
+        lo = float(np.percentile(aperture, 5))
+        hi = float(np.percentile(aperture, 95))
+        span = hi - lo
+        if span <= _MIN_SPAN_FOR_CALIBRATION:
+            return aperture, self.closed_threshold, self.open_threshold
+        middle = aperture[aperture.size // 4 : 3 * aperture.size // 4]
+        mid = float(np.median(middle))
+        if mid >= lo + 0.5 * span:
+            # Closed position sits at the high extreme (or the convention is
+            # inverted): mirror so closed reads low in the hysteresis.
+            aperture = (lo + hi) - aperture
+        return aperture, lo + 0.3 * span, hi - 0.3 * span
+
     def label(self, traj: dict[str, Any]) -> np.ndarray:
         state = np.asarray(traj["state"], dtype=np.float32)
         if state.ndim != 2:
@@ -73,12 +122,14 @@ class RuleBasedPhaseLabeler:
         aperture = state[:, g0:g1].mean(axis=1)
         speed = np.linalg.norm(np.diff(eef, axis=0, prepend=eef[:1]), axis=1)
 
+        aperture, closed_level, open_level = self._calibrate_aperture(aperture)
+
         closed = np.zeros(T, dtype=bool)
         previous = False
         for t, value in enumerate(aperture):
-            if value < self.closed_threshold:
+            if value < closed_level:
                 previous = True
-            elif value > self.open_threshold:
+            elif value > open_level:
                 previous = False
             closed[t] = previous
 

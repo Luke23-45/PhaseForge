@@ -68,6 +68,9 @@ source:
 phase_labeler:
   _target_: phaseforge.data.robomimic.phase_labeler.RuleBasedPhaseLabeler
   num_phases: 6
+  # Closed/open gripper levels are calibrated per demonstration from the
+  # observed aperture range (sign- and scale-agnostic); these absolute
+  # thresholds are only fallbacks for degenerate (nearly constant) demos.
   gripper_closed_threshold: 0.02
   gripper_open_threshold: 0.04
   eef_velocity_threshold: 0.01
