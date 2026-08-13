@@ -34,6 +34,63 @@ def test_cli_importable_without_wandb() -> None:
     assert "wandb" not in getattr(cli, "__dict__", {})
 
 
+def _cfg_with_log_level(level: str):
+    from omegaconf import DictConfig
+
+    return DictConfig({"project": {"log_level": level}})
+
+
+def test_apply_log_level_sets_root_level_and_restores() -> None:
+    """The helper must respect the configured level (case-insensitive)."""
+    previous = logging.getLogger().level
+    try:
+        cli._apply_log_level(_cfg_with_log_level("info"))
+        assert logging.getLogger().level == logging.INFO
+        cli._apply_log_level(_cfg_with_log_level("DEBUG"))
+        assert logging.getLogger().level == logging.DEBUG
+        cli._apply_log_level(_cfg_with_log_level("warning"))
+        assert logging.getLogger().level == logging.WARNING
+    finally:
+        logging.getLogger().setLevel(previous)
+
+
+def test_apply_log_level_defaults_to_warning() -> None:
+    """Missing config key falls back to the cloud-friendly WARNING level."""
+    from omegaconf import DictConfig
+
+    previous = logging.getLogger().level
+    try:
+        cli._apply_log_level(DictConfig({"project": {}}))
+        assert logging.getLogger().level == logging.WARNING
+    finally:
+        logging.getLogger().setLevel(previous)
+
+
+def test_apply_log_level_invalid_falls_back_to_warning(caplog) -> None:
+    """Unknown levels must not crash the run; WARNING is the safe default."""
+    previous = logging.getLogger().level
+    try:
+        cli._apply_log_level(_cfg_with_log_level("banana"))
+        assert logging.getLogger().level == logging.WARNING
+        assert "falling back to WARNING" in caplog.text
+    finally:
+        logging.getLogger().setLevel(previous)
+
+
+def test_apply_log_level_filters_info_records(caplog) -> None:
+    """At WARNING, INFO records are suppressed while WARNING records pass."""
+    previous = logging.getLogger().level
+    try:
+        cli._apply_log_level(_cfg_with_log_level("WARNING"))
+        run_logger = logging.getLogger("phaseforge.cli")
+        run_logger.info("verbose info that must be filtered")
+        run_logger.warning("warning that must appear")
+        assert "verbose info that must be filtered" not in caplog.text
+        assert "warning that must appear" in caplog.text
+    finally:
+        logging.getLogger().setLevel(previous)
+
+
 def test_load_state_dict_checked_passes_on_perfect_match() -> None:
     model = _DummyModel()
     cli._load_state_dict_checked(

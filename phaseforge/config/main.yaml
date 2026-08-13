@@ -13,6 +13,11 @@ project:
   device: "cuda"
   output_dir: "outputs"
   tag: null               # Optional user-friendly label (e.g., "lr1e-3", "ablation")
+  # Log verbosity for CLI runs. WARNING keeps cloud consoles readable:
+  # per-epoch routing diagnostics, checkpoint chatter, and third-party INFO
+  # lines (e.g. numexpr) are filtered out. Use INFO or DEBUG for verbose
+  # local runs, e.g. `phaseforge-train project.log_level=INFO`.
+  log_level: "WARNING"
   wandb:
     project: "phaseforge"
     entity: null          # Set via env var WANDB_ENTITY or override

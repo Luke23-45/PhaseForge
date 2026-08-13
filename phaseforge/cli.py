@@ -32,6 +32,29 @@ from phaseforge.utils.seed import set_seed
 logger = logging.getLogger(__name__)
 
 
+def _apply_log_level(cfg: DictConfig) -> None:
+    """Filter the run's log stream to the configured verbosity.
+
+    Hydra configures the root logger at INFO on startup, which floods cloud
+    consoles with per-epoch routing diagnostics, checkpoint chatter, and
+    third-party INFO lines (e.g. numexpr). ``project.log_level`` (default
+    ``WARNING``) raises the root level so only warnings and errors pass;
+    child loggers without an explicit level (all of ``phaseforge.*`` and
+    most third-party loggers) inherit the filter. Set
+    ``project.log_level=INFO`` (or ``DEBUG``) for verbose local runs.
+    """
+    level_name = str(cfg.project.get("log_level", "WARNING")).upper()
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        logger.warning("Unknown log_level %r — falling back to WARNING.", level_name)
+        level = logging.WARNING
+    logging.getLogger().setLevel(level)
+    logger.warning(
+        "Log level: %s (override with project.log_level=INFO or DEBUG).",
+        logging.getLevelName(level),
+    )
+
+
 def _resolve_device(cfg: DictConfig) -> torch.device:
     """Resolve the compute device with a graceful CPU fallback.
 
@@ -131,6 +154,7 @@ def _load_state_dict_checked(
 def train(cfg: DictConfig) -> None:
     """Main training entry point."""
     # 1. Setup
+    _apply_log_level(cfg)
     set_seed(cfg.project.seed)
     # Resolve once and write the effective device back into the config so
     # bootstrap, trainer construction, and run metadata all use the same
@@ -316,6 +340,7 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
 @hydra.main(version_base="1.3", config_path="config", config_name="main")
 def evaluate(cfg: DictConfig) -> None:
     """Evaluate a trained model with the currently supported offline metrics."""
+    _apply_log_level(cfg)
     set_seed(cfg.project.seed)
     output_dir = get_eval_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
