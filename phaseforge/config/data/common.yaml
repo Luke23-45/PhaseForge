@@ -32,7 +32,10 @@ schema_version: "robomimic-lift-structured-v1"
 action_contract:
   # The HDF5 file stores the environment action vector. The exact controller
   # interpretation (for example delta versus absolute pose) must be read from
-  # env_args and pinned in the rollout adapter before evaluation.
+  # env_args and pinned in the rollout adapter before evaluation. Per the
+  # robomimic dataset convention, stored actions are normalized to [-1, 1]
+  # (robomimic's get_dataset_info.py enforces this on every released
+  # artifact); the ingester re-verifies the same bound on ingest.
   representation: "robosuite_environment_action"
   range: [-1.0, 1.0]
   gripper_convention: "robosuite_action_convention"

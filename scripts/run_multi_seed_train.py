@@ -55,10 +55,10 @@ def run_train(model_cfg: str, stage: int, seed: int) -> None:
         f"models={model_cfg}",
         f"train=stage{stage}",
         f"project.seed={seed}",
-        # Locked protocol (novelty_claim E2): full-length schedules with NO
-        # truncating early stop. The stage yamls default early_stopping to
-        # enabled (patience 10), which would silently truncate the protocol
-        # runs — disable it explicitly.
+        # Locked protocol (research_definition.md §5): full-length schedules
+        # with NO truncating early stop. The stage yamls default
+        # early_stopping to enabled (patience 10), which would silently
+        # truncate the protocol runs — disable it explicitly.
         "train.early_stopping.enabled=false",
     ]
     print(f"\n>>> Running: {' '.join(cmd)}")

@@ -194,7 +194,9 @@ class RobomimicHDF5Ingester:
                 ):
                     raise ValueError(
                         f"{path}:{demo_key} actions fall outside the declared "
-                        f"range [{self.action_low}, {self.action_high}]"
+                        f"range [{self.action_low}, {self.action_high}]; "
+                        f"observed min={float(action.min()):.6g} "
+                        f"max={float(action.max()):.6g}"
                     )
                 if not np.isfinite(state).all() or not np.isfinite(action).all():
                     raise ValueError(f"{path}:{demo_key} contains non-finite values")

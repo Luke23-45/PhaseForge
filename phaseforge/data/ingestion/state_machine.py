@@ -153,6 +153,24 @@ class DataPipelineStateMachine:
                 "phase labels cannot be indexed by the classifier/router/scatter."
             )
 
+    def _model_uses_phase_labels(self) -> bool:
+        """True when the selected model consumes phase labels in training.
+
+        Models with a ``phase_head`` (phase cross-entropy supervision) or a
+        top-level ``num_phases`` (privileged oracle routing / centroid
+        bootstrap) need every phase to be populated; degenerate labels would
+        silently corrupt them. MoE rows that declare only a
+        ``router.num_experts`` (scratch/warm-start MoE) train without labels
+        and must not block the BC pilot on degenerate labels.
+        """
+        models_cfg = self.cfg.get("models")
+        if models_cfg is None:
+            return False
+        phase_head = models_cfg.get("phase_head")
+        if phase_head is not None and phase_head.get("num_phases") is not None:
+            return True
+        return models_cfg.get("num_phases") is not None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -300,10 +318,20 @@ class DataPipelineStateMachine:
 
         if phase_counts is not None and np.any(phase_counts == 0):
             missing = np.flatnonzero(phase_counts == 0).tolist()
+            if self._model_uses_phase_labels():
+                raise PipelineError(
+                    f"Phase labels contain no samples for phase(s) {missing}. "
+                    "The selected model consumes phase labels (phase_head or "
+                    "top-level num_phases); degenerate labels would silently "
+                    "corrupt phase cross-entropy and router centroid "
+                    "initialization. Revise the state-only label thresholds "
+                    "or the demonstrations before training."
+                )
             logger.warning(
                 "Phase labels contain no samples for phase(s) %s. "
-                "The BC pilot may continue, but PhaseForge centroid "
-                "initialization must not proceed until Gate 3 is passed.",
+                "The selected model does not consume phase labels, so the "
+                "BC pilot may continue; PhaseForge centroid initialization "
+                "must not proceed until Gate 3 is passed.",
                 missing,
             )
 
