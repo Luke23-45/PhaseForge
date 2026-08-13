@@ -9,7 +9,8 @@ ever touches it.
 
 Idempotency contract: an existing file whose checksum matches is left
 untouched; a checksum mismatch is a hard error and is never silently
-overwritten.
+overwritten. When no checksum is available (no pinned value and no mirror
+LFS metadata) the file is sanity-checked as a readable HDF5 archive instead.
 """
 
 from __future__ import annotations
@@ -30,8 +31,24 @@ def _sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def _hdf5_sanity_check(path: Path) -> None:
+    """Raise ``RuntimeError`` when ``path`` is not a readable HDF5 archive."""
+    try:
+        import h5py
+
+        with h5py.File(path, "r"):
+            pass
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"{path} is not a readable HDF5 file: {exc}") from exc
+
+
 def fetch_mirror_sha256(repo_id: str, path: str) -> str | None:
-    """Return the mirror's recorded SHA-256 for a dataset file (LFS), if any."""
+    """Return the mirror's recorded SHA-256 for a dataset file (LFS), if any.
+
+    Raises:
+        RuntimeError: When the metadata cannot be read (network failure,
+            missing artifact, ...). Callers decide whether that is fatal.
+    """
     try:
         from huggingface_hub import get_paths_info
     except ImportError as exc:  # pragma: no cover
@@ -43,7 +60,8 @@ def fetch_mirror_sha256(repo_id: str, path: str) -> str | None:
         infos = get_paths_info(repo_id=repo_id, paths=path, repo_type="dataset")
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(
-            f"Could not read HuggingFace metadata for {repo_id}/{path}: {exc}"
+            f"Could not read HuggingFace metadata for {repo_id}/{path} — "
+            f"is data.source.huggingface.path correct? ({exc})"
         ) from exc
     if not infos:
         return None
@@ -64,7 +82,9 @@ def download_hf_file(
     own LFS metadata; when neither is available the file is sanity-checked as
     a readable HDF5 archive. An existing file with a matching checksum is
     returned untouched; a checksum mismatch is a hard error (never an
-    overwrite).
+    overwrite). When the mirror metadata cannot be read but the file already
+    exists, the existing file is sanity-checked instead of failing (re-runs
+    stay robust to network hiccups); a fresh download still fails closed.
 
     Returns:
         The verified destination path.
@@ -81,10 +101,32 @@ def download_hf_file(
         ) from exc
 
     dest_dir = Path(dest_dir)
-    dest = dest_dir / Path(path).name
+    name = Path(path).name
+    if not name:
+        raise RuntimeError(
+            f"HuggingFace artifact path {path!r} has no file name; "
+            "data.source.huggingface.path must point at a file."
+        )
+    dest = dest_dir / name
+    if dest.is_dir():
+        raise RuntimeError(
+            f"{dest} is a directory — {path!r} must name a file, not a folder."
+        )
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    expected = pinned_sha256 or fetch_mirror_sha256(repo_id, path)
+    expected = pinned_sha256
+    if expected is None:
+        try:
+            expected = fetch_mirror_sha256(repo_id, path)
+        except RuntimeError as exc:
+            if not dest.exists():
+                raise
+            logger.warning(
+                "  mirror metadata unavailable (%s) — falling back to an "
+                "HDF5 sanity check for the existing file.",
+                exc,
+            )
+            expected = None
 
     if dest.exists():
         if expected is not None:
@@ -96,7 +138,8 @@ def download_hf_file(
                 f"Existing file {dest} has SHA-256 {actual}, expected {expected}. "
                 "Refusing to overwrite — remove or repair it manually."
             )
-        logger.info("  already provisioned (no checksum available): %s", dest)
+        _hdf5_sanity_check(dest)
+        logger.info("  already provisioned: %s (HDF5 sanity check passed)", dest)
         return dest
 
     logger.info("  downloading %s/%s -> %s", repo_id, path, dest)
@@ -119,15 +162,10 @@ def download_hf_file(
         logger.info("  downloaded %s (SHA-256 verified: %s)", dest.name, actual)
     else:
         try:
-            import h5py
-
-            with h5py.File(dest, "r"):
-                pass
-        except Exception as exc:  # noqa: BLE001
+            _hdf5_sanity_check(dest)
+        except RuntimeError:
             dest.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"Downloaded file {dest} is not a readable HDF5 file: {exc}"
-            ) from exc
+            raise
         logger.info("  downloaded %s (HDF5 sanity check passed)", dest.name)
 
     return dest
