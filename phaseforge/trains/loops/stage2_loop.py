@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 
 from phaseforge.evaluations.metrics import expert_utilization, phase_alignment, routing_stability
-from phaseforge.trains.loops.base import BaseTrainer
+from phaseforge.trains.loops.base import BaseTrainer, MetricValue
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class Stage2Trainer(BaseTrainer):
 
     def _compute_loss(
         self, batch: dict[str, torch.Tensor], out=None
-    ) -> tuple[torch.Tensor, dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
         # Forward pass (reuse an existing output when provided, e.g. from the
         # validation loop, to avoid a double forward).
         if out is None:
@@ -70,14 +70,16 @@ class Stage2Trainer(BaseTrainer):
         total_loss = action_loss + balance_loss
         
         metrics = {
-            "loss_total": total_loss.item(),
-            "loss_action": action_loss.item(),
-            "loss_balance": balance_loss.item(),
+            # Defer .item() until the trainer logs/aggregates the metric so
+            # the hot training loop does not synchronize CUDA every batch.
+            "loss_total": total_loss.detach(),
+            "loss_action": action_loss.detach(),
+            "loss_balance": balance_loss.detach(),
         }
         
         return total_loss, metrics
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def _validate(self) -> dict[str, float]:
         """Validation plus per-epoch routing diagnostics (C3).
 
@@ -100,7 +102,7 @@ class Stage2Trainer(BaseTrainer):
         gate_logits_all: list[torch.Tensor] = []
 
         for batch in self.val_loader:
-            batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+            batch = self._move_batch(batch)
 
             out = self.model(batch)
             _, metrics = self._compute_loss(batch, out=out)
@@ -109,7 +111,7 @@ class Stage2Trainer(BaseTrainer):
             if n == 0:
                 continue
             for k, v in metrics.items():
-                agg_metrics[k] = agg_metrics.get(k, 0.0) + v * n
+                agg_metrics[k] = agg_metrics.get(k, 0.0) + self._metric_to_float(v) * n
             total_samples += n
 
             if out.expert_indices is not None:

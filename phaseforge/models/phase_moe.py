@@ -201,10 +201,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         # 1. Compute latent centroids
         phase_sums = torch.zeros((num_phases, latent_dim), device=device)
         phase_counts = torch.zeros((num_phases,), device=device)
+        non_blocking = torch.device(device).type == "cuda"
 
         for batch in dataloader:
-            state = batch["state"].to(device)
-            phase = batch["phase"].to(device)
+            state = batch["state"].to(device, non_blocking=non_blocking)
+            phase = batch["phase"].to(device, non_blocking=non_blocking)
             
             # Handle sequence length dimension if present
             if state.ndim == 3:

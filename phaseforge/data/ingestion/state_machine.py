@@ -725,19 +725,46 @@ class DataPipelineStateMachine:
             )
             is_train = split_name == "train"
 
-            # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns
-            num_workers = int(data_cfg.num_workers)
+            # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns.
+            # The dataset is fully materialized in memory, so zero remains a
+            # valid choice for small CPU-only pilots where worker IPC costs
+            # more than it saves.
+            num_workers = max(0, int(data_cfg.num_workers))
             if hasattr(os, "cpu_count") and os.cpu_count() is not None:
                 num_workers = min(num_workers, os.cpu_count())
+
+            # These options are intentionally derived from the effective
+            # runtime. Pinned memory is useful for CUDA host-to-device copies,
+            # but adds overhead on CPU-only runs. prefetch_factor and
+            # persistent_workers are only legal when workers are enabled.
+            project_cfg = self.cfg.get("project")
+            requested_device = str(
+                project_cfg.get("device", "cuda") if project_cfg is not None else "cuda"
+            )
+            pin_memory = (
+                bool(data_cfg.get("pin_memory", False))
+                and requested_device.startswith("cuda")
+                and torch.cuda.is_available()
+            )
+            loader_options: dict[str, Any] = {
+                "pin_memory": pin_memory,
+            }
+            if num_workers > 0:
+                loader_options["prefetch_factor"] = max(
+                    1, int(data_cfg.get("prefetch_factor", 2))
+                )
+                loader_options["persistent_workers"] = bool(
+                    data_cfg.get("persistent_workers", False)
+                )
 
             loader = DataLoader(
                 dataset,
                 batch_size=int(data_cfg.batch_size),
                 shuffle=is_train,
                 num_workers=num_workers,
-                pin_memory=bool(data_cfg.pin_memory),
                 collate_fn=PhaseAwareCollator(),
                 drop_last=is_train,
+                **loader_options,
             )
             result[split_name] = loader
             logger.info(

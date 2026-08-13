@@ -19,6 +19,8 @@ from phaseforge.models.base import BaseManipulationModel
 
 logger = logging.getLogger(__name__)
 
+MetricValue = float | torch.Tensor
+
 
 class BaseTrainer(ABC):
     """Abstract base class for all training loops.
@@ -152,13 +154,35 @@ class BaseTrainer(ABC):
     @abstractmethod
     def _compute_loss(
         self, batch: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor, dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
         """Compute the loss for a single batch.
 
         Returns:
             total_loss: The scalar loss tensor to backpropagate.
             metrics: A dictionary of metric floats to log.
         """
+
+    def _move_batch(self, batch: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Move tensor fields to the training device.
+
+        ``pin_memory`` only helps when the host-to-CUDA copy is explicitly
+        non-blocking. The CPU path remains unchanged, while CUDA batches can
+        overlap their transfer with device work where the DataLoader provides
+        pinned tensors.
+        """
+        non_blocking = self.device.type == "cuda"
+        return {
+            key: value.to(self.device, non_blocking=non_blocking)
+            for key, value in batch.items()
+            if isinstance(value, torch.Tensor)
+        }
+
+    @staticmethod
+    def _metric_to_float(value: MetricValue) -> float:
+        """Materialize a metric only at a logging/aggregation boundary."""
+        if isinstance(value, torch.Tensor):
+            return float(value.detach().cpu().item())
+        return float(value)
 
     def fit(self) -> None:
         """Execute the full training loop."""
@@ -212,9 +236,9 @@ class BaseTrainer(ABC):
             
         for batch_idx, batch in enumerate(iterable):
             # Move batch to device
-            batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+            batch = self._move_batch(batch)
             
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad(set_to_none=True)
             
             # Subclasses implement the specific loss logic
             loss, metrics = self._compute_loss(batch)
@@ -231,26 +255,48 @@ class BaseTrainer(ABC):
             loss.backward()
 
             if self.grad_clip_norm > 0:
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
-
-            # Fail fast on non-finite gradients (e.g. NaN from a poisoned
-            # batch); check before the optimizer step.
-            for name, param in self.model.named_parameters():
-                if param.grad is not None and not torch.isfinite(param.grad).all():
+                # clip_grad_norm_ computes one aggregate norm and can perform
+                # the finite-value check in the same pass. Scanning every
+                # parameter tensor separately creates many synchronization
+                # points on CUDA.
+                try:
+                    nn.utils.clip_grad_norm_(
+                        self.model.parameters(),
+                        self.grad_clip_norm,
+                        error_if_nonfinite=True,
+                    )
+                except RuntimeError as exc:
                     raise FloatingPointError(
-                        f"Non-finite gradient in '{name}' at global step "
+                        f"Non-finite gradient at global step "
                         f"{self.global_step + 1}, epoch {self.current_epoch}. "
                         "Aborting to avoid corrupting the run."
-                    )
+                    ) from exc
+            else:
+                # Keep the explicit guard when clipping is disabled; there is
+                # no aggregate norm call in that configuration.
+                for name, param in self.model.named_parameters():
+                    if param.grad is not None and not torch.isfinite(param.grad).all():
+                        raise FloatingPointError(
+                            f"Non-finite gradient in '{name}' at global step "
+                            f"{self.global_step + 1}, epoch {self.current_epoch}. "
+                            "Aborting to avoid corrupting the run."
+                        )
 
             self.optimizer.step()
             self.global_step += 1
             
-            if self.global_step % self.log_every_n_steps == 0:
-                self._trigger_callbacks("on_train_step", step=self.global_step, metrics=metrics)
+            should_log = self.global_step % self.log_every_n_steps == 0
+            if should_log:
+                self._trigger_callbacks(
+                    "on_train_step",
+                    step=self.global_step,
+                    metrics={k: self._metric_to_float(v) for k, v in metrics.items()},
+                )
                 
             if pbar is not None:
-                postfix = {k: f"{v:.4f}" for k, v in metrics.items()}
+                postfix = {
+                    k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()
+                }
                 postfix["loss"] = f"{loss.item():.4f}"
                 pbar.set_postfix(postfix)
 
@@ -293,13 +339,15 @@ class BaseTrainer(ABC):
             iterable = self.val_loader
             
         for batch in iterable:
-            batch = {k: v.to(self.device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+            batch = self._move_batch(batch)
             
             # We don't backprop, just compute losses for logging
             _, metrics = self._compute_loss(batch)
             
             if pbar is not None:
-                postfix = {k: f"{v:.4f}" for k, v in metrics.items()}
+                postfix = {
+                    k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()
+                }
                 pbar.set_postfix(postfix)
                 
             # Weight per-batch metrics by the number of valid samples so the
@@ -309,7 +357,7 @@ class BaseTrainer(ABC):
             if n == 0:
                 continue
             for k, v in metrics.items():
-                agg_metrics[k] = agg_metrics.get(k, 0.0) + v * n
+                agg_metrics[k] = agg_metrics.get(k, 0.0) + self._metric_to_float(v) * n
             total_samples += n
             
         if total_samples > 0:

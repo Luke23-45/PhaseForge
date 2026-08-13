@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from phaseforge.trains.loops.base import BaseTrainer
+from phaseforge.trains.loops.base import BaseTrainer, MetricValue
 
 
 class Stage1Trainer(BaseTrainer):
@@ -17,7 +17,7 @@ class Stage1Trainer(BaseTrainer):
 
     def _compute_loss(
         self, batch: dict[str, torch.Tensor]
-    ) -> tuple[torch.Tensor, dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
         # Forward pass
         out = self.model(batch)
         
@@ -60,9 +60,12 @@ class Stage1Trainer(BaseTrainer):
         total_loss = action_loss + lambda_phase * phase_loss
         
         metrics = {
-            "loss_total": total_loss.item(),
-            "loss_action": action_loss.item(),
-            "loss_phase": phase_loss.item() if lambda_phase > 0.0 else 0.0,
+            # Keep scalar metrics on-device until the trainer actually logs or
+            # aggregates them. Calling .item() for every metric on every CUDA
+            # batch would force a host/device synchronization each step.
+            "loss_total": total_loss.detach(),
+            "loss_action": action_loss.detach(),
+            "loss_phase": phase_loss.detach() if lambda_phase > 0.0 else 0.0,
         }
         
         return total_loss, metrics
