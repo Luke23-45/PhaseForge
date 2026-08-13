@@ -300,10 +300,11 @@ class DataPipelineStateMachine:
 
         if phase_counts is not None and np.any(phase_counts == 0):
             missing = np.flatnonzero(phase_counts == 0).tolist()
-            raise PipelineError(
-                f"Phase labels contain no samples for phase(s) {missing}. "
-                "Revise the state-only label thresholds or the demonstrations "
-                "before attempting router centroid initialization."
+            logger.warning(
+                "Phase labels contain no samples for phase(s) %s. "
+                "The BC pilot may continue, but PhaseForge centroid "
+                "initialization must not proceed until Gate 3 is passed.",
+                missing,
             )
 
         self._check_state_dim_consistency(trajectories)
@@ -348,6 +349,7 @@ class DataPipelineStateMachine:
         exactly which dataset produced a result.
         """
         split_task_names: dict[str, list[str]] = {}
+        split_demo_keys: dict[str, list[str]] = {}
         id_to_name = {v: k for k, v in self._task_index.items()}
         for split_name, indices in splits.items():
             split_task_names[split_name] = sorted(
@@ -363,6 +365,10 @@ class DataPipelineStateMachine:
                     )
                     for i in indices
                 }
+            )
+            split_demo_keys[split_name] = sorted(
+                str(self._trajectories[i].get("demo_key", f"trajectory_{i}"))
+                for i in indices
             )
 
         raw_files: list[dict[str, Any]] = []
@@ -427,12 +433,24 @@ class DataPipelineStateMachine:
                 "stride": int(self.data_cfg.get("stride", 1)),
             },
             "split_task_names": split_task_names,
+            "split_demo_keys": split_demo_keys,
             "configuration": OmegaConf.to_yaml(self.data_cfg, resolve=True),
         }
         if labeler_cfg is not None:
             provenance["phase_labeler"] = OmegaConf.to_container(
                 labeler_cfg, resolve=True
             )
+        environment_metadata: list[dict[str, Any]] = []
+        seen_metadata: set[str] = set()
+        for traj in self._trajectories:
+            metadata = traj.get("env_metadata")
+            if not isinstance(metadata, dict):
+                continue
+            serialized = json.dumps(metadata, sort_keys=True)
+            if serialized not in seen_metadata:
+                seen_metadata.add(serialized)
+                environment_metadata.append(metadata)
+        provenance["environment_metadata"] = environment_metadata
         return provenance
 
     def _normalize_and_save(self) -> None:
@@ -510,6 +528,31 @@ class DataPipelineStateMachine:
         rng = np.random.default_rng(split_seed)
 
         if strategy == "trajectory":
+            if bool(split_cfg.get("use_dataset_filters", True)):
+                filtered = [
+                    (i, traj.get("dataset_split"))
+                    for i, traj in enumerate(self._trajectories)
+                ]
+                if any(split is not None for _, split in filtered):
+                    missing = [i for i, split in filtered if split not in {"train", "val"}]
+                    if missing:
+                        raise PipelineError(
+                            "The HDF5 dataset contains an incomplete train/valid "
+                            f"filter assignment; missing trajectories: {missing[:8]}"
+                        )
+                    train_idx = [i for i, split in filtered if split == "train"]
+                    val_idx = [i for i, split in filtered if split == "val"]
+                    if not train_idx or not val_idx:
+                        raise PipelineError(
+                            "The HDF5 train/valid filters must both be non-empty."
+                        )
+                    logger.info(
+                        "  Dataset-filter split: %d train trajectories, %d val "
+                        "trajectories across %d tasks",
+                        len(train_idx), len(val_idx), len(task_ids),
+                    )
+                    return {"train": train_idx, "val": val_idx}
+
             train_idx: list[int] = []
             val_idx: list[int] = []
             for task_id in task_ids:

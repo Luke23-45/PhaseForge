@@ -30,12 +30,20 @@ action_dim: 7
 state_dim: 19
 schema_version: "robomimic-lift-structured-v1"
 action_contract:
-  representation: "delta_eef_pose_plus_gripper"
+  # The HDF5 file stores the environment action vector. The exact controller
+  # interpretation (for example delta versus absolute pose) must be read from
+  # env_args and pinned in the rollout adapter before evaluation.
+  representation: "robosuite_environment_action"
   range: [-1.0, 1.0]
   gripper_convention: "robosuite_action_convention"
+  requires_env_metadata: true
 
 source:
   name: "robomimic"
+  task_name: "Lift"
+  dataset_type: "ph"
+  hdf5_type: "low_dim"
+  expected_env_name: "Lift"
   # Override PHASEFORGE_DATA_DIR or data.source.dir on each machine. Raw data
   # must remain outside the repository and must not be downloaded by training.
   dir: "${oc.env:PHASEFORGE_DATA_DIR,data}/raw/robomimic/lift"
@@ -57,12 +65,16 @@ ingester:
   state_keys: ${data.state_keys}
   action_key: ${data.action_key}
   action_dim: ${data.action_dim}
+  action_range: ${data.action_contract.range}
+  expected_env_name: ${data.source.expected_env_name}
+  respect_dataset_filters: ${data.split.use_dataset_filters}
   phase_labeler: ${data.phase_labeler}
 
 # One policy per task is the primary protocol. Within-task trajectory splits
 # keep validation available for the single-task pilot without task leakage.
 split:
   strategy: "trajectory"
+  use_dataset_filters: true
   val_ratio: 0.1
   seed: 42
 

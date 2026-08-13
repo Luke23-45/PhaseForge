@@ -1,6 +1,8 @@
 # PhaseForge — Final State-Based Evaluation and Research Plan
 
-**Status:** final protocol for implementation
+**Status:** final protocol; current code is a Lift low-dimensional ingestion pilot, not a complete evaluation implementation
+
+**Research definition:** [research_definition.md](research_definition.md)
 
 **Research area:** non-visual robot manipulation from structured low-dimensional observations
 
@@ -146,6 +148,16 @@ Use the official robomimic low-dimensional dataset artifacts where available. If
 
 Do not mix observations extracted with one simulator version and rollouts executed with another without a documented parity test.
 
+The release track must be frozen before Gate 1. The [current robomimic v0.1
+dataset documentation](https://robomimic.github.io/docs/v0.4/datasets/robomimic_v0.1.html)
+provides low-dimensional artifacts based on robosuite v1.5.1
+and explicitly warns that the older `offline_study` and v1.4.1 dataset tracks
+may not reproduce the same results. The repository's current optional rollout
+extra is still a temporary v1.4.0 pilot pin; it is not approval to mix that
+environment with the current released artifacts. Before rollout work, either
+select the v1.5.1 artifact/environment pair or deliberately select an older
+matching pair and record it in `MANIFEST.json`.
+
 ### 4.2 Splits
 
 Split demonstrations by trajectory, never by individual timesteps.
@@ -174,6 +186,11 @@ The evaluator must fail loudly when action dimensions, ranges, or normalization 
 ### 4.4 Phase labels
 
 Phase labels may be generated from demonstration state/action trajectories, but they are auxiliary training labels only.
+
+There is no standard robomimic six-phase ground-truth annotation that this project
+may claim to reproduce. The current six-phase rule labeler is a project-specific
+heuristic. It must therefore be treated as an ablation-sensitive preprocessing
+choice, and any phase-based claim requires the validation checks below.
 
 Before the main experiment, verify:
 
@@ -436,6 +453,12 @@ Before the final matrix, the codebase must implement and test:
 12. per-task success and failure-stage reporting;
 13. checkpoint-selection safeguards;
 14. complete provenance in every result file.
+
+The current repository does not yet satisfy this list: it has the Lift HDF5
+ingestion pilot and offline single-step data path, but not the history-aware
+dataset/model path, simulator rollout adapter, scripted-controller gate, or
+the five-task configuration matrix. No final success-rate claim is valid until
+those missing components are implemented and Gate 1 has passed.
 
 The existing PhaseForge router, phase-labeling, routing diagnostics, checkpointing, and evaluation instrumentation may be reused only after they satisfy this benchmark contract.
 

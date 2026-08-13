@@ -29,17 +29,11 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.8",
 ]
-# Simulation environment (Linux + GPU required; heavy install:
-# pulls robosuite 1.4, mujoco). Install only on the evaluation
-# machine:  uv sync --extra rollout
-# Pins:
-# - robosuite==1.4.0 + mujoco==3.3.1: the robomimic/robosuite protocol
-#   (docs/plan/final_evaluation_plan.md) runs on these. mujoco==3.3.1 is
-#   critical: robosuite's OSC controller calls the legacy
-#   mj_fullM(model, dst, data.qM); mujoco REMOVED mjData.qM in
-#   3.10.0 (2026-06-22), so any unpinned mujoco>=3 resolves to 3.10.x
-#   and crashes with AttributeError: 'MjData' object has no attribute
-#   'qM'. 3.3.1 is pre-3.10, has cp312 wheels, and supports numpy 2.
+# Temporary simulator pin for the ingestion pilot only. The final rollout
+# environment must be selected together with the matching robomimic dataset
+# release; see docs/plan/final_evaluation_plan.md section 4.1. Do not treat
+# this old pin as a validated benchmark environment.
+# Install only on the evaluation machine: uv sync --extra rollout.
 # The former vision-benchmark simulation wrapper and rollout harness are
 # archived under legacy/ and are NOT part of the current protocol.
 rollout = [

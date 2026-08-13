@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from scipy.ndimage import median_filter
 
 
 class RuleBasedPhaseLabeler:
@@ -17,7 +16,9 @@ class RuleBasedPhaseLabeler:
 
     The labeler only reads the configured end-effector position and gripper
     slices from the unnormalized state. It deliberately does not inspect
-    actions, future states, object state, or task metadata.
+    actions, future states, object state, or task metadata. Smoothing and
+    transitions are causal so a label at time ``t`` cannot depend on samples
+    after ``t``.
     """
 
     def __init__(
@@ -38,8 +39,8 @@ class RuleBasedPhaseLabeler:
             )
         if not 0 < min_phase_duration:
             raise ValueError("min_phase_duration must be positive")
-        if median_filter_size < 1 or median_filter_size % 2 == 0:
-            raise ValueError("median_filter_size must be a positive odd integer")
+        if median_filter_size < 1:
+            raise ValueError("median_filter_size must be a positive integer")
         if not gripper_closed_threshold < gripper_open_threshold:
             raise ValueError(
                 "gripper_closed_threshold must be below gripper_open_threshold"
@@ -92,11 +93,18 @@ class RuleBasedPhaseLabeler:
         for t in range(T):
             held = t - entered >= self.min_duration
             if grasp[t]:
-                lookback = min(2 * self.min_duration, t)
-                phases[t - lookback:t][phases[t - lookback:t] == 0] = 1
                 phase, entered = 2, t
             elif release[t]:
                 phase, entered = 4, t
+            elif (
+                phase == 0
+                and t >= self.min_duration
+                and not closed[t]
+                and speed[t] < self.velocity_threshold
+            ):
+                # Causal pre-grasp state: the demonstrator has finished the
+                # approach and is stationary while the gripper is open.
+                phase, entered = 1, t
             elif phase == 2 and held and closed[t] and speed[t] > self.velocity_threshold:
                 phase, entered = 3, t
             elif phase == 4 and held and not closed[t] and speed[t] > self.velocity_threshold:
@@ -106,20 +114,12 @@ class RuleBasedPhaseLabeler:
             phases[t] = phase
 
         if T > self.filter_size:
-            phases = median_filter(phases.astype(np.float32), size=self.filter_size).astype(
-                np.int64
-            )
-        phases = self._merge_short_segments(phases)
+            # scipy.ndimage.median_filter uses a centered window by default,
+            # which would leak future observations into the auxiliary labels.
+            # Apply the same median idea causally using only [t-size+1, t].
+            causal = np.empty_like(phases, dtype=np.float32)
+            for t in range(T):
+                start = max(0, t - self.filter_size + 1)
+                causal[t] = np.median(phases[start : t + 1])
+            phases = causal.astype(np.int64)
         return np.clip(phases, 0, self.num_phases - 1).astype(np.int64)
-
-    def _merge_short_segments(self, phases: np.ndarray) -> np.ndarray:
-        result = phases.copy()
-        i = 0
-        while i < len(result):
-            j = i + 1
-            while j < len(result) and result[j] == result[i]:
-                j += 1
-            if j - i < self.min_duration and i > 0:
-                result[i:j] = result[i - 1]
-            i = j
-        return result
