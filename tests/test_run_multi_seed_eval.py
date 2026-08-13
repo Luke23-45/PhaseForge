@@ -151,9 +151,9 @@ def test_end_to_end_shared_checkpoint_excludes_comparisons(
     assert first["suites"]["libero_10"]["suite_role"] == "zero-shot"
     assert first["suites"]["libero_90"]["complete"] is True
     assert first["overall"]["seeds_valid"] == 3
-    # Episode-weighted overall for bc: (0.4*4500 + 0.2*100) / 4600
+    # Episode-weighted overall for bc: (0.4*900 + 0.2*100) / 1000
     assert first["overall"]["weighting"] == "episode-weighted"
-    assert first["overall"]["mean"] == pytest.approx((0.4 * 4500 + 0.2 * 100) / 4600)
+    assert first["overall"]["mean"] == pytest.approx((0.4 * 900 + 0.2 * 100) / 1000)
     assert first["overall"]["ci95"] is not None
 
 
@@ -206,11 +206,11 @@ def test_end_to_end_comparisons_independent_checkpoints(
     pair = comps[0]
     assert (pair["cell_a"], pair["cell_b"]) == ("bc", "phaseforge")
     assert pair["seeds_used"] == [42, 43, 44]
-    # Episode-weighted means: bc = (0.4*4500 + 0.2*100)/4600,
-    # phaseforge = (0.6*4500 + 0.2*100)/4600.
-    assert pair["mean_a"] == pytest.approx((0.4 * 4500 + 0.2 * 100) / 4600)
-    assert pair["mean_b"] == pytest.approx((0.6 * 4500 + 0.2 * 100) / 4600)
-    assert pair["margin_a_minus_b"] == pytest.approx(-(0.2 * 4500) / 4600)
+    # Episode-weighted means: bc = (0.4*900 + 0.2*100)/1000,
+    # phaseforge = (0.6*900 + 0.2*100)/1000.
+    assert pair["mean_a"] == pytest.approx((0.4 * 900 + 0.2 * 100) / 1000)
+    assert pair["mean_b"] == pytest.approx((0.6 * 900 + 0.2 * 100) / 1000)
+    assert pair["margin_a_minus_b"] == pytest.approx(-(0.2 * 900) / 1000)
     assert pair["prob_a_over_b"] == pytest.approx(0.0)  # degenerate 0.4 vs 0.6
     assert pair["prob_b_over_a"] == pytest.approx(1.0)
     # Fully separated groups: small p (asymptotic, tie-corrected for the

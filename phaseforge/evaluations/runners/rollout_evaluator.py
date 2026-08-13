@@ -308,9 +308,11 @@ class RolloutEvaluator:
           from XML every episode — the official protocol, bit-identical)
         - ``eval.environment.num_workers`` (default 0 = auto: one per CPU)
         - ``eval.environment.object_state`` (default None = disabled)
-        - ``eval.evaluation.num_episodes_per_task`` (default 50)
+        - ``eval.evaluation.num_episodes_per_task`` (default 10;
+          approved 2026-08-13, professor decision Option A)
         - ``eval.evaluation.episodes_per_suite`` (default {} = use the
-          per-task count for every suite; E5 sets libero_90=50, libero_10=10)
+          per-task count for every suite; E5, amended 2026-08-13, sets
+          libero_90=10, libero_10=10)
     """
 
     def __init__(
@@ -344,11 +346,12 @@ class RolloutEvaluator:
         self.hard_reset: bool = bool(env_cfg.get("hard_reset", True))
         self.num_workers: int = int(env_cfg.get("num_workers", 0))
         self.num_episodes_per_task: int = int(
-            eval_settings.get("num_episodes_per_task", 50)
+            eval_settings.get("num_episodes_per_task", 10)
         )
-        # Per-suite episode counts (E5): libero_90 = 50 eps/task (ID),
-        # libero_10 = 10 eps/task (labeled zero-shot row). Falls back to
-        # ``num_episodes_per_task`` for suites without an entry.
+        # Per-suite episode counts (E5, amended 2026-08-13): libero_90 =
+        # 10 eps/task (ID), libero_10 = 10 eps/task (labeled zero-shot
+        # row). Falls back to ``num_episodes_per_task`` for suites
+        # without an entry.
         self.episodes_per_suite: dict[str, int] = {
             str(k): int(v) for k, v in (eval_settings.get("episodes_per_suite") or {}).items()
         }

@@ -4,10 +4,12 @@ This module deliberately contains no LIBERO/GPU/CLI code. It is the single
 source of truth for:
 
 - the suite protocol spec (Decision 2, issues register A2; episode counts
-  locked at E5): ``libero_90`` in-distribution, ``libero_10`` zero-shot;
+  amended 2026-08-13 by professor decision, Option A): ``libero_90``
+  in-distribution, ``libero_10`` zero-shot, both at 10 episodes/task;
 - per-suite subprocess timeout sizing (the previous fixed 7200 s timeout
-  killed every ``libero_90`` run: 4500 episodes at ~13 s/ep with 2 workers
-  is ~8.2 h);
+  killed every ``libero_90`` run at the former 50-eps protocol: 4500
+  episodes at ~13 s/ep with 2 workers was ~8.2 h; the approved 10-eps
+  protocol is 900 episodes ~ 1.6 h raw);
 - parsing a single seed's ``eval_results.json`` into a :class:`SeedResult`
   where a missing/failed value is ``None`` — never a fabricated ``0.0``
   (a crashed seed must stay distinguishable from "the policy scored 0%").
@@ -19,7 +21,7 @@ source of truth for:
   few-run guidance of Agarwal et al. 2021 ("Deep RL at the Edge of the
   Statistical Precipice", rliable). The across-suite overall can be
   episode-weighted so libero_10's 100 episodes cannot outvote libero_90's
-  4500; head-to-head comparisons only use suites where EVERY common seed
+  900; head-to-head comparisons only use suites where EVERY common seed
   has per-task data in BOTH cells (paired design, never a silently
   reduced seed grid, never silent truncation of task lists).
 
@@ -35,9 +37,15 @@ context::
   pretraining-ID sanity) and libero_10 (zero-shot downstream row) must
   never be merged into one number and compared against published
   leaderboards;
-- libero_10's 10 episodes/task sits below OpenVLA's 500 rollouts/3 seeds
-  (~16.7 episodes/task); any comparison against OpenVLA numbers carries
-  that episode-count footnote.
+- both suites run 10 episodes/task (900 + 100 per seed); this sits below
+  OpenVLA's 500 rollouts/suite (50 trials x 10 tasks), and any comparison
+  against published numbers carries that episode-count footnote;
+- escalated follow-ups (professor decision 2026-08-13): any pair/tasks
+  escalated from the base matrix (head-to-head or per-task claim within
+  <=3 pp at 10 eps, re-run at 20 eps x 5 seeds) is reported as a clearly
+  labeled follow-up comparison with its own CI and probability of
+  improvement — NEVER pooled with the base-matrix statistics
+  (interim-analysis rule).
 """
 
 from __future__ import annotations
@@ -61,7 +69,7 @@ class SuiteSpec:
 
     ``episodes_per_task`` is what ``rollout.yaml`` currently names
     ``episodes_per_suite``: it is episodes per TASK within the suite
-    (libero_90: 50 eps x 90 tasks = 4500; libero_10: 10 x 10 = 100).
+    (libero_90: 10 eps x 90 tasks = 900; libero_10: 10 x 10 = 100).
     """
 
     name: str
@@ -75,12 +83,14 @@ class SuiteSpec:
         return self.n_tasks * self.episodes_per_task
 
 
-# Decision 2 (issues register A2) + E5: only these two suites are evaluated.
+# Decision 2 (issues register A2) + E5, amended 2026-08-13 (professor
+# decision, Option A): only these two suites are evaluated, both at 10
+# episodes/task (libero_90: 10 x 90 = 900; libero_10: 10 x 10 = 100).
 SUITES: dict[str, SuiteSpec] = {
     "libero_90": SuiteSpec(
         name="libero_90",
         n_tasks=90,
-        episodes_per_task=50,
+        episodes_per_task=10,
         max_steps=400,
         role="in-distribution",
     ),
@@ -105,9 +115,14 @@ PROTOCOL_NOTES: list[str] = [
     "pretraining-ID sanity) and libero_10 (zero-shot downstream row) must "
     "never be merged into a single number and compared against published "
     "leaderboards; every table keeps the ID/ZS role labels.",
-    "libero_10 uses 10 episodes/task (100 total) per seed, below OpenVLA's "
-    "500 rollouts / 3 seeds (~16.7 episodes/task). Any comparison against "
-    "OpenVLA numbers must carry this episode-count footnote.",
+    "Both suites run 10 episodes/task per seed (libero_90: 900, libero_10: "
+    "100 total), below OpenVLA's 500 rollouts/suite. Any comparison against "
+    "published numbers must carry this episode-count footnote.",
+    "Escalated follow-ups (professor decision 2026-08-13): any pair/tasks "
+    "escalated from the base matrix (<=3 pp head-to-head or per-task claim "
+    "at 10 eps, re-run at 20 eps x 5 seeds) is a clearly labeled follow-up "
+    "comparison with its own CI and probability of improvement — never "
+    "pooled with the base-matrix statistics (interim-analysis rule).",
 ]
 
 # Timeout sizing. Measured on free Colab T4 with 2 workers: ~13.1 s/episode

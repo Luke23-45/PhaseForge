@@ -4,7 +4,9 @@
 #   phaseforge-eval eval=rollout
 #
 # Uses LIBERO OffScreenRenderEnv to run online rollouts with the
-# standard protocol: 50 episodes/task, binary success via goal predicates.
+# approved protocol (professor decision 2026-08-13, Option A):
+# 10 episodes/task, binary success via goal predicates. Decision and
+# rationale: docs/dev/evaluation_plan.md decision log + REPORT_to_professor_3.
 #
 # Suites (Decision 2, 2026-08-07): libero_90 is the in-distribution
 # evaluation target (90 tasks) and libero_10 the labeled zero-shot row
@@ -50,21 +52,24 @@ environment:
     index_path: null         # null -> {data_root}/raw/libero/object_index.json
 
 evaluation:
-  num_episodes_per_task: 50   # Standard LIBERO protocol (OpenVLA, LeRobot)
-  # Per-suite episode counts (E5, locked): libero_90 = 50 eps/task
+  num_episodes_per_task: 10   # Approved 2026-08-13 (professor decision, Option
+                              # A): 10 eps/task for every suite. LeRobot-style
+                              # episode count; scope caveat in evaluation_plan.md
+                              # decision log and REPORT_to_professor_3.md §6.
+  # Per-suite episode counts (E5, amended 2026-08-13): libero_90 = 10 eps/task
   # (in-distribution), libero_10 = 10 eps/task (labeled zero-shot row).
   # Suites without an entry fall back to num_episodes_per_task.
   #
   # D6 (2026-08-09): the key name "episodes_per_suite" is KEPT deliberately,
-  # although it means episodes per TASK within each suite (libero_90: 50 ->
-  # 4,500 total; libero_10: 10 -> 100 total). Renaming was considered and
+  # although it means episodes per TASK within each suite (libero_90: 10 ->
+  # 900 total; libero_10: 10 -> 100 total). Renaming was considered and
   # rejected: it would break every config override and doc reference for
   # zero functional gain. The semantics are pinned here and in
   # SuiteSpec.episodes_per_task (phaseforge/evaluations/runners/
   # multi_seed_summary.py), which is the single source of truth the
   # multi-seed runner uses for timeouts and episode-count verification.
   episodes_per_suite:
-    libero_90: 50
+    libero_90: 10
     libero_10: 10
 
   # B4: every eval_results.json declares each suite's role (ID vs OOD) via

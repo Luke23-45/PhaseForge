@@ -14,7 +14,8 @@ Hard guarantees (why this script exists):
   ``complete: false``, flagged loudly, and the script exits nonzero.
 - Per-suite subprocess timeouts are sized to the real workload
   (episode count x measured seconds/episode / workers x headroom) — the
-  previous fixed 2-hour timeout killed every libero_90 run (~8.2 h).
+  previous fixed 2-hour timeout killed every libero_90 run at the former
+  50-eps protocol (~8.2 h).
   ``--workers`` and ``--seconds-per-episode`` are threaded BOTH into the
   timeout estimate AND into the subprocess itself
   (``eval.environment.num_workers`` / ``eval.environment.suites``).
@@ -31,7 +32,7 @@ Hard guarantees (why this script exists):
   checkpoint — the comparisons would be meaningless).
 - Statistics: mean +/- std (ddof=1) plus a 95% stratified bootstrap CI
   over task-level rates (Agarwal et al. 2021, rliable). The overall is
-  EPISODE-WEIGHTED across suites (libero_90's 4500 episodes dominate
+  EPISODE-WEIGHTED across suites (libero_90's 900 episodes dominate
   libero_10's 100, never an equal vote). Head-to-head comparisons (every
   cell pair) add the rliable-style probability of improvement and a
   Mann-Whitney U p-value on per-seed aggregates, and only use suites
@@ -466,7 +467,7 @@ def main() -> int:
         "suite columns: ID = in-distribution (libero_90), "
         "ZS = zero-shot (libero_10). Every cell: mean +/- std (ddof=1) "
         "with 95% stratified bootstrap CI in brackets. The overall is "
-        "episode-weighted (libero_90's 4500 episodes vs libero_10's 100)."
+        "episode-weighted (libero_90's 900 episodes vs libero_10's 100)."
     )
 
     if shared_checkpoint:

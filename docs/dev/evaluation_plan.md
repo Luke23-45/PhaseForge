@@ -8,7 +8,7 @@ After thorough review of the literature (LIBERO NeurIPS 2023, OpenVLA, Pi0.5, GR
 |---------|----------|--------|
 | **Evaluation type** | Environment-based rollout in robosuite (MuJoCo) | LIBERO paper §5, OpenVLA, Pi0.5, GR00T |
 | **Metric** | Binary task success via goal predicates | LIBERO Appendix E.2: "success rates, not BC loss" |
-| **Episodes per task** | **50** (standard) or **10** (minimum) | OpenVLA: 50; LeRobot: 10 |
+| **Episodes per task** | **50** (standard) or **10** (minimum) — **ours: 10** (approved 2026-08-13, decision log) | OpenVLA: 50; LeRobot: 10 (four standard suites) |
 | **Total trials per suite** | 500 (10 tasks × 50 episodes) or 400 (4 suites × 10 tasks × 10 episodes) | OpenVLA §4, LeRobot docs |
 | **Suites** | LIBERO-Spatial, LIBERO-Object, LIBERO-Goal, LIBERO-Long (LIBERO-10) | LIBERO §4.2 |
 | **Seeds** | 3 random seeds; report mean ± std (ddof=1) with a 95% bootstrap CI (stratified over task-level rates, resampling seeds within tasks — rliable structure; a plain seed-level bootstrap undercovers at n=3) | OpenVLA, all SOTA work; Agarwal et al. 2021 |
@@ -17,7 +17,16 @@ After thorough review of the literature (LIBERO NeurIPS 2023, OpenVLA, Pi0.5, GR
 | **Observation** | RGB images (agentview + wrist) + 8-DoF proprioception | Standard VLA setting |
 | **Max steps** | Suite-specific: Spatial=280, Object=280, Goal=300, Long=520 | LeRobot `TASK_SUITE_MAX_STEPS` |
 
-**Locked.** This protocol is accepted as written and the evaluation code is frozen. No change — suites, episode counts, seeds, statistics, or reporting format — without explicit professor sign-off. (Changed 2026-08-09: Seeds and Initial states rows corrected per the accepted-standard audit; statistics row now mean ± std + bootstrap CI; D6 note on `episodes_per_suite`; §2.8/§2.9 rewritten to match `run_multi_seed_eval.py` and the mandatory suite-role reporting rule.)
+**Locked.** This protocol is accepted as written and the evaluation code is frozen. No change — suites, episode counts, seeds, statistics, or reporting format — without explicit professor sign-off. (Changed 2026-08-09: Seeds and Initial states rows corrected per the accepted-standard audit; statistics row now mean ± std + bootstrap CI; D6 note on `episodes_per_suite`; §2.8/§2.9 rewritten to match `run_multi_seed_eval.py` and the mandatory suite-role reporting rule. Changed 2026-08-13: episode budget per professor decision — libero_90 50 → 10 eps/task (Option A), libero_10 unchanged; escalation tier added (≤3 pp → 20 eps × 5 seeds, labeled follow-ups); see decision log below.)
+
+**Decision log (locked-protocol amendments):**
+
+| Date | Amendment | Status |
+|------|-----------|--------|
+| 2026-08-09 | Seeds / Initial-states rows corrected; statistics row (mean ± std + bootstrap CI); D6 `episodes_per_suite` note; §2.8/§2.9 rewrite | professor review |
+| 2026-08-13 | **Episode budget — Option A approved:** libero_90 **50 → 10 eps/task × 3 seeds** (900 eps/seed); libero_10 unchanged (10 eps/task, 100 eps/seed). Escalation tier: any head-to-head or per-task claim within **≤3 pp** at 10 eps is re-run at **20 eps/task × 5 seeds** for that pair/tasks only, reported as a **clearly labeled follow-up comparison** (own CI and probability of improvement) — **never pooled** with base-matrix statistics (interim-analysis rule). Suites, max steps, `hard_reset`, base-matrix seed count, statistics, and reporting format unchanged. Config change (config-only): `rollout.yaml` `episodes_per_suite: {libero_90: 10, libero_10: 10}`, `num_episodes_per_task: 10`; `SuiteSpec` (multi_seed_summary.py) `libero_90.episodes_per_task` 50 → 10; per-suite timeouts auto-resize (libero_90: 900 × 13 s / 2 workers × 1.5 ≈ **2.4 h**) | **professor decision, 2026-08-13** |
+| 2026-08-13 | Professor item B (5 seeds at launch): **declined — base matrix stays 3 seeds** as approved. Rationale: catastrophic-seed risk is monitored training-side (routing/loss collapse diagnostics, seed-lottery §3.3 check); the escalation tier provides 5-seed coverage at the decision boundary. | recorded answer (one line, as requested) |
+| 2026-08-13 | Citation corrections per professor review (before this rationale appears in any thesis text): LeRobot 10-eps recommendation scoped to its four standard suites (libero_90 NOT among them — reframed in §7/report); Flow-Matching-LIBERO citation **dropped** (unverifiable); seed-lottery arXiv ID **verified correct** — arXiv:2606.13856 (Sam & Tsetserukou, 2026, cs.RO; submitted 2026-06-11; earlier resolution failure likely arXiv Aug 4–5 maintenance), with regime caveat added (VLA-JEPA fine-tuning ≠ from-scratch MoE; conservative anchor only) | done 2026-08-13 |
 
 ### 1.1 What This Means for PhaseForge
 
@@ -581,8 +590,8 @@ environment:
   num_steps_wait: 10                  # wait steps for sim objects to settle
 
 evaluation:
-  num_episodes_per_task: 50           # standard: 50, minimum: 10 (LeRobot)
-  episodes_per_suite: {libero_90: 50, libero_10: 10}  # E5: 10 eps on the zero-shot row
+  num_episodes_per_task: 10           # approved 2026-08-13: 10 eps/task (professor decision)
+  episodes_per_suite: {libero_90: 10, libero_10: 10}  # E5, amended 2026-08-13
   seeds: [42, 43, 44]                 # 3 seeds for statistical significance
   record_video: false
   video_dir: null
@@ -605,9 +614,10 @@ Guarantees (full list in the script docstring; unit-tested in
 `tests/test_multi_seed_summary.py` and `tests/test_run_multi_seed_eval.py`):
 
 - One `phaseforge-eval` subprocess per (cell, suite, seed). Per-suite
-  timeouts are sized from the real workload (libero_90: 4500 × ~13 s /
-  2 workers × 1.5 buffer ≈ 12 h) — never the old fixed 2-hour cap that
-  killed every libero_90 run.
+  timeouts are sized from the real workload (libero_90: 900 × ~13 s /
+  2 workers × 1.5 buffer ≈ 2.4 h at the approved 10-eps protocol) — never
+  the old fixed 2-hour cap that killed every libero_90 run at the former
+  50-eps protocol (~8.2 h).
 - A missing/failed seed is `None`, **never** a silent `0.0`. A cell below
   `MIN_SEEDS_FOR_SUMMARY` (3) valid seeds is marked `complete: false`,
   flagged loudly, and makes the script exit nonzero.
@@ -627,10 +637,10 @@ Guarantees (full list in the script docstring; unit-tested in
 - Output: `outputs/eval/final_results.json` (full payload) + console table.
 
 **D6 note:** the config key `episodes_per_suite` (rollout.yaml) is kept
-by design — it means episodes per TASK within each suite (libero_90: 50 →
-4,500; libero_10: 10 → 100). Renaming was considered and rejected (breaks
-every config override for zero gain); the semantics are pinned in
-`rollout.yaml` and `SuiteSpec.episodes_per_task`.
+by design — it means episodes per TASK within each suite (libero_90: 10 →
+900; libero_10: 10 → 100, amended 2026-08-13). Renaming was considered and
+rejected (breaks every config override for zero gain); the semantics are
+pinned in `rollout.yaml` and `SuiteSpec.episodes_per_task`.
 
 ### 2.9 Reporting Format
 
@@ -655,6 +665,14 @@ valid seeds is marked incomplete and is never reported as a 3-seed
 statistic. Head-to-head claims (e.g. PhaseForge vs WarmStart MoE) must
 cite the probability of improvement and Mann-Whitney U from the
 `comparisons` block of `final_results.json`, not a bare mean gap.
+
+**Escalated follow-ups (professor decision 2026-08-13, interim-analysis
+rule):** any pair/tasks escalated from the base matrix (head-to-head or
+per-task claim within ≤3 pp at 10 eps/task, re-run at 20 eps/task × 5
+seeds) is reported as a clearly labeled follow-up comparison with its own
+CI and probability of improvement — never pooled with the base-matrix
+statistics, and flagged in the table (e.g. "escalated pair, 5 seeds,
+follow-up").
 
 ---
 
@@ -692,7 +710,7 @@ If the state vectors match within simulation tolerance, the evaluation is valid.
 |-------------|-------------------|--------|
 | Simulator rollouts (MuJoCo) | `StateOnlyLiberoEnv` → robosuite | ❌ Not implemented |
 | Binary task success from environment | `info["is_success"]` | ❌ Not implemented |
-| 50 episodes per task | `num_episodes_per_task=50` | ❌ Config not written |
+| 10 episodes per task | `num_episodes_per_task=10`, `episodes_per_suite={libero_90: 10, libero_10: 10}` (approved 2026-08-13) | ✅ `rollout.yaml` + `SuiteSpec` (900 + 100 eps/seed) |
 | 3 seeds | `seeds=[42,43,44]` | ❌ Config not written |
 | Per-suite breakdown | Spatial, Object, Goal, Long separately | ❌ Not implemented |
 | Mean ± std across seeds | `eval/success_rate_std` | ❌ Script not written |
@@ -714,7 +732,7 @@ If the state vectors match within simulation tolerance, the evaluation is valid.
 | Action range mismatch: model outputs normalized actions, env expects unnormalized | Medium | Critical | Config must specify whether model outputs raw or normalized actions; add inverse transform |
 | LIBERO suite definition for state-only differs from standard | Medium | Medium | The `libero` package's task definitions are vision-agnostic; state-only wrapper just selects which obs keys to return |
 | Different MuJoCo/robosuite versions produce different physics | Low | Medium | Pin versions in `pyproject.toml`; document exact version numbers in paper |
-| Rollout evaluation is compute-intensive (500 episodes × 4 suites × 3 seeds = 6000 episodes) | Low | Medium | Not a risk but a time budget estimate; ~3-5 days on a single GPU depending on model inference speed |
+| Rollout evaluation is compute-intensive (8 cells × 3 seeds × (900 + 100) episodes = 24,000 episodes at the approved 10-eps protocol) | Low | Medium | Not a risk but a time budget estimate: ~3.5 eval-days + ~4 training days ≈ 7.5 days wall on free Colab (12.5 s/ep wall, 2 workers); escalation tier adds ≤1.6 eval-days only if triggered |
 
 ---
 
@@ -739,8 +757,118 @@ The evaluation pipeline is complete when:
 |-----------|------|-----------|
 | LeRobot LIBERO docs (HuggingFace) | https://huggingface.co/docs/lerobot/en/libero | Standard protocol: 10 episodes/task, 4 suites |
 | OpenVLA LIBERO eval script | https://raw.githubusercontent.com/moojink/openvla-oft/main/experiments/robot/libero/run_libero_eval.py | Reference implementation: 50 episodes/task, 500 trials per suite |
+| Seed-lottery (Sam & Tsetserukou, 2026) | https://arxiv.org/abs/2606.13856 | Seed variance dominates eval noise: std 7.5 pp / 29 pp span across 13 seeds at 500 eps/suite (LIBERO-Object); conservative external anchor only (VLA-JEPA fine-tuning regime) |
 | LIBERO GitHub | https://github.com/Lifelong-Robot-Learning/LIBERO | Benchmark definitions, initial states |
 | LIBERO-PRO (Zhou et al.) | https://arxiv.org/abs/2510.03827 | Demonstrates standard protocol overestimates capability |
 | ROBOSUITE docs | https://robosuite.ai/docs/ | Simulation framework |
 | PhaseForge config/common.yaml | `config/data/common.yaml` | State dimension order (23-DoF) |
 | PhaseForge PhaseAwareCollator | `phaseforge/data/collator.py` | Training-time state format |
+
+---
+
+## 8. Execution Plan — Draft v0 (for professor discussion, 2026-08-14)
+
+NOT yet approved. Everything in this section is a proposal with options;
+the locked protocol in §1–§2 is unaffected until a decision is made.
+
+### 8.1 Spend-Gated Execution Flow
+
+Every stage is gated: no spending until the previous gate passes.
+
+| Gate | Trigger | Action | Cost |
+|------|---------|--------|------|
+| **G0** | Stage-2 training completes (8 cells × 3 seeds on T4) | — | — |
+| **G1** | Any usable checkpoint exists | `profile_rollout.py` per cell (5 tasks × 5 eps, ~6 min free). Produces: per-suite SR signal + measured seconds/episode. **If SR ≈ 0 across all cells → iterate training; no rental, no matrix.** | free |
+| **G2** | Probe SR > 0 | Optional 1-seed BC floor (see §8.4) + end-to-end dress rehearsal of the 900-ep pipeline on free Colab | ~3.5 h free |
+| **G2'** | Floor passed | Rental smoke test: 1 task × 1 ep × 1 seed on the rental box (checkpoint transfer, EGL/GL deps, normalizer + object_index.json) | ~5 min |
+| **G3** | Smoke passed | Matrix run (waves, §8.2) on CPU-only rental; escalation tier triggers only if a claim lands within ≤3 pp | 0.75–1.5 eval-days @ 16 cores |
+
+**Hardware-constancy rule (proposal):** all matrix cells must run on the
+same machine class (all-Colab or all-Lightning), never a mix — hardware
+variance would confound seed-level statistics (seed-lottery: std ≈ 7.5 pp
+already dominates eval noise).
+
+### 8.2 Wave vs Full Matrix (Options)
+
+- **Option A — Waves (recommended):** Wave 1 = **bc, phaseforge,
+  scratch_moe, warmstart_moe** (the four cells that answer the primary
+  claims: does phase-bootstrap + warmstart beat plain scratch MoE and BC?).
+  Wave 2 = **teacher_forced, phase_pretrain_random_router,
+  plain_encoder_phase_bootstrap, oracle_moe** (ablations + signature-only
+  bound — only informative if wave 1 shows signal).
+  - **Micro-gate:** within wave 1, run **seed 42 only first** (~1 h @ 16
+    cores ≈ 4,000 eps). If all-zero → stop and iterate training.
+  - Pros: ~50% of eval budget saved if the experiment is dead; the three
+    ablation cells' scientific value depends on wave-1 results anyway.
+  - Cons: two decision points; wave-2 cells run slightly later.
+- **Option B — Full matrix at once:** all 8 cells in one contiguous rental
+  (~0.75 eval-day @ 16 cores). Pros: simplest logistics, maximal
+  hardware constancy. Cons: rents ~4 cells of compute that may be useless.
+
+**Recommendation: A, with a single contiguous rental session** — rent once,
+run wave 1, evaluate, extend the same instance for wave 2 if signal exists.
+
+### 8.3 Timeout Sizing — Options for Discussion
+
+**Problem:** the auto-sizing formula uses `SECONDS_PER_EPISODE_ESTIMATE
+= 13 s` (900 × 13 / 2 workers × 1.5 ≈ **2.44 h** for libero_90), but the
+measured wall time is **25 s/ep/worker** → a real libero_90 seed ≈ 3.1 h
+would be killed as TIMED OUT.
+
+| Option | Change | Pros | Cons |
+|--------|--------|------|------|
+| **A. Bump the constant** | `13 → 25`, update tests | Config self-consistent; no CLI discipline needed | Constant still a guess for other hardware; only fixes the fallback |
+| **B. CLI override only** | Pass `--seconds-per-episode 25` at run time | No code change | Footgun: any run without the flag times out; config-vs-reality mismatch (the exact class of issue the professor's review targeted) |
+| **C. Fixed generous caps** | e.g. libero_90 → 4 h, decoupled from per-episode estimate | Robust to estimate drift | Kills fail-fast (a wedged rollout burns 4 h); doesn't scale to escalation (20 eps → 7.8 h); unprincipled |
+| **D. Measure-then-size (recommended)** | Bump fallback to 25 **and** make the plan mandate feeding the profiler's measured seconds/ep (per suite — libero_10 has horizon 520 > libero_90's 400) into `--seconds-per-episode` | Exact sizing per model + hardware; escalation scales automatically; profiler cost is ~6 min | Requires following the workflow (documented, not enforced) |
+
+**Recommendation: D.** The fallback constant should match our measured
+floor (25 s) so a plain run works, and the workflow should feed the
+profiler measurement at G1 into every matrix run.
+
+**Also flagged (needs professor sign-off on the figures):** §5 risk row and
+report §7 say "12.5 s/ep" and escalation "≤1.6 eval-days" — both stale vs
+the measured 25 s/ep. Corrected estimates: **~3.5 eval-days** base matrix
+@ 2 workers, escalation worst case **~2.9 eval-days** (all pairs within
+≤3 pp, re-run at 20 eps × 5 seeds).
+
+### 8.4 BC Floor Reference — Decision Memo
+
+Originally proposed: run one BC cell (1 seed, 900 eps) early as a
+sanity check before renting. Reconsidered:
+
+- **Why not now:** no trained checkpoint exists yet, so it cannot run
+  today; and the G1 probe already answers the SR question (25 trials/cell)
+  at ~6 min — a full 900-ep floor adds little information while SR ≈ 0.
+- **Why it is still worth running — but at G2, not earlier:** it is the
+  cheapest end-to-end **dress rehearsal** of the exact production path
+  (`run_multi_seed_eval.py` → timeouts → `multi_seed_summary.py` →
+  `final_results.json`), which `profile_rollout.py` does NOT exercise.
+  It also produces the paper's BC baseline number early and gives
+  at-scale timing data to finalize rental sizing (§8.3).
+- **Cost:** ~3.5 h free Colab, or ~45 min at the start of the rental.
+- **Decision:** keep it, scheduled at **G2**, running **only if the G1
+  probe shows SR > 0**. (Matches user direction: nothing runs yet.)
+
+### 8.5 Timing & Cost Tables (at measured 25 s/ep/worker)
+
+| Cores (workers) | 1 cell (3 seeds, 1,000 eps) | Full matrix (8 cells) | Where |
+|:---------------:|:---------------------------:|:---------------------:|-------|
+| 2 | ≈ 10.5 h | ≈ 3.5 eval-days | free Colab |
+| 8 | ≈ 1.5 h | ≈ 1.5 days | rental |
+| 16 | ≈ 45 min | ≈ 0.75 day | rental (recommended) |
+| 32 | ≈ 23 min | ≈ 9 h | rental |
+
+Escalation tier (20 eps × 5 seeds, pairs only): worst case ≈ +2.9
+eval-days @ 2 workers, ≈ +0.6 day @ 16 cores — only if claims land
+within ≤3 pp.
+
+### 8.6 Open Decisions (for professor)
+
+1. **Timeout policy:** accept Option D (§8.3)? (bump fallback 13 → 25 s
+   with test updates + profiler-fed sizing workflow)
+2. **Waves:** accept Option A (§8.2) incl. the seed-42 micro-gate?
+3. **BC floor:** accept the G2 placement (§8.4)?
+4. **Rental size:** 16 vCPUs (recommended) or 32?
+5. **Stale figures:** approve correcting "12.5 s/ep" and "≤1.6 eval-days"
+   to the measured 25 s/ep and ~2.9 eval-days in §5 and the report?

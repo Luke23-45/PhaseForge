@@ -130,7 +130,7 @@ def seed_result(
 def test_suite_registry_locked() -> None:
     """Decision 2: only libero_90 (in-distribution) and libero_10 (zero-shot)."""
     assert set(SUITES) == {"libero_90", "libero_10"}
-    assert SUITES["libero_90"].n_episodes == 4500  # 90 tasks x 50 episodes
+    assert SUITES["libero_90"].n_episodes == 900  # 90 tasks x 10 episodes (amended 2026-08-13)
     assert SUITES["libero_90"].role == "in-distribution"
     assert SUITES["libero_10"].n_episodes == 100  # 10 tasks x 10 episodes
     assert SUITES["libero_10"].role == "zero-shot"
@@ -144,8 +144,8 @@ def test_suite_registry_locked() -> None:
 
 def test_estimated_timeout_sizes() -> None:
     """Timeout tracks the suite workload, not a fixed 7200 s cap."""
-    # 4500 eps x 13 s / 2 workers x 1.5 buffer = 43,875 s (~12.2 h)
-    assert estimated_timeout_s(SUITES["libero_90"]) == 43875
+    # 900 eps x 13 s / 2 workers x 1.5 buffer = 8,775 s (~2.4 h)
+    assert estimated_timeout_s(SUITES["libero_90"]) == 8775
     # 100 eps x 13 s / 2 workers x 1.5 buffer = 975 s (~16 min)
     assert estimated_timeout_s(SUITES["libero_10"]) == 975
     assert estimated_timeout_s(SUITES["libero_10"], workers=1) == 1950

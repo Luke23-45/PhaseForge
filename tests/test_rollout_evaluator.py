@@ -350,7 +350,7 @@ def test_rollout_mode_without_environment_keys_uses_defaults(
     del cfg.eval["evaluation"]
     evaluator = _make_evaluator(tmp_path, cfg, monkeypatch=monkeypatch)
     assert evaluator.suites == ["libero_90"]  # Decision 2 (A2): ID core only
-    assert evaluator.num_episodes_per_task == 50
+    assert evaluator.num_episodes_per_task == 10  # approved 2026-08-13
     assert evaluator.num_steps_wait == 10
     assert evaluator.render_observations is False
     assert evaluator.hard_reset is True
@@ -520,7 +520,7 @@ def test_eval_config_groups_compose() -> None:
         assert rollout_cfg.eval.environment.num_steps_wait == 10
         assert rollout_cfg.eval.environment.render_observations is False
         assert rollout_cfg.eval.environment.num_workers == 0  # auto
-        assert rollout_cfg.eval.evaluation.num_episodes_per_task == 50
+        assert rollout_cfg.eval.evaluation.num_episodes_per_task == 10  # approved 2026-08-13
         assert rollout_cfg.eval.environment.object_state.enabled is True
         assert rollout_cfg.eval.environment.object_state.k_slots == 8
         assert rollout_cfg.data.state_dim == 87
