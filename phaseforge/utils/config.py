@@ -102,12 +102,18 @@ def git_info() -> dict[str, str]:
     return _git_info()
 
 
-def write_run_meta(output_dir: Path, cfg: DictConfig) -> None:
-    """Write a lightweight JSON metadata file for quick run inspection."""
+def write_run_meta(output_dir: Path, cfg: DictConfig, stage: int | None = None) -> None:
+    """Write a lightweight JSON metadata file for quick run inspection.
+
+    Args:
+        stage: Effective model stage. Eval runs pass the stage restored
+            from the loaded checkpoint so the metadata reflects the
+            evaluated artifact, not the default ``train`` group.
+    """
     git = _git_info()
     meta = {
         "model_name": getattr(cfg.models, "name", cfg.models._target_.split(".")[-1]),
-        "stage": cfg.train.get("stage", 1),
+        "stage": cfg.train.get("stage", 1) if stage is None else stage,
         "seed": cfg.project.get("seed", None),
         "device": cfg.project.get("device", None),
         "git_commit": git["commit"],

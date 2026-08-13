@@ -347,7 +347,6 @@ def evaluate(cfg: DictConfig) -> None:
 
     with open(output_dir / "resolved_config.yaml", "w") as f:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
-    write_run_meta(output_dir, cfg)
 
     logger.info(f"Evaluation output directory: {output_dir}")
 
@@ -369,6 +368,9 @@ def evaluate(cfg: DictConfig) -> None:
     # 2. Model
     logger.info("Initializing Model...")
     model = build_eval_model(cfg)
+    # Metadata reflects the artifact actually evaluated: the stage restored
+    # from the checkpoint (an eval run's `train` group is stage1 by default).
+    write_run_meta(output_dir, cfg, stage=getattr(model, "stage", None))
 
     # 3. Run the selected evaluator
     device = _resolve_device(cfg)

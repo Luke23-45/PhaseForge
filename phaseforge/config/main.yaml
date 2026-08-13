@@ -22,3 +22,12 @@ project:
     project: "phaseforge"
     entity: null          # Set via env var WANDB_ENTITY or override
     mode: "disabled"      # online | offline | disabled
+
+# The CLI already writes its own per-run artifacts (resolved_config.yaml,
+# run_meta.json) under outputs/<model>/stage<N>/...; keep Hydra from
+# duplicating them into a parallel outputs/YYYY-MM-DD/HH-MM-SS/ job dir.
+hydra:
+  output_subdir: null      # no .hydra/ config copy — resolved_config.yaml covers it
+  job_logging:
+    root:
+      handlers: [console]  # no cli.log file — console stream only

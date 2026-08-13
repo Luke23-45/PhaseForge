@@ -12,6 +12,7 @@ from phaseforge.utils.config import (
     config_hash,
     find_latest_checkpoint,
     scan_checkpoints,
+    write_run_meta,
 )
 
 
@@ -104,3 +105,28 @@ def test_config_hash_is_deterministic() -> None:
 
     cfg3 = DictConfig({"a": 1, "b": {"c": [1, 2, 4]}})
     assert config_hash(cfg1) != config_hash(cfg3)
+
+
+def _meta_cfg(stage: int) -> DictConfig:
+    return DictConfig(
+        {
+            "models": {"name": "phaseforge", "_target_": "phaseforge.models.moe"},
+            "train": {"stage": stage},
+            "project": {"seed": 42, "device": "cuda", "tag": None},
+        }
+    )
+
+
+def test_write_run_meta_records_explicit_stage(tmp_path: Path) -> None:
+    # Eval runs: the stage restored from the checkpoint wins over cfg.train.stage.
+    write_run_meta(tmp_path, _meta_cfg(1), stage=2)
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["stage"] == 2
+    assert meta["model_name"] == "phaseforge"
+    assert meta["seed"] == 42
+
+
+def test_write_run_meta_defaults_to_train_stage(tmp_path: Path) -> None:
+    write_run_meta(tmp_path, _meta_cfg(2))
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["stage"] == 2
