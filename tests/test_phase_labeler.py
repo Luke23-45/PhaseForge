@@ -13,12 +13,18 @@ import pytest
 from phaseforge.data.robomimic.phase_labeler import RuleBasedPhaseLabeler
 
 
-def _build_demo(open_aperture: float, closed_aperture: float, segments) -> dict:
+def _build_demo(
+    open_aperture: float,
+    closed_aperture: float,
+    segments,
+    antisymmetric: bool = False,
+) -> dict:
     """Build a 9-dim state (eef_pos(3) + quat(4) + gripper_qpos(2)) demo.
 
     ``segments`` is a list of (num_samples, aperture, eef_speed) tuples; the
     eef position accumulates the per-sample speed so the velocity threshold
-    is exercised.
+    is exercised. With ``antisymmetric`` the two finger qpos are +a/-a (the
+    panda convention), otherwise both fingers read ``aperture``.
     """
     states = []
     pos = 0.0
@@ -30,7 +36,11 @@ def _build_demo(open_aperture: float, closed_aperture: float, segments) -> dict:
     state = np.zeros((T, 9), dtype=np.float32)
     for t, (p, aperture) in enumerate(states):
         state[t, 0] = p
-        state[t, 7:9] = aperture
+        if antisymmetric:
+            state[t, 7] = aperture
+            state[t, 8] = -aperture
+        else:
+            state[t, 7:9] = aperture
     return {"state": state}
 
 
@@ -55,6 +65,14 @@ def _canonical(open_aperture: float, closed_aperture: float) -> dict:
     return _build_demo(open_aperture, closed_aperture, segments)
 
 
+def _canonical_panda(open_aperture: float, closed_aperture: float) -> dict:
+    segments = [
+        (n, closed_aperture if i in (2, 3, 4, 5) else open_aperture, speed)
+        for i, (n, _unused, speed) in enumerate(CANONICAL_SEGMENTS)
+    ]
+    return _build_demo(open_aperture, closed_aperture, segments, antisymmetric=True)
+
+
 def _first_occurrence(phases: np.ndarray) -> dict[int, int]:
     first: dict[int, int] = {}
     for t, p in enumerate(phases):
@@ -66,7 +84,6 @@ def _first_occurrence(phases: np.ndarray) -> dict[int, int]:
 @pytest.mark.parametrize(
     ("open_aperture", "closed_aperture"),
     [
-        (-0.02, 0.02),  # panda finger qpos, closed at the positive end
         (0.04, 0.0),    # magnitude convention, closed at the low end
         (0.0, 0.04),    # magnitude convention, closed at the high end
     ],
@@ -82,7 +99,6 @@ def test_all_six_phases_populated(open_aperture, closed_aperture) -> None:
 @pytest.mark.parametrize(
     ("open_aperture", "closed_aperture"),
     [
-        (-0.02, 0.02),
         (0.04, 0.0),
         (0.0, 0.04),
     ],
@@ -100,8 +116,8 @@ def test_phase_order_is_approach_to_retract(open_aperture, closed_aperture) -> N
 @pytest.mark.parametrize(
     ("open_aperture", "closed_aperture"),
     [
-        (-0.02, 0.02),
         (0.04, 0.0),
+        (0.0, 0.04),
     ],
 )
 def test_post_grasp_phases_dominate_approach(open_aperture, closed_aperture) -> None:
@@ -110,6 +126,31 @@ def test_post_grasp_phases_dominate_approach(open_aperture, closed_aperture) -> 
     counts = np.bincount(phases, minlength=6)
 
     assert counts[2:].sum() > counts[0]
+
+
+def test_panda_antisymmetric_fingers_all_six_phases() -> None:
+    """Regression: the mean of antisymmetric finger qpos (panda: open =
+    [+0.0208, -0.0208], closed = [+0.04, -0.04]) is ~constant zero, so the
+    aperture must be the finger excursion magnitude; all six phases must
+    populate (the cloud failure produced only phases {2, 3})."""
+    labeler = RuleBasedPhaseLabeler()
+    phases = labeler.label(
+        _canonical_panda(open_aperture=0.020833, closed_aperture=0.04)
+    )
+
+    assert set(phases.tolist()) == {0, 1, 2, 3, 4, 5}
+
+
+def test_panda_antisymmetric_fingers_phase_order() -> None:
+    labeler = RuleBasedPhaseLabeler()
+    phases = labeler.label(
+        _canonical_panda(open_aperture=0.020833, closed_aperture=0.04)
+    )
+    first = _first_occurrence(phases)
+
+    assert first[0] == 0
+    for p in range(5):
+        assert first[p] < first[p + 1]
 
 
 def test_constant_aperture_falls_back_to_absolute_thresholds() -> None:

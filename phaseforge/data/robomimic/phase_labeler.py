@@ -7,12 +7,16 @@ Threshold calibration is adaptive: the closed/open gripper levels are derived
 per demonstration from the observed aperture range (5-95 percentiles, with the
 grasp/transport-dominated middle of the demo disambiguating the sign), so any
 robosuite gripper convention labels correctly without per-env tuning — e.g.
-the Panda finger qpos range [-0.02, 0.02] (closed at either end) or a
-magnitude convention like [0, 0.04]. The configured absolute thresholds are
-only fallbacks for degenerate demonstrations with a (nearly) constant
-aperture. Labels are computed offline during ingestion (like the train-split
-normalization statistics); the phase state machine and its smoothing remain
-causal, so a label at time ``t`` never depends on the phase values after ``t``.
+the Panda finger qpos range [-0.04, 0.04] with its antisymmetric fingers
+(open = [+0.0208, -0.0208], closed = [+0.04, -0.04]) or a magnitude
+convention like [0, 0.04]. The aperture feature is the finger excursion
+magnitude ``max(|q0|, |q1|)``: the mean of the two finger qpos is ~constant
+for parallel-jaw grippers and cannot separate open from closed. The
+configured absolute thresholds are only fallbacks for degenerate
+demonstrations with a (nearly) constant aperture. Labels are computed offline
+during ingestion (like the train-split normalization statistics); the phase
+state machine and its smoothing remain causal, so a label at time ``t`` never
+depends on the phase values after ``t``.
 """
 
 from __future__ import annotations
@@ -119,7 +123,12 @@ class RuleBasedPhaseLabeler:
             return np.zeros(0, dtype=np.int64)
 
         eef = state[:, e0:e1]
-        aperture = state[:, g0:g1].mean(axis=1)
+        fingers = state[:, g0:g1]
+        # Parallel-jaw grippers (panda finger qpos spans [-0.04, 0.04] with the
+        # two fingers antisymmetric: open = [+0.0208, -0.0208], closed =
+        # [+0.04, -0.04]) make the MEAN of the two finger qpos ~constant, so
+        # the closed/open signal is the finger excursion magnitude instead.
+        aperture = np.max(np.abs(fingers), axis=1)
         speed = np.linalg.norm(np.diff(eef, axis=0, prepend=eef[:1]), axis=1)
 
         aperture, closed_level, open_level = self._calibrate_aperture(aperture)
