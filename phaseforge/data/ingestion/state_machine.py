@@ -7,13 +7,20 @@ States
 ------
 CHECK_PERSISTENT_CACHE → (hit) READY
                        → (miss) VALIDATE_SOURCE → INGEST_AND_STRIP
-                                                → NORMALIZE_AND_SAVE → READY
+                                               → NORMALIZE_AND_SAVE → READY
+
+When the raw source is missing and ``data.source.auto_download=true``,
+VALIDATE_SOURCE routes to PROVISION_SOURCE, which downloads the configured
+HuggingFace artifact (SHA-256-verified) before INGEST_AND_STRIP.
 
 Design notes (bugs fixed here, each proven by simulation)
 ----------------------------------------------------------
 - Bug 1: No more fictional box.com download. The FSM consumes pre-downloaded
   data from the env-var-aware data root (paths.py). VALIDATE_SOURCE checks
-  the configured ``data.source`` directory before ingesting.
+  the configured ``data.source`` directory before ingesting; downloading
+  from the mirror happens only in the explicit PROVISION_SOURCE state when
+  ``data.source.auto_download=true`` (off by default, so training runs stay
+  fail-closed).
 - Bug 4: The processed cache lives under {data_root}/processed/cache, NOT under
   the per-run outputs/ directory, so the config-hash cache is reused across runs.
 - Bug 5: Splits are done at trajectory or task level according to the
@@ -52,6 +59,7 @@ from phaseforge.data.ingestion.cache_manager import (
     git_commit,
     sha256_file,
 )
+from phaseforge.data.ingestion.hf_downloader import download_hf_file
 from phaseforge.data.ingestion.states import PipelineState
 from phaseforge.data.paths import processed_cache_root
 
@@ -202,6 +210,8 @@ class DataPipelineStateMachine:
                 self._check_cache()
             elif self._state == PipelineState.VALIDATE_SOURCE:
                 self._validate_source()
+            elif self._state == PipelineState.PROVISION_SOURCE:
+                self._provision_source()
             elif self._state == PipelineState.INGEST_AND_STRIP:
                 self._ingest_source()
             elif self._state == PipelineState.NORMALIZE_AND_SAVE:
@@ -245,22 +255,49 @@ class DataPipelineStateMachine:
             )
         return Path(str(source["dir"]))
 
+    def _auto_download_enabled(self) -> bool:
+        """True when the FSM may provision missing raw data from the mirror."""
+        source = self.data_cfg.get("source")
+        if source is None:
+            return False
+        return bool(source.get("auto_download", False))
+
     def _validate_source(self) -> None:
         """Bug 1 fix: consume pre-downloaded data and verify it exists."""
         logger.info("VALIDATE_SOURCE: checking pre-downloaded raw data…")
         raw_suite_dir = self._resolve_raw_dir()
 
         if not raw_suite_dir.exists():
+            if self._auto_download_enabled():
+                logger.info(
+                    "  Raw source directory missing — auto-download enabled, "
+                    "provisioning from the configured HuggingFace mirror."
+                )
+                self._raw_dir = raw_suite_dir
+                self._state = PipelineState.PROVISION_SOURCE
+                return
             raise PipelineError(
                 f"Raw source directory not found: {raw_suite_dir}. "
-                "Download the dataset first and set data.source.dir."
+                "Provision the dataset first, or set "
+                "data.source.auto_download=true to download it from the "
+                "configured HuggingFace mirror."
             )
 
         hdf5_files = sorted(raw_suite_dir.glob("*.hdf5"))
         if not hdf5_files:
+            if self._auto_download_enabled():
+                logger.info(
+                    "  Raw source has no .hdf5 files — auto-download enabled, "
+                    "provisioning from the configured HuggingFace mirror."
+                )
+                self._raw_dir = raw_suite_dir
+                self._state = PipelineState.PROVISION_SOURCE
+                return
             raise PipelineError(
                 f"No .hdf5 files found in {raw_suite_dir}. "
-                "The source adapter expects the dataset's HDF5 artifacts."
+                "Provision the dataset first, or set "
+                "data.source.auto_download=true to download it from the "
+                "configured HuggingFace mirror."
             )
         logger.info(
             "  OK: source '%s' has %d .hdf5 files",
@@ -268,6 +305,35 @@ class DataPipelineStateMachine:
         )
 
         self._raw_dir = raw_suite_dir
+        self._state = PipelineState.INGEST_AND_STRIP
+
+    def _provision_source(self) -> None:
+        """PROVISION_SOURCE: download the raw artifact from the configured mirror.
+
+        Reads ``data.source.huggingface`` (``repo_id``, ``path``, optional
+        pinned ``sha256``) and downloads into the raw directory with SHA-256
+        verification (pinned value, else the mirror's LFS metadata, else an
+        HDF5 sanity check). Proceeds to ingestion only after a verified
+        artifact is on disk; an already-verified file is a no-op.
+        """
+        logger.info("PROVISION_SOURCE: downloading raw dataset artifact…")
+        source = self.data_cfg.get("source")
+        if source is None:
+            raise PipelineError("data.source is not configured.")
+        hf_cfg = source.get("huggingface")
+        if hf_cfg is None or not hf_cfg.get("repo_id") or not hf_cfg.get("path"):
+            raise PipelineError(
+                "data.source.auto_download=true requires data.source.huggingface "
+                "with repo_id and path (the HuggingFace mirror artifact)."
+            )
+
+        dest_dir = self._raw_dir or self._resolve_raw_dir()
+        download_hf_file(
+            repo_id=str(hf_cfg["repo_id"]),
+            path=str(hf_cfg["path"]),
+            dest_dir=dest_dir,
+            pinned_sha256=str(hf_cfg["sha256"]) if hf_cfg.get("sha256") else None,
+        )
         self._state = PipelineState.INGEST_AND_STRIP
 
     def _ingest_source(self) -> None:

@@ -51,6 +51,19 @@ source:
   # must remain outside the repository and must not be downloaded by training.
   dir: "${oc.env:PHASEFORGE_DATA_DIR,data}/raw/robomimic/lift"
   manifest_path: null
+  # Fail-closed by default: VALIDATE_SOURCE raises when the raw directory is
+  # missing. Setting this to true routes the FSM through PROVISION_SOURCE,
+  # which downloads the artifact below (SHA-256-verified, idempotent) before
+  # ingestion — use it explicitly (e.g. the notebook data-prep cell), never
+  # as a silent training-time download.
+  auto_download: false
+  huggingface:
+    # Official robomimic v0.1 (v1.5 track) Proficient-Human low-dim dataset.
+    repo_id: "amandlek/robomimic"
+    path: "v1.5/lift/ph/low_dim_v15.hdf5"
+    # Pin the artifact checksum when known; otherwise the mirror's own LFS
+    # metadata is used for verification.
+    sha256: null
 
 phase_labeler:
   _target_: phaseforge.data.robomimic.phase_labeler.RuleBasedPhaseLabeler

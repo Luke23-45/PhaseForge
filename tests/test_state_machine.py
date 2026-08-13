@@ -96,3 +96,75 @@ def test_degenerate_phases_only_warn_for_label_free_models(caplog) -> None:
         fsm._ingest_source()
     assert "no samples for phase" in caplog.text
     assert fsm._trajectories
+
+
+def _fsm_with_missing_source(
+    tmp_path: Path, auto_download: bool
+) -> DataPipelineStateMachine:
+    data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+    data_cfg.source.dir = str(tmp_path / "no_such_raw")
+    data_cfg.source.auto_download = auto_download
+    return DataPipelineStateMachine(
+        DictConfig(
+            {
+                "models": OmegaConf.load(
+                    "phaseforge/config/models/phaseforge.yaml"
+                ),
+                "data": data_cfg,
+            }
+        )
+    )
+
+
+def test_missing_source_without_auto_download_raises(tmp_path) -> None:
+    fsm = _fsm_with_missing_source(tmp_path, auto_download=False)
+    with pytest.raises(PipelineError, match="Raw source directory not found"):
+        fsm._validate_source()
+
+
+def test_missing_source_with_auto_download_enters_provision_state(tmp_path) -> None:
+    from phaseforge.data.ingestion.states import PipelineState
+
+    fsm = _fsm_with_missing_source(tmp_path, auto_download=True)
+    fsm._validate_source()
+    assert fsm._state == PipelineState.PROVISION_SOURCE
+    assert fsm._raw_dir is not None
+
+
+def test_provision_source_downloads_verified_file(
+    tmp_path, monkeypatch
+) -> None:
+    from phaseforge.data.ingestion.states import PipelineState
+
+    fsm = _fsm_with_missing_source(tmp_path, auto_download=True)
+    raw_dir = fsm._resolve_raw_dir()
+    downloaded = raw_dir / "low_dim_v15.hdf5"
+    downloaded.parent.mkdir(parents=True)
+    downloaded.write_bytes(b"fake-hdf5")
+
+    calls: list[tuple] = []
+
+    def fake_download(repo_id, path, dest_dir, pinned_sha256=None):
+        calls.append((repo_id, path, Path(dest_dir), pinned_sha256))
+        return downloaded
+
+    monkeypatch.setattr(
+        "phaseforge.data.ingestion.state_machine.download_hf_file", fake_download
+    )
+    fsm._provision_source()
+    assert calls == [
+        (
+            "amandlek/robomimic",
+            "v1.5/lift/ph/low_dim_v15.hdf5",
+            raw_dir,
+            None,
+        )
+    ]
+    assert fsm._state == PipelineState.INGEST_AND_STRIP
+
+
+def test_provision_source_requires_hf_config(tmp_path) -> None:
+    fsm = _fsm_with_missing_source(tmp_path, auto_download=True)
+    fsm.data_cfg.source.pop("huggingface")
+    with pytest.raises(PipelineError, match="requires data.source.huggingface"):
+        fsm._provision_source()
