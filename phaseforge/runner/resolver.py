@@ -204,6 +204,35 @@ def resolve_checkpoint_path(
     return ckpt.resolve()
 
 
+def resolve_stage_ckpt(
+    outputs_base: Path,
+    model_name: str,
+    stage: int,
+    *,
+    seed: int,
+    tag: str | None = None,
+) -> Path:
+    """Resolve the absolute ``checkpoint_best.pt`` of a provider run.
+
+    This is what a stage-2 training subprocess loads via
+    ``train.stage1_ckpt_path``. It reuses the strict seed+tag resolution so
+    the exact, completed, *untagged* provider run is selected — never the CLI
+    auto-detect (:func:`phaseforge.utils.config.find_latest_checkpoint`),
+    whose ``tag=None`` means "no constraint" and can therefore pick a tagged
+    sibling variant that shares the provider's output tree (e.g.
+    ``bc_robot_only`` next to ``bc``), crashing the stage-2 load with a
+    dimension mismatch.
+    """
+    run_dir = resolve_run_dir(outputs_base, model_name, stage, seed=seed, tag=tag)
+    ckpt = run_dir / _REQUIRED_CKPT_REL
+    if not ckpt.is_file():
+        raise CheckpointError(
+            f"Run {run_dir} completed but has no {_REQUIRED_CKPT_REL} — the "
+            "training run did not persist a best checkpoint."
+        )
+    return ckpt.resolve()
+
+
 def checkpoint_exists(
     outputs_base: Path,
     model_name: str,

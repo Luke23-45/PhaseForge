@@ -17,8 +17,15 @@ def train_command(
     *,
     outputs_base: Path,
     defaults: tuple[str, ...],
+    ckpt_path: Path | None = None,
 ) -> list[str]:
-    """Build ``phaseforge-train`` argv for a training step."""
+    """Build ``phaseforge-train`` argv for a training step.
+
+    A stage-2 step that bootstraps from a provider passes that exact Stage 1
+    checkpoint as ``train.stage1_ckpt_path``, so the subprocess never falls
+    back to its own loose auto-detect (which could select a tagged sibling
+    variant that shares the provider's output tree).
+    """
     method = step.method
     assert step.stage is not None
     cmd = [
@@ -32,6 +39,8 @@ def train_command(
         cmd.append(f"data={method.data}")
     if method.tag:
         cmd.append(f"project.tag={method.tag}")
+    if ckpt_path is not None:
+        cmd.append(f"train.stage1_ckpt_path={ckpt_path}")
     cmd.extend(defaults)
     return cmd
 

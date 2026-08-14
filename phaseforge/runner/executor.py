@@ -41,7 +41,9 @@ def step_command(
         return eval_command(
             step, ckpt_path=ckpt_path, outputs_base=outputs_base, defaults=defaults
         )
-    return train_command(step, outputs_base=outputs_base, defaults=defaults)
+    return train_command(
+        step, outputs_base=outputs_base, defaults=defaults, ckpt_path=ckpt_path
+    )
 
 
 def run_step(

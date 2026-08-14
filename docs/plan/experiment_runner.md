@@ -101,7 +101,7 @@ entry point is a loud error, never a silent skip).
 
 - Train argv: `phaseforge-train models=<model> train=stageN project.seed=<s>
   project.output_dir=<abs> project.log_level=<INFO|WARNING> [data=<variant>]
-  [project.tag=<tag>] <defaults...>`
+  [project.tag=<tag>] [train.stage1_ckpt_path=<abs provider ckpt>] <defaults...>`
 - Eval argv: `phaseforge-eval ... train.stage1_ckpt_path=<abs ckpt>`
   with the same `models`/`seed`/`output_dir`/`tag`/`log_level` plumbing.
 
@@ -110,6 +110,15 @@ location-independent. `data` is passed only when it differs from the protocol
 default (the `bc_robot_only` cell); `project.tag` is passed only for tagged
 cells. Logs stream to the console (inherited stdio); `--verbose` forwards
 `project.log_level=INFO`, otherwise `WARNING`.
+
+A stage-2 step that bootstraps from a provider always receives the provider's
+exact Stage 1 checkpoint as `train.stage1_ckpt_path`, resolved by the strict
+seed+tag scan (untagged provider, `.completed`-gated — §5). Passing it
+explicitly is what makes the subprocess load the right artifact: without it the
+`phaseforge-train` CLI falls back to `find_latest_checkpoint`, whose
+`tag=None` means "no constraint" and can select a newer *tagged* sibling run
+sharing the provider's output tree (e.g. `bc_robot_only` next to `bc`),
+crashing the stage-2 load with an input-dimension mismatch.
 
 ## 4. State registry (resume + provenance)
 

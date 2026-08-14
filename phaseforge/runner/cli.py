@@ -40,10 +40,10 @@ from phaseforge.runner.protocol import (
 from phaseforge.runner.registry import RegistryError, RunnerState
 from phaseforge.runner.resolver import (
     CheckpointError,
-    checkpoint_exists,
     resolve_checkpoint_path,
     resolve_eval_run_dir,
     resolve_run_dir,
+    resolve_stage_ckpt,
     stage_checkpoint_relative,
 )
 
@@ -170,19 +170,32 @@ def _build_plan(protocol: Protocol, args: argparse.Namespace) -> list[Step]:
     )
 
 
-def _require_stage2_prereq(step: Step, outputs_base: Path) -> None:
-    """A stage-2 step must be able to load its provider's Stage 1 checkpoint."""
+def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
+    """Resolve the exact Stage 1 checkpoint a stage-2 step bootstraps from.
+
+    Returns ``None`` for steps that load nothing (a stage-1 step, or a
+    stage-2 step whose model has no Stage 1 source). The returned path is
+    passed to the subprocess as ``train.stage1_ckpt_path`` so it loads this
+    exact artifact rather than re-running its own auto-detect
+    (:func:`phaseforge.utils.config.find_latest_checkpoint`), whose
+    ``tag=None`` means "no constraint" and can select a newer *tagged* sibling
+    variant that shares the provider's output tree (e.g. ``bc_robot_only``
+    next to ``bc``), crashing the load with a dimension mismatch.
+    """
     req = step.required_checkpoint()
     if req is None:
-        return
+        return None
     model, stage = req
-    # Providers are validated to be untagged, so the strict lookup is tag=None.
-    if not checkpoint_exists(outputs_base, model, stage, seed=step.seed, tag=None):
+    try:
+        return resolve_stage_ckpt(
+            outputs_base, model, stage, seed=step.seed, tag=None
+        )
+    except CheckpointError as exc:
         raise CheckpointError(
             f"{step.method.name} stage 2 needs a {model} stage 1 checkpoint for "
             f"seed {step.seed} under {outputs_base}. Run {model} stage 1 first, "
             "or re-run with --with-dependencies."
-        )
+        ) from exc
 
 
 def _eval_target(
@@ -315,7 +328,7 @@ def run(args: argparse.Namespace) -> int:
             if step.kind == "eval":
                 ckpt_abs = _eval_target(step, outputs_base, state)
             else:
-                _require_stage2_prereq(step, outputs_base)
+                ckpt_abs = _require_stage2_prereq(step, outputs_base)
 
             run_step(
                 step,
@@ -384,7 +397,7 @@ def _print_dry_run(
         if step.kind == "eval":
             ckpt_abs = _eval_target(step, outputs_base, state)
         else:
-            _require_stage2_prereq(step, outputs_base)
+            ckpt_abs = _require_stage2_prereq(step, outputs_base)
         cmd = step_command(
             step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=defaults
         )

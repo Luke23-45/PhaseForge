@@ -326,6 +326,17 @@ def test_train_command_stage2(tmp_path: Path) -> None:
     assert "train=stage2" in cmd
 
 
+def test_train_command_stage2_injects_provider_ckpt(tmp_path: Path) -> None:
+    ckpt = tmp_path / "outputs" / "bc" / "stage1" / "x" / "checkpoint_best.pt"
+    cmd = train_command(
+        _step("warmstart_moe", 42, "stage2"),
+        outputs_base=tmp_path / "outputs",
+        defaults=(),
+        ckpt_path=ckpt,
+    )
+    assert f"train.stage1_ckpt_path={ckpt}" in cmd
+
+
 def test_eval_command_targets_final_checkpoint(tmp_path: Path) -> None:
     ckpt = tmp_path / "outputs" / "phaseforge" / "stage2" / "ckpt" / "checkpoint_best.pt"
     cmd = eval_command(
@@ -485,6 +496,29 @@ def test_resolve_checkpoint_path_prefers_registry(tmp_path: Path) -> None:
     assert method is not None
     ckpt = resolve_checkpoint_path(tmp_path, method, 2, seed=42, state=state)
     assert "old" in str(ckpt)
+
+
+def test_stage2_resolves_exact_untagged_provider_ckpt(tmp_path: Path) -> None:
+    """A stage-2 step must load the *untagged* provider checkpoint.
+
+    The default BC run and its ``robot_only`` sibling share the
+    ``bc/stage1/`` output tree; ``find_latest_checkpoint`` auto-detect would
+    pick the newer tagged run and crash the stage-2 load with a dimension
+    mismatch. The runner must resolve the exact untagged artifact instead.
+    """
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
+    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42,
+              tag="robot_only")
+    step = _step("warmstart_moe", 42, "stage2")
+    ckpt = runner_cli._require_stage2_prereq(step, tmp_path)
+    assert ckpt is not None
+    assert "aaaa0001" in str(ckpt)
+    assert "robot_only" not in str(ckpt)
+
+
+def test_stage2_prereq_none_for_plain_stage1(tmp_path: Path) -> None:
+    step = _step("bc", 42, "stage1")
+    assert runner_cli._require_stage2_prereq(step, tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
