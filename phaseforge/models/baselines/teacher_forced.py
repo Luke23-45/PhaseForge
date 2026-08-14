@@ -162,15 +162,25 @@ class TeacherForcedMoEModel(BaseManipulationModel):
                 if latent.ndim == 3:
                     latent = latent.view(-1, latent.size(-1))
                 phase_logits = self.phase_head(latent)
-                return self._dispatch(latent, phase_logits.argmax(dim=-1))
+                return self._dispatch(
+                    latent, phase_logits.argmax(dim=-1), phase_logits=phase_logits
+                )
         else:
             raise RuntimeError(f"Invalid stage {self._stage}")
 
-    def _dispatch(self, latent: Tensor, expert_indices: Tensor) -> ModelOutput:
+    def _dispatch(
+        self,
+        latent: Tensor,
+        expert_indices: Tensor,
+        phase_logits: Tensor | None = None,
+    ) -> ModelOutput:
         """Top-1 hard expert dispatch with certainty-one routing weights.
 
         Mirrors the oracle's dispatch (weights 1.0, one-hot gate logits) so
         the two cells differ ONLY in the routing signal (GT vs predicted).
+        ``phase_logits`` is surfaced from the label-free eval path so the
+        trainer can compute the routing accuracy diagnostic (spec §4.4); the
+        GT-routed training path leaves it ``None``.
         """
         B = latent.size(0)
         E = self.moe_layer.router.num_experts
@@ -182,17 +192,21 @@ class TeacherForcedMoEModel(BaseManipulationModel):
                 f"Teacher-forced phase labels must map to experts in [0, {E - 1}], "
                 f"got range [{int(expert_indices.min())}, {int(expert_indices.max())}]."
             )
-        expert_indices = expert_indices.unsqueeze(-1)  # (B, 1)
+        expert_indices = expert_indices.long()
+        if expert_indices.ndim == 1:
+            expert_indices = expert_indices.unsqueeze(-1)  # (B, 1)
 
-        routing_weights = torch.ones((B, 1), device=latent.device)
+        routing_weights = torch.ones((B, 1), dtype=latent.dtype, device=latent.device)
 
         # Dummy logits for metric compatibility (highly peaked one-hot)
-        gate_logits = torch.zeros((B, E), device=latent.device)
+        gate_logits = torch.zeros((B, E), dtype=latent.dtype, device=latent.device)
         gate_logits.scatter_(1, expert_indices, 100.0)
         self._last_gate_logits = gate_logits.detach()
 
         out_dim = self.moe_layer.experts[0].output_dim
-        combined_output = torch.zeros((B, out_dim), device=latent.device)
+        combined_output = torch.zeros(
+            (B, out_dim), dtype=latent.dtype, device=latent.device
+        )
 
         for expert_idx, expert_net in enumerate(self.moe_layer.experts):
             match_mask = (expert_indices == expert_idx).squeeze(-1)
@@ -203,7 +217,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
 
         return ModelOutput(
             action_pred=combined_output,
-            phase_logits=None,
+            phase_logits=phase_logits,
             routing_weights=routing_weights,
             expert_indices=expert_indices,
             gate_logits=gate_logits,

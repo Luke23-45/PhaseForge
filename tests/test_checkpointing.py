@@ -95,6 +95,25 @@ def test_save_top_k_prunes_and_updates_alias(tmp_path: Path) -> None:
     assert alias["global_step"] == best["global_step"]
 
 
+def test_prefixed_monitor_matches_stage2_val_metrics(tmp_path: Path) -> None:
+    # Stage 2 validation returns already-prefixed keys ('val/routing_entropy').
+    # A prefixed monitor must still drive best-checkpoint selection instead of
+    # silently selecting nothing.
+    cb = CheckpointCallback(
+        output_dir=tmp_path,
+        every_n_epochs=100,
+        monitor="val/routing_entropy",
+        mode="max",
+        save_top_k=1,
+    )
+    trainer = _make_trainer()
+    trainer.current_epoch = 1
+    cb.on_epoch_end(trainer, {"val/routing_entropy": 0.5})
+    assert cb.best_ckpt_path is not None
+    assert cb.best_score == pytest.approx(0.5)
+    assert (tmp_path / "checkpoint_best.pt").exists()
+
+
 def test_resume_restores_rng_epoch_step_and_callback_state(tmp_path: Path) -> None:
     # Trainer A: simulate a run at epoch 2, step 5, with early-stopping
     # state already accumulated, and save a checkpoint through the callback.

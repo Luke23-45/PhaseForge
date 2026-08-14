@@ -5,7 +5,12 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from phaseforge.trains.loops.base import BaseTrainer, MetricValue
+from phaseforge.models.base import ModelOutput
+from phaseforge.trains.loops.base import (
+    BaseTrainer,
+    MetricValue,
+    _PhaseAccumulator,
+)
 
 
 class Stage1Trainer(BaseTrainer):
@@ -13,13 +18,26 @@ class Stage1Trainer(BaseTrainer):
 
     Computes: L_total = L_action + λ_phase * L_phase
     Action loss is MSE. Phase loss is CrossEntropy.
+
+    Also persists the phase-classification accuracy the protocol requires
+    (final specification §4.2): micro ``phase_acc`` and macro/balanced
+    ``phase_balanced_acc`` (mean per-class recall), computed in the
+    training loop and in validation. ``bc`` has no phase head, so its
+    ``phase_logits`` are ``None`` and no phase fields are emitted — absence
+    is honest, never a fabricated zero.
     """
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._train_phase_acc = _PhaseAccumulator(device=self.device)
+        self._val_phase_acc = _PhaseAccumulator(device=self.device)
+
     def _compute_loss(
-        self, batch: dict[str, torch.Tensor]
+        self, batch: dict[str, torch.Tensor], out: ModelOutput | None = None
     ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
         # Forward pass
-        out = self.model(batch)
+        if out is None:
+            out = self.model(batch)
         
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
@@ -69,3 +87,47 @@ class Stage1Trainer(BaseTrainer):
         }
         
         return total_loss, metrics
+
+    def _on_train_batch_processed(
+        self,
+        batch: dict[str, torch.Tensor],
+        out: ModelOutput,
+        metrics: dict[str, MetricValue],
+        n: int,
+    ) -> None:
+        if out.phase_logits is not None:
+            self._train_phase_acc.update(
+                out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
+            )
+
+    def epoch_train_metrics(self) -> dict[str, float]:
+        if not self._train_phase_acc.has_data:
+            return {}
+        acc, balanced = self._train_phase_acc.compute()
+        return {
+            "train/phase_acc": acc,
+            "train/phase_balanced_acc": balanced,
+        }
+
+    def _reset_train_pool(self) -> None:
+        self._train_phase_acc.reset()
+
+    def _reset_validation_pool(self) -> None:
+        self._val_phase_acc.reset()
+
+    def _collect_validation_pool(
+        self,
+        batch: dict[str, torch.Tensor],
+        out: ModelOutput,
+        metrics: dict[str, MetricValue],
+    ) -> None:
+        if out.phase_logits is not None:
+            self._val_phase_acc.update(
+                out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
+            )
+
+    def _finalize_validation_pool(self, agg_metrics: dict[str, float]) -> None:
+        if self._val_phase_acc.has_data:
+            acc, balanced = self._val_phase_acc.compute()
+            agg_metrics["val/phase_acc"] = acc
+            agg_metrics["val/phase_balanced_acc"] = balanced

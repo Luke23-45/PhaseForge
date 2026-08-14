@@ -103,7 +103,11 @@ def git_info() -> dict[str, str]:
 
 
 def write_run_meta(
-    output_dir: Path, cfg: DictConfig, stage: int | None = None
+    output_dir: Path,
+    cfg: DictConfig,
+    stage: int | None = None,
+    kind: str = "train",
+    data_config_hash: str | None = None,
 ) -> dict[str, object]:
     """Write a lightweight JSON metadata file for quick run inspection.
 
@@ -111,9 +115,14 @@ def write_run_meta(
         stage: Effective model stage. Eval runs pass the stage restored
             from the loaded checkpoint so the metadata reflects the
             evaluated artifact, not the default ``train`` group.
+        kind: ``"train"`` or ``"eval"`` (final specification §5.5).
+        data_config_hash: The effective cache data-config hash (recorded in
+            ``environment.json``); the full provenance lives in the two
+            metadata manifests rather than being duplicated here (§5.5).
     """
     git = _git_info()
     meta = {
+        "kind": kind,
         "model_name": getattr(cfg.models, "name", cfg.models._target_.split(".")[-1]),
         "stage": cfg.train.get("stage", 1) if stage is None else stage,
         "seed": cfg.project.get("seed", None),
@@ -121,6 +130,7 @@ def write_run_meta(
         "git_commit": git["commit"],
         "git_branch": git["branch"],
         "config_hash": config_hash(cfg),
+        "data_config_hash": data_config_hash,
         "tag": cfg.project.get("tag", None),
     }
     path = output_dir / "run_meta.json"
@@ -418,3 +428,55 @@ def find_latest_checkpoint(
                 "different seed."
             )
     return checkpoints[0].path
+
+
+def checkpoint_source_info(
+    ckpt_path: str | Path,
+    base: str | Path = "outputs",
+) -> dict[str, object] | None:
+    """Resolve the exact Stage 1 artifact a Stage 2 run bootstrapped from.
+
+    Returns a dict with ``run_id``, ``checkpoint`` (path relative to the
+    outputs base when possible), ``sha256``, ``model``, ``seed``,
+    ``config_hash`` and ``git_commit`` — the source identity every Stage 2
+    summary must record (final specification §4.1). Returns ``None`` when
+    the checkpoint or its run directory cannot be resolved.
+
+    A resolved checkpoint path alone is insufficient provenance because
+    auto-detection can select a different artifact after later runs are
+    added; the source is therefore snapshotted at bootstrap time.
+    """
+    from phaseforge.data.ingestion.cache_manager import sha256_file
+    from phaseforge.outputs_writer.writer import parse_run_dir
+
+    p = Path(ckpt_path).resolve()
+    if not p.is_file():
+        return None
+
+    run_dir = p.parent.parent  # <run_dir>/checkpoints/<file>
+    meta: dict[str, object] = {}
+    meta_path = run_dir / "run_meta.json"
+    if meta_path.is_file():
+        try:
+            loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                meta = loaded
+        except (OSError, json.JSONDecodeError):
+            meta = {}
+
+    _ts, _tag, run_id = parse_run_dir(run_dir.name)
+    base_dir = _project_root() / Path(base)
+    try:
+        rel = p.relative_to(base_dir).as_posix()
+    except ValueError:
+        rel = str(p)
+
+    return {
+        "run_id": run_id or None,
+        "checkpoint": rel,
+        "sha256": sha256_file(p),
+        "model": meta.get("model_name"),
+        "seed": meta.get("seed"),
+        "config_hash": meta.get("config_hash"),
+        "git_commit": meta.get("git_commit"),
+    }

@@ -18,14 +18,24 @@ from omegaconf import DictConfig, OmegaConf
 
 from phaseforge.outputs_writer.ledger import LedgerRow, RunLedger
 from phaseforge.outputs_writer.metadata import collect_environment
+from phaseforge.outputs_writer.provenance import (
+    copy_cache_provenance,
+    write_artifact_manifest,
+)
 from phaseforge.outputs_writer.results import append_result_row
 from phaseforge.outputs_writer.schema import OPTIONAL_METRIC_FIELDS
+from phaseforge.outputs_writer.training_summary import (
+    append_training_summary_row,
+    write_reconciliation_record,
+)
 from phaseforge.outputs_writer.writer import RunWriter, parse_run_dir
 from phaseforge.trains.callbacks.checkpointing import CheckpointCallback
 from phaseforge.trains.callbacks.early_stopping import EarlyStoppingCallback
 from phaseforge.trains.callbacks.metric_tracker import MetricTrackerCallback
+from phaseforge.trains.callbacks.persistence import MetricPersistenceCallback
 from phaseforge.trains.callbacks.wandb_logger import WandbLoggerCallback
 from phaseforge.utils.config import (
+    checkpoint_source_info,
     config_hash,
     find_latest_checkpoint,
     get_eval_output_dir,
@@ -92,8 +102,9 @@ def _init_run_bookkeeping(
 
     Returns ``(run_writer, ledger, run_id)``. The environment fingerprint
     is written immediately; the ledger row is ``pending`` until the
-    caller flips it via :func:`_mark_run_completed` /
-    :func:`_mark_run_failed`.
+    caller flips it via the run-specific finalizer
+    (:func:`_finalize_training_run` / :func:`_finalize_eval_run` /
+    :func:`_mark_run_failed`).
     """
     from phaseforge.data.ingestion.cache_manager import CacheManager
 
@@ -124,17 +135,6 @@ def _init_run_bookkeeping(
         )
     )
     return run_writer, ledger, run_id
-
-
-def _mark_run_completed(run_writer: RunWriter, ledger: RunLedger, run_id: str) -> None:
-    """Mark a run completed; never mask the original outcome."""
-    try:
-        run_writer.mark_completed()
-        ledger.update_status(run_id, "completed")
-    except Exception:
-        logger.exception(
-            "Failed to record the completed run (%s) in outputs bookkeeping.", run_id
-        )
 
 
 def _mark_run_failed(
@@ -286,10 +286,19 @@ def train(cfg: DictConfig) -> None:
     output_dir = get_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save resolved config and lightweight run metadata
+    # Save resolved config and lightweight run metadata. run_meta.json
+    # records the effective data-config hash (final specification §5.5),
+    # mirroring the eval path and environment.json.
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
     with open(output_dir / "resolved_config.yaml", "w") as f:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
-    write_run_meta(output_dir, cfg)
+    write_run_meta(
+        output_dir,
+        cfg,
+        kind="train",
+        data_config_hash=CacheManager.compute_hash(cfg.data),
+    )
 
     logger.info(f"Output directory: {output_dir}")
 
@@ -297,14 +306,144 @@ def train(cfg: DictConfig) -> None:
     #    still leaves a pending ledger row + environment fingerprint.
     run_writer, ledger, run_id = _init_run_bookkeeping(cfg, output_dir, kind="train")
     try:
-        _train_body(cfg, output_dir)
+        _train_body(cfg, output_dir, run_id)
     except BaseException as exc:
         _mark_run_failed(run_writer, ledger, run_id, exc)
         raise
-    _mark_run_completed(run_writer, ledger, run_id)
+    _finalize_training_run(cfg, output_dir, run_writer, ledger, run_id)
 
 
-def _train_body(cfg: DictConfig, output_dir: Path) -> None:
+def _finalize_training_run(
+    cfg: DictConfig,
+    output_dir: Path,
+    run_writer: RunWriter,
+    ledger: RunLedger,
+    run_id: str,
+) -> None:
+    """Complete a successful training run in the provenance-defined order.
+
+    Order (final specification §5.3 / §9.3 / §9.4):
+
+    1. Append the schema-validated ``training_summary.jsonl`` row — or, on
+       failure, write a reconciliation record so the run-local summary can
+       rebuild the ledger. The run is never marked complete before this.
+    2. Copy the cache data-provenance into ``metadata/data_provenance.json``.
+    3. Mark the run completed (writes ``timings.json`` + the sibling marker).
+    4. Hash every paper input into ``metadata/artifact_manifest.json`` —
+       written after step 3 so ``timings.json`` exists to be hashed.
+    5. Flip the ledger row to ``completed``.
+
+    Steps 2–5 are best effort in the same spirit as the eval result row:
+    a bookkeeping failure must not flip an already-successful training run
+    to failed, but every failure is logged loudly and the run-local
+    artifacts remain authoritative for recovery.
+    """
+    try:
+        _append_training_summary_row(cfg, output_dir)
+    except Exception as exc:
+        logger.exception(
+            "Failed to append the training summary row for run %s — wrote a "
+            "reconciliation record; run-local summary.json is authoritative.",
+            run_id,
+        )
+        try:
+            write_reconciliation_record(output_dir, exc)
+        except Exception:
+            logger.exception(
+                "Failed to write the reconciliation record for run %s.", run_id
+            )
+    try:
+        _copy_data_provenance(cfg, output_dir)
+    except Exception:
+        logger.exception(
+            "Failed to copy the cache data provenance into %s.", output_dir.name
+        )
+    try:
+        run_writer.mark_completed()
+    except Exception:
+        logger.exception("Failed to mark run %s completed.", run_id)
+    try:
+        write_artifact_manifest(
+            output_dir,
+            {
+                "resolved_config.yaml": "resolved_config.yaml",
+                "run_meta.json": "run_meta.json",
+                "metadata/environment.json": "metadata/environment.json",
+                "metadata/data_provenance.json": "metadata/data_provenance.json",
+                "timings.json": "timings.json",
+                "metrics/training_curves.jsonl": "metrics/training_curves.jsonl",
+                "metrics/summary.json": "metrics/summary.json",
+                "checkpoints/checkpoint_best.pt": "checkpoints/checkpoint_best.pt",
+            },
+        )
+    except Exception:
+        logger.exception("Failed to write the artifact manifest for run %s.", run_id)
+    try:
+        ledger.update_status(run_id, "completed")
+    except Exception:
+        logger.exception(
+            "Failed to update the ledger for completed run %s.", run_id
+        )
+
+
+def _append_training_summary_row(cfg: DictConfig, output_dir: Path) -> None:
+    """Append the run-local summary to the global training ledger.
+
+    The run-local ``metrics/summary.json`` (written by the persistence
+    callback at ``on_train_end``) is authoritative. On any failure a
+    reconciliation record is written next to it so
+    ``reconcile_training_ledger`` can rebuild the ledger — provenance is
+    never silently lost.
+    """
+    summary_path = output_dir / "metrics" / "summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(
+            f"No run-local summary at {summary_path} — the persistence "
+            "callback did not write one."
+        )
+    import json as _json
+
+    summary = _json.loads(summary_path.read_text(encoding="utf-8"))
+    base_dir = output_base_dir(cfg)
+    try:
+        summary["run_dir"] = output_dir.relative_to(base_dir).as_posix()
+    except ValueError:
+        summary["run_dir"] = str(output_dir)
+    append_training_summary_row(base_dir / "_results", summary)
+
+
+def _copy_data_provenance(cfg: DictConfig, output_dir: Path) -> None:
+    """Copy the cache manifest's provenance block into the run directory.
+
+    Uses the effective cache hash recorded in ``environment.json`` when
+    available (the pipeline may have fallen back to a different cache),
+    else the freshly computed data-config hash.
+    """
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+    from phaseforge.data.paths import processed_cache_root
+
+    env_path = output_dir / "metadata" / "environment.json"
+    config_hash_val = CacheManager.compute_hash(cfg.data)
+    if env_path.is_file():
+        try:
+            import json as _json
+
+            env = _json.loads(env_path.read_text(encoding="utf-8"))
+            recorded = env.get("data_config_hash")
+            if recorded:
+                config_hash_val = str(recorded)
+        except (OSError, _json.JSONDecodeError):
+            logger.warning(
+                "Could not read environment.json to resolve the effective "
+                "cache hash — falling back to the computed data-config hash.",
+                exc_info=True,
+            )
+    copy_cache_provenance(
+        output_dir, processed_cache_root(), config_hash_val
+    )
+
+
+def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
     """The training work itself, wrapped in run lifecycle bookkeeping."""
     # 2. Init W&B (lazy import: cli.py stays importable without wandb installed)
     try:
@@ -362,6 +501,12 @@ def _train_body(cfg: DictConfig, output_dir: Path) -> None:
                         f"outputs/{source_model}/stage1/ has one."
                     )
 
+            # Record the RESOLVED source so run metadata, environment.json,
+            # the summary's source_stage1, and the artifact manifest all
+            # reflect the exact checkpoint actually loaded (auto-detection
+            # can select a different artifact after later runs are added).
+            cfg.train.stage1_ckpt_path = ckpt_path
+
             logger.info(f"Loading Stage 1 checkpoint from {ckpt_path}...")
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
             _load_state_dict_checked(
@@ -390,6 +535,23 @@ def _train_body(cfg: DictConfig, output_dir: Path) -> None:
 
     # 6. Callbacks
     trainer.add_callback(MetricTrackerCallback())
+
+    # Persist the per-epoch curves + final summary. Stage 2 runs record the
+    # exact Stage 1 source artifact (final specification §4.1) so a later
+    # run cannot silently change the auto-detected source.
+    source_stage1 = None
+    if stage == 2 and cfg.train.get("stage1_ckpt_path"):
+        source_stage1 = checkpoint_source_info(
+            cfg.train.stage1_ckpt_path, base=cfg.project.output_dir
+        )
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    trainer.add_callback(MetricPersistenceCallback(
+        run_dir=output_dir,
+        run_id=run_id,
+        data_config_hash=CacheManager.compute_hash(cfg.data),
+        source_stage1=source_stage1,
+    ))
 
     if hasattr(cfg.train, "early_stopping") or "early_stopping" in cfg.train:
         if cfg.train.early_stopping.get("enabled", True):
@@ -491,7 +653,40 @@ def evaluate(cfg: DictConfig) -> None:
     except BaseException as exc:
         _mark_run_failed(run_writer, ledger, run_id, exc)
         raise
-    _mark_run_completed(run_writer, ledger, run_id)
+    _finalize_eval_run(cfg, output_dir, run_writer, ledger, run_id)
+
+
+def _finalize_eval_run(
+    cfg: DictConfig,
+    output_dir: Path,
+    run_writer: RunWriter,
+    ledger: RunLedger,
+    run_id: str,
+) -> None:
+    """Complete a successful eval run: mark done, then hash its inputs."""
+    try:
+        run_writer.mark_completed()
+    except Exception:
+        logger.exception("Failed to mark eval run %s completed.", run_id)
+    try:
+        write_artifact_manifest(
+            output_dir,
+            {
+                "resolved_config.yaml": "resolved_config.yaml",
+                "run_meta.json": "run_meta.json",
+                "metadata/environment.json": "metadata/environment.json",
+                "timings.json": "timings.json",
+                "eval_results.json": "eval_results.json",
+            },
+        )
+    except Exception:
+        logger.exception("Failed to write the artifact manifest for eval run %s.", run_id)
+    try:
+        ledger.update_status(run_id, "completed")
+    except Exception:
+        logger.exception(
+            "Failed to update the ledger for completed eval run %s.", run_id
+        )
 
 
 def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
@@ -518,7 +713,15 @@ def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
     # run artifact is written; metadata reflects the artifact actually
     # evaluated: the stage restored from the checkpoint (an eval run's
     # `train` group is stage1 by default).
-    write_run_meta(output_dir, cfg, stage=getattr(model, "stage", None))
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    write_run_meta(
+        output_dir,
+        cfg,
+        stage=getattr(model, "stage", None),
+        kind="eval",
+        data_config_hash=CacheManager.compute_hash(cfg.data),
+    )
     model.to(torch.device(cfg.project.device))
 
     # 3. Run the selected evaluator

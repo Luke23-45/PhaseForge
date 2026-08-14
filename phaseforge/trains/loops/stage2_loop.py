@@ -8,7 +8,12 @@ import torch
 import torch.nn.functional as F
 
 from phaseforge.evaluations.metrics import expert_utilization, phase_alignment, routing_stability
-from phaseforge.trains.loops.base import BaseTrainer, MetricValue
+from phaseforge.models.base import ModelOutput
+from phaseforge.trains.loops.base import (
+    BaseTrainer,
+    MetricValue,
+    _PhaseAccumulator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +32,17 @@ class Stage2Trainer(BaseTrainer):
     ``val/routing_entropy`` —
     so pseudo-balancing (balance high while NMI collapses to 0) is visible
     at training time instead of only in offline evaluation.
+
+    For the ``teacher_forced`` cell, the label-free routing accuracy (micro
+    and macro/balanced) is computed over the SAME inference path that
+    selects experts by the frozen phase head (``out.phase_logits`` is only
+    non-None for that cell in Stage 2) — never from the GT-routed training
+    path (final specification §4.4).
     """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._val_routing_acc = _PhaseAccumulator(device=self.device)
 
     def fit(self) -> None:
         """Override fit to handle encoder freezing before the loop starts."""
@@ -47,7 +62,7 @@ class Stage2Trainer(BaseTrainer):
         super().fit()
 
     def _compute_loss(
-        self, batch: dict[str, torch.Tensor], out=None
+        self, batch: dict[str, torch.Tensor], out: ModelOutput | None = None
     ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
         # Forward pass (reuse an existing output when provided, e.g. from the
         # validation loop, to avoid a double forward).
@@ -98,6 +113,7 @@ class Stage2Trainer(BaseTrainer):
         self.model.eval()
         agg_metrics: dict[str, float] = {}
         total_samples = 0
+        self._val_routing_acc.reset()
 
         expert_indices_all: list[torch.Tensor] = []
         phases_all: list[torch.Tensor] = []
@@ -108,6 +124,13 @@ class Stage2Trainer(BaseTrainer):
 
             out = self.model(batch)
             _, metrics = self._compute_loss(batch, out=out)
+
+            # teacher_forced only: ``phase_logits`` are emitted in the
+            # label-free eval path (frozen phase head selects the expert).
+            if out.phase_logits is not None:
+                self._val_routing_acc.update(
+                    out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
+                )
 
             n = self._batch_sample_count(batch)
             if n == 0:
@@ -169,6 +192,11 @@ class Stage2Trainer(BaseTrainer):
             agg_metrics["val/routing_entropy"] = (
                 routing_stability.routing_entropy(gate_logits, normalize=True).item()
             )
+
+        if self._val_routing_acc.has_data:
+            acc, balanced = self._val_routing_acc.compute()
+            agg_metrics["val/routing_accuracy"] = acc
+            agg_metrics["val/routing_balanced_accuracy"] = balanced
 
         logger.info(
             "Epoch %d routing diagnostics: NMI=%.4f topk_balance=%.4f "

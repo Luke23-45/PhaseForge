@@ -64,10 +64,12 @@ class CheckpointCallback(Callback):
         epoch = trainer.current_epoch
 
         # Metric keys might be passed as e.g., 'loss_total' instead of 'val/loss_total'
-        # so we strip 'val/' if necessary.
+        # so we strip 'val/' if necessary. Some loops (stage 2) also return
+        # already-prefixed keys ('val/routing_entropy'); try both forms so a
+        # routing-diagnostics monitor never silently selects nothing.
         monitor_key = self.monitor.replace("val/", "")
 
-        current_score = val_metrics.get(monitor_key)
+        current_score = val_metrics.get(monitor_key, val_metrics.get(self.monitor))
 
         if current_score is not None:
             self._update_topk(trainer, epoch, float(current_score))

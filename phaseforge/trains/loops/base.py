@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -15,11 +16,95 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
-from phaseforge.models.base import BaseManipulationModel
+from phaseforge.models.base import BaseManipulationModel, ModelOutput
 
 logger = logging.getLogger(__name__)
 
 MetricValue = float | torch.Tensor
+
+
+def _flatten_valid(
+    logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor | None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Flatten logits/targets to ``(N, C)`` / ``(N,)``, dropping padding.
+
+    Handles single-step ``(B, C)`` / ``(B,)`` and multi-step
+    ``(B, T, C)`` / ``(B, T)`` shapes; without a mask nothing is dropped.
+    """
+    if mask is None:
+        return logits.reshape(-1, logits.size(-1)), targets.reshape(-1)
+    logits_flat = logits.reshape(-1, logits.size(-1))
+    targets_flat = targets.reshape(-1)
+    mask_flat = mask.bool().reshape(-1)
+    return logits_flat[mask_flat], targets_flat[mask_flat]
+
+
+class _PhaseAccumulator:
+    """Accumulates micro + macro/balanced phase accuracy on the device.
+
+    Keeps per-class correct/count tensors on the training device and
+    materializes scalars only in :meth:`compute` (at an epoch boundary), so
+    the training loop never synchronizes CUDA per batch.
+    """
+
+    def __init__(self, device: torch.device, num_phases: int | None = None) -> None:
+        self.device = device
+        self.num_phases = num_phases
+        self._correct: torch.Tensor | None = None
+        self._total: torch.Tensor | None = None
+        self._samples = 0
+
+    def reset(self) -> None:
+        self._correct = None
+        self._total = None
+        self._samples = 0
+
+    @property
+    def has_data(self) -> bool:
+        return self._samples > 0
+
+    def update(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> None:
+        logits, targets = _flatten_valid(logits, targets, mask)
+        if logits.numel() == 0:
+            return
+        targets = targets.long()
+        if self.num_phases is None:
+            self.num_phases = int(logits.size(-1))
+        n_classes = self.num_phases
+        if self._correct is None:
+            self._correct = torch.zeros(n_classes, device=logits.device)
+            self._total = torch.zeros(n_classes, device=logits.device)
+        correct_acc = self._correct
+        total_acc = self._total
+        assert correct_acc is not None and total_acc is not None
+        correct = (logits.argmax(dim=-1) == targets).float()
+        correct_acc.scatter_add_(0, targets, correct)
+        total_acc.scatter_add_(
+            0,
+            targets,
+            torch.ones(targets.numel(), device=logits.device),
+        )
+        self._samples += targets.numel()
+
+    def compute(self) -> tuple[float, float]:
+        """Return ``(micro_accuracy, balanced_accuracy)`` as Python floats."""
+        if not self.has_data:
+            raise ValueError("_PhaseAccumulator.compute() with no data")
+        correct_acc = self._correct
+        total_acc = self._total
+        assert correct_acc is not None and total_acc is not None
+        micro = float((correct_acc.sum() / total_acc.sum()).item())
+        recall = correct_acc / total_acc
+        valid = total_acc > 0
+        balanced = (
+            float(recall[valid].mean().item()) if valid.any() else float("nan")
+        )
+        return micro, balanced
 
 
 class BaseTrainer(ABC):
@@ -151,11 +236,19 @@ class BaseTrainer(ABC):
             if method:
                 method(trainer=self, **kwargs)
 
+    def _forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        """Run the model on a batch. Override to wrap/route the forward."""
+        return self.model(batch)
+
     @abstractmethod
     def _compute_loss(
-        self, batch: dict[str, torch.Tensor]
+        self, batch: dict[str, torch.Tensor], out: ModelOutput | None = None
     ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
         """Compute the loss for a single batch.
+
+        ``out`` may be supplied by a caller that already ran the forward
+        (validation reuses it to avoid a double pass); when ``None`` the
+        trainer runs :meth:`_forward` itself.
 
         Returns:
             total_loss: The scalar loss tensor to backpropagate.
@@ -183,6 +276,59 @@ class BaseTrainer(ABC):
         if isinstance(value, torch.Tensor):
             return float(value.detach().cpu().item())
         return float(value)
+
+    def _epoch_timing_dict(
+        self, *, epoch_wall_seconds: float, train_seconds: float, steps_in_epoch: int
+    ) -> dict[str, float | None]:
+        """Assemble the per-epoch timing record persisted in curve rows."""
+        return {
+            "epoch_wall_seconds": float(epoch_wall_seconds),
+            "train_steps_per_second": (
+                float(steps_in_epoch / train_seconds)
+                if train_seconds > 0.0
+                else float("nan")
+            ),
+            "steps_in_epoch": float(steps_in_epoch),
+            "peak_gpu_memory_mb": self._peak_gpu_memory_mb(),
+        }
+
+    def epoch_timing(self) -> dict[str, float | None]:
+        """Per-epoch timing for the most recently completed epoch."""
+        return dict(self._epoch_timing)
+
+    def parameter_counts(self) -> dict[str, int]:
+        """Trainable and total parameter counts **after** freeze logic."""
+        total = sum(p.numel() for p in self.model.parameters())
+        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        return {"trainable_params": int(trainable), "total_params": int(total)}
+
+    def _peak_gpu_memory_mb(self) -> float | None:
+        """Peak GPU memory this epoch, or ``None`` on CPU (Locked Decision 4)."""
+        if self.device.type != "cuda" or not torch.cuda.is_available():
+            return None
+        peak = torch.cuda.max_memory_allocated(self.device)
+        return float(peak / (1024.0 * 1024.0)) if peak > 0 else None
+
+    def _on_train_batch_processed(
+        self,
+        batch: dict[str, torch.Tensor],
+        out: ModelOutput,
+        metrics: dict[str, MetricValue],
+        n: int,
+    ) -> None:
+        """Trainer-level per-batch hook (default: no-op).
+
+        Subclasses accumulate train-phase scalars here so the epoch-level
+        values are exact without per-batch host/device syncs.
+        """
+
+    def epoch_train_metrics(self) -> dict[str, float]:
+        """Extra per-epoch **training** scalars beyond the loss metrics.
+
+        Stage 1 returns ``train/phase_acc`` + ``train/phase_balanced_acc``
+        when the model has a phase head; base returns ``{}``.
+        """
+        return {}
 
     def fit(self) -> None:
         """Execute the full training loop."""
@@ -218,13 +364,30 @@ class BaseTrainer(ABC):
             )
             epoch_iter = epoch_pbar
 
+        self._epoch_timing: dict[str, float | None] = {}
+
         try:
             for epoch in epoch_iter:
                 self.current_epoch = epoch
                 self._trigger_callbacks("on_epoch_start")
 
+                if self.device.type == "cuda" and torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats(self.device)
+
+                steps_before = self.global_step
+                epoch_t0 = time.perf_counter()
+                train_t0 = time.perf_counter()
                 self._train_epoch()
+                train_seconds = time.perf_counter() - train_t0
+                steps_in_epoch = self.global_step - steps_before
                 val_metrics = self._validate()
+                epoch_wall_seconds = time.perf_counter() - epoch_t0
+
+                self._epoch_timing = self._epoch_timing_dict(
+                    epoch_wall_seconds=epoch_wall_seconds,
+                    train_seconds=train_seconds,
+                    steps_in_epoch=steps_in_epoch,
+                )
 
                 self._trigger_callbacks("on_epoch_end", val_metrics=val_metrics)
 
@@ -252,6 +415,7 @@ class BaseTrainer(ABC):
 
     def _train_epoch(self) -> None:
         self.model.train()
+        self._reset_train_pool()
         
         use_pbar = self.train_cfg.get("rich_progressbar", False)
         
@@ -277,8 +441,12 @@ class BaseTrainer(ABC):
             
             self.optimizer.zero_grad(set_to_none=True)
             
-            # Subclasses implement the specific loss logic
-            loss, metrics = self._compute_loss(batch)
+            # Subclasses implement the specific loss logic. The forward pass
+            # is separated so the same outputs feed the loss, the per-batch
+            # persistence hook, and subclass train-phase accumulators.
+            out = self._forward(batch)
+            loss, metrics = self._compute_loss(batch, out=out)
+            n = self._batch_sample_count(batch)
             
             # Fail fast on non-finite losses: a NaN/Inf loss would otherwise
             # corrupt the optimizer state and the checkpoint silently.
@@ -321,6 +489,19 @@ class BaseTrainer(ABC):
 
             self.optimizer.step()
             self.global_step += 1
+
+            # Every batch feeds the persistence layer and subclass train-phase
+            # accumulators so the persisted epoch means/accuracies are exact;
+            # the metrics stay on-device to avoid per-batch syncs.
+            self._on_train_batch_processed(batch, out, metrics, n)
+            self._trigger_callbacks(
+                "on_train_batch",
+                batch=batch,
+                out=out,
+                metrics=metrics,
+                n=n,
+                step=self.global_step,
+            )
             
             should_log = self.global_step % self.log_every_n_steps == 0
             if should_log:
@@ -348,6 +529,23 @@ class BaseTrainer(ABC):
             return int(mask.sum().item())
         return batch["action"].shape[0]
 
+    def _reset_train_pool(self) -> None:
+        """Hook: subclass training accumulators reset per epoch."""
+
+    def _reset_validation_pool(self) -> None:
+        """Hook: subclass validation accumulators reset per epoch."""
+
+    def _collect_validation_pool(
+        self,
+        batch: dict[str, torch.Tensor],
+        out: ModelOutput,
+        metrics: dict[str, MetricValue],
+    ) -> None:
+        """Hook: accumulate validation scalars for one batch."""
+
+    def _finalize_validation_pool(self, agg_metrics: dict[str, float]) -> None:
+        """Hook: fold accumulated validation scalars into the epoch metrics."""
+
     @torch.no_grad()
     def _validate(self) -> dict[str, float]:
         if self.val_loader is None:
@@ -356,6 +554,7 @@ class BaseTrainer(ABC):
         self.model.eval()
         agg_metrics: dict[str, float] = {}
         total_samples = 0
+        self._reset_validation_pool()
         
         use_pbar = self.train_cfg.get("rich_progressbar", False)
         
@@ -378,8 +577,10 @@ class BaseTrainer(ABC):
         for batch in iterable:
             batch = self._move_batch(batch)
             
-            # We don't backprop, just compute losses for logging
-            _, metrics = self._compute_loss(batch)
+            # Reuse the forward outputs for the losses and the validation
+            # accumulators (single forward pass per batch).
+            out = self._forward(batch)
+            _, metrics = self._compute_loss(batch, out=out)
             
             if pbar is not None:
                 postfix = {
@@ -393,11 +594,13 @@ class BaseTrainer(ABC):
             n = self._batch_sample_count(batch)
             if n == 0:
                 continue
+            self._collect_validation_pool(batch, out, metrics)
             for k, v in metrics.items():
                 agg_metrics[k] = agg_metrics.get(k, 0.0) + self._metric_to_float(v) * n
             total_samples += n
             
         if total_samples > 0:
             agg_metrics = {k: v / total_samples for k, v in agg_metrics.items()}
+            self._finalize_validation_pool(agg_metrics)
             
         return agg_metrics

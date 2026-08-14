@@ -130,3 +130,16 @@ def test_write_run_meta_defaults_to_train_stage(tmp_path: Path) -> None:
     write_run_meta(tmp_path, _meta_cfg(2))
     meta = json.loads((tmp_path / "run_meta.json").read_text())
     assert meta["stage"] == 2
+
+
+def test_write_run_meta_records_data_config_hash(tmp_path: Path) -> None:
+    write_run_meta(tmp_path, _meta_cfg(1), kind="train", data_config_hash="deadbeef")
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["kind"] == "train"
+    assert meta["data_config_hash"] == "deadbeef"
+
+
+def test_write_run_meta_default_data_config_hash_is_null(tmp_path: Path) -> None:
+    write_run_meta(tmp_path, _meta_cfg(1))
+    meta = json.loads((tmp_path / "run_meta.json").read_text())
+    assert meta["data_config_hash"] is None

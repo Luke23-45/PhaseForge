@@ -17,6 +17,17 @@ class Callback:
     def on_epoch_start(self, trainer: BaseTrainer) -> None:
         pass
 
+    def on_train_batch(
+        self,
+        trainer: BaseTrainer,
+        batch: dict,
+        out: object,
+        metrics: dict,
+        n: int,
+        step: int,
+    ) -> None:
+        pass
+
     def on_train_step(self, trainer: BaseTrainer, step: int, metrics: dict[str, float]) -> None:
         pass
 
