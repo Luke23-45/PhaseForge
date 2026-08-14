@@ -102,7 +102,9 @@ def git_info() -> dict[str, str]:
     return _git_info()
 
 
-def write_run_meta(output_dir: Path, cfg: DictConfig, stage: int | None = None) -> None:
+def write_run_meta(
+    output_dir: Path, cfg: DictConfig, stage: int | None = None
+) -> dict[str, object]:
     """Write a lightweight JSON metadata file for quick run inspection.
 
     Args:
@@ -175,6 +177,16 @@ def get_eval_output_dir(cfg: DictConfig) -> Path:
         run_dir = f"{timestamp}_{run_id}"
 
     return (base / "eval" / model_name / run_dir).resolve()
+
+
+def output_base_dir(cfg: DictConfig) -> Path:
+    """Absolute base directory for run outputs.
+
+    ``{project_root}/{project.output_dir}`` — the directory that contains
+    the ``{model}/stage{N}/...`` run trees, ``eval/``, and the bookkeeping
+    dirs ``_ledger/`` and ``_results/``.
+    """
+    return (_project_root() / cfg.project.output_dir).resolve()
 
 
 @dataclass

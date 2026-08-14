@@ -1534,6 +1534,7 @@ name = "phaseforge"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "filelock" },
     { name = "h5py" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
@@ -1563,6 +1564,7 @@ rollout = [
 
 [package.metadata]
 requires-dist = [
+    { name = "filelock", specifier = ">=3.12" },
     { name = "h5py", specifier = ">=3.10" },
     { name = "huggingface-hub", specifier = ">=1.0" },
     { name = "hydra-core", specifier = ">=1.3" },

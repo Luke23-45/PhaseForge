@@ -10,19 +10,28 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import hydra
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from phaseforge.outputs_writer.ledger import LedgerRow, RunLedger
+from phaseforge.outputs_writer.metadata import collect_environment
+from phaseforge.outputs_writer.results import append_result_row
+from phaseforge.outputs_writer.schema import OPTIONAL_METRIC_FIELDS
+from phaseforge.outputs_writer.writer import RunWriter, parse_run_dir
 from phaseforge.trains.callbacks.checkpointing import CheckpointCallback
 from phaseforge.trains.callbacks.early_stopping import EarlyStoppingCallback
 from phaseforge.trains.callbacks.metric_tracker import MetricTrackerCallback
 from phaseforge.trains.callbacks.wandb_logger import WandbLoggerCallback
 from phaseforge.utils.config import (
+    config_hash,
     find_latest_checkpoint,
     get_eval_output_dir,
     get_output_dir,
+    git_info,
+    output_base_dir,
     resolve_checkpoint_source,
     write_run_meta,
 )
@@ -70,6 +79,111 @@ def _resolve_device(cfg: DictConfig) -> torch.device:
         )
         return torch.device("cpu")
     return torch.device(requested)
+
+
+def _init_run_bookkeeping(
+    cfg: DictConfig, output_dir: Path, *, kind: str
+) -> tuple[RunWriter, RunLedger, str]:
+    """Create the RunWriter + pending ledger row for a run directory.
+
+    Called at the very start of a run (before the data pipeline or model
+    construction) so a killed cloud session still leaves a trace in
+    ``outputs/_ledger/``.
+
+    Returns ``(run_writer, ledger, run_id)``. The environment fingerprint
+    is written immediately; the ledger row is ``pending`` until the
+    caller flips it via :func:`_mark_run_completed` /
+    :func:`_mark_run_failed`.
+    """
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    outputs_base = output_base_dir(cfg)
+    ledger = RunLedger(outputs_base / "_ledger")
+    run_writer = RunWriter(output_dir)
+    timestamp, tag, run_id = parse_run_dir(output_dir.name)
+    run_writer.write_environment(
+        collect_environment(
+            data_config_hash=CacheManager.compute_hash(cfg.data),
+            config_hash=config_hash(cfg),
+            extra={"kind": kind, "device": str(cfg.project.device), "tag": tag},
+        )
+    )
+    ledger.append(
+        LedgerRow(
+            run_id=run_id,
+            kind=kind,
+            timestamp=timestamp,
+            model=getattr(cfg.models, "name", cfg.models._target_.split(".")[-1]),
+            stage=cfg.train.get("stage", 1),
+            seed=cfg.project.get("seed"),
+            config_hash=config_hash(cfg),
+            git_sha=git_info()["commit"],
+            status="pending",
+            path=str(output_dir),
+            extra={"tag": tag} if tag else {},
+        )
+    )
+    return run_writer, ledger, run_id
+
+
+def _mark_run_completed(run_writer: RunWriter, ledger: RunLedger, run_id: str) -> None:
+    """Mark a run completed; never mask the original outcome."""
+    try:
+        run_writer.mark_completed()
+        ledger.update_status(run_id, "completed")
+    except Exception:
+        logger.exception(
+            "Failed to record the completed run (%s) in outputs bookkeeping.", run_id
+        )
+
+
+def _mark_run_failed(
+    run_writer: RunWriter,
+    ledger: RunLedger,
+    run_id: str,
+    exc: BaseException,
+) -> None:
+    """Mark a run failed (recording the exception); re-raise by the caller."""
+    try:
+        run_writer.mark_failed(exc)
+        ledger.update_status(run_id, "failed")
+    except Exception:
+        logger.exception(
+            "Failed to record the failed run (%s) in outputs bookkeeping.", run_id
+        )
+
+
+def _append_eval_result_row(
+    cfg: DictConfig,
+    model: torch.nn.Module,
+    results: dict[str, Any],
+    output_dir: Path,
+) -> None:
+    """Append one schema-validated row to the global results ledger.
+
+    The row's ``stage`` is the stage restored from the evaluated checkpoint
+    (not the default ``train`` group); ``ckpt_path`` records the exact
+    artifact evaluated so the paper tables can be traced to a checkpoint.
+    """
+    _timestamp, _tag, run_id = parse_run_dir(output_dir.name)
+    git = git_info()
+    row: dict[str, Any] = {
+        "run_id": run_id,
+        "timestamp": _timestamp,
+        "model": getattr(cfg.models, "name", cfg.models._target_.split(".")[-1]),
+        "stage": int(getattr(model, "stage", cfg.train.get("stage", 1))),
+        "seed": cfg.project.get("seed"),
+        "git_sha": git["commit"],
+        "config_hash": config_hash(cfg),
+        "device": str(cfg.project.get("device")),
+        "ckpt_path": str(cfg.train.get("stage1_ckpt_path") or ""),
+        "action_mse": float(results["eval/action_mse"]),
+    }
+    for metric in OPTIONAL_METRIC_FIELDS:
+        key = f"eval/{metric}"
+        if key in results:
+            row[metric] = float(results[key])
+    append_result_row(output_base_dir(cfg) / "_results", row)
 
 
 def _unused_stage1_head_prefixes(model: torch.nn.Module) -> tuple[str, ...]:
@@ -179,6 +293,19 @@ def train(cfg: DictConfig) -> None:
 
     logger.info(f"Output directory: {output_dir}")
 
+    # 2. Run lifecycle bookkeeping BEFORE any work so a killed cloud session
+    #    still leaves a pending ledger row + environment fingerprint.
+    run_writer, ledger, run_id = _init_run_bookkeeping(cfg, output_dir, kind="train")
+    try:
+        _train_body(cfg, output_dir)
+    except BaseException as exc:
+        _mark_run_failed(run_writer, ledger, run_id, exc)
+        raise
+    _mark_run_completed(run_writer, ledger, run_id)
+
+
+def _train_body(cfg: DictConfig, output_dir: Path) -> None:
+    """The training work itself, wrapped in run lifecycle bookkeeping."""
     # 2. Init W&B (lazy import: cli.py stays importable without wandb installed)
     try:
         import wandb
@@ -342,6 +469,12 @@ def evaluate(cfg: DictConfig) -> None:
     """Evaluate a trained model with the currently supported offline metrics."""
     _apply_log_level(cfg)
     set_seed(cfg.project.seed)
+    # Resolve the effective device and write it back BEFORE any run artifact
+    # is written, so resolved_config.yaml, environment.json, the ledger row,
+    # run_meta.json, and the results row all record the same device (mirrors
+    # the train() ordering).
+    effective_device = _resolve_device(cfg)
+    cfg.project.device = str(effective_device)
     output_dir = get_eval_output_dir(cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -350,6 +483,19 @@ def evaluate(cfg: DictConfig) -> None:
 
     logger.info(f"Evaluation output directory: {output_dir}")
 
+    # 2. Run lifecycle bookkeeping BEFORE the pipeline so a killed session
+    #    still leaves a pending ledger row + environment fingerprint.
+    run_writer, ledger, run_id = _init_run_bookkeeping(cfg, output_dir, kind="eval")
+    try:
+        _eval_body(cfg, output_dir)
+    except BaseException as exc:
+        _mark_run_failed(run_writer, ledger, run_id, exc)
+        raise
+    _mark_run_completed(run_writer, ledger, run_id)
+
+
+def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
+    """The evaluation work itself, wrapped in run lifecycle bookkeeping."""
     eval_mode = cfg.eval.get("mode", "offline")
     logger.info(f"Evaluation mode: {eval_mode}")
 
@@ -368,14 +514,14 @@ def evaluate(cfg: DictConfig) -> None:
     # 2. Model
     logger.info("Initializing Model...")
     model = build_eval_model(cfg)
-    # Metadata reflects the artifact actually evaluated: the stage restored
-    # from the checkpoint (an eval run's `train` group is stage1 by default).
+    # Device is resolved + written back by the evaluate() wrapper BEFORE any
+    # run artifact is written; metadata reflects the artifact actually
+    # evaluated: the stage restored from the checkpoint (an eval run's
+    # `train` group is stage1 by default).
     write_run_meta(output_dir, cfg, stage=getattr(model, "stage", None))
+    model.to(torch.device(cfg.project.device))
 
     # 3. Run the selected evaluator
-    device = _resolve_device(cfg)
-    model.to(device)
-
     if eval_mode == "rollout":
         raise ValueError(
             "Rollout evaluation is not implemented for the current protocol. "
@@ -406,3 +552,17 @@ def evaluate(cfg: DictConfig) -> None:
         else:
             logger.info(f"  {key}: {val}")
     logger.info(f"Results saved to {results_path}")
+
+    # 5. Append the schema-validated row to the global results ledger
+    #    (outputs/_results/results.jsonl) — the aggregation source. Best
+    #    effort: the evaluation already succeeded (eval_results.json is
+    #    saved), so a bookkeeping failure must NOT flip the run to failed.
+    try:
+        _append_eval_result_row(cfg, model, results, output_dir)
+    except Exception:
+        logger.exception(
+            "Failed to append the eval result row for run %s — results "
+            "remain in %s. Fix the ledger and re-run summarize_eval.py.",
+            output_dir.name,
+            results_path,
+        )

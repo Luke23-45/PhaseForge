@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 # Model config -> list of training stages to run (BC is Stage 1 only).
 #
@@ -79,6 +80,33 @@ def run_train(model_cfg: str, stage: int, seed: int) -> None:
     )
 
 
+def print_ledger_summary() -> None:
+    """Print per-model/stage run status counts from the outputs ledger."""
+    # Anchored to the default `project.output_dir` ("outputs"); keep in sync
+    # if the sweep runs with a different override. The existence check is
+    # deliberate: constructing a RunLedger would create the directory.
+    ledger_dir = Path("outputs") / "_ledger"
+    if not (ledger_dir / "runs.jsonl").exists():
+        print("[ledger] no runs recorded yet.")
+        return
+    from phaseforge.outputs_writer.ledger import RunLedger
+
+    rows = RunLedger(ledger_dir).read_all()
+    if not rows:
+        print("[ledger] ledger is empty.")
+        return
+    summary: dict[tuple[str, int | None], dict[str, int]] = {}
+    for row in rows:
+        counts = summary.setdefault((row.model, row.stage), {})
+        counts[row.status] = counts.get(row.status, 0) + 1
+    print("\n[ledger] per model/stage run status:")
+    for (model, stage), counts in sorted(summary.items()):
+        print(
+            f"  {model:<38} stage {stage}: "
+            + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        )
+
+
 def main() -> None:
     for seed_index, seed in enumerate(SEEDS, start=1):
         print(
@@ -98,6 +126,7 @@ def main() -> None:
         else:
             print(f"[multi-seed] COMPLETE seed={seed}", flush=True)
     print("[multi-seed] ALL SEEDS COMPLETE", flush=True)
+    print_ledger_summary()
 
 
 if __name__ == "__main__":

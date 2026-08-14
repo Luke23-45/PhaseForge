@@ -18,6 +18,7 @@ dependencies = [
     "matplotlib>=3.8",
     "scikit-learn>=1.4",
     "scipy>=1.11",  # mannwhitneyu for multi-seed head-to-head comparisons (D3)
+    "filelock>=3.12",  # cross-process lock for the append-only results ledger
     # Used only by the optional dataset archival/upload utility.
     "huggingface_hub>=1.0",
 ]
