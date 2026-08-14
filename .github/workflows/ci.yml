@@ -28,7 +28,7 @@ jobs:
       - name: ruff check (scripts/ is in the same gate as phaseforge/ and tests/)
         run: uv run ruff check phaseforge tests scripts
       - name: mypy (data/eval/train harness — professor item 7.2)
-        run: uv run mypy phaseforge/data/robomimic phaseforge/data/ingestion/cache_manager.py phaseforge/data/ingestion/state_machine.py phaseforge/evaluations/runners/offline_evaluator.py scripts/run_multi_seed_train.py
+        run: uv run mypy phaseforge/data/robomimic phaseforge/data/ingestion/cache_manager.py phaseforge/data/ingestion/state_machine.py phaseforge/evaluations/runners/offline_evaluator.py
 
   test:
     name: Tests (pytest, CPU-only)

@@ -23,8 +23,12 @@ def _make_run(
     name: str,
     seed: int | None,
     tag: str | None = None,
+    seed_dir: bool = False,
 ) -> None:
-    run_dir = base / model / f"stage{stage}" / name
+    run_dir = base / model / f"stage{stage}"
+    if seed_dir and seed is not None:
+        run_dir = run_dir / f"seed{seed}"
+    run_dir = run_dir / name
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     (ckpt_dir / "checkpoint_best.pt").write_text("dummy")
@@ -97,6 +101,39 @@ def test_scan_checkpoints_reports_tag(tmp_path: Path) -> None:
     assert len(infos) == 2
     assert infos[0].tag == "robot_only"
     assert infos[1].tag is None
+
+
+def test_scan_checkpoints_supports_seed_dir_layout(tmp_path: Path) -> None:
+    # Runs live under stage{N}/seed{S}/; both seeds are discovered and the
+    # global newest-first ordering across seeds is preserved.
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42, seed_dir=True)
+    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42, seed_dir=True)
+    _make_run(tmp_path, "bc", 1, "2026-08-03_10-00-00_aaaa0003", seed=43, seed_dir=True)
+
+    infos = scan_checkpoints("bc", stage=1, base=tmp_path)
+    assert [i.seed for i in infos] == [43, 42, 42]
+
+
+def test_scan_checkpoints_dual_layout(tmp_path: Path) -> None:
+    # Legacy run directly under stage{N}/ plus a newer seed-dir run: both
+    # must be discovered (backward compatibility with pre-seed-dir runs).
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
+    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42, seed_dir=True)
+
+    infos = scan_checkpoints("bc", stage=1, base=tmp_path)
+    assert len(infos) == 2
+    assert "aaaa0002" in str(infos[0].path)
+
+
+def test_find_latest_checkpoint_seed_dir_layout(tmp_path: Path) -> None:
+    # Seed-42 run in the seed-dir layout is newest; requesting seed 43 must
+    # pick the (older) seed-43 run, not the globally newest run.
+    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42, seed_dir=True)
+    _make_run(tmp_path, "bc", 1, "2026-08-03_10-00-00_aaaa0003", seed=43, seed_dir=True)
+
+    ckpt = find_latest_checkpoint("bc", stage=1, base=tmp_path, resolve_alias=False, seed=43)
+    assert ckpt is not None
+    assert "aaaa0003" in str(ckpt)
 
 
 def test_resolve_alias_looks_in_source_model_dir(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ import functools
 import hashlib
 import json
 import logging
+import re
 import secrets
 import subprocess
 from dataclasses import dataclass
@@ -15,6 +16,19 @@ from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
+
+_SEED_DIR_RE = re.compile(r"^seed\d+$")
+
+
+def is_seed_dir(path: str | Path) -> bool:
+    """Return whether ``path`` is a ``seed{N}`` directory level.
+
+    Multi-seed runs are organised as ``{model}/stage{N}/seed{S}/{run}/``; this
+    predicate lets scanners accept both that layout and the legacy
+    ``{model}/stage{N}/{run}/`` layout (runs written before seeds were a
+    directory dimension).
+    """
+    return bool(_SEED_DIR_RE.match(Path(path).name))
 
 
 def config_to_yaml(cfg: DictConfig) -> str:
@@ -144,8 +158,11 @@ def get_output_dir(cfg: DictConfig) -> Path:
 
     Returns::
 
-        {project_root}/outputs/{model_name}/stage{N}/{timestamp}[_{tag}]_{run_id}/
+        {project_root}/outputs/{model_name}/stage{N}/seed{S}/{timestamp}[_{tag}]_{run_id}/
 
+    The ``seed{S}`` level is inserted when ``cfg.project.seed`` is an
+    integer, so multi-seed sweeps are grouped and recognisable by path;
+    runs without a seed fall back to the legacy layout without the level.
     The model name is read from ``cfg.models.name`` (falling back to
     the last component of ``cfg.models._target_``). The stage is read
     from ``cfg.train.stage``. An optional ``cfg.project.tag`` is
@@ -157,13 +174,17 @@ def get_output_dir(cfg: DictConfig) -> Path:
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_id = generate_run_id()
     tag = cfg.project.get("tag", None)
+    seed = cfg.project.get("seed", None)
 
     if tag:
         run_dir = f"{timestamp}_{tag}_{run_id}"
     else:
         run_dir = f"{timestamp}_{run_id}"
 
-    return (base / model_name / f"stage{stage}" / run_dir).resolve()
+    path = base / model_name / f"stage{stage}"
+    if isinstance(seed, int):
+        path = path / f"seed{seed}"
+    return (path / run_dir).resolve()
 
 
 def get_eval_output_dir(cfg: DictConfig) -> Path:
@@ -171,22 +192,28 @@ def get_eval_output_dir(cfg: DictConfig) -> Path:
 
     Returns::
 
-        {project_root}/outputs/eval/{model_name}/{timestamp}[_{tag}]_{run_id}/
+        {project_root}/outputs/eval/{model_name}/seed{S}/{timestamp}[_{tag}]_{run_id}/
 
     Separated from training outputs to avoid collisions under ``stage1/``.
+    The ``seed{S}`` level is inserted when ``cfg.project.seed`` is an
+    integer (mirrors :func:`get_output_dir`).
     """
     base = _project_root() / cfg.project.output_dir
     model_name = getattr(cfg.models, "name", cfg.models._target_.split(".")[-1])
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_id = generate_run_id()
     tag = cfg.project.get("tag", None)
+    seed = cfg.project.get("seed", None)
 
     if tag:
         run_dir = f"{timestamp}_{tag}_{run_id}"
     else:
         run_dir = f"{timestamp}_{run_id}"
 
-    return (base / "eval" / model_name / run_dir).resolve()
+    path = base / "eval" / model_name
+    if isinstance(seed, int):
+        path = path / f"seed{seed}"
+    return (path / run_dir).resolve()
 
 
 def output_base_dir(cfg: DictConfig) -> Path:
@@ -277,11 +304,21 @@ def scan_checkpoints(
         return []
 
     checkpoints: list[CheckpointInfo] = []
-    runs = sorted(base_dir.iterdir(), reverse=True)
+    # Dual layout: current runs live under ``stage{N}/seed{S}/{run}`` while
+    # legacy runs (written before seeds were a directory dimension) sit
+    # directly under ``stage{N}/``.  Collect every run regardless of depth,
+    # then sort newest-first by run name so the contract is layout-agnostic.
+    runs: list[Path] = []
+    for child in base_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if is_seed_dir(child):
+            runs.extend(sub for sub in child.iterdir() if sub.is_dir())
+        else:
+            runs.append(child)
+    runs.sort(key=lambda p: p.name, reverse=True)
 
     for run in runs:
-        if not run.is_dir():
-            continue
 
         ckpt_path = run / "checkpoints" / "checkpoint_best.pt"
         if not ckpt_path.is_file():

@@ -55,7 +55,7 @@ outputs/
   _ledger/runs.jsonl + index.json        # every train AND eval run, one row   [implemented]
   _results/results.jsonl                 # global append-only EVAL rows (aggregation source) [implemented]
   _results/training_summary.jsonl        # global append-only TRAIN summary rows (PROPOSED)
-  {model}/stage{N}/{ts}_{runid}/         # unchanged layout:
+  {model}/stage{N}/seed{S}/{ts}_{runid}/   # multi-seed runs grouped by seed;
       resolved_config.yaml               #   [implemented]
       metadata/data_provenance.json      #   PROPOSED: copy of cache provenance
       metadata/artifact_manifest.json    #   PROPOSED: SHA-256 of paper inputs
@@ -65,8 +65,8 @@ outputs/
       metrics/training_curves.jsonl      #   PROPOSED: one validated row per epoch
       metrics/summary.json               #   PROPOSED: per-run final scalars at on_train_end
       checkpoints/                       #   [implemented]
-  eval/{model}/{ts}_{runid}/             # unchanged layout + [all implemented]:
-      eval_results.json                  #   per-run snapshot
+  eval/{model}/seed{S}/{ts}_{runid}/     # seed level mirrors training; legacy
+      eval_results.json                  #   runs (no seed{S}/ level) stay readable
       episodes.jsonl                     #   PROPOSED: one row per rollout episode
       metadata/environment.json, timings.json
   _summaries/                            # PRODUCED by summarize tooling:
@@ -162,7 +162,7 @@ single most important missing piece.
 
 ## 4. Data inventory by model and stage
 
-The matrix (from `scripts/run_multi_seed_train.py`) has eight cells and two
+The matrix (driven by `experiments/lift_pilot.json`) has eight cells and two
 training stages. The inventory is organized as: **core** (every run), **Stage 1
 extras**, **Stage 2 extras**, and **cell-specific diagnostics**.
 

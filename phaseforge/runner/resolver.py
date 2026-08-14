@@ -18,6 +18,12 @@ The tag disambiguates variants that share a model output tree, e.g. the
 ``data=robot_only`` BC cell recorded with ``project.tag=robot_only`` next to
 the default BC runs under ``outputs/bc/stage1/``.
 
+Since seeds became a directory dimension, runs live under
+``{model}/stage{N}/seed{S}/{run}/``; legacy runs directly under
+``{model}/stage{N}/`` are still resolved (both layouts are scanned). The
+``seed`` filter is applied from ``run_meta.json`` regardless of layout, so
+resolution stays seed-exact either way.
+
 Tag semantics here are *strict*: ``tag=None`` matches only runs whose
 ``run_meta.json`` records no tag (the default cell must never resolve to the
 ``robot_only`` variant, and vice versa). This is intentionally stricter than
@@ -28,6 +34,7 @@ means "no constraint".
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +42,18 @@ from phaseforge.runner.protocol import Method
 from phaseforge.runner.registry import RunnerState
 
 _REQUIRED_CKPT_REL = "checkpoints/checkpoint_best.pt"
+_SEED_DIR_RE = re.compile(r"^seed\d+$")
+
+
+def is_seed_dir(path: str | Path) -> bool:
+    """Return whether ``path`` is a ``seed{N}`` directory level.
+
+    Multi-seed runs are organised as ``{model}/stage{N}/seed{S}/{run}/``;
+    this predicate lets the resolver accept both that layout and the legacy
+    ``{model}/stage{N}/{run}/`` layout (runs written before seeds were a
+    directory dimension).
+    """
+    return bool(_SEED_DIR_RE.match(Path(path).name))
 
 
 class CheckpointError(RuntimeError):
@@ -71,10 +90,24 @@ def _is_completed(run_dir: Path) -> bool:
     return run_dir.with_name(run_dir.name + ".completed").is_file()
 
 
-def _iter_runs_newest_first(stage_dir: Path):
-    for run in sorted(stage_dir.iterdir(), key=lambda p: p.name, reverse=True):
-        if run.is_dir():
-            yield run
+def _iter_runs_newest_first(search_dir: Path):
+    """Collect candidate run dirs across the dual output layout, newest-first.
+
+    Current runs live under ``stage{N}/seed{S}/{run}/``; legacy runs (written
+    before seeds were a directory dimension) sit directly under ``stage{N}/``.
+    Both are collected, then sorted globally by run name so the newest-first
+    contract holds regardless of layout.
+    """
+    runs: list[Path] = []
+    for child in search_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if is_seed_dir(child):
+            runs.extend(sub for sub in child.iterdir() if sub.is_dir())
+        else:
+            runs.append(child)
+    runs.sort(key=lambda p: p.name, reverse=True)
+    return iter(runs)
 
 
 def _find_run(
@@ -116,11 +149,12 @@ def resolve_run_dir(
     """Return the newest *completed* run directory for ``model/stage`` matching
     seed+tag.
 
-    Iterates ``<outputs_base>/<model_name>/stage<stage>/`` newest-first and
-    returns the first directory whose ``<run_dir>.completed`` marker exists
-    and whose ``run_meta.json`` records the expected seed and tag. ``tag=None``
-    matches only untagged runs. Requiring the completion marker means a run
-    that crashed after saving early checkpoints is never selected. Newest-first
+    Searches ``<outputs_base>/<model_name>/stage<stage>/`` (including
+    ``seed{S}/`` sub-directories when present) newest-first and returns the
+    first directory whose ``<run_dir>.completed`` marker exists and whose
+    ``run_meta.json`` records the expected seed and tag. ``tag=None`` matches
+    only untagged runs. Requiring the completion marker means a run that
+    crashed after saving early checkpoints is never selected. Newest-first
     matters because a sweep can legitimately produce several runs for one
     ``(model, stage, seed)`` cell (e.g. a re-run after a crash); under the
     runner's "latest successful wins" policy the newest completed run is the

@@ -9,9 +9,10 @@
 The runner executes the frozen pilot matrix from a single JSON protocol
 manifest: for every selected method and seed it runs each training stage in
 order and then the offline evaluation of that method's final-stage checkpoint,
-honouring the protocol's Stage 1 source dependencies. It supersedes
-`scripts/run_multi_seed_train.py` (which did not cover the `bc_robot_only`
-cell and did not run evaluations).
+honouring the protocol's Stage 1 source dependencies. It is the only entry
+point for training: the legacy `scripts/run_multi_seed_train.py` was removed
+because it did not cover the `bc_robot_only` cell and did not run
+evaluations.
 
 ---
 
@@ -117,12 +118,12 @@ cells. Logs stream to the console (inherited stdio); `--verbose` forwards
 ```json
 {"runs": {
   "phaseforge": {"42": {"stage1": {"status": "completed",
-                                    "run_dir": "phaseforge/stage1/<ts>_<id>",
-                                    "ckpt": "phaseforge/stage1/<ts>_<id>/checkpoints/checkpoint_best.pt"},
+                                    "run_dir": "phaseforge/stage1/seed42/<ts>_<id>",
+                                    "ckpt": "phaseforge/stage1/seed42/<ts>_<id>/checkpoints/checkpoint_best.pt"},
                          "stage2": {...},
                          "eval":   {"status": "completed",
-                                    "ckpt": "phaseforge/stage2/<ts>_<id>/checkpoints/checkpoint_best.pt",
-                                    "run_dir": "eval/phaseforge/<ts>_<id>"}}}}
+                                    "ckpt": "phaseforge/stage2/seed42/<ts>_<id>/checkpoints/checkpoint_best.pt",
+                                    "run_dir": "eval/phaseforge/seed42/<ts>_<id>"}}}}
 ```
 
 Writes are atomic (temp file + `os.replace`). A corrupt file raises
@@ -150,6 +151,13 @@ Two sources of truth, in order:
 1. the registry — the exact run dir / checkpoint a stage produced;
 2. a strict seed+tag filesystem scan (`resolve_run_dir`), which covers runs
    launched manually, outside the runner.
+
+Runs are organised under `{model}/stage{N}/seed{S}/{ts}_...` (eval under
+`eval/{model}/seed{S}/`), so every seed is recognisable by path. Legacy runs
+written before seeds became a directory dimension sit directly under
+`stage{N}/` and remain resolvable — the scan descends into `seed{S}`
+sub-directories when present, and filters by `run_meta.json` seed regardless
+of layout.
 
 The scan's tag semantics are **strict**: `tag=None` matches only runs whose
 `run_meta.json` records no tag; `tag="robot_only"` matches only that tag. This

@@ -381,9 +381,12 @@ def test_registry_corrupt_state_is_loud(tmp_path: Path) -> None:
 
 def _make_run(
     base: Path, model: str, stage: int, name: str, seed: int, tag=None,
-    completed: bool = True,
+    completed: bool = True, seed_dir: bool = True,
 ) -> None:
-    run_dir = base / model / f"stage{stage}" / name
+    run_dir = base / model / f"stage{stage}"
+    if seed_dir:
+        run_dir = run_dir / f"seed{seed}"
+    run_dir = run_dir / name
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     (ckpt_dir / "checkpoint_best.pt").write_text("dummy")
@@ -433,6 +436,20 @@ def test_checkpoint_exists_false_for_crashed_run(tmp_path: Path) -> None:
 def test_resolve_run_dir_missing_stage(tmp_path: Path) -> None:
     with pytest.raises(CheckpointError, match="stage1"):
         resolve_run_dir(tmp_path, "phaseforge", 1, seed=42)
+
+
+def test_resolve_run_dir_legacy_layout(tmp_path: Path) -> None:
+    # Runs written before seeds became a directory dimension sit directly
+    # under stage{N}/; the resolver must still find and seed-filter them.
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42,
+              seed_dir=False)
+    _make_run(tmp_path, "bc", 1, "2026-08-03_10-00-00_aaaa0003", seed=43,
+              seed_dir=False)
+
+    assert resolve_run_dir(tmp_path, "bc", 1, seed=42).name == "2026-08-01_10-00-00_aaaa0001"
+    assert resolve_run_dir(tmp_path, "bc", 1, seed=43).name == "2026-08-03_10-00-00_aaaa0003"
+    with pytest.raises(CheckpointError, match="seed 44"):
+        resolve_run_dir(tmp_path, "bc", 1, seed=44)
 
 
 def test_stage_checkpoint_relative_requires_best_ckpt(tmp_path: Path) -> None:
