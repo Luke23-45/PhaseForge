@@ -1,6 +1,6 @@
 # PhaseForge — Final State-Based Evaluation and Research Plan
 
-**Status:** final protocol; current code is a Lift low-dimensional ingestion pilot, not a complete evaluation implementation
+**Status:** **SUPERSEDED** — [state_only_rollout_implementation_plan.md](state_only_rollout_implementation_plan.md) is now the authoritative protocol for the current single-step state-only Lift paper. The five-task matrix and the required BC-RNN baseline described below are optional extensions, not gates. Retained for reference.
 
 **Research definition:** [research_definition.md](research_definition.md)
 

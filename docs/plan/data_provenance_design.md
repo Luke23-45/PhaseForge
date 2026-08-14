@@ -361,9 +361,10 @@ The minimum validated fields are:
 ```
 
 `success` is present only for a valid completed episode. Infrastructure
-failures, policy exceptions, invalid actions, and simulator errors are not
-converted to failed task episodes; they are counted separately and invalidate
-the run until rerun. `failure_category` is required only for valid failures
+failures and simulator errors are excluded from the success denominator and
+counted separately; policy-generated exceptions and invalid actions are
+reported as policy failures under a strict metric (labeled separately), never
+silently removed. `failure_category` is required only for valid failures
 and must come from a frozen taxonomy. The record must preserve the exact reset
 seed and checkpoint hash so paired comparisons can be reconstructed.
 
