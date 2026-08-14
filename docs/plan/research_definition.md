@@ -86,7 +86,13 @@ If this comparison is not run, PhaseForge cannot separate the value of phase-sup
 
 PhaseForge will improve the predeclared aggregate held-out simulator success over the matched Warm-Start MoE and Scratch MoE baselines, with the direction replicated on a predeclared majority of tasks, without reducing the structured-state BC floor.
 
-This is the main performance hypothesis. The aggregate, task-level aggregation rule, paired test initial states, seed handling, and interval procedure must be frozen before the final test episodes. Offline action loss, phase accuracy, and routing metrics cannot substitute for paired rollout success.
+This is the main performance hypothesis. The frozen protocol uses the
+unweighted macro-average over the five tasks, 50 paired simulator episodes per
+task for each training seed, evaluation reset seeds 10000–10049, and training
+seeds 42, 43, and 44. Per-episode uncertainty is summarized with 95% Wilson
+intervals; training uncertainty is reported across the three paired seeds.
+Offline action loss, phase accuracy,
+and routing metrics cannot substitute for paired rollout success.
 
 ### H4 — Phase observability
 

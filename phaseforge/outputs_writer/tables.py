@@ -3,7 +3,7 @@
 Paper-ready CSVs produced from :file:`outputs/_results/results.jsonl`:
 
 * ``_summaries/aggregates.csv``      — per (model, stage) mean/std/n over seeds
-* ``_summaries/bootstrap_ci.csv``    — bootstrap 95% CIs per (model, stage, metric)
+* ``_summaries/bootstrap_ci.csv``    — exploratory bootstrap summaries per (model, stage, metric)
 * ``_summaries/paired_wilcoxon.csv`` — paired Wilcoxon vs the baseline method
 
 Adaptations from the csd reference:
@@ -228,7 +228,13 @@ def bootstrap_ci_per_row(
     *,
     metric: str,
 ) -> list[dict[str, object]]:
-    """Bootstrap CI per (model, stage) for a single metric."""
+    """Exploratory bootstrap CI per (model, stage) for a single metric.
+
+    The current rows are seed-level summaries. With the protocol minimum of
+    three seeds, these intervals are not the primary inferential result; the
+    paper must report seed-level variation and episode-level Wilson intervals
+    from rollout records separately.
+    """
     grouped: dict[tuple[str, int], list[ResultRow]] = {}
     for row in rows:
         grouped.setdefault((row.model, row.stage), []).append(row)
@@ -322,7 +328,12 @@ def write_aggregates_csv(
 def write_bootstrap_csv(
     rows: Sequence[ResultRow], path: Path
 ) -> Path:
-    """Write ``_summaries/bootstrap_ci.csv`` (one row per model+stage+metric)."""
+    """Write exploratory seed-row bootstrap summaries.
+
+    This file is useful for diagnostics, but is not the final paper CI under
+    the three-seed protocol. Rollout episodes require their own Wilson or
+    paired episode-level analysis.
+    """
     out: list[dict[str, object]] = []
     for metric in METRIC_COLUMNS:
         out.extend(bootstrap_ci_per_row(rows, metric=metric))

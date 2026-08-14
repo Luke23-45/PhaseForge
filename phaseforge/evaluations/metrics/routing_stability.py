@@ -18,8 +18,9 @@ from torch import Tensor
 class RoutingStabilityResult(NamedTuple):
     """Result of a per-trajectory routing-stability analysis.
 
-    ``step`` is the first step at which the requested stability run is
-    complete, or the trajectory length when the run is not observed.  The
+    ``step`` is the number of observed timesteps at which the requested
+    stability run is complete, or the trajectory length when the run is not
+    observed. The
     explicit ``stabilized`` flag is essential: a trajectory ending at its
     horizon is censored, not evidence that stability was reached at the last
     step.
@@ -146,8 +147,8 @@ def time_to_stable_routing(
         consecutive_windows: Number of consecutive stable windows required.
 
     Returns:
-        Int tensor: step index (end of the window at which stability was
-        reached). Returns ``T`` (the sequence length) if routing never
+        Int tensor: one-based observed-step count at the end of the window
+        at which stability was reached. Returns ``T`` (the sequence length) if routing never
         becomes stable within the available steps. Use
         :func:`time_to_stable_routing_result` when the caller must distinguish
         a true stabilization from right-censoring at the trajectory horizon.
@@ -208,7 +209,15 @@ def time_to_stable_routing_result(
         hits = (counts == consecutive_windows).nonzero()
         if hits.numel() > 0:
             return RoutingStabilityResult(
-                step=int(hits[0].item()) + consecutive_windows,
+                # Window index j covers [j, j + window_size - 1]. The run
+                # beginning at hit completes after the final window's last
+                # timestep, reported as a one-based observed-step count.
+                step=(
+                    int(hits[0].item())
+                    + window_size
+                    + consecutive_windows
+                    - 1
+                ),
                 stabilized=True,
             )
 

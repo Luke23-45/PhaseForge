@@ -314,7 +314,7 @@ class OfflineEvaluator:
                 "from collator trajectory_id, never across episode boundaries."
             ),
             "eval/time_to_stable_routing": (
-                "Mean step index among trajectories that reach the requested "
+                "Mean one-based observed-step count among trajectories that reach the requested "
                 "stability run; trajectories that do not reach it are right-"
                 "censored and summarized separately by routing_stability_fraction."
             ),

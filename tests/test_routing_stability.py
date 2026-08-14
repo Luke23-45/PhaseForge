@@ -122,17 +122,27 @@ def test_time_to_stable_result_marks_observed_convergence() -> None:
     assert result.step < 1000
 
 
+def test_time_to_stable_result_includes_window_length() -> None:
+    result = time_to_stable_routing_result(
+        torch.zeros(6, 4), window_size=3, consecutive_windows=2
+    )
+    # Windows [0:3] and [1:4] complete after four observed timesteps.
+    assert result.step == 4
+    assert result.stabilized is True
+
+
 def _reference_time_to_stable(
     gate_logits, window_size: int, variance_threshold: float, consecutive_windows: int
 ) -> int:
     """The original O(N) Python-loop implementation — the semantic contract
-    the vectorized version must match exactly."""
+    the vectorized version must match exactly. The result is a one-based
+    observed-step count, so the window length is included."""
     probs = torch.softmax(gate_logits, dim=-1)
     log_probs = torch.log(probs.clamp(min=1e-8))
     entropy = -(probs * log_probs).sum(dim=-1)
     T = entropy.numel()
 
-    if T < window_size * consecutive_windows:
+    if T < window_size + consecutive_windows - 1:
         return T
 
     windows = entropy.unfold(0, window_size, 1)
@@ -143,7 +153,7 @@ def _reference_time_to_stable(
         if variances[i] < variance_threshold:
             consecutive += 1
             if consecutive >= consecutive_windows:
-                return i + 1
+                return i + window_size
         else:
             consecutive = 0
     return T

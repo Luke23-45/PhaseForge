@@ -40,7 +40,9 @@ The accepted low-dimensional manipulation setting uses task-relevant structured 
 
 The relevant published precedents are:
 
-- Diffusion Policy provides separate state-based and vision-based experiments, with reproducible low-dimensional experiment logs and three-seed evaluation. [Official project](https://diffusion-policy.cs.columbia.edu/)
+- Diffusion Policy provides a separate state-based benchmark track, with
+  low-dimensional experiment artifacts and the same robomimic task family.
+  [Official project](https://diffusion-policy.cs.columbia.edu/)
 - robomimic studies low-dimensional observations, image observations, BC, BC-RNN, and hierarchical BC on simulated and real manipulation tasks. It reports that history-dependent policies are highly effective and that validation loss is not a reliable substitute for rollout evaluation. [Study](https://robomimic.github.io/study/)
 - robomimic extracts low-dimensional observations from simulator states and evaluates task completion with simulator success termination. [Dataset protocol](https://robomimic.github.io/docs/v0.4/datasets/robosuite.html)
 - Meta-World documents structured state containing robot, object, and goal information rather than bare robot proprioception. [State-space specification](https://metaworld.farama.org/benchmark/state_space/)
@@ -67,6 +69,35 @@ The primary results must use the benchmark’s low-dimensional observation extra
 This plan intentionally uses one benchmark family. No second benchmark is part of the core protocol.
 
 Any future transfer experiment must be written as a separate protocol with its own observation schema, task split, baselines, and claims. It must not be added to the primary results table merely to increase the number of benchmarks.
+
+### 2.4 Evaluation evidence from published state-based studies
+
+The evaluation design follows the parts of the published low-dimensional
+literature that are relevant to this project:
+
+- [robomimic's study protocol](https://robomimic.github.io/study/) defines
+  task reset distributions and evaluates policies in the
+  simulator rather than treating validation loss as the task result;
+  the authors explicitly report that the best validation checkpoint can be
+  substantially worse in rollout performance;
+- robomimic identifies history-dependent BC-RNN as a strong baseline, so a
+  single-step BC model cannot be the only behavioral control;
+- [Diffusion Policy's official project page](https://diffusion-policy.cs.columbia.edu/)
+  reports the same five robomimic simulation tasks in its
+  state-based benchmark track, which supports using Lift, Can, Square, Tool
+  Hang, and Transport as a recognizable state-policy comparison set;
+- published simulation evaluations commonly repeat training with at least
+  three seeds and report rollout success over fixed evaluation trials; for
+  example, the simulation protocol in the [PerAct supplementary
+  evaluation](https://proceedings.mlr.press/v205/nasiriany23a/nasiriany23a-supp.pdf)
+  evaluates three seeds and repeated rollouts. This protocol therefore treats
+  training seeds and paired rollout initial states as separate sources of
+  variation.
+
+These precedents do not make PhaseForge a reproduction of Diffusion Policy or
+robomimic. They define the evaluation standard: closed-loop task success is the
+primary outcome, validation action loss is diagnostic, and all methods must be
+compared under identical reset conditions.
 
 ---
 
@@ -260,7 +291,9 @@ Before any large run, commit a protocol file containing:
 - phase-label definition;
 - train/validation/test split;
 - seeds;
+- evaluation reset-seed bank and episode count;
 - primary metrics;
+- confidence-interval and aggregation rules;
 - checkpoint-selection rule.
 
 No result is included in the final comparison if it was produced under a different schema or split.
@@ -316,11 +349,24 @@ Use the frozen final checkpoints selected only through the validation protocol. 
 
 ### 7.1 Episodes
 
-- 10 episodes per task: smoke test only.
-- 50 episodes per task: final reported evaluation.
-- 3 independent training seeds: minimum final matrix.
+- 10 episodes per task: smoke test only; use this only to catch adapter,
+  checkpoint, action-scale, or success-predicate failures.
+- 50 episodes per task for each training seed: final reported evaluation.
+- 3 independent training seeds: minimum final matrix, fixed as 42, 43, 44.
+- Use one frozen evaluation initial-state bank per task, containing 50
+  deterministic reset seeds, fixed as 10000 through 10049. Every model and
+  every training seed receives the same bank in the same order. The bank must
+  be disjoint from all training, validation, checkpoint-selection, and
+  phase-label calibration decisions.
+- Evaluate in inference mode with deterministic action selection. If a model
+  is intrinsically stochastic, its evaluation RNG and sampling rule must be
+  fixed before the final run and recorded.
+- The task horizon, reset distribution, and success predicate come from the
+  pinned robosuite/robomimic environment. Do not replace task success with an
+  action-error threshold or a hand-written distance cutoff.
 
-The 10-episode run must never be presented as the final result when a 50-episode result is required for the protocol.
+The 10-episode run must never be presented as the final result when a
+50-episode result is required for the protocol.
 
 ### 7.2 Primary reporting
 
@@ -330,8 +376,13 @@ Report:
 - success rate per task;
 - mean task success across tasks;
 - aggregate episode success, clearly distinguished from mean task success;
-- mean ± standard deviation across training seeds;
-- paired confidence intervals or bootstrap intervals over task-level results;
+- per-seed success rate and mean ± sample standard deviation across the
+  three training seeds;
+- a 95% Wilson interval for each per-seed task success rate over its 50
+  episodes;
+- the paired PhaseForge-minus-baseline difference for each task and seed;
+- a 95% interval for the cross-seed paired difference, with the three seeds
+  treated as the independent training replicates;
 - number of valid seeds and failed/incomplete runs.
 
 Every result table must identify:
@@ -346,13 +397,33 @@ Every result table must identify:
 
 Missing or failed runs are incomplete, never silently converted to zero success.
 
-### 7.3 Checkpoint selection
+Do not use a bootstrap over only three seed-level observations as the primary
+confidence interval. It is too small to provide a reliable nonparametric
+sampling distribution. Episode-level intervals describe reset uncertainty;
+seed-level variation describes training uncertainty. Report both separately.
+
+### 7.3 Statistical summary and aggregation
+
+The primary cross-task number is the unweighted macro-average of the five
+per-task success rates, giving each task equal weight. Also report the pooled
+episode rate as a descriptive number, because it weights tasks by the number
+of valid episodes. The macro-average is the primary summary; the pooled rate
+must not replace it.
+
+For pairwise comparisons, use the same task and evaluation seed bank for both
+methods and report paired differences. With only three training seeds, treat
+formal p-values as secondary and do not call a result significant solely
+because of a single favorable seed. A strong PhaseForge claim requires a
+positive paired effect on the macro-average, replication across seeds, and no
+unexplained collapse on an individual task.
+
+### 7.4 Checkpoint selection
 
 Checkpoint selection must be fixed before the final test evaluation. It must use validation data or a predeclared training rule, never the final test success rate.
 
 Because offline loss and rollout success can disagree, final checkpoint selection must be justified independently of the held-out test episodes.
 
-### 7.4 Videos and failure analysis
+### 7.5 Videos and failure analysis
 
 Record representative rollouts for:
 
@@ -376,25 +447,36 @@ At least one failure taxonomy must be reported. Success rate alone does not expl
 ### Secondary behavioral outcomes
 
 - per-task success;
-- success by task stage or phase;
-- action smoothness;
-- boundary-action discontinuity;
-- time to completion;
-- failure-stage distribution.
+- success by task stage only when the pinned simulator exposes a validated
+  stage predicate;
+- episode length/time-to-termination, with timeout reported separately from
+  task failure;
+- boundary-action discontinuity on held-out demonstration trajectories;
+- failure-stage distribution from a predeclared taxonomy;
+- optional simulator-native progress signals, clearly labeled as secondary
+  and never substituted for binary task success.
 
 ### Mechanism diagnostics
 
 - phase-classification accuracy;
 - phase–expert normalized mutual information;
-- expert assignment purity by phase;
-- routing entropy;
-- expert load balance;
-- collapsed-expert count;
-- routing switch rate;
-- time to stable routing;
-- per-phase action error.
+- the phase–top-1-expert contingency matrix and per-phase assignment purity;
+- phase coverage and duration statistics for the offline auxiliary labels;
+- pre-top-k routing entropy;
+- top-1 and top-k expert load balance and collapse rates;
+- routing switch rate, computed within trajectories only;
+- time to stable routing plus the fraction of trajectories that stabilize;
+- per-phase action error on held-out trajectories, when phase labels are
+  available for that diagnostic.
 
 Offline action loss is diagnostic only. It is not the main performance metric.
+
+Mechanism metrics are evidence about the proposed training mechanism, not
+independent performance objectives. In particular, high NMI or high balance
+without improved rollout success must be reported as a mechanistic result,
+not as task improvement. Ground-truth/oracle routing is a metric sanity check;
+it is not a deployable upper bound unless the paper explicitly defines it as
+such.
 
 NMI is interpreted differently by model:
 
@@ -456,7 +538,13 @@ Before the final matrix, the codebase must implement and test:
 11. paired fixed-initial-state rollout evaluation;
 12. per-task success and failure-stage reporting;
 13. checkpoint-selection safeguards;
-14. complete provenance in every result file.
+14. per-episode rollout records containing task, evaluation seed, reset seed,
+    checkpoint, success, termination reason, horizon/timeout status, and
+    failure category;
+15. rollout-time routing traces so mechanism diagnostics are computed on the
+    same held-out episodes as behavioral evaluation;
+16. Wilson episode intervals and paired cross-seed summary statistics;
+17. complete provenance in every result file.
 
 The current repository does not yet satisfy this list: it has the Lift HDF5
 ingestion pilot and offline single-step data path, but not the history-aware

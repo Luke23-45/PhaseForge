@@ -25,7 +25,8 @@ mechanism:
     window_size: 10
     # Temporal metric — computed per trajectory (E9). A window_size that
     # exceeds the trajectory length falls back to the full-trajectory
-    # variance (documented behavior).
+    # variance (documented behavior). This value is frozen for the final
+    # protocol; do not tune it after inspecting test results.
 
   time_to_stable_routing:
     enabled: true
@@ -36,6 +37,7 @@ mechanism:
     # below the shortest Lift pilot trajectory so the metric is observable;
     # trajectories that never stabilize are reported via
     # eval/routing_stability_fraction, not as a fake time at the horizon.
+    # window_size/consecutive_windows are frozen before the final sweep.
 
   expert_utilization:
     enabled: true
