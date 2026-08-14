@@ -1,5 +1,14 @@
 """Run full multi-seed training for all PhaseForge model variants.
 
+DEPRECATED — superseded by ``phaseforge-sweep`` (see
+``docs/plan/experiment_runner.md``). This helper does NOT cover the
+``bc_robot_only`` cell (``data=robot_only``) and does NOT run the offline
+evaluation steps; it is kept only for reference. Use the runner instead:
+
+    phaseforge-sweep --list          # show the full method matrix
+    phaseforge-sweep --stage 1       # train stage 1 for all methods/seeds
+    phaseforge-sweep --with-dependencies   # full sweep incl. eval
+
 Trains every model for every seed so that downstream evaluation can report
 mean +/- std over training seeds. Stage 2 runs auto-detect the SAME seed's
 Stage 1 checkpoint via seed-matched lookup

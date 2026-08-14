@@ -45,6 +45,7 @@ rollout = [
 [project.scripts]
 phaseforge-train = "phaseforge.cli:train"
 phaseforge-eval  = "phaseforge.cli:evaluate"
+phaseforge-sweep = "phaseforge.runner.cli:main"
 
 [build-system]
 requires = ["hatchling"]

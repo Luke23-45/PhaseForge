@@ -16,13 +16,22 @@ from phaseforge.utils.config import (
 )
 
 
-def _make_run(base: Path, model: str, stage: int, name: str, seed: int | None) -> None:
+def _make_run(
+    base: Path,
+    model: str,
+    stage: int,
+    name: str,
+    seed: int | None,
+    tag: str | None = None,
+) -> None:
     run_dir = base / model / f"stage{stage}" / name
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     (ckpt_dir / "checkpoint_best.pt").write_text("dummy")
     meta = {"seed": seed}
-    if seed is not None:
+    if tag is not None:
+        meta["tag"] = tag
+    if seed is not None or tag is not None:
         (run_dir / "run_meta.json").write_text(json.dumps(meta))
 
 
@@ -78,6 +87,16 @@ def test_scan_checkpoints_reports_seed(tmp_path: Path) -> None:
     infos = scan_checkpoints("bc", stage=1, base=tmp_path)
     assert len(infos) == 1
     assert infos[0].seed == 42
+
+
+def test_scan_checkpoints_reports_tag(tmp_path: Path) -> None:
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
+    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42, tag="robot_only")
+
+    infos = scan_checkpoints("bc", stage=1, base=tmp_path)
+    assert len(infos) == 2
+    assert infos[0].tag == "robot_only"
+    assert infos[1].tag is None
 
 
 def test_resolve_alias_looks_in_source_model_dir(tmp_path: Path) -> None:

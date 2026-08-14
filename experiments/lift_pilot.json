@@ -1,0 +1,102 @@
+{
+  "name": "lift_pilot",
+  "task": "Lift",
+  "description": "Frozen single-task Lift pilot matrix (notebook methods 1-9). One row = a complete run: every training stage in order, then the offline evaluation of the final-stage checkpoint. Seed 42 first; expand to 42, 43, 44 after the pilot gates pass.",
+  "seeds": [42, 43, 44],
+  "defaults": [
+    "train.early_stopping.enabled=false"
+  ],
+  "methods": [
+    {
+      "index": 1,
+      "name": "phaseforge",
+      "role": "proposed method",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true
+    },
+    {
+      "index": 2,
+      "name": "bc",
+      "role": "structured-state floor",
+      "model": "baselines/bc",
+      "data": "common",
+      "stages": [1],
+      "stage2_source": null,
+      "evaluate": true
+    },
+    {
+      "index": 3,
+      "name": "bc_robot_only",
+      "role": "robot-only negative control",
+      "model": "baselines/bc",
+      "data": "robot_only",
+      "tag": "robot_only",
+      "stages": [1],
+      "stage2_source": null,
+      "evaluate": true
+    },
+    {
+      "index": 4,
+      "name": "scratch_moe",
+      "role": "scratch MoE (random init, no Stage 1)",
+      "model": "baselines/scratch_moe",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": null,
+      "evaluate": true
+    },
+    {
+      "index": 5,
+      "name": "warmstart_moe",
+      "role": "warm-start MoE (plain encoder x random router)",
+      "model": "baselines/warmstart_moe",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "bc",
+      "evaluate": true
+    },
+    {
+      "index": 6,
+      "name": "phase_pretrain_random_router",
+      "role": "phase-representation control",
+      "model": "baselines/phase_pretrain_random_router",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true
+    },
+    {
+      "index": 7,
+      "name": "plain_encoder_phase_bootstrap",
+      "role": "centroid-init control",
+      "model": "baselines/plain_encoder_phase_bootstrap",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "bc",
+      "evaluate": true
+    },
+    {
+      "index": 8,
+      "name": "teacher_forced",
+      "role": "privileged-training diagnostic (E8)",
+      "model": "baselines/teacher_forced",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true
+    },
+    {
+      "index": 9,
+      "name": "oracle_moe",
+      "role": "ground-truth routing diagnostic (non-deployable)",
+      "model": "baselines/oracle_moe",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": null,
+      "evaluate": true
+    }
+  ]
+}
