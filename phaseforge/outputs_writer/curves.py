@@ -209,6 +209,8 @@ def validate_summary(summary: dict[str, Any]) -> None:
         "lambda_phase",
         "balance_coeff",
         "freeze_encoder",
+        "tag",
+        "method",
         "run_dir",
     }
     unknown = sorted(set(summary) - known)
@@ -217,6 +219,14 @@ def validate_summary(summary: dict[str, Any]) -> None:
 
     for key in ("run_id", "model", "config_hash", "data_config_hash", "git_sha",
                 "device", "started_at", "finished_at", "data_provenance_path"):
+        value = summary[key]
+        if value is not None and not isinstance(value, str):
+            raise SchemaError(
+                f"Summary[{key!r}] must be str or null, got {type(value).__name__}"
+            )
+    for key in ("tag", "method"):
+        if key not in summary:
+            continue
         value = summary[key]
         if value is not None and not isinstance(value, str):
             raise SchemaError(

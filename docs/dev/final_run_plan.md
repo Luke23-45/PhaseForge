@@ -152,6 +152,8 @@ uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge
 Writes under `outputs/_summaries/`:
 - `training_aggregates.csv` — per (model, stage) mean/std/n over seeds
 - `training_cost.csv` — wall time, epochs, optimizer steps, params
+  (wall time = `summary.json` `wall_seconds`, training-loop only, **not**
+  `timings.json`'s full-lifecycle value — see `training_summaries.py`)
 - `training_curves.csv` — per (model, stage, epoch) curve means (plot source)
 - `rollout_success.csv` / `rollout_comparisons.csv` — written ONLY when
   `episodes.jsonl` exists; rollout evaluation is intentionally blocked, so

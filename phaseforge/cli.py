@@ -177,6 +177,8 @@ def _append_eval_result_row(
         "config_hash": config_hash(cfg),
         "device": str(cfg.project.get("device")),
         "ckpt_path": str(cfg.train.get("stage1_ckpt_path") or ""),
+        "tag": cfg.project.get("tag"),
+        "method": cfg.project.get("method"),
         "action_mse": float(results["eval/action_mse"]),
     }
     for metric in OPTIONAL_METRIC_FIELDS:

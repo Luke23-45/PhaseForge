@@ -8,7 +8,10 @@ CSVs from the validated training ledger + each run's curves:
   ``trainable_params`` and ``total_params``;
 * ``training_cost.csv`` — per ``(model, stage)``: wall time (mean ± std),
   epochs run, total optimizer steps, parameter counts — the appendix cost
-  table;
+  table; wall time is the training-loop wall clock written to each
+  ``summary.json`` (``wall_seconds``), **not** the full-lifecycle value in
+  ``timings.json`` (which also spans dependency install, data prep and
+  checkout), so the two are not comparable;
 * ``training_curves.csv`` — per ``(model, stage, epoch)``: mean ± std over
   seeds of every curve metric — the plot source.
 
@@ -81,10 +84,12 @@ def _summary_scalar(row: dict[str, Any], key: str) -> float | None:
     return row.get(key)
 
 def training_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per ``(model, stage)`` mean/std/n over seeds of the final scalars."""
-    grouped: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    """Per ``(model, tag, stage)`` mean/std/n over seeds of the final scalars."""
+    grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:
-        grouped.setdefault((row["model"], int(row["stage"])), []).append(row)
+        grouped.setdefault(
+            (row["model"], row.get("tag") or "", int(row["stage"])), []
+        ).append(row)
 
     final_val_keys: list[str] = []
     for row in rows:
@@ -101,10 +106,11 @@ def training_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             scalar_keys.append(k)
 
     out: list[dict[str, Any]] = []
-    for (model, stage), group in grouped.items():
+    for (model, tag, stage), group in grouped.items():
         seeds = {r.get("seed") for r in group}
         entry: dict[str, Any] = {
             "model": model,
+            "tag": tag,
             "stage": stage,
             "n_seeds": len(seeds),
             "n_rows": len(group),
@@ -121,18 +127,20 @@ def training_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry[f"{key}_std"] = _nanstd(values)
             entry[f"{key}_n"] = len(values)
         out.append(entry)
-    out.sort(key=lambda e: (e["model"], e["stage"]))
+    out.sort(key=lambda e: (e["model"], e["tag"], e["stage"]))
     return out
 
 
 def training_cost_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per ``(model, stage)`` appendix cost table rows."""
-    grouped: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    """Per ``(model, tag, stage)`` appendix cost table rows."""
+    grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:
-        grouped.setdefault((row["model"], int(row["stage"])), []).append(row)
+        grouped.setdefault(
+            (row["model"], row.get("tag") or "", int(row["stage"])), []
+        ).append(row)
 
     out: list[dict[str, Any]] = []
-    for (model, stage), group in grouped.items():
+    for (model, tag, stage), group in grouped.items():
         wall = [_to_float(r.get("wall_seconds")) for r in group]
         epochs = [_to_float(r.get("epochs_run")) for r in group]
         steps = [_to_float(r.get("global_steps")) for r in group]
@@ -141,6 +149,7 @@ def training_cost_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seeds = {r.get("seed") for r in group}
         entry: dict[str, Any] = {
             "model": model,
+            "tag": tag,
             "stage": stage,
             "n_seeds": len(seeds),
             "wall_seconds_mean": _nanmean(wall),
@@ -154,7 +163,7 @@ def training_cost_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "total_params_mean": _nanmean(total),
         }
         out.append(entry)
-    out.sort(key=lambda e: (e["model"], e["stage"]))
+    out.sort(key=lambda e: (e["model"], e["tag"], e["stage"]))
     return out
 
 
@@ -189,6 +198,7 @@ def read_training_curves(
             out.append(
                 {
                     "model": row["model"],
+                    "tag": row.get("tag"),
                     "stage": int(row["stage"]),
                     "seed": row.get("seed"),
                     **curve,
@@ -247,15 +257,21 @@ def write_training_curves_csv(curve_rows: list[dict[str, Any]], path: Path) -> P
                 }:
                     metric_keys.append(key)
 
-    grouped: dict[tuple[str, int, int], list[dict[str, Any]]] = {}
+    grouped: dict[tuple[str, str, int, int], list[dict[str, Any]]] = {}
     for row in curve_rows:
         grouped.setdefault(
-            (row["model"], int(row["stage"]), int(row["epoch"])), []
+            (row["model"], row.get("tag") or "", int(row["stage"]), int(row["epoch"])),
+            [],
         ).append(row)
 
     out: list[dict[str, Any]] = []
-    for (model, stage, epoch), group in grouped.items():
-        entry: dict[str, Any] = {"model": model, "stage": stage, "epoch": epoch}
+    for (model, tag, stage, epoch), group in grouped.items():
+        entry: dict[str, Any] = {
+            "model": model,
+            "tag": tag,
+            "stage": stage,
+            "epoch": epoch,
+        }
         for key in metric_keys:
             values: list[float] = []
             for r in group:
@@ -268,7 +284,7 @@ def write_training_curves_csv(curve_rows: list[dict[str, Any]], path: Path) -> P
             entry[f"{key}_std"] = _nanstd(values)
             entry[f"{key}_n"] = len(values)
         out.append(entry)
-    out.sort(key=lambda e: (e["model"], e["stage"], e["epoch"]))
+    out.sort(key=lambda e: (e["model"], e["tag"], e["stage"], e["epoch"]))
 
     if not out:
         path.write_text("", encoding="utf-8")

@@ -229,6 +229,8 @@ class MetricPersistenceCallback(Callback):
             "model": model_name,
             "stage": stage,
             "seed": trainer.cfg.project.get("seed"),
+            "tag": trainer.cfg.project.get("tag"),
+            "method": trainer.cfg.project.get("method"),
             "config_hash": config_hash(trainer.cfg),
             "data_config_hash": self.data_config_hash,
             "data_provenance_path": "metadata/data_provenance.json",

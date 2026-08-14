@@ -2,15 +2,18 @@
 
 Paper-ready CSVs produced from :file:`outputs/_results/results.jsonl`:
 
-* ``_summaries/aggregates.csv``      — per (model, stage) mean/std/n over seeds
-* ``_summaries/bootstrap_ci.csv``    — exploratory bootstrap summaries per (model, stage, metric)
+* ``_summaries/aggregates.csv``      — per (model, tag, stage) mean/std/n over seeds
+* ``_summaries/bootstrap_ci.csv``    — bootstrap summaries per (model, tag, stage, metric)
 * ``_summaries/paired_wilcoxon.csv`` — paired Wilcoxon vs the baseline method
 
 Adaptations from the csd reference:
 
-* grouping is (model, stage) not (system, method);
-* the paired Wilcoxon pairing key is (stage, seed) — PhaseForge's multi-seed
-  protocol shares seeds across all model variants, so the pairing is exact;
+* grouping is (model, tag, stage) not (system, method) — the ``tag`` axis
+  keeps data-variant runs that share a model name (e.g. ``bc`` vs
+  ``bc``/``robot_only``) in separate rows;
+* the paired Wilcoxon pairing key is (stage, seed, tag) — PhaseForge's
+  multi-seed protocol shares seeds across all model variants, so the pairing
+  is exact;
 * ``min_pairs`` defaults to 3 (PhaseForge's SEEDS=[42, 43, 44]); scipy's
   Wilcoxon needs at least one pair to compute but n=3 has very low power,
   so the paper should report n alongside p;
@@ -43,9 +46,10 @@ _MIN_PAIRS_DEFAULT = 3
 
 @dataclass
 class Aggregate:
-    """Per (model, stage) mean / std / n over seeds, for every metric."""
+    """Per (model, tag, stage) mean / std / n over seeds, for every metric."""
 
     model: str
+    tag: str
     stage: int
     n_seeds: int
     n_rows: int
@@ -125,19 +129,21 @@ def _values_for(rows: Sequence[ResultRow], metric: str) -> np.ndarray:
 
 
 def aggregate_rows(rows: Sequence[ResultRow]) -> list[Aggregate]:
-    """Group rows by ``(model, stage)`` and compute mean/std/n per metric.
+    """Group rows by ``(model, tag, stage)`` and compute mean/std/n per metric.
 
-    ``n_seeds`` is the number of distinct seeds in the group; ``n_rows`` is
-    the total row count (matches ``n_seeds`` when each seed is run once,
-    which is the current protocol). Per-metric ``n`` is the count of
-    finite (non-NaN) values — methods without a router (e.g. ``bc``)
+    ``tag`` separates data-variant runs that share a ``model`` name (e.g.
+    the ``bc`` floor and the ``bc``/``robot_only`` negative control), so the
+    two are never merged. ``n_seeds`` is the number of distinct seeds in the
+    group; ``n_rows`` is the total row count (matches ``n_seeds`` when each
+    seed is run once, which is the current protocol). Per-metric ``n`` is the
+    count of finite (non-NaN) values — methods without a router (e.g. ``bc``)
     report ``n=0`` for routing metrics rather than dropping the cell.
     """
-    grouped: dict[tuple[str, int], list[ResultRow]] = {}
+    grouped: dict[tuple[str, str, int], list[ResultRow]] = {}
     for row in rows:
-        grouped.setdefault((row.model, row.stage), []).append(row)
+        grouped.setdefault((row.model, row.tag or "", row.stage), []).append(row)
     out: list[Aggregate] = []
-    for (model, stage), group in grouped.items():
+    for (model, tag, stage), group in grouped.items():
         seeds = {row.seed for row in group}
         per_metric = {}
         for metric in METRIC_COLUMNS:
@@ -150,6 +156,7 @@ def aggregate_rows(rows: Sequence[ResultRow]) -> list[Aggregate]:
         out.append(
             Aggregate(
                 model=model,
+                tag=tag,
                 stage=stage,
                 n_seeds=len(seeds),
                 n_rows=len(group),
@@ -191,7 +198,7 @@ def aggregate_rows(rows: Sequence[ResultRow]) -> list[Aggregate]:
                 phase_expert_nmi_n=per_metric["phase_expert_nmi"][2],
             )
         )
-    out.sort(key=lambda a: (a.model, a.stage))
+    out.sort(key=lambda a: (a.model, a.tag, a.stage))
     return out
 
 
@@ -228,23 +235,24 @@ def bootstrap_ci_per_row(
     *,
     metric: str,
 ) -> list[dict[str, object]]:
-    """Exploratory bootstrap CI per (model, stage) for a single metric.
+    """Exploratory bootstrap CI per (model, tag, stage) for a single metric.
 
     The current rows are seed-level summaries. With the protocol minimum of
     three seeds, these intervals are not the primary inferential result; the
     paper must report seed-level variation and episode-level Wilson intervals
     from rollout records separately.
     """
-    grouped: dict[tuple[str, int], list[ResultRow]] = {}
+    grouped: dict[tuple[str, str, int], list[ResultRow]] = {}
     for row in rows:
-        grouped.setdefault((row.model, row.stage), []).append(row)
+        grouped.setdefault((row.model, row.tag or "", row.stage), []).append(row)
     out: list[dict[str, object]] = []
-    for (model, stage), group in grouped.items():
+    for (model, tag, stage), group in grouped.items():
         values = [float(getattr(row, metric)) for row in group]
         m, lo, hi = bootstrap_ci(values)
         out.append(
             {
                 "model": model,
+                "tag": tag,
                 "stage": stage,
                 "metric": metric,
                 "n": len(values),
@@ -253,38 +261,41 @@ def bootstrap_ci_per_row(
                 "ci95_high": hi,
             }
         )
-    out.sort(key=lambda r: (r["model"], r["stage"], r["metric"]))
+    out.sort(key=lambda r: (r["model"], r["tag"], r["stage"], r["metric"]))
     return out
 
 
 def paired_wilcoxon(
     rows: Sequence[ResultRow],
     *,
-    method_a: str,
-    method_b: str,
+    method_a: tuple[str, str | None],
+    method_b: tuple[str, str | None],
     metric: str,
     min_pairs: int = _MIN_PAIRS_DEFAULT,
 ) -> dict[str, object] | None:
-    """Paired Wilcoxon signed-rank on same ``(stage, seed)`` pairs.
+    """Paired Wilcoxon signed-rank on same ``(stage, seed, tag)`` pairs.
 
-    Returns ``None`` when fewer than ``min_pairs`` pairs are available
-    or when scipy is not installed (the paper can still be built from
-    ``aggregates.csv`` + ``bootstrap_ci.csv``; this function is best
-    effort).
+    ``method_a``/``method_b`` are ``(model, tag)`` identities, so data-variant
+    runs that share a model name (e.g. ``("bc", None)`` vs
+    ``("bc", "robot_only")``) never cross-pair. Returns ``None`` when fewer
+    than ``min_pairs`` pairs are available or when scipy is not installed
+    (the paper can still be built from ``aggregates.csv`` +
+    ``bootstrap_ci.csv``; this function is best effort).
     """
     try:
         from scipy.stats import wilcoxon
     except Exception:
         return None
-    pa: dict[tuple[int, int], float] = {}
-    pb: dict[tuple[int, int], float] = {}
+    pa: dict[tuple[int, int, str | None], float] = {}
+    pb: dict[tuple[int, int, str | None], float] = {}
     for row in rows:
         if math.isnan(float(getattr(row, metric))):
             continue
-        key = (int(row.stage), int(row.seed))
-        if row.model == method_a:
+        identity = (row.model, row.tag)
+        key = (int(row.stage), int(row.seed), row.tag)
+        if identity == method_a:
             pa[key] = float(getattr(row, metric))
-        elif row.model == method_b:
+        elif identity == method_b:
             pb[key] = float(getattr(row, metric))
     keys = sorted(set(pa) & set(pb))
     if len(keys) < int(min_pairs):
@@ -296,8 +307,10 @@ def paired_wilcoxon(
     except ValueError:
         return None
     return {
-        "method_a": method_a,
-        "method_b": method_b,
+        "method_a": method_a[0],
+        "tag_a": method_a[1],
+        "method_b": method_b[0],
+        "tag_b": method_b[1],
         "metric": metric,
         "n_pairs": len(keys),
         "mean_diff": float(np.mean(a - b)),
@@ -358,16 +371,19 @@ def write_paired_wilcoxon_csv(
     min_pairs: int = _MIN_PAIRS_DEFAULT,
 ) -> Path:
     """Write ``_summaries/paired_wilcoxon.csv`` (baseline vs every other method)."""
-    methods = sorted({row.model for row in rows})
+    identities = sorted(
+        {(row.model, row.tag) for row in rows}, key=lambda i: (i[0], i[1] or "")
+    )
+    baseline_identity = (baseline, None)
     out: list[dict[str, object]] = []
-    for method in methods:
-        if method == baseline:
+    for identity in identities:
+        if identity == baseline_identity:
             continue
         for metric in METRIC_COLUMNS:
             record = paired_wilcoxon(
                 rows,
-                method_a=baseline,
-                method_b=method,
+                method_a=baseline_identity,
+                method_b=identity,
                 metric=metric,
                 min_pairs=min_pairs,
             )

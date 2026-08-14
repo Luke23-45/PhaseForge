@@ -40,7 +40,12 @@ EPISODE_REQUIRED: tuple[str, ...] = (
 _EPISODE_BOOL = ("valid_episode", "success", "timed_out")
 _EPISODE_INT = ("training_seed", "reset_seed", "episode_index", "steps")
 _EPISODE_STR = ("run_id", "model", "checkpoint_sha256", "task")
-_EPISODE_STR_NULLABLE = ("termination_reason", "failure_category", "exception")
+_EPISODE_STR_NULLABLE = (
+    "termination_reason",
+    "failure_category",
+    "exception",
+    "tag",
+)
 
 
 def _is_real_int(value: Any) -> bool:
@@ -198,20 +203,26 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per ``(task, model, training_seed)`` success rows for the paper.
+    """Per ``(task, model, tag, training_seed)`` success rows for the paper.
+
+    ``tag`` keeps data-variant runs that share a ``model`` name (e.g. the
+    ``bc`` floor and the ``bc``/``robot_only`` negative control) in separate
+    rows, mirroring the offline aggregate tables.
 
     Each output row carries valid/success counts, the success rate over
     valid episodes, the Wilson interval, and the number of invalid
     (infrastructure-failure) attempts — which invalidate the run until
     rerun and are reported, never folded into the rate.
     """
-    groups: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    groups: dict[tuple[str, str, str | None, int], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (row["task"], row["model"], int(row["training_seed"]))
+        key = (row["task"], row["model"], row.get("tag"), int(row["training_seed"]))
         groups.setdefault(key, []).append(row)
 
     out: list[dict[str, Any]] = []
-    for (task, model, seed), group in sorted(groups.items()):
+    for key in sorted(groups, key=lambda k: (k[0], k[1], k[2] or "", k[3])):
+        group = groups[key]
+        task, model, tag, seed = key
         valid = [r for r in group if r["valid_episode"]]
         successes = sum(1 for r in valid if r.get("success"))
         invalid = len(group) - len(valid)
@@ -220,6 +231,7 @@ def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "task": task,
                 "model": model,
+                "tag": tag,
                 "training_seed": seed,
                 "valid_episodes": len(valid),
                 "successes": successes,
@@ -237,31 +249,36 @@ def paired_rollout_comparisons(
     *,
     baseline: str = "phaseforge",
 ) -> list[dict[str, Any]]:
-    """Paired PhaseForge-minus-baseline differences per ``(task, seed)``.
+    """Paired PhaseForge-minus-baseline differences per ``(task, tag, seed)``.
 
-    Pairs the success rate of every non-baseline model against the baseline
-    model on the same task and training seed (the protocol shares seeds
-    across variants, so the pairing is exact). Only task/seed cells where
-    both models have valid episodes are emitted.
+    Pairs the success rate of every non-baseline ``(model, tag)`` identity
+    against the baseline model on the same task and training seed (the
+    protocol shares seeds across variants, so the pairing is exact). Only
+    task/seed cells where both identities have valid episodes are emitted.
+    Tagged variants of the baseline itself are never paired against it.
     """
     summaries = {
-        (s["task"], s["model"], int(s["training_seed"])): s
+        (s["task"], s["model"], s["tag"], int(s["training_seed"])): s
         for s in summarize_episodes(rows)
     }
     tasks = {key[0] for key in summaries}
-    seeds = {int(key[2]) for key in summaries}
-    models = {key[1] for key in summaries}
+    seeds = {int(key[3]) for key in summaries}
+    identities = sorted(
+        {(key[1], key[2]) for key in summaries},
+        key=lambda i: (i[0], i[1] or ""),
+    )
+    baseline_identity = (baseline, None)
 
     out: list[dict[str, Any]] = []
     for task in sorted(tasks):
         for seed in sorted(seeds):
-            base = summaries.get((task, baseline, seed))
+            base = summaries.get((task, baseline, None, seed))
             if base is None or not base["valid_episodes"]:
                 continue
-            for model in sorted(models):
-                if model == baseline:
+            for model, tag in identities:
+                if (model, tag) == baseline_identity:
                     continue
-                other = summaries.get((task, model, seed))
+                other = summaries.get((task, model, tag, seed))
                 if other is None or not other["valid_episodes"]:
                     continue
                 out.append(
@@ -270,6 +287,7 @@ def paired_rollout_comparisons(
                         "training_seed": seed,
                         "baseline": baseline,
                         "model": model,
+                        "tag": tag,
                         "baseline_success_rate": base["success_rate"],
                         "model_success_rate": other["success_rate"],
                         "diff": other["success_rate"] - base["success_rate"],

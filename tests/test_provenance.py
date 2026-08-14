@@ -277,6 +277,14 @@ class TestSummarySchema:
         with pytest.raises(SchemaError, match="freeze_encoder"):
             validate_summary(make_summary(freeze_encoder="yes"))
 
+    def test_tag_and_method_str_or_null(self) -> None:
+        validate_summary(make_summary(tag="robot_only", method="bc_robot_only"))
+        validate_summary(make_summary(tag=None, method=None))
+        with pytest.raises(SchemaError, match="tag"):
+            validate_summary(make_summary(tag=7))
+        with pytest.raises(SchemaError, match="method"):
+            validate_summary(make_summary(method=["bc"]))
+
 
 class TestCurveWriter:
     def test_append_and_read_roundtrip(self, tmp_path: Path) -> None:
@@ -559,14 +567,37 @@ class TestEpisodes:
             ),
         ]
         summaries = summarize_episodes(rows)
-        by_key = {(s["task"], s["model"], s["training_seed"]): s for s in summaries}
-        pf = by_key[("push", "phaseforge", 42)]
+        by_key = {
+            (s["task"], s["model"], s["tag"], s["training_seed"]): s for s in summaries
+        }
+        pf = by_key[("push", "phaseforge", None, 42)]
         assert pf["valid_episodes"] == 3
         assert pf["successes"] == 2
         assert pf["success_rate"] == pytest.approx(2 / 3)
         assert pf["invalid_attempts"] == 1
         assert pf["wilson_ci95_low"] < pf["success_rate"] < pf["wilson_ci95_high"]
-        assert by_key[("push", "bc", 42)]["success_rate"] == 1.0
+        assert by_key[("push", "bc", None, 42)]["success_rate"] == 1.0
+
+    def test_summarize_episodes_splits_tagged_variants(self) -> None:
+        # ``bc`` and ``bc``/``robot_only`` share a model name; their rollout
+        # episodes must never be merged into one success row.
+        rows = [
+            make_episode(task="push", model="bc", seed=42, episode_index=i)
+            for i in range(3)
+        ] + [
+            make_episode(
+                task="push", model="bc", tag="robot_only", seed=42, episode_index=i
+            )
+            for i in range(3)
+        ]
+        summaries = summarize_episodes(rows)
+        by_key = {
+            (s["task"], s["model"], s["tag"], s["training_seed"]): s
+            for s in summaries
+        }
+        assert by_key[("push", "bc", None, 42)]["valid_episodes"] == 3
+        assert by_key[("push", "bc", "robot_only", 42)]["valid_episodes"] == 3
+        assert len(summaries) == 2
 
     def test_paired_rollout_comparisons(self) -> None:
         rows = []
@@ -948,6 +979,32 @@ class TestTrainingSummaries:
         assert cost["wall_seconds_mean"] == pytest.approx(100.0)
         assert cost["total_global_steps"] == pytest.approx(100.0)
 
+    def test_aggregate_and_cost_split_tagged_variants(self) -> None:
+        # ``bc`` and ``bc``/``robot_only`` share a model name but must not be
+        # merged into one training aggregate / cost row.
+        rows = [
+            make_summary(run_id=f"bc{s}", model="bc", stage=1, seed=s, wall_seconds=50.0)
+            for s in (42, 43, 44)
+        ]
+        rows += [
+            make_summary(
+                run_id=f"ro{s}", model="bc", tag="robot_only", stage=1, seed=s,
+                wall_seconds=60.0,
+            )
+            for s in (42, 43, 44)
+        ]
+        aggs = training_aggregate_rows(rows)
+        assert [(a["model"], a["tag"], a["stage"]) for a in aggs] == [
+            ("bc", "", 1),
+            ("bc", "robot_only", 1),
+        ]
+        costs = training_cost_rows(rows)
+        assert [(c["model"], c["tag"], c["stage"]) for c in costs] == [
+            ("bc", "", 1),
+            ("bc", "robot_only", 1),
+        ]
+        assert costs[0]["n_seeds"] == 3 and costs[1]["n_seeds"] == 3
+
     def test_read_training_curves_located_via_run_dir(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
         run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
@@ -979,9 +1036,9 @@ class TestTrainingSummaries:
         ]
         path = write_training_curves_csv(curve_rows, tmp_path / "curves.csv")
         text = path.read_text()
-        assert text.splitlines()[0].startswith("model,stage,epoch")
+        assert text.splitlines()[0].startswith("model,tag,stage,epoch")
         assert "train/loss_total_mean" in text
-        assert "phaseforge,1,1" in text
+        assert "phaseforge,,1,1" in text
 
     def test_write_training_curves_csv_tolerates_missing_metrics(self, tmp_path: Path) -> None:
         # Seed 43 emits a routing metric seed 42 lacks; the aggregate for it
@@ -1031,11 +1088,11 @@ class TestTrainingSummaries:
         for name, path in paths.items():
             assert path.exists(), name
         agg = (outputs / "_summaries" / "training_aggregates.csv").read_text()
-        assert agg.splitlines()[0].startswith("model,stage,n_seeds")
-        assert "phaseforge,1,2" in agg
+        assert agg.splitlines()[0].startswith("model,tag,stage,n_seeds")
+        assert "phaseforge,,1,2" in agg
         curves = (outputs / "_summaries" / "training_curves.csv").read_text()
-        assert curves.splitlines()[0].startswith("model,stage,epoch")
-        assert "phaseforge,1,1" in curves
+        assert curves.splitlines()[0].startswith("model,tag,stage,epoch")
+        assert "phaseforge,,1,1" in curves
 
     def test_summarize_training_is_idempotent(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
@@ -1072,8 +1129,8 @@ class TestTrainingSummaries:
         paths = summarize_rollout(outputs)
         assert set(paths) == {"rollout_success", "rollout_comparisons"}
         success = (outputs / "_summaries" / "rollout_success.csv").read_text()
-        assert success.splitlines()[0].startswith("task,model,training_seed")
-        assert "push,phaseforge,42" in success
+        assert success.splitlines()[0].startswith("task,model,tag,training_seed")
+        assert "push,phaseforge,,42" in success
         comparisons = (outputs / "_summaries" / "rollout_comparisons.csv").read_text()
         assert comparisons.splitlines()[0].startswith("task,training_seed,baseline")
         assert "-0.25" in comparisons

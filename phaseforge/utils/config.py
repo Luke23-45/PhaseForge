@@ -146,6 +146,7 @@ def write_run_meta(
         "config_hash": config_hash(cfg),
         "data_config_hash": data_config_hash,
         "tag": cfg.project.get("tag", None),
+        "method": cfg.project.get("method", None),
     }
     path = output_dir / "run_meta.json"
     with open(path, "w") as f:

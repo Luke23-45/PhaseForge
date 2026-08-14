@@ -41,6 +41,12 @@ _STR_FIELDS = (
     "ckpt_path",
 )
 
+# Optional string-or-null identity fields. ``tag`` disambiguates data-variant
+# runs that share a ``model`` name (e.g. ``bc`` vs ``bc``/``robot_only``);
+# ``method`` records the protocol method name when the runner sets it. Both
+# are absent on legacy rows (validator-compatible via the ``None`` default).
+_STR_OR_NULL_FIELDS = ("tag", "method")
+
 # Optional per-metric columns. Validator type-checks these only when they
 # are present so that methods without a router (e.g. ``bc``) can produce
 # schema-valid rows.
@@ -84,6 +90,8 @@ class ResultRow:
     topk_collapse_rate: float = float("nan")
     top1_collapse_rate: float = float("nan")
     phase_expert_nmi: float = float("nan")
+    tag: str | None = None
+    method: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -116,6 +124,7 @@ def validate_row(row: dict[str, Any]) -> None:
     * all required keys present
     * ``stage`` and ``seed`` are ints (``bool`` rejected)
     * string fields are ``str``
+    * ``tag``/``method`` (when present) are ``str`` or ``None``
     * ``action_mse`` is finite-or-NaN numeric
     * optional metric fields: when present, must be finite-or-NaN numeric
     * ``extra`` (when present) is a dict
@@ -126,7 +135,12 @@ def validate_row(row: dict[str, Any]) -> None:
     missing = [k for k in _CORE_REQUIRED if k not in row]
     if missing:
         raise SchemaError(f"Row missing required keys: {missing}")
-    known = set(_CORE_REQUIRED) | set(OPTIONAL_METRIC_FIELDS) | {"extra"}
+    known = (
+        set(_CORE_REQUIRED)
+        | set(OPTIONAL_METRIC_FIELDS)
+        | set(_STR_OR_NULL_FIELDS)
+        | {"extra"}
+    )
     unknown = sorted(set(row) - known)
     if unknown:
         raise SchemaError(f"Row has unknown top-level keys: {unknown}")
@@ -139,6 +153,14 @@ def validate_row(row: dict[str, Any]) -> None:
         if not isinstance(row[key], str):
             raise SchemaError(
                 f"Row[{key!r}] must be str, got {type(row[key]).__name__}"
+            )
+    for key in _STR_OR_NULL_FIELDS:
+        if key not in row:
+            continue
+        value = row[key]
+        if value is not None and not isinstance(value, str):
+            raise SchemaError(
+                f"Row[{key!r}] must be str or null, got {type(value).__name__}"
             )
     if "action_mse" in row and not _is_real_numeric(row["action_mse"]):
         raise SchemaError(

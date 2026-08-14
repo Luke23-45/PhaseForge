@@ -39,6 +39,8 @@ def train_command(
         cmd.append(f"data={method.data}")
     if method.tag:
         cmd.append(f"project.tag={method.tag}")
+    if method.name:
+        cmd.append(f"project.method={method.name}")
     if ckpt_path is not None:
         cmd.append(f"train.stage1_ckpt_path={ckpt_path}")
     cmd.extend(defaults)
@@ -69,5 +71,7 @@ def eval_command(
         cmd.append(f"data={method.data}")
     if method.tag:
         cmd.append(f"project.tag={method.tag}")
+    if method.name:
+        cmd.append(f"project.method={method.name}")
     cmd.extend(defaults)
     return cmd

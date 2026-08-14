@@ -30,13 +30,13 @@ from phaseforge.outputs_writer.tables import (
 
 
 def build_metrics_summary(rows: list[ResultRow]) -> dict[str, Any]:
-    """Per (model, stage) per-metric means for ``metrics.json``.
+    """Per (model, tag, stage) per-metric means for ``metrics.json``.
 
     Output shape::
 
         {
           "summary": {
-              (model, stage): {
+              (model, tag, stage): {
                   <metric>: <mean over finite>,
                   "n_nan_<metric>": <count of NaN seeds>,
               },
@@ -50,12 +50,12 @@ def build_metrics_summary(rows: list[ResultRow]) -> dict[str, Any]:
     "n_nan_<metric>": N}`` — the paper appendix can render this as "n/a"
     rather than dropping the cell.
     """
-    groups: dict[tuple[str, int], list[ResultRow]] = {}
+    groups: dict[tuple[str, str, int], list[ResultRow]] = {}
     for row in rows:
-        groups.setdefault((row.model, row.stage), []).append(row)
+        groups.setdefault((row.model, row.tag or "", row.stage), []).append(row)
     summary: dict[str, dict[str, Any]] = {}
-    for (model, stage), group in groups.items():
-        entry: dict[str, Any] = {}
+    for (model, tag, stage), group in groups.items():
+        entry: dict[str, Any] = {"model": model, "tag": tag, "stage": stage}
         for metric in METRIC_COLUMNS:
             values = [
                 float(getattr(row, metric))
@@ -67,7 +67,7 @@ def build_metrics_summary(rows: list[ResultRow]) -> dict[str, Any]:
             else:
                 entry[metric] = None
             entry[f"n_nan_{metric}"] = len(group) - len(values)
-        summary[f"{model}__stage{stage}"] = entry
+        summary[f"{model}__stage{stage}__tag{tag or 'default'}"] = entry
     return {
         "summary": summary,
         "n_seeds": len({(row.seed,) for row in rows}),

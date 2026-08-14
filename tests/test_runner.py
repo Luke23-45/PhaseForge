@@ -302,6 +302,7 @@ def test_train_command_common_cell(tmp_path: Path) -> None:
         "train=stage1",
         "project.seed=42",
         f"project.output_dir={tmp_path / 'outputs'}",
+        "project.method=bc",
         "train.early_stopping.enabled=false",
     ]
 
@@ -314,6 +315,7 @@ def test_train_command_variant_tag_and_data(tmp_path: Path) -> None:
     )
     assert "data=robot_only" in cmd
     assert "project.tag=robot_only" in cmd
+    assert "project.method=bc_robot_only" in cmd
 
 
 def test_train_command_stage2(tmp_path: Path) -> None:

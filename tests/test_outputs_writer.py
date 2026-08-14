@@ -13,6 +13,11 @@ from pathlib import Path
 
 import pytest
 
+from phaseforge.outputs_writer.backfill import (
+    backfill_results,
+    backfill_training_summary,
+    collect_run_meta,
+)
 from phaseforge.outputs_writer.ledger import LedgerRow, RunLedger
 from phaseforge.outputs_writer.metadata import collect_environment
 from phaseforge.outputs_writer.results import append_result_row, read_result_rows
@@ -45,6 +50,8 @@ def make_row(
     seed: int = 42,
     action_mse: float = 0.028,
     with_metrics: bool = True,
+    tag: str | None = None,
+    method: str | None = None,
 ) -> dict:
     row = {
         "run_id": "a1b2c3d4",
@@ -57,6 +64,8 @@ def make_row(
         "device": "cuda:0",
         "ckpt_path": "outputs/phaseforge/stage2/2026-01-01_00-00-00_a1b2c3d4/model.pt",
         "action_mse": action_mse,
+        "tag": tag,
+        "method": method,
     }
     if with_metrics:
         row.update(
@@ -155,6 +164,23 @@ class TestSchema:
         row = make_result_row()
         validate_row(row.to_dict())
         assert row.to_dict()["action_mse"] == 0.028
+
+    def test_tag_and_method_str_or_null(self) -> None:
+        validate_row(make_row(tag="robot_only", method="bc_robot_only"))
+        validate_row(make_row(tag=None, method=None))
+        row = make_row(tag="robot_only")
+        row["method"] = 7
+        with pytest.raises(SchemaError, match="method"):
+            validate_row(row)
+        row = make_row()
+        row["tag"] = 3
+        with pytest.raises(SchemaError, match="tag"):
+            validate_row(row)
+
+    def test_result_row_defaults_tag_method_to_none(self) -> None:
+        row = make_result_row()
+        assert row.tag is None
+        assert row.method is None
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +476,81 @@ class TestTables:
         assert agg.action_mse_mean == pytest.approx(0.04)
         assert agg.action_mse_std == pytest.approx(0.02)
 
+    def test_aggregate_splits_tagged_variants(self) -> None:
+        # ``bc`` and ``bc``/``robot_only`` share a model name but must never
+        # be merged into one aggregate row (different observation spaces).
+        rows = [
+            make_result_row(model="bc", stage=1, seed=s, action_mse=0.028, with_metrics=False)
+            for s in (42, 43, 44)
+        ]
+        rows += [
+            make_result_row(
+                model="bc", tag="robot_only", stage=1, seed=s,
+                action_mse=0.020, with_metrics=False,
+            )
+            for s in (42, 43, 44)
+        ]
+        aggs = aggregate_rows(rows)
+        assert [(a.model, a.tag, a.stage) for a in aggs] == [
+            ("bc", "", 1),
+            ("bc", "robot_only", 1),
+        ]
+        untagged, tagged = aggs
+        assert untagged.n_seeds == 3 and untagged.n_rows == 3
+        assert untagged.action_mse_mean == pytest.approx(0.028)
+        assert tagged.action_mse_mean == pytest.approx(0.020)
+        assert tagged.tag == "robot_only"
+
+    def test_paired_wilcoxon_never_cross_pairs_tags(self) -> None:
+        # Tagged and untagged variants of the same model share (stage, seed)
+        # keys; the pairing key must include the tag so they cannot pair.
+        rows = [
+            make_result_row(model="phaseforge", stage=1, seed=s, action_mse=0.02)
+            for s in (42, 43, 44)
+        ]
+        rows += [
+            make_result_row(
+                model="bc", tag="robot_only", stage=1, seed=s,
+                action_mse=0.02, with_metrics=False,
+            )
+            for s in (42, 43, 44)
+        ]
+        assert (
+            paired_wilcoxon(
+                rows,
+                method_a=("phaseforge", None),
+                method_b=("bc", "robot_only"),
+                metric="action_mse",
+            )
+            is None
+        )
+
+    def test_wilcoxon_csv_sorts_mixed_tag_none(self, tmp_path: Path) -> None:
+        # A model with both a tagged and an untagged variant yields (model,
+        # None) and (model, str) identities; sorting them must not raise even
+        # when the baseline pairs against one of them.
+        rows = [
+            make_result_row(model="bc", stage=1, seed=s, action_mse=0.03, with_metrics=False)
+            for s in (42, 43, 44)
+        ]
+        rows += [
+            make_result_row(
+                model="bc", tag="robot_only", stage=1, seed=s,
+                action_mse=0.02, with_metrics=False,
+            )
+            for s in (42, 43, 44)
+        ]
+        rows += [
+            make_result_row(model="scratch_moe", stage=1, seed=s, action_mse=0.05)
+            for s in (42, 43, 44)
+        ]
+        path = write_paired_wilcoxon_csv(
+            rows, tmp_path / "paired_wilcoxon.csv", baseline="bc"
+        )
+        text = path.read_text()
+        assert text.splitlines()[0].startswith("method_a,tag_a,method_b,tag_b,metric")
+        assert "scratch_moe" in text
+
     def test_bootstrap_ci_is_deterministic_and_finite(self) -> None:
         values = [0.01, 0.02, 0.03, 0.04, 0.05]
         first = bootstrap_ci(values)
@@ -475,7 +576,10 @@ class TestTables:
             for s in (42, 43, 44)
         ]
         result = paired_wilcoxon(
-            rows, method_a="phaseforge", method_b="scratch_moe", metric="action_mse"
+            rows,
+            method_a=("phaseforge", None),
+            method_b=("scratch_moe", None),
+            metric="action_mse",
         )
         assert result is not None
         assert result["n_pairs"] == 3
@@ -489,8 +593,8 @@ class TestTables:
         assert (
             paired_wilcoxon(
                 rows,
-                method_a="phaseforge",
-                method_b="scratch_moe",
+                method_a=("phaseforge", None),
+                method_b=("scratch_moe", None),
                 metric="action_mse",
             )
             is None
@@ -510,13 +614,13 @@ class TestTables:
             rows, tmp_path / "paired_wilcoxon.csv", baseline="phaseforge"
         )
         agg_text = agg_path.read_text()
-        assert agg_text.splitlines()[0].startswith("model,stage,n_seeds")
+        assert agg_text.splitlines()[0].startswith("model,tag,stage,n_seeds")
         assert "phaseforge" in agg_text
         boot_text = boot_path.read_text()
-        assert boot_text.splitlines()[0].startswith("model,stage,metric,n,mean")
+        assert boot_text.splitlines()[0].startswith("model,tag,stage,metric,n,mean")
         assert "action_mse" in boot_text
         wilcox_text = wilcox_path.read_text()
-        assert wilcox_text.splitlines()[0].startswith("method_a,method_b,metric")
+        assert wilcox_text.splitlines()[0].startswith("method_a,tag_a,method_b,tag_b,metric")
         assert "phaseforge" in wilcox_text
 
     def test_metric_columns_include_action_mse_first(self) -> None:
@@ -542,7 +646,7 @@ class TestSummarize:
         for name, path in paths.items():
             assert path.exists(), name
         metrics = json.loads(paths["metrics"].read_text())
-        assert "phaseforge__stage2" in metrics["summary"]
+        assert "phaseforge__stage2__tagdefault" in metrics["summary"]
 
     def test_summarize_all_is_idempotent(self, tmp_path: Path) -> None:
         results_dir = tmp_path / "_results"
@@ -560,3 +664,126 @@ class TestSummarize:
         )
         with pytest.raises(SchemaError):
             summarize_all(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Backfill migration
+# ---------------------------------------------------------------------------
+
+class TestBackfillTags:
+    def _write_run_meta(self, outputs: Path, model: str, run_id: str, *, tag: str) -> None:
+        run_dir = outputs / model / "stage1" / f"2026-01-01_00-00-00_{run_id}"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_meta.json").write_text(
+            json.dumps({"tag": tag, "model_name": model, "seed": 42}),
+            encoding="utf-8",
+        )
+
+    def test_backfill_results_from_eval_run_meta(self, tmp_path: Path) -> None:
+        outputs = tmp_path / "outputs"
+        # The row's own run_id is the eval run's; its run_meta carries the tag.
+        self._write_run_meta(outputs, "bc", "ee000001", tag="robot_only")
+        results_dir = tmp_path / "_results"
+        results_dir.mkdir(parents=True)
+        row = make_row(model="bc", stage=1, tag=None)
+        row["run_id"] = "ee000001"
+        row["ckpt_path"] = (
+            "outputs/bc/stage1/seed42/2026-01-01_00-00-00_aa000001/checkpoints/checkpoint_best.pt"
+        )
+        (results_dir / "results.jsonl").write_text(
+            json.dumps(row) + "\n", encoding="utf-8"
+        )
+        report = backfill_results(results_dir, collect_run_meta(outputs))
+        assert report == {"changed": 1, "rows": 1}
+        rows = read_result_rows(results_dir)
+        assert rows[0]["tag"] == "robot_only"
+        validate_row(rows[0])
+
+    def test_backfill_results_falls_back_to_ckpt_run(self, tmp_path: Path) -> None:
+        # Eval run_meta is missing (not copied); the tag must come from the
+        # evaluated checkpoint's own run dir instead.
+        outputs = tmp_path / "outputs"
+        self._write_run_meta(outputs, "bc", "aa000001", tag="robot_only")
+        results_dir = tmp_path / "_results"
+        results_dir.mkdir(parents=True)
+        row = make_row(model="bc", stage=1, tag=None)
+        row["run_id"] = "ee000001"
+        row["ckpt_path"] = (
+            "outputs/bc/stage1/seed42/2026-01-01_00-00-00_aa000001/checkpoints/checkpoint_best.pt"
+        )
+        (results_dir / "results.jsonl").write_text(
+            json.dumps(row) + "\n", encoding="utf-8"
+        )
+        backfill_results(results_dir, collect_run_meta(outputs))
+        rows = read_result_rows(results_dir)
+        assert rows[0]["tag"] == "robot_only"
+
+    def test_backfill_leaves_tagged_rows_untouched(self, tmp_path: Path) -> None:
+        results_dir = tmp_path / "_results"
+        results_dir.mkdir(parents=True)
+        (results_dir / "results.jsonl").write_text(
+            json.dumps(make_row(tag="robot_only")) + "\n", encoding="utf-8"
+        )
+        report = backfill_results(results_dir, {})
+        assert report == {"changed": 0, "rows": 1}
+        assert read_result_rows(results_dir)[0]["tag"] == "robot_only"
+
+    def test_backfill_is_idempotent(self, tmp_path: Path) -> None:
+        outputs = tmp_path / "outputs"
+        self._write_run_meta(outputs, "bc", "aa000001", tag="robot_only")
+        results_dir = tmp_path / "_results"
+        results_dir.mkdir(parents=True)
+        row = make_row(model="bc", stage=1, tag=None)
+        row["ckpt_path"] = (
+            "outputs/bc/stage1/seed42/2026-01-01_00-00-00_aa000001/checkpoints/checkpoint_best.pt"
+        )
+        (results_dir / "results.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        first = backfill_results(results_dir, collect_run_meta(outputs))
+        second = backfill_results(results_dir, collect_run_meta(outputs))
+        assert first["changed"] == 1
+        assert second["changed"] == 0
+        assert len(read_result_rows(results_dir)) == 1
+
+    def test_backfill_training_summary(self, tmp_path: Path) -> None:
+        from phaseforge.outputs_writer.training_summary import (
+            read_training_summary_rows,
+        )
+
+        outputs = tmp_path / "outputs"
+        run_dir = outputs / "bc" / "stage1" / "2026-01-01_00-00-00_aa000001"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_meta.json").write_text(
+            json.dumps({"tag": "robot_only", "model_name": "bc", "seed": 42}),
+            encoding="utf-8",
+        )
+        results_dir = tmp_path / "_results"
+        results_dir.mkdir(parents=True)
+        summary = {
+            "run_id": "aa000001",
+            "kind": "train",
+            "model": "bc",
+            "stage": 1,
+            "seed": 42,
+            "config_hash": "f89790f7520ddfdb",
+            "data_config_hash": "cachedatahash",
+            "data_provenance_path": "metadata/data_provenance.json",
+            "git_sha": "c0e72de",
+            "device": "cpu",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "finished_at": "2026-01-01T00:01:00+00:00",
+            "wall_seconds": 60.0,
+            "epochs_run": 5,
+            "trainable_params": 100,
+            "total_params": 200,
+            "best_epoch": 4,
+            "final_val": {"loss_total": 0.05, "loss_action": 0.04},
+            "extra": {},
+        }
+        (results_dir / "training_summary.jsonl").write_text(
+            json.dumps(summary) + "\n", encoding="utf-8"
+        )
+        report = backfill_training_summary(results_dir, collect_run_meta(outputs))
+        assert report == {"changed": 1, "rows": 1}
+        rows = read_training_summary_rows(results_dir)
+        assert rows[0]["tag"] == "robot_only"
+        assert rows[0]["run_id"] == "aa000001"
