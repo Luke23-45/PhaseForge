@@ -383,6 +383,7 @@ class ScriptedController:
             if (
                 target_reached
                 and t - self._place_started_at >= config.place_hold_steps
+                and self._placement_release_ready(state)
             ):
                 self._phase = _Phase.RETRACT
                 retract_target = np.array(
@@ -528,6 +529,15 @@ class ScriptedController:
         target = self.placement_target(state)
         if target is not None:
             self._placement_snapshot = np.asarray(target, dtype=np.float64)
+
+    def _placement_release_ready(self, state: np.ndarray) -> bool:  # noqa: ARG002
+        """Return whether a placement task may open its gripper.
+
+        The base controller only has an end-effector target. Tasks whose
+        simulator predicate evaluates the object body can override this hook
+        to require the body itself to be in the receptacle before release.
+        """
+        return True
 
     def _placement_target(self) -> np.ndarray | None:
         """The pinned placement target recorded at grasp completion.
@@ -741,6 +751,25 @@ class ScriptedSquareController(ScriptedController):
             if self._native_grasp_status() is not False:
                 self._placement_snapshot = self.placement_target(state)
         return super().act(state, t)
+
+    def _placement_release_ready(self, state: np.ndarray) -> bool:
+        """Require the nut body to satisfy robosuite's placement geometry.
+
+        ``NutAssembly._check_success`` evaluates the root body, not the
+        handle or end-effector: the body must be close to the peg in xy and
+        below the table-height success limit.  The additional eef/body
+        separation preserves robosuite's reach term, which requires the
+        gripper to be clear of the nut after release.
+        """
+        if self.env is None or not hasattr(self.env, "peg1_body_id"):
+            return True
+        peg = self._env_body_pos(self.env, int(self.env.peg1_body_id))
+        obj = self.object_pos(state)
+        eef = self.eef_pos(state)
+        xy_error = float(np.linalg.norm(obj[:2] - peg[:2]))
+        below_peg = float(obj[2]) < float(peg[2]) + 0.015
+        clear_of_gripper = float(np.linalg.norm(eef - obj)) > 0.045
+        return xy_error <= 0.025 and below_peg and clear_of_gripper
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         config = self.config

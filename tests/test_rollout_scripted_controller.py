@@ -294,6 +294,15 @@ class TestClosedLoop:
         # [-0.1, 0.0, 0.2].
         assert np.allclose(ctrl._placement_snapshot, [0.1, 0.3, 1.06])
 
+        ready_state = state.copy()
+        ready_state[0:3] = [0.1, 0.3, 0.96]
+        ready_state[9 + 7 : 9 + 10] = [0.2, 0.3, 0.86]
+        assert ctrl._placement_release_ready(ready_state)
+
+        not_ready_state = ready_state.copy()
+        not_ready_state[9 + 7] = 0.24
+        assert not ctrl._placement_release_ready(not_ready_state)
+
     def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 
