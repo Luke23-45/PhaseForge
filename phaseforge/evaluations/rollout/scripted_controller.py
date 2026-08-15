@@ -95,10 +95,9 @@ GRASP_Z_OFFSET: float = OBJECT_HALF_SIZE + 0.02
 # Validated against all 50 cases in the pinned Lift reset bank. Other tasks
 # retain GRASP_Z_OFFSET until their own scripted gates are validated.
 LIFT_GRASP_Z_OFFSET: float = 0.01
-# SquareNut uses the same low eef-over-object grasp geometry as Lift. Its
-# object center is already above the table, so the generic placement offset
-# would place the eef too high to establish native contact.
-SQUARE_GRASP_Z_OFFSET: float = 0.01
+# SquareNut is grasped around its handle / center plane. A positive offset
+# places the Panda eef above the thin nut and misses native contact.
+SQUARE_GRASP_Z_OFFSET: float = 0.0
 
 
 class _Phase(Enum):
@@ -634,7 +633,7 @@ class ScriptedSquareController(ScriptedController):
     PEG_XY: tuple[float, float] = (-0.12, -0.08)
     #: The square nut center must sit slightly above the peg body. The
     #: controller target is the eef center, so include the grasp offset below.
-    PEG_OBJECT_Z_OFFSET: float = 0.02
+    PEG_OBJECT_Z_OFFSET: float = 0.01
 
     object_key = "object"
     object_position_slice = (7, 10)
