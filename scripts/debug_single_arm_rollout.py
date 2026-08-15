@@ -106,6 +106,16 @@ def _native_metrics(env: Any, controller: Any, state: np.ndarray) -> dict[str, A
             metrics["eef_to_nut_distance_native"] = float(
                 np.linalg.norm(controller.eef_pos(state) - nut_pos)
             )
+            site_ids = getattr(env, "object_site_ids", None)
+            if site_ids is not None:
+                handle_pos = np.asarray(
+                    env.sim.data.site_xpos[int(site_ids[int(nut_id)])],
+                    dtype=np.float64,
+                ).copy()
+                metrics["nut_handle_position_native"] = handle_pos
+                metrics["eef_to_nut_handle_distance_native"] = float(
+                    np.linalg.norm(controller.eef_pos(state) - handle_pos)
+                )
             peg_id = int(getattr(env, "peg1_body_id"))
             peg_pos = np.asarray(env.sim.data.body_xpos[peg_id], dtype=np.float64).copy()
             metrics["peg1_position_native"] = peg_pos
