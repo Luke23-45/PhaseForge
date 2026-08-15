@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -89,8 +90,9 @@ def _native_metrics(env: Any, controller: Any, state: np.ndarray) -> dict[str, A
         metrics["gripper_qpos_native_error"] = f"{type(exc).__name__}: {exc}"
 
     # NutAssembly-specific facts make Square failures distinguishable without
-    # rendering images: active nut pose, peg pose, native on_peg result, and
-    # robosuite's cached objects_on_pegs flag.
+    # rendering images: active nut pose, peg pose, native on_peg result,
+    # robosuite's cached objects_on_pegs flag, and every term used by the
+    # controller's release guard.
     try:
         nuts = getattr(env, "nuts", None)
         nut_id = getattr(env, "nut_id", None)
@@ -123,6 +125,22 @@ def _native_metrics(env: Any, controller: Any, state: np.ndarray) -> dict[str, A
             metrics["objects_on_pegs_native"] = np.asarray(
                 getattr(env, "objects_on_pegs", []), dtype=np.float64
             ).copy()
+            eef_pos = controller.eef_pos(state)
+            metrics["square_xy_error_to_peg"] = float(
+                np.linalg.norm(nut_pos[:2] - peg_pos[:2])
+            )
+            metrics["square_nut_below_peg"] = bool(
+                float(nut_pos[2]) < float(peg_pos[2]) + 0.015
+            )
+            metrics["square_eef_clear_of_nut"] = bool(
+                float(np.linalg.norm(eef_pos - nut_pos)) > 0.045
+            )
+            metrics["square_release_ready"] = bool(
+                controller._placement_release_ready(state)
+            )
+            metrics["square_eef_to_peg_distance"] = float(
+                np.linalg.norm(eef_pos - peg_pos)
+            )
     except Exception as exc:  # noqa: BLE001 - diagnostics retain the cause
         metrics["nut_geometry_native_error"] = f"{type(exc).__name__}: {exc}"
 
@@ -260,6 +278,9 @@ def _trace_case(
             "target_distance_after": target_distance,
             "action": action,
             "gripper_action": float(action[6]),
+            "release_commanded": bool(
+                phase_before in {"PLACE", "RETRACT"} and action[6] < 0.0
+            ),
             "sim_metrics": sim_metrics,
             "success": bool(success),
         }
@@ -298,7 +319,12 @@ def _trace_case(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", type=int, default=1)
-    parser.add_argument("--case-index", type=int, default=None)
+    parser.add_argument(
+        "--case-index",
+        type=int,
+        action="append",
+        help="trace an exact bank case; repeat for multiple cases",
+    )
     parser.add_argument("--max-steps", type=int, default=500)
     parser.add_argument("--log-every", type=int, default=5)
     parser.add_argument("--no-action-probe", action="store_true")
@@ -312,6 +338,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.cases <= 0 or args.max_steps <= 0 or args.log_every <= 0:
         parser.error("--cases, --max-steps, and --log-every must be positive")
+    if args.case_index is not None and any(index < 0 for index in args.case_index):
+        parser.error("--case-index values must be non-negative")
     if args.descend_z_offset is not None and (
         not np.isfinite(args.descend_z_offset) or args.descend_z_offset < 0.0
     ):
@@ -333,19 +361,26 @@ def main() -> None:
             )
         controller_cls = TaskSpec.from_protocol(bank.task).get_controller_class()
         if args.case_index is not None:
-            selected = [case for case in bank.cases if case.index == args.case_index]
-            if not selected:
+            invalid = [index for index in args.case_index if index >= bank.num_cases]
+            if invalid:
                 raise ValueError(
-                    f"case index {args.case_index} is not present in bank "
-                    f"{bank.bank_id} (0..{len(bank.cases) - 1})"
+                    f"case index {invalid} outside bank range "
+                    f"0..{bank.num_cases - 1}"
                 )
+            selected = [bank.cases[index] for index in args.case_index]
         else:
             selected = bank.cases[: args.cases]
         print(f"Task: {bank.task}; bank: {bank.bank_id}; cases: {[c.index for c in selected]}")
+        # Preserve task-specific defaults (notably Square's short grasp hold)
+        # when applying a diagnostic-only offset override.
+        default_controller = controller_cls(spec, env=adapter.env)
         controller_config = (
-            None
+            default_controller.config
             if args.descend_z_offset is None
-            else ScriptedControllerConfig(descend_z_offset=args.descend_z_offset)
+            else replace(
+                default_controller.config,
+                descend_z_offset=args.descend_z_offset,
+            )
         )
         effective_controller = controller_cls(
             spec,
