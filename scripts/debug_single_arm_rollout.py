@@ -271,11 +271,23 @@ def _trace_case(
         phase_before = controller.phase_name
         eef_before = _state_slice(state, spec, "robot0_eef_pos")
         object_before = controller.object_pos(state)
+        grasp_target_before = np.asarray(
+            controller.grasp_pos(state), dtype=np.float64
+        ).copy()
+        grasp_distance_before = float(
+            np.linalg.norm(grasp_target_before - eef_before)
+        )
         target = controller._placement_target()
         action = np.asarray(controller.act(state, t), dtype=np.float64)
         next_state, _done, success, _info = adapter.step(action)
         eef_after = _state_slice(next_state, spec, "robot0_eef_pos")
         object_after = controller.object_pos(next_state)
+        grasp_target_after = np.asarray(
+            controller.grasp_pos(next_state), dtype=np.float64
+        ).copy()
+        grasp_distance_after = float(
+            np.linalg.norm(grasp_target_after - eef_after)
+        )
         target_after = controller._placement_target()
         target_distance = (
             None
@@ -293,6 +305,16 @@ def _trace_case(
             "eef_delta": eef_after - eef_before,
             "object_before": object_before,
             "object_after": object_after,
+            "grasp_target_before": grasp_target_before,
+            "grasp_target_after": grasp_target_after,
+            "grasp_distance_before": grasp_distance_before,
+            "grasp_distance_after": grasp_distance_after,
+            "descent_target_after": (
+                grasp_target_after
+                + np.array([0.0, 0.0, controller.config.descend_z_offset])
+                if phase_before == "DESCEND"
+                else None
+            ),
             "target_before": target,
             "target_after": target_after,
             "target_distance_after": target_distance,
@@ -316,6 +338,8 @@ def _trace_case(
                 f"phase={phase_before}->{controller.phase_name} "
                 f"eef={np.round(eef_after, 5).tolist()} "
                 f"obj={np.round(object_after, 5).tolist()} "
+                f"grasp_target={np.round(grasp_target_after, 5).tolist()} "
+                f"grasp_dist={grasp_distance_after:.5f} "
                 f"target={None if target_after is None else np.round(target_after, 5).tolist()} "
                 f"target_dist={target_distance} "
                 f"a_xyz={np.round(action[:3], 3).tolist()} "
