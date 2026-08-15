@@ -51,7 +51,11 @@ def _write_report(cfg: DictConfig, results, exit_code: int, base: Path) -> Path:
     return path
 
 
-@hydra.main(version_base="1.3", config_path="config", config_name="main")
+# This module lives three package levels below ``phaseforge/config``. A
+# relative ``config`` path here makes Hydra search for the nonexistent
+# ``phaseforge.evaluations.rollout.config`` package instead of the project's
+# shared config package.
+@hydra.main(version_base="1.3", config_path="../../../config", config_name="main")
 def gates(cfg: DictConfig) -> None:
     """Run all rollout validation gates and report PASS/FAIL/SKIPPED."""
     from phaseforge.evaluations.rollout.gates import GateFailure, run_all_gates

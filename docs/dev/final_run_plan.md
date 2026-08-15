@@ -8,6 +8,44 @@ uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge
 uv run python scripts/summarize_eval.py  --outputs outputs --baseline phaseforge   # 8. eval tables
 
 
+You are right. I mixed up the checkpoint-free scripted gates with learned-policy evaluation.
+
+Correct order:
+
+1. Provision and verify all five datasets.
+
+2. Run the checkpoint-free scripted simulator gates:
+
+```bash
+uv run phaseforge-gates data=lift eval=rollout
+uv run phaseforge-gates data=can eval=rollout
+uv run phaseforge-gates data=square eval=rollout
+uv run phaseforge-gates data=tool_hang eval=rollout
+uv run phaseforge-gates data=transport eval=rollout
+```
+
+3. Run the full sweep:
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/five_task.json \
+  --continue-on-error
+```
+
+This command trains each method/seed, creates checkpoints, and then evaluates each checkpoint.
+
+4. Verify that no cells failed or remain pending. Rerun failures before reporting results.
+
+5. Generate tables:
+
+```bash
+uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge
+uv run python scripts/summarize_eval.py --outputs outputs --baseline phaseforge
+uv run phaseforge-rollout-report outputs
+```
+
+The scripted gates come first because they validate the simulator and reset bank. The learned-policy evaluations happen afterward, inside the sweep, after checkpoints are created.
+
 # Final Run Plan — Lift pilot sweep → paper tables
 
 Run this once, top to bottom, on the machine that will produce the paper
