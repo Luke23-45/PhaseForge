@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,28 @@ MIN_CASE_DISTANCE: float = 1e-3
 
 #: Flat state index where qpos starts (time, qpos..., qvel...).
 TIME_DIMS: int = 1
+
+
+@contextmanager
+def _seeded_reset_rng(seed: int):
+    """Seed robosuite's legacy global samplers without leaking RNG state.
+
+    robosuite 1.5.1's task-level constructors do not consistently forward
+    ``seed`` to ``MujocoEnv``.  Its placement samplers nevertheless use the
+    process-global ``numpy.random`` generator, so passing ``seed`` through
+    ``robosuite.make`` is both invalid for tasks such as Lift and ineffective
+    for the reset distribution.  Seed the generators used during bank
+    creation, then restore the caller's state exactly.
+    """
+    numpy_state = np.random.get_state()
+    python_state = random.getstate()
+    np.random.seed(int(seed))
+    random.seed(int(seed))
+    try:
+        yield
+    finally:
+        np.random.set_state(numpy_state)
+        random.setstate(python_state)
 
 
 @dataclass(frozen=True)
@@ -255,51 +279,51 @@ def generate_reset_bank(
     misconfigured and the bank would be degenerate.
     """
     cases: list[ResetCase] = []
-    adapter = adapter_factory()
-
     seen: list[np.ndarray] = []
-    for index in range(num_cases):
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                adapter.env.reset()
-                states = np.asarray(adapter.env.sim.get_state().flatten(), dtype=np.float32)
-            except Exception as exc:
-                raise InfrastructureError(
-                    f"Reset sampling failed on case {index} (attempt {attempt}): {exc}"
-                ) from exc
-            if not np.isfinite(states).all():
-                raise InfrastructureError(
-                    f"Reset sampling produced non-finite state on case "
-                    f"{index} — the simulator is not returning valid states."
-                )
-            if _is_duplicate(states, seen):
-                if attempt >= max_attempts_per_case:
+    with _seeded_reset_rng(seed):
+        adapter = adapter_factory()
+        for index in range(num_cases):
+            attempt = 0
+            while True:
+                attempt += 1
+                try:
+                    adapter.env.reset()
+                    states = np.asarray(adapter.env.sim.get_state().flatten(), dtype=np.float32)
+                except Exception as exc:
                     raise InfrastructureError(
-                        f"Reset sampling could not produce a state distinct "
-                        f"from the previous {len(seen)} within "
-                        f"{max_attempts_per_case} attempts on case {index}. "
-                        "The reset distribution is degenerate."
+                        f"Reset sampling failed on case {index} (attempt {attempt}): {exc}"
+                    ) from exc
+                if not np.isfinite(states).all():
+                    raise InfrastructureError(
+                        f"Reset sampling produced non-finite state on case "
+                        f"{index} — the simulator is not returning valid states."
                     )
-                continue
-            break
-        xml = None
-        try:
-            xml = getattr(adapter.env, "model_xml", None) or getattr(
-                adapter.env, "_model_xml", None
-            )
-            if xml is not None:
-                xml = str(xml)
-        except Exception:
+                if _is_duplicate(states, seen):
+                    if attempt >= max_attempts_per_case:
+                        raise InfrastructureError(
+                            f"Reset sampling could not produce a state distinct "
+                            f"from the previous {len(seen)} within "
+                            f"{max_attempts_per_case} attempts on case {index}. "
+                            "The reset distribution is degenerate."
+                        )
+                    continue
+                break
             xml = None
-        ep_meta = getattr(adapter.env, "ep_meta", None)
-        if isinstance(ep_meta, dict):
-            ep_meta = dict(ep_meta)
-        else:
-            ep_meta = None
-        cases.append(ResetCase(index=index, states=states, xml=xml, ep_meta=ep_meta))
-        seen.append(states)
+            try:
+                xml = getattr(adapter.env, "model_xml", None) or getattr(
+                    adapter.env, "_model_xml", None
+                )
+                if xml is not None:
+                    xml = str(xml)
+            except Exception:
+                xml = None
+            ep_meta = getattr(adapter.env, "ep_meta", None)
+            if isinstance(ep_meta, dict):
+                ep_meta = dict(ep_meta)
+            else:
+                ep_meta = None
+            cases.append(ResetCase(index=index, states=states, xml=xml, ep_meta=ep_meta))
+            seen.append(states)
 
     bank_id = compute_bank_id(
         meta,

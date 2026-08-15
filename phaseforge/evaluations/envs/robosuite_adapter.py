@@ -112,6 +112,13 @@ class RobosuiteStateAdapter:
         self.action_dim = int(action_dim)
         self.action_low = float(action_low)
         self.action_high = float(action_high)
+        # Keep the protocol seed as adapter metadata, but do not forward it
+        # to robosuite.make().  In robosuite 1.5.1 the base MujocoEnv accepts
+        # ``seed`` while task classes such as Lift do not expose or forward
+        # that argument, so passing it to the registered task raises a
+        # TypeError.  Reset-bank generation seeds robosuite's actual global
+        # NumPy sampler explicitly instead.
+        self.seed = None if seed is None else int(seed)
 
         try:
             import robosuite
@@ -124,8 +131,11 @@ class RobosuiteStateAdapter:
         self._robosuite = robosuite
 
         kwargs = {**meta.env_kwargs, **_FORCED_ENV_KWARGS}
-        if seed is not None:
-            kwargs["seed"] = int(seed)
+        # Some serialized metadata may carry a generic seed field even
+        # though the concrete robosuite task constructor does not accept it.
+        # The rollout protocol controls reset determinism in
+        # ``generate_reset_bank`` instead of relying on this task-level kwarg.
+        kwargs.pop("seed", None)
         try:
             self.env = robosuite.make(meta.env_name, **kwargs)
         except Exception as exc:

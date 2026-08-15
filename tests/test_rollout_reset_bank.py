@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 import numpy as np
 import pytest
 
@@ -89,6 +91,57 @@ class TestGenerate:
                 max_attempts_per_case=3,
                 robosuite_version="1.5.1",
             )
+
+    def test_seed_controls_legacy_global_sampler_and_restores_caller_state(self) -> None:
+        class GlobalRngSim:
+            def __init__(self):
+                self.state = np.zeros(12, dtype=np.float32)
+
+            @property
+            def sim(self):
+                return self
+
+            def reset(self):
+                self.state = np.random.random(12).astype(np.float32)
+
+            def get_state(self):
+                return self.state
+
+        def factory():
+            return type("Adapter", (), {"env": GlobalRngSim()})()
+
+        np.random.seed(1234)
+        random.seed(1234)
+        expected_numpy = np.random.random()
+        expected_python = random.random()
+
+        np.random.seed(1234)
+        random.seed(1234)
+        first = generate_reset_bank(
+            factory,
+            make_meta(),
+            task="Lift",
+            seed=2026,
+            num_cases=3,
+            robosuite_version="1.5.1",
+        )
+        actual_numpy = np.random.random()
+        actual_python = random.random()
+
+        second = generate_reset_bank(
+            factory,
+            make_meta(),
+            task="Lift",
+            seed=2026,
+            num_cases=3,
+            robosuite_version="1.5.1",
+        )
+        assert actual_numpy == expected_numpy
+        assert actual_python == expected_python
+        assert np.array_equal(
+            np.stack([case.states for case in first.cases]),
+            np.stack([case.states for case in second.cases]),
+        )
 
 
 class TestRoundtrip:
