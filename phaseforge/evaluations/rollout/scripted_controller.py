@@ -103,7 +103,7 @@ class ScriptedControllerConfig:
     position_scale: float = POSITION_SCALE
     orientation_scale: float = ORIENTATION_SCALE
     success_z: float = SUCCESS_Z
-    descend_z_offset: float = 0.0
+    descend_z_offset: float = 0.02
     approach_z_offset: float = 0.12
     lift_z: float = 0.95
     placement_z: float = DEFAULT_PLACEMENT_Z
@@ -111,7 +111,7 @@ class ScriptedControllerConfig:
     place_hold_steps: int = PLACE_HOLD_STEPS
     stall_steps: int = STALL_STEPS
     stall_progress: float = STALL_PROGRESS
-    position_tolerance: float = 0.02
+    position_tolerance: float = 0.025
 
 
 class ScriptedController:
@@ -258,7 +258,11 @@ class ScriptedController:
 
         if self._phase is _Phase.DESCEND:
             target = obj + np.array([0.0, 0.0, config.descend_z_offset])
-            if np.linalg.norm(target - eef) < config.position_tolerance:
+            xy_dist = float(np.linalg.norm(target[:2] - eef[:2]))
+            dist_3d = float(np.linalg.norm(target - eef))
+            if dist_3d < config.position_tolerance or (
+                xy_dist < config.position_tolerance and eef[2] <= target[2] + config.position_scale
+            ):
                 self._phase = _Phase.GRASP
                 self._grasp_started_at = t
             else:

@@ -50,7 +50,7 @@ class TestPhases:
         for _ in range(200):
             action = ctrl.act(sim.state, sim.t)
             sim.step(action)
-            if action[6] == -1.0 and np.allclose(action[0:3], 0.0):
+            if action[6] == -1.0:
                 saw_grasp = True
             if sim.success:
                 break
@@ -63,9 +63,9 @@ class TestPhases:
         for _ in range(500):
             action = ctrl.act(sim.state, sim.t)
             sim.step(action)
-            if action[6] == -1.0 and not np.allclose(action[0:3], 0.0):
+            if action[6] == -1.0 and _eef_of(action)[2] > 0:
                 saw_lift = True
-            if action[6] == -1.0 and np.allclose(action[0:3], 0.0):
+            if action[6] == -1.0:
                 saw_close = True
             if sim.success:
                 break

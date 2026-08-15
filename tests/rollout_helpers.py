@@ -116,11 +116,11 @@ class FakeLiftSim:
             and gripper <= -0.9
             and abs(self.eef[0] - self.cube[0]) < 0.03
             and abs(self.eef[1] - self.cube[1]) < 0.03
-            and abs(self.eef[2] - self.cube[2]) < self.grasp_z_window + 0.02
+            and abs(self.eef[2] - (self.cube[2] + 0.02)) < self.grasp_z_window + 0.02
         ):
             self.grasped = True
         if self.grasped:
-            self.cube = self.eef.copy()
+            self.cube = self.eef - np.array([0.0, 0.0, 0.02])
         self.t += 1
 
     @property
