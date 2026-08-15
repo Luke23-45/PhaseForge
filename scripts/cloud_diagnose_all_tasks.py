@@ -168,7 +168,14 @@ def run_task_diagnostics(
         bank = _SimpleBank(cases)
 
     controller_cls = TASK_CONTROLLERS[task_name]
-    recommended_dz = float(demo_stats.get("median_dz_grasp", 0.18))
+    # Demo-derived wrist/object offsets are not grasp geometry: the dataset's
+    # eef site is above the cube center by a task/controller-dependent amount.
+    # Use the canonical controller default unless an explicit, validated
+    # override is supplied; the old 0.18 m fallback left the gripper above the
+    # Lift cube and produced false controller diagnostics.
+    from phaseforge.evaluations.rollout.scripted_controller import GRASP_Z_OFFSET
+
+    recommended_dz = GRASP_Z_OFFSET
     config = ScriptedControllerConfig(
         descend_z_offset=recommended_dz,
         approach_z_offset=recommended_dz + 0.10,

@@ -83,7 +83,12 @@ STALL_PROGRESS: float = 1e-4
 
 #: Default placement target height (relative to the table) for tasks that
 #: transport an object to a separate receptacle.
-DEFAULT_PLACEMENT_Z: float = 1.15
+DEFAULT_PLACEMENT_Z: float = 0.95
+
+# The Panda eef site is the gripper center. For the 4.3 cm cube, grasping is
+# performed just above the cube center/top rather than at the high approach
+# waypoint. This is also the geometry used by the kinematic gate simulator.
+GRASP_Z_OFFSET: float = OBJECT_HALF_SIZE + 0.02
 
 
 class _Phase(Enum):
@@ -103,15 +108,15 @@ class ScriptedControllerConfig:
     position_scale: float = POSITION_SCALE
     orientation_scale: float = ORIENTATION_SCALE
     success_z: float = SUCCESS_Z
-    descend_z_offset: float = 0.18
-    approach_z_offset: float = 0.28
-    lift_z: float = 1.15
+    descend_z_offset: float = GRASP_Z_OFFSET
+    approach_z_offset: float = 0.12
+    lift_z: float = 0.95
     placement_z: float = DEFAULT_PLACEMENT_Z
     grasp_hold_steps: int = GRASP_HOLD_STEPS
     place_hold_steps: int = PLACE_HOLD_STEPS
     stall_steps: int = STALL_STEPS
     stall_progress: float = STALL_PROGRESS
-    position_tolerance: float = 0.03
+    position_tolerance: float = 0.01
 
 
 class ScriptedController:
@@ -260,8 +265,10 @@ class ScriptedController:
             target = obj + np.array([0.0, 0.0, config.descend_z_offset])
             xy_dist = float(np.linalg.norm(target[:2] - eef[:2]))
             dist_3d = float(np.linalg.norm(target - eef))
+            vertical_dist = abs(float(eef[2] - target[2]))
             if dist_3d < config.position_tolerance or (
-                xy_dist < config.position_tolerance and eef[2] <= target[2] + config.position_scale
+                xy_dist < config.position_tolerance
+                and vertical_dist < config.position_tolerance
             ):
                 self._phase = _Phase.GRASP
                 self._grasp_started_at = t
@@ -278,8 +285,8 @@ class ScriptedController:
                 # latter would chase the eef indefinitely.
                 self._snapshot_placement_target(state)
                 self._phase = _Phase.LIFT
-            target = obj + np.array([0.0, 0.0, config.descend_z_offset])
-            return self._track(target, GRIPPER_CLOSE, eef, t)
+            else:
+                return self._hold_action(GRIPPER_CLOSE)
 
         if self._phase is _Phase.LIFT:
             target = np.array([eef[0], eef[1], config.lift_z])
