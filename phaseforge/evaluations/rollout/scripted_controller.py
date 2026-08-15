@@ -75,7 +75,12 @@ PLACE_HOLD_STEPS: int = 10
 #: with zero translation commands until the horizon expires -- recorded as
 #: a task timeout, never as a simulator/policy failure).
 STALL_STEPS: int = 30
-STALL_PROGRESS: float = 0.005
+# A robosuite policy step can move the end effector by only a few millimetres
+# under OSC_POSE, especially while approaching contact.  5 mm therefore
+# classifies valid slow progress as a stall.  Keep the watchdog as a safety
+# net for a genuinely frozen simulator, but use a sub-millimetre threshold;
+# the fixed rollout horizon remains the authoritative task-time limit.
+STALL_PROGRESS: float = 1e-4
 
 #: Default placement target height (relative to the table) for tasks that
 #: transport an object to a separate receptacle.
@@ -166,6 +171,11 @@ class ScriptedController:
         self._stall_since: int | None = None
         self._last_eef: np.ndarray | None = None
         self._placement_snapshot: np.ndarray | None = None
+
+    @property
+    def phase_name(self) -> str:
+        """Stable diagnostic name for the current controller phase."""
+        return self._phase.name
 
     # ------------------------------------------------------------------
     # State parsing

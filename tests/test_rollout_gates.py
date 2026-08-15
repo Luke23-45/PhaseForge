@@ -61,6 +61,28 @@ class TestDemoReplay:
         result = gate_demo_replay(adapter, path, num_demos=1, tolerance=1e-6)  # type: ignore[arg-type]
         assert result.status == "PASS", result.detail
 
+    def test_passes_on_v15_equal_length_demo(self, tmp_path) -> None:
+        """The v1.5 PH files store T states and T actions.
+
+        The published v1.5 states are post-action states, so state[0] is
+        already the result of action[0]. The gate must replay actions[1:]
+        against states[1:].
+        """
+        import h5py
+
+        adapter = FakeAdapter(horizon=500)  # type: ignore[arg-type]
+        states, actions = _linear_demo(adapter, steps=5)
+        path = tmp_path / "lift_v15.hdf5"
+        with h5py.File(path, "w") as h5:
+            data = h5.create_group("data")
+            demo = data.create_group("demo_0")
+            demo.create_dataset("states", data=states[1:])
+            demo.create_dataset("actions", data=actions)
+
+        result = gate_demo_replay(adapter, path, num_demos=1, tolerance=1e-6)  # type: ignore[arg-type]
+        assert result.status == "PASS", result.detail
+        assert result.metrics["compared"] == 4
+
     def test_fails_on_divergent_demo(self, tmp_path) -> None:
         import h5py
 

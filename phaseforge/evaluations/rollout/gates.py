@@ -124,9 +124,17 @@ def gate_demo_replay(
     num_demos: int = 1,
     tolerance: float = 1e-3,
 ) -> GateResult:
-    """Replay the first demo(s): reset_to(states[0]) then compare qpos/qvel
-    after every step against the stored states[i+1] (robomimic's own
-    validation contract). Skipped loudly when the raw HDF5 is absent.
+    """Replay the first demo(s) against the raw HDF5 state trajectory.
+
+    robomimic stores either ``T+1`` states with ``T`` actions (an initial state
+    plus one post-action state per action) or ``T`` post-action states with
+    ``T`` actions in the v1.5 files. In the latter representation the first
+    action produced the stored initial state, so the check starts at
+    ``states[0]`` and replays ``actions[1:]`` against ``states[1:]``. Both
+    representations are valid; silently treating the equal-length v1.5 form
+    as a malformed demo would incorrectly skip this gate.
+
+    Skipped loudly when the raw HDF5 is absent.
     """
     import h5py
 
@@ -161,24 +169,35 @@ def gate_demo_replay(
                     )
                 states = np.asarray(demo["states"][:], dtype=np.float64)
                 actions = np.asarray(demo["actions"][:], dtype=np.float64)
-                if states.shape[0] != actions.shape[0] + 1:
+                if states.shape[0] == actions.shape[0] + 1:
+                    replay_actions = actions
+                    expected_states = states[1:]
+                elif states.shape[0] == actions.shape[0] and states.shape[0] >= 2:
+                    # The robosuite data-collection path records states after
+                    # each action and removes the extra terminal state before
+                    # writing the equal-length v1.5 HDF5. State[0] is thus
+                    # already the result of action[0].
+                    replay_actions = actions[1:]
+                    expected_states = states[1:]
+                else:
                     return GateResult(
                         gate="2_demo_replay",
                         status="SKIPPED",
                         detail=(
-                            f"{demo_key} states ({states.shape[0]}) must be "
-                            f"one longer than actions ({actions.shape[0]})"
+                            f"{demo_key} has incompatible trajectory lengths: "
+                            f"states={states.shape[0]}, actions={actions.shape[0]}; "
+                            "expected states=actions or states=actions+1"
                         ),
                     )
                 adapter.reset_to(states[0], xml=None, ep_meta=None)
-                for i in range(actions.shape[0]):
-                    adapter.step(actions[i])
+                for i in range(replay_actions.shape[0]):
+                    adapter.step(replay_actions[i])
                     sim = np.asarray(adapter.env.sim.get_state().flatten(), dtype=np.float64)
-                    if sim.shape != states[i + 1].shape:
+                    if sim.shape != expected_states[i].shape:
                         mismatches += 1
                         break
                     compared += 1
-                    if np.max(np.abs(sim[1:] - states[i + 1][1:])) > tolerance:
+                    if np.max(np.abs(sim[1:] - expected_states[i][1:])) > tolerance:
                         mismatches += 1
                 checked += 1
     except GateFailure as exc:
@@ -319,6 +338,7 @@ def gate_scripted_controller(
     infra = 0
     timeouts = 0
     failures_detail: list[str] = []
+    failure_phases: dict[str, int] = {}
 
     for case in bank.cases:
         # The oracle may read pinned simulator geometry (target-bin, peg,
@@ -347,7 +367,9 @@ def gate_scripted_controller(
             successes += 1
         else:
             timeouts += 1
-            failures_detail.append(f"case {case.index}: timed out")
+            phase = getattr(controller, "phase_name", "unknown")
+            failure_phases[phase] = failure_phases.get(phase, 0) + 1
+            failures_detail.append(f"case {case.index}: timed out in phase {phase}")
 
     rate = successes / len(bank.cases) if bank.cases else float("nan")
     passed = rate + 1e-9 >= threshold and infra == 0
@@ -365,6 +387,7 @@ def gate_scripted_controller(
             "rate": rate,
             "timeouts": timeouts,
             "infra_failures": infra,
+            "timeout_phases": failure_phases,
         },
     )
 
@@ -466,7 +489,12 @@ def gate_checkpoint_smoke(
         from phaseforge.cli import build_eval_model
 
         model = build_eval_model(cfg)
-        model.to(torch.device(cfg.project.get("device", "cpu")))
+        requested_device = str(cfg.project.get("device", "cpu"))
+        if requested_device.startswith("cuda") and not torch.cuda.is_available():
+            requested_device = "cpu"
+        device = torch.device(requested_device)
+        model.to(device)
+        model.eval()
     except Exception as exc:  # noqa: BLE001
         return GateResult(
             gate="6_checkpoint_smoke",
@@ -490,40 +518,43 @@ def gate_checkpoint_smoke(
             detail=f"normalizer load failed: {exc}",
         )
 
+    mean = normalizer.mean.to(device)
+    std = normalizer.std.to(device)
+
     successes = 0
     infra = 0
     policy_failures = 0
-    for case in bank.cases[:num_episodes]:
-        try:
-            state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
-        except Exception:  # noqa: BLE001
-            infra += 1
-            continue
-        ok = False
-        for _t in range(adapter.horizon):
+    with torch.inference_mode():
+        for case in bank.cases[:num_episodes]:
             try:
-                normalized = normalizer.normalize(state).unsqueeze(0)
-                model.eval()
-                with torch.no_grad():
-                    action = model.get_action(normalized)  # type: ignore[operator]
-                action = np.asarray(action.detach().cpu().numpy()).reshape(-1)
-                action = adapter.validate_action(action)
-            except PolicyInvalidActionError:
-                policy_failures += 1
-                break
-            except Exception:  # noqa: BLE001
-                policy_failures += 1
-                break
-            try:
-                state, _done, success, _info = adapter.step(action)
+                state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
             except Exception:  # noqa: BLE001
                 infra += 1
-                break
-            if success:
-                ok = True
-                break
-        if ok:
-            successes += 1
+                continue
+            ok = False
+            for _t in range(adapter.horizon):
+                try:
+                    state_tensor = torch.as_tensor(state, dtype=torch.float32, device=device)
+                    normalized = ((state_tensor - mean) / std).unsqueeze(0)
+                    action = model.get_action(normalized)  # type: ignore[operator]
+                    action = np.asarray(action.detach().cpu().numpy()).reshape(-1)
+                    action = adapter.validate_action(action)
+                except PolicyInvalidActionError:
+                    policy_failures += 1
+                    break
+                except Exception:  # noqa: BLE001
+                    policy_failures += 1
+                    break
+                try:
+                    state, _done, success, _info = adapter.step(action)
+                except Exception:  # noqa: BLE001
+                    infra += 1
+                    break
+                if success:
+                    ok = True
+                    break
+            if ok:
+                successes += 1
 
     rate = successes / num_episodes if num_episodes else 0.0
     passed = rate + 1e-9 >= max_success_rate and infra == 0

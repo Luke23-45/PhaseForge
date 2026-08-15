@@ -117,6 +117,22 @@ class RolloutEvaluator:
         self.horizon = int(horizon or adapter.horizon)
         self.action_tolerance = float(action_tolerance)
 
+        # These values are invariant for the whole rollout. Resolving them
+        # once avoids a parameter walk, an eval-mode traversal, and repeated
+        # normalizer device transfers at every simulator step.
+        self._model_device: torch.device | None = None
+        self._normalizer_mean: torch.Tensor | None = None
+        self._normalizer_std: torch.Tensor | None = None
+        if self.model is not None:
+            self.model.eval()
+            try:
+                self._model_device = next(self.model.parameters()).device
+            except (StopIteration, AttributeError):
+                self._model_device = torch.device("cpu")
+            if self.normalizer is not None:
+                self._normalizer_mean = self.normalizer.mean.to(self._model_device)
+                self._normalizer_std = self.normalizer.std.to(self._model_device)
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -268,13 +284,17 @@ class RolloutEvaluator:
             raise PolicyInvalidActionError("No normalizer available for policy inference.")
         if self.model is None:
             raise PolicyInvalidActionError("No policy available.")
-        try:
-            device = next(self.model.parameters()).device
-        except (StopIteration, AttributeError):
-            device = torch.device("cpu")
-        normalized = self.normalizer.normalize(state).unsqueeze(0).to(device)
-        self.model.eval()
-        with torch.no_grad():
+        device = self._model_device or torch.device("cpu")
+        state_tensor = torch.as_tensor(state, dtype=torch.float32, device=device)
+        if self._normalizer_mean is None or self._normalizer_std is None:
+            # This fallback keeps the method safe for a custom normalizer
+            # implementation while the standard FrozenNormalizer takes the
+            # cached path above.
+            normalized_state = self.normalizer.normalize(state_tensor)
+        else:
+            normalized_state = (state_tensor - self._normalizer_mean) / self._normalizer_std
+        normalized = normalized_state.unsqueeze(0)
+        with torch.inference_mode():
             action_tensor = self.model.get_action(normalized)  # type: ignore[operator]
         action = np.asarray(action_tensor.detach().cpu().numpy()).reshape(-1)
         return self.adapter.validate_action(action, tolerance=self.action_tolerance)
