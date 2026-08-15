@@ -34,9 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hydra import compose, initialize
 
-from phaseforge.evaluations.envs.env_metadata import PinnedEnvMetadata
+from phaseforge.evaluations.envs.env_metadata import PinnedEnvMetadata, dev_fallback_metadata
 from phaseforge.evaluations.envs.robosuite_adapter import RobosuiteStateAdapter, StateSpec
-from phaseforge.evaluations.envs.task_registry import TASK_REGISTRY
 from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedCanController,
     ScriptedControllerConfig,
@@ -134,9 +133,17 @@ def run_task_diagnostics(
         if "median_dz_grasp" in demo_stats:
             print(f"Dataset Human Grasp (eef_z - obj_z): {demo_stats['median_dz_grasp']:+.4f} m")
     else:
-        from phaseforge.evaluations.envs.task_registry import dev_fallback_metadata
-
-        meta = dev_fallback_metadata(TASK_REGISTRY[task_name].protocol_name)
+        # Map snake_case task name (e.g. "tool_hang") to the CamelCase
+        # protocol name used by TaskSpec (e.g. "ToolHang").
+        _TASK_PROTOCOL = {
+            "lift": "Lift",
+            "can": "Can",
+            "square": "Square",
+            "tool_hang": "ToolHang",
+            "transport": "Transport",
+        }
+        protocol_name = _TASK_PROTOCOL.get(task_name, task_name.title())
+        meta = dev_fallback_metadata(protocol_name)
         print("Using dev fallback metadata (no local HDF5 found)")
 
     adapter = RobosuiteStateAdapter(meta, state_spec, action_dim=cfg.data.action_dim)
