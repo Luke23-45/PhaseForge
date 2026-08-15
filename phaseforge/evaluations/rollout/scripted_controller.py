@@ -34,9 +34,9 @@ Phase progression for tasks without placement (Lift):
 
     APPROACH -> DESCEND -> GRASP_HOLD -> LIFT
 
-A stall watchdog abandons an episode when the end-effector makes no
-progress while tracking a target. The GRASP phase is exempt (closing
-the gripper intentionally keeps the end-effector stationary). The
+A stall watchdog abandons an episode only when the distance to the active
+target stops decreasing while tracking it. The GRASP phase is exempt
+(closing the gripper intentionally keeps the end-effector stationary). The
 abandoned episode then simply times out as a task failure, never as a
 policy / simulator error.
 """
@@ -75,11 +75,10 @@ PLACE_HOLD_STEPS: int = 10
 #: with zero translation commands until the horizon expires -- recorded as
 #: a task timeout, never as a simulator/policy failure).
 STALL_STEPS: int = 30
-# A robosuite policy step can move the end effector by only a few millimetres
-# under OSC_POSE, especially while approaching contact.  5 mm therefore
-# classifies valid slow progress as a stall.  Keep the watchdog as a safety
-# net for a genuinely frozen simulator, but use a sub-millimetre threshold;
-# the fixed rollout horizon remains the authoritative task-time limit.
+# The watchdog compares target-distance progress rather than raw end-effector
+# displacement.  OSC_POSE can converge in sub-millimetre steps near a target;
+# raw displacement would incorrectly classify that valid convergence as a
+# stall.  The fixed rollout horizon remains the authoritative task-time limit.
 STALL_PROGRESS: float = 1e-4
 
 #: Default placement target height (relative to the table) for tasks that
@@ -169,7 +168,8 @@ class ScriptedController:
         self._grasp_started_at: int | None = None
         self._place_started_at: int | None = None
         self._stall_since: int | None = None
-        self._last_eef: np.ndarray | None = None
+        self._last_target: np.ndarray | None = None
+        self._last_target_distance: float | None = None
         self._placement_snapshot: np.ndarray | None = None
 
     @property
@@ -235,8 +235,6 @@ class ScriptedController:
         if self.is_success(state):
             return self._hold_action(GRIPPER_OPEN)
 
-        self._watchdog(eef, t)
-
         if self._phase is _Phase.STALLED:
             return self._hold_action(GRIPPER_OPEN)
 
@@ -246,7 +244,7 @@ class ScriptedController:
                 self._approach_done = True
                 self._phase = _Phase.DESCEND
             else:
-                return self._track(target, GRIPPER_OPEN, eef)
+                return self._track(target, GRIPPER_OPEN, eef, t)
 
         if self._phase is _Phase.DESCEND:
             target = obj + np.array([0.0, 0.0, config.descend_z_offset])
@@ -254,7 +252,7 @@ class ScriptedController:
                 self._phase = _Phase.GRASP
                 self._grasp_started_at = t
             else:
-                return self._track(target, GRIPPER_OPEN, eef)
+                return self._track(target, GRIPPER_OPEN, eef, t)
 
         if self._phase is _Phase.GRASP:
             assert self._grasp_started_at is not None
@@ -284,7 +282,7 @@ class ScriptedController:
                 # else (no placement): stay in LIFT and let the success
                 # predicate fire; the track action is now near-zero
                 # because we are at the target.
-            return self._track(target, GRIPPER_CLOSE, eef)
+            return self._track(target, GRIPPER_CLOSE, eef, t)
 
         if self._phase is _Phase.TRANSPORT and has_placement and placement is not None:
             assert placement is not None
@@ -296,13 +294,13 @@ class ScriptedController:
                 self._phase = _Phase.PLACE
                 self._place_started_at = t
             else:
-                return self._track(placement, GRIPPER_CLOSE, eef)
+                return self._track(placement, GRIPPER_CLOSE, eef, t)
 
         if self._phase is _Phase.PLACE and placement is not None:
             assert self._place_started_at is not None
             if t - self._place_started_at >= config.place_hold_steps:
                 return self._hold_action(GRIPPER_OPEN)
-            return self._track(placement, GRIPPER_OPEN, eef)
+            return self._track(placement, GRIPPER_OPEN, eef, t)
 
         return self._hold_action(GRIPPER_OPEN)
 
@@ -310,7 +308,15 @@ class ScriptedController:
     # Internals
     # ------------------------------------------------------------------
 
-    def _track(self, target: np.ndarray, gripper: float, eef: np.ndarray) -> np.ndarray:
+    def _track(
+        self, target: np.ndarray, gripper: float, eef: np.ndarray, t: int
+    ) -> np.ndarray:
+        # Run the watchdog only for an active tracking command. Phase
+        # transition checks above get first chance to recognize that the
+        # target has already been reached.
+        self._watchdog(eef, target, t)
+        if self._phase is _Phase.STALLED:
+            return self._hold_action(GRIPPER_OPEN)
         delta = target - eef
         return self._normalized_action(delta, gripper)
 
@@ -358,23 +364,28 @@ class ScriptedController:
     def _env_body_pos(self, env: Any, body_id: int) -> np.ndarray:
         return np.asarray(env.sim.data.body_xpos[body_id], dtype=np.float64).copy()
 
-    def _watchdog(self, eef: np.ndarray, t: int) -> None:
+    def _watchdog(self, eef: np.ndarray, target: np.ndarray, t: int) -> None:
         """Abandon an episode when tracking makes no progress.
 
-        The GRASP phase is exempt: closing the gripper intentionally keeps
-        the end-effector stationary, so a lack of movement there is
-        expected, not a stall.
+        Progress is measured as a reduction in distance to ``target`` rather
+        than as raw end-effector displacement. A phase can legitimately
+        converge with very small Cartesian steps near its target.
         """
-        if self._phase is _Phase.GRASP:
-            return
         config = self.config
-        if self._last_eef is None:
-            self._last_eef = eef.copy()
+        target = np.asarray(target, dtype=np.float64)
+        distance = float(np.linalg.norm(target - eef))
+        target_changed = self._last_target is None or not np.allclose(
+            target, self._last_target, rtol=0.0, atol=1e-9
+        )
+        if target_changed or self._last_target_distance is None:
+            self._last_target = target.copy()
+            self._last_target_distance = distance
             self._stall_since = t
             return
-        moved = np.linalg.norm(eef - self._last_eef)
-        self._last_eef = eef.copy()
-        if moved < config.stall_progress:
+
+        progress = self._last_target_distance - distance
+        self._last_target_distance = distance
+        if progress < config.stall_progress:
             if self._stall_since is None:
                 self._stall_since = t
             elif t - self._stall_since >= config.stall_steps:

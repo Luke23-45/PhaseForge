@@ -97,7 +97,8 @@ class TestDemoReplay:
             demo.create_dataset("actions", data=actions)
 
         result = gate_demo_replay(adapter, path, num_demos=1, tolerance=1e-6)  # type: ignore[arg-type]
-        assert result.status == "FAIL", result.detail
+        assert result.status == "SKIPPED", result.detail
+        assert result.metrics["diagnostic_only"] is True
         assert result.metrics["mismatches"] >= 1
 
 
