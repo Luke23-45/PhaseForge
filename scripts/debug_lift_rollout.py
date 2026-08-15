@@ -34,6 +34,7 @@ from phaseforge.evaluations.rollout.runner import (
     resolve_pinned_metadata,
     state_spec_from_config,
 )
+from phaseforge.evaluations.rollout.scripted_controller import ScriptedControllerConfig
 from phaseforge.utils.config import output_base_dir
 
 
@@ -89,26 +90,41 @@ def _real_sim_metrics(env: Any) -> dict[str, Any]:
         metrics["cube_body_pos"] = np.asarray(
             env.sim.data.body_xpos[int(body_id)], dtype=np.float64
         ).copy()
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - diagnostics must retain the cause
+        metrics["cube_body_pos_error"] = f"{type(exc).__name__}: {exc}"
     try:
         robot = env.robots[0]
+        arms = getattr(robot, "arms", ())
+        arm = arms[0] if arms else "right"
+        indexes = getattr(robot, "_ref_gripper_joint_pos_indexes")
+        if isinstance(indexes, dict):
+            indexes = indexes[arm]
         metrics["gripper_qpos_native"] = np.asarray(
-            env.sim.data.qpos[robot._ref_gripper_joint_pos_indexes], dtype=np.float64
+            env.sim.data.qpos[indexes], dtype=np.float64
         ).copy()
-    except Exception:
-        pass
+        metrics["gripper_arm"] = arm
+    except Exception as exc:  # noqa: BLE001 - diagnostics must retain the cause
+        metrics["gripper_qpos_native_error"] = f"{type(exc).__name__}: {exc}"
     try:
         metrics["env_success"] = bool(env._check_success())
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - diagnostics must retain the cause
+        metrics["env_success_error"] = f"{type(exc).__name__}: {exc}"
     try:
         metrics["grasp_check"] = bool(
             env._check_grasp(gripper=env.robots[0].gripper, object_geoms=env.cube)
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - diagnostics must retain the cause
+        metrics["grasp_check_error"] = f"{type(exc).__name__}: {exc}"
     return metrics
+
+
+def _state_slice(state: np.ndarray, spec: Any, key: str) -> np.ndarray | None:
+    """Read a declared state field without hiding schema failures."""
+    try:
+        start, stop = spec.index_of(key)
+    except (KeyError, ValueError):
+        return None
+    return np.asarray(state[start:stop], dtype=np.float64).copy()
 
 
 def _eef_from_state(state: np.ndarray, spec) -> np.ndarray:
@@ -153,8 +169,9 @@ def _trace_case(
     max_steps: int,
     log_every: int,
     include_probe: bool,
+    controller_config: ScriptedControllerConfig | None = None,
 ) -> dict[str, Any]:
-    controller = controller_cls(spec, env=adapter.env)
+    controller = controller_cls(spec, env=adapter.env, config=controller_config)
     state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
     record: dict[str, Any] = {
         "case_index": int(case.index),
@@ -188,6 +205,12 @@ def _trace_case(
             "eef_before": eef_before,
             "eef_after": eef_after,
             "eef_delta": eef_after - eef_before,
+            "gripper_qpos_state_before": _state_slice(
+                state, spec, "robot0_gripper_qpos"
+            ),
+            "gripper_qpos_state_after": _state_slice(
+                next_state, spec, "robot0_gripper_qpos"
+            ),
             "object_before": object_before,
             "object_after": object_after,
             "object_z": float(object_after[2]),
@@ -220,7 +243,29 @@ def _trace_case(
             break
     record["final_phase"] = controller.phase_name
     record["stalled_from_phase"] = controller.stalled_from_phase
+    grasp_values = [
+        step["sim_metrics"].get("grasp_check")
+        for step in record["steps"]
+        if "grasp_check" in step["sim_metrics"]
+    ]
+    record["native_grasp_observed"] = any(grasp_values)
+    record["native_grasp_checks_available"] = bool(grasp_values)
     return _jsonable(record)
+
+
+def _parse_offsets(value: str) -> list[float]:
+    """Parse a comma-separated, finite, non-negative offset list."""
+    try:
+        offsets = [float(part.strip()) for part in value.split(",") if part.strip()]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "grasp offsets must be comma-separated floats"
+        ) from exc
+    if not offsets or any(not np.isfinite(offset) or offset < 0.0 for offset in offsets):
+        raise argparse.ArgumentTypeError(
+            "grasp offsets must contain at least one finite non-negative value"
+        )
+    return offsets
 
 
 def main() -> None:
@@ -230,6 +275,17 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=500)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--no-action-probe", action="store_true")
+    parser.add_argument(
+        "--sweep-grasp-offsets",
+        action="store_true",
+        help="run the selected case at each --grasp-offsets value",
+    )
+    parser.add_argument(
+        "--grasp-offsets",
+        type=_parse_offsets,
+        default=_parse_offsets("0.000,0.010,0.020,0.030,0.040,0.050,0.060"),
+        help="comma-separated non-negative vertical offsets from object center",
+    )
     parser.add_argument(
         "overrides",
         nargs="*",
@@ -262,18 +318,70 @@ def main() -> None:
 
         print(f"Task: {bank.task}; bank: {bank.bank_id}; cases: {[c.index for c in selected]}")
         print("Controller metadata:", json.dumps(_controller_metadata(adapter.env), indent=2))
-        traces = [
-            _trace_case(
-                adapter,
-                case,
-                spec,
-                controller_cls,
-                max_steps=args.max_steps,
-                log_every=args.log_every,
-                include_probe=not args.no_action_probe,
-            )
-            for case in selected
-        ]
+        traces = []
+        offset_sweep = []
+        if args.sweep_grasp_offsets:
+            if bank.task != "Lift":
+                raise ValueError(
+                    "--sweep-grasp-offsets is currently supported only for data=lift"
+                )
+            if len(selected) != 1:
+                raise ValueError("--sweep-grasp-offsets requires --case-index")
+            case = selected[0]
+            for offset in args.grasp_offsets:
+                trace = _trace_case(
+                    adapter,
+                    case,
+                    spec,
+                    controller_cls,
+                    max_steps=args.max_steps,
+                    log_every=args.max_steps + 1,
+                    include_probe=False,
+                    controller_config=ScriptedControllerConfig(
+                        descend_z_offset=offset,
+                    ),
+                )
+                steps = trace["steps"]
+                first_grasp = next(
+                    (
+                        step["t"]
+                        for step in steps
+                        if step["sim_metrics"].get("grasp_check") is True
+                    ),
+                    None,
+                )
+                final_step = steps[-1] if steps else {}
+                offset_sweep.append(
+                    {
+                        "descend_z_offset": offset,
+                        "success": bool(trace["success"]),
+                        "native_grasp_observed": bool(trace["native_grasp_observed"]),
+                        "first_grasp_step": first_grasp,
+                        "final_phase": trace["final_phase"],
+                        "final_cube_body_pos": final_step.get("sim_metrics", {}).get(
+                            "cube_body_pos"
+                        ),
+                        "gripper_qpos_native_error": final_step.get(
+                            "sim_metrics", {}
+                        ).get("gripper_qpos_native_error"),
+                    }
+                )
+            print("Grasp-offset sweep:")
+            for result in offset_sweep:
+                print(json.dumps(result, sort_keys=True))
+        else:
+            traces = [
+                _trace_case(
+                    adapter,
+                    case,
+                    spec,
+                    controller_cls,
+                    max_steps=args.max_steps,
+                    log_every=args.log_every,
+                    include_probe=not args.no_action_probe,
+                )
+                for case in selected
+            ]
     finally:
         adapter.close()
 
@@ -287,6 +395,7 @@ def main() -> None:
         "config_overrides": overrides,
         "controller_metadata": controller_metadata,
         "traces": traces,
+        "offset_sweep": offset_sweep,
     }
     path.write_text(json.dumps(_jsonable(payload), indent=2), encoding="utf-8")
     print(f"Complete diagnostic trace written to {path}")

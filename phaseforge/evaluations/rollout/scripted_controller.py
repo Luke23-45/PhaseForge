@@ -278,6 +278,13 @@ class ScriptedController:
         if self._phase is _Phase.GRASP:
             assert self._grasp_started_at is not None
             if t - self._grasp_started_at >= config.grasp_hold_steps:
+                # Do not let a fixed timer claim that a real grasp happened.
+                # Unit-test fakes do not expose this predicate and return
+                # None, while a real robosuite environment can veto the
+                # transition when contact was not established.
+                native_grasp = self._native_grasp_status()
+                if native_grasp is False:
+                    return self._hold_action(GRIPPER_CLOSE)
                 # Snapshot the placement target at the moment the grasp
                 # completes. The target must be relative to the object's
                 # position *at the time of the grasp*, not the current
@@ -325,6 +332,30 @@ class ScriptedController:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _native_grasp_status(self) -> bool | None:
+        """Return the simulator grasp predicate when this env exposes it.
+
+        ``None`` means that the controller is running against a unit-test
+        fake or an environment whose object geometry is not registered here.
+        A definite ``False`` from a real environment is not treated as a
+        successful grasp. This privileged signal is used only by the
+        training-free rollout oracle, never by learned policies.
+        """
+        if self.env is None:
+            return None
+        checker = getattr(self.env, "_check_grasp", None)
+        robots = getattr(self.env, "robots", None)
+        gripper = getattr(robots[0], "gripper", None) if robots else None
+        object_geoms = getattr(
+            self.env, getattr(self, "grasp_object_attr", ""), None
+        )
+        if not callable(checker) or gripper is None or object_geoms is None:
+            return None
+        try:
+            return bool(checker(gripper=gripper, object_geoms=object_geoms))
+        except Exception:  # noqa: BLE001 - a diagnostic guard must not crash execution
+            return None
 
     def _track(self, target: np.ndarray, gripper: float, eef: np.ndarray, t: int) -> np.ndarray:
         # Run the watchdog only for an active tracking command. Phase
@@ -428,6 +459,7 @@ class ScriptedLiftController(ScriptedController):
     """
 
     object_key = "object"
+    grasp_object_attr = "cube"
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         return None

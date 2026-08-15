@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from phaseforge.evaluations.rollout.scripted_controller import (
+    GRASP_HOLD_STEPS,
     POSITION_SCALE,
     ScriptedLiftConfig,
     ScriptedLiftController,
@@ -30,7 +31,7 @@ class TestPhases:
         ctrl = _controller()
         state = state_from_parts(np.array([0.05, 0.05, 0.87]), np.array([-0.1, 0.02, 0.8]))
         action = ctrl.act(state, t=0)
-        # target = cube + (0,0,0.28) = (-0.1, 0.02, 1.08); delta positive in z
+        # The approach target is above the cube and should require positive z.
         assert _eef_of(action)[2] > 0
         assert action[6] == 1.0
 
@@ -104,3 +105,27 @@ class TestClosedLoop:
                     break
             assert ok, f"controller failed from rng seed {seed}"
             assert sim.cube[2] > SUCCESS_Z
+
+    def test_real_env_guard_does_not_claim_unverified_grasp(self) -> None:
+        class NoGraspEnv:
+            cube = object()
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return False
+
+        ctrl = ScriptedLiftController(lift_state_spec(), env=NoGraspEnv())
+        approach_state = state_from_parts(
+            np.array([0.0, 0.0, 0.8 + 0.12]),
+            np.array([0.0, 0.0, 0.8]),
+        )
+        ctrl.act(approach_state, 0)
+        grasp_state = state_from_parts(
+            np.array([0.0, 0.0, 0.8 + 0.0415]),
+            np.array([0.0, 0.0, 0.8]),
+        )
+        for t in range(1, GRASP_HOLD_STEPS + 2):
+            action = ctrl.act(grasp_state, t)
+            assert action[6] == -1.0
+        assert ctrl.phase_name == "GRASP"
