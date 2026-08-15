@@ -95,6 +95,10 @@ GRASP_Z_OFFSET: float = OBJECT_HALF_SIZE + 0.02
 # Validated against all 50 cases in the pinned Lift reset bank. Other tasks
 # retain GRASP_Z_OFFSET until their own scripted gates are validated.
 LIFT_GRASP_Z_OFFSET: float = 0.01
+# SquareNut uses the same low eef-over-object grasp geometry as Lift. Its
+# object center is already above the table, so the generic placement offset
+# would place the eef too high to establish native contact.
+SQUARE_GRASP_Z_OFFSET: float = 0.01
 
 
 class _Phase(Enum):
@@ -634,6 +638,17 @@ class ScriptedSquareController(ScriptedController):
 
     object_key = "object"
     object_position_slice = (7, 10)
+
+    def __init__(
+        self,
+        state_spec: StateSpec,
+        *,
+        config: ScriptedControllerConfig | None = None,
+        env: Any | None = None,
+    ) -> None:
+        if config is None:
+            config = ScriptedControllerConfig(descend_z_offset=SQUARE_GRASP_Z_OFFSET)
+        super().__init__(state_spec, config=config, env=env)
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config

@@ -296,6 +296,14 @@ def main() -> None:
             if args.descend_z_offset is None
             else ScriptedControllerConfig(descend_z_offset=args.descend_z_offset)
         )
+        effective_controller = controller_cls(
+            spec,
+            env=adapter.env,
+            config=controller_config,
+        )
+        effective_descend_z_offset = float(
+            effective_controller.config.descend_z_offset
+        )
         traces = [
             _trace_case(
                 adapter,
@@ -320,6 +328,7 @@ def main() -> None:
         "bank_id": bank.bank_id,
         "config_overrides": overrides,
         "diagnostic_descend_z_offset": args.descend_z_offset,
+        "effective_descend_z_offset": effective_descend_z_offset,
         "traces": traces,
     }
     path.write_text(json.dumps(_jsonable(payload), indent=2), encoding="utf-8")
