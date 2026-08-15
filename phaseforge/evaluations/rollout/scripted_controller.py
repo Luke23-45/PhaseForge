@@ -755,7 +755,10 @@ class ScriptedSquareController(ScriptedController):
         oracle: the transition to release is still governed by the base
         controller's target and the environment's own success predicate.
         """
-        if self._phase in (_Phase.LIFT, _Phase.TRANSPORT, _Phase.PLACE):
+        # In PLACE, native grasp=False is expected: the nut may already have
+        # been released. Only LIFT/TRANSPORT represent a still-held object;
+        # contact loss in those phases requires a fresh approach.
+        if self._phase in (_Phase.LIFT, _Phase.TRANSPORT):
             native_grasp = self._native_grasp_status()
             if native_grasp is False:
                 # SquareNut contact is transient under robosuite OSC. The
