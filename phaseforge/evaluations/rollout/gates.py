@@ -386,6 +386,9 @@ def gate_scripted_controller(
             if success:
                 ok = True
                 break
+            phase_name = getattr(controller, "phase_name", "")
+            if phase_name == "STALLED":
+                break
         if ok:
             successes += 1
         else:

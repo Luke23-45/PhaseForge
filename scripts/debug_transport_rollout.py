@@ -147,11 +147,21 @@ def _phase_targets(
 
     lid_approach = lid_handle + np.array([0.0, 0.0, config.approach_z_offset])
     lid_grasp = lid_handle.copy()
-    trash_approach = trash + np.array([0.0, 0.0, config.approach_z_offset])
-    trash_grasp = trash + np.array([0.0, 0.0, config.descend_z_offset])
+    trash_high = np.array(
+        [
+            trash[0],
+            trash[1],
+            min(
+                trash[2] + controller.TRASH_APPROACH_Z_OFFSET,
+                controller.TRASH_APPROACH_Z_CAP,
+            ),
+        ],
+        dtype=np.float64,
+    )
+    trash_grasp = trash + np.array([0.0, 0.0, controller.TRASH_GRASP_Z_OFFSET])
 
     if phase == "LID_APPROACH":
-        return lid_approach, trash_approach
+        return lid_approach, trash_high
     if phase == "LID_DESCEND":
         return lid_grasp, trash_grasp
     if phase == "LID_GRASP":
