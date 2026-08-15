@@ -92,13 +92,17 @@ def _git_info() -> dict[str, str]:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             info["commit"] = result.stdout.strip()
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             info["branch"] = result.stdout.strip()
@@ -320,7 +324,6 @@ def scan_checkpoints(
     runs.sort(key=lambda p: p.name, reverse=True)
 
     for run in runs:
-
         ckpt_path = run / "checkpoints" / "checkpoint_best.pt"
         if not ckpt_path.is_file():
             continue
@@ -363,17 +366,19 @@ def scan_checkpoints(
             except (json.JSONDecodeError, OSError):
                 pass
 
-        checkpoints.append(CheckpointInfo(
-            path=ckpt_path.resolve(),
-            model_name=model_name,
-            stage=stage,
-            run_dir=run_dir_name,
-            timestamp=timestamp,
-            run_id=run_id,
-            config_hash=config_hash,
-            tag=meta_tag,
-            seed=meta_seed,
-        ))
+        checkpoints.append(
+            CheckpointInfo(
+                path=ckpt_path.resolve(),
+                model_name=model_name,
+                stage=stage,
+                run_dir=run_dir_name,
+                timestamp=timestamp,
+                run_id=run_id,
+                config_hash=config_hash,
+                tag=meta_tag,
+                seed=meta_seed,
+            )
+        )
 
     return checkpoints
 

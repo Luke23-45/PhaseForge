@@ -12,10 +12,11 @@ from torch import Tensor
 
 class RouterOutput(NamedTuple):
     """Standardized output from the TopKRouter."""
-    weights: Tensor         # (B, K) normalized top-k weights
-    indices: Tensor         # (B, K) selected expert indices
-    gate_logits: Tensor     # (B, E) raw logits over all experts
-    balance_loss: Tensor    # scalar, auxiliary load-balancing loss
+
+    weights: Tensor  # (B, K) normalized top-k weights
+    indices: Tensor  # (B, K) selected expert indices
+    gate_logits: Tensor  # (B, E) raw logits over all experts
+    balance_loss: Tensor  # scalar, auxiliary load-balancing loss
 
 
 class TopKRouter(nn.Module):
@@ -78,7 +79,7 @@ class TopKRouter(nn.Module):
         self.normalize_input = bool(normalize_input)
 
         self.gate_linear = nn.Linear(latent_dim, num_experts)
-        
+
         # Linear layer to scale the noise per-input, following standard MoE practices
         if self.noise_std > 0.0:
             self.noise_linear = nn.Linear(latent_dim, num_experts)
@@ -89,13 +90,13 @@ class TopKRouter(nn.Module):
 
     def _init_weights(self) -> None:
         """Initialize routing weights.
-        
-        Using normal initialization with a small std dev helps prevent 
+
+        Using normal initialization with a small std dev helps prevent
         all inputs from collapsing to a single expert at the start.
         """
         nn.init.normal_(self.gate_linear.weight, mean=0.0, std=0.02)
         nn.init.zeros_(self.gate_linear.bias)
-        
+
         if self.noise_linear is not None:
             nn.init.normal_(self.noise_linear.weight, mean=0.0, std=0.02)
             nn.init.zeros_(self.noise_linear.bias)
@@ -131,7 +132,7 @@ class TopKRouter(nn.Module):
         # Select top-k experts
         # values: (B, K), indices: (B, K)
         top_k_logits, top_k_indices = torch.topk(gate_logits, self.top_k, dim=-1)
-        
+
         # Normalize top-k values to sum to 1
         # Re-compute softmax over just the top-k elements so that sum(weights) == 1
         top_k_weights = F.softmax(top_k_logits, dim=-1)
@@ -144,7 +145,7 @@ class TopKRouter(nn.Module):
             weights=top_k_weights,
             indices=top_k_indices,
             gate_logits=gate_logits,
-            balance_loss=balance_loss * self.balance_coeff
+            balance_loss=balance_loss * self.balance_coeff,
         )
 
     def _compute_balance_loss(self, routing_probs: Tensor, gate_logits: Tensor) -> Tensor:
@@ -168,26 +169,26 @@ class TopKRouter(nn.Module):
         Args:
             routing_probs: (B, E) softmax probabilities
             gate_logits: (B, E) raw logits before softmax
-            
+
         Returns:
             Scalar balance loss tensor.
         """
         B, E = gate_logits.shape
-        
+
         # f_i: fraction of batch routed to each expert (based on primary choice)
         # We use top-1 for the balance loss calculation, as is standard.
-        top_1_indices = gate_logits.argmax(dim=-1) # (B,)
-        
+        top_1_indices = gate_logits.argmax(dim=-1)  # (B,)
+
         # One-hot encoding of expert assignments (B, E)
         expert_mask = F.one_hot(top_1_indices, num_classes=E).float()
-        
+
         # Mean fraction of tokens routed to each expert: (E,)
         f_i = expert_mask.mean(dim=0)
-        
+
         # Mean probability assigned to each expert: (E,)
         p_i = routing_probs.mean(dim=0)
-        
+
         # The loss encourages f_i and p_i to be uniform (1/E)
         balance_loss = E * torch.sum(f_i * p_i)
-        
+
         return balance_loss

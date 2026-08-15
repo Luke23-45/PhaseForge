@@ -119,11 +119,7 @@ def _nanstd(values: np.ndarray) -> float:
 
 def _values_for(rows: Sequence[ResultRow], metric: str) -> np.ndarray:
     return np.array(
-        [
-            float(getattr(row, metric))
-            for row in rows
-            if math.isfinite(float(getattr(row, metric)))
-        ],
+        [float(getattr(row, metric)) for row in rows if math.isfinite(float(getattr(row, metric)))],
         dtype=float,
     )
 
@@ -320,9 +316,7 @@ def paired_wilcoxon(
     }
 
 
-def write_aggregates_csv(
-    rows: Sequence[ResultRow], path: Path
-) -> Path:
+def write_aggregates_csv(rows: Sequence[ResultRow], path: Path) -> Path:
     """Write ``_summaries/aggregates.csv`` (one row per model+stage)."""
     aggregates = aggregate_rows(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,9 +332,7 @@ def write_aggregates_csv(
     return path
 
 
-def write_bootstrap_csv(
-    rows: Sequence[ResultRow], path: Path
-) -> Path:
+def write_bootstrap_csv(rows: Sequence[ResultRow], path: Path) -> Path:
     """Write exploratory seed-row bootstrap summaries.
 
     This file is useful for diagnostics, but is not the final paper CI under
@@ -371,9 +363,7 @@ def write_paired_wilcoxon_csv(
     min_pairs: int = _MIN_PAIRS_DEFAULT,
 ) -> Path:
     """Write ``_summaries/paired_wilcoxon.csv`` (baseline vs every other method)."""
-    identities = sorted(
-        {(row.model, row.tag) for row in rows}, key=lambda i: (i[0], i[1] or "")
-    )
+    identities = sorted({(row.model, row.tag) for row in rows}, key=lambda i: (i[0], i[1] or ""))
     baseline_identity = (baseline, None)
     out: list[dict[str, object]] = []
     for identity in identities:

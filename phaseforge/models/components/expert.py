@@ -19,7 +19,7 @@ class ExpertMLP(nn.Module):
     """A single expert network within the Mixture-of-Experts layer.
 
     All experts share identical architectures but maintain independent weights.
-    The architecture is typically a small multi-layer perceptron mapping the 
+    The architecture is typically a small multi-layer perceptron mapping the
     latent representation to the action space.
 
     Args:
@@ -57,7 +57,7 @@ class ExpertMLP(nn.Module):
 
     def _init_weights(self) -> None:
         """Initialize expert weights.
-        
+
         Using Kaiming initialization to preserve variance through the MLP.
         """
         for m in self.modules():

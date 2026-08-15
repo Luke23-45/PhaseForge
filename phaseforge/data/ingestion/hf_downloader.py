@@ -109,9 +109,7 @@ def download_hf_file(
         )
     dest = dest_dir / name
     if dest.is_dir():
-        raise RuntimeError(
-            f"{dest} is a directory — {path!r} must name a file, not a folder."
-        )
+        raise RuntimeError(f"{dest} is a directory — {path!r} must name a file, not a folder.")
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     expected = pinned_sha256
@@ -146,9 +144,7 @@ def download_hf_file(
     try:
         cached = hf_hub_download(repo_id=repo_id, filename=path, repo_type="dataset")
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(
-            f"Failed to download {repo_id}/{path} from HuggingFace: {exc}"
-        ) from exc
+        raise RuntimeError(f"Failed to download {repo_id}/{path} from HuggingFace: {exc}") from exc
     shutil.copy2(cached, dest)
 
     if expected is not None:

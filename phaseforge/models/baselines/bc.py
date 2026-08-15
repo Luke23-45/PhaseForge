@@ -11,7 +11,7 @@ from phaseforge.models.components.encoder import StateEncoder
 
 class BehaviorCloningModel(BaseManipulationModel):
     """Simple Behavior Cloning baseline.
-    
+
     Encoder -> ActionHead. No phase head, no routing.
     """
 
@@ -28,7 +28,7 @@ class BehaviorCloningModel(BaseManipulationModel):
         state = batch["state"]
         latent = self.encoder(state)
         action_pred = self.action_head(latent)
-        
+
         return ModelOutput(
             action_pred=action_pred,
             phase_logits=None,

@@ -80,18 +80,14 @@ def _eval_run_id_fallback(row: dict[str, Any]) -> str | None:
     return _run_id_from_dir_name(run_dir_name)
 
 
-def _lookup_meta(
-    run_id: object, index: dict[str, dict[str, Any]]
-) -> dict[str, Any] | None:
+def _lookup_meta(run_id: object, index: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
     """Look up a run's metadata by id, tolerating a ``None``/non-str id."""
     if not isinstance(run_id, str) or not run_id:
         return None
     return index.get(run_id)
 
 
-def backfill_results(
-    results_dir: Path, index: dict[str, dict[str, Any]]
-) -> dict[str, int]:
+def backfill_results(results_dir: Path, index: dict[str, dict[str, Any]]) -> dict[str, int]:
     """Backfill ``tag``/``method`` on every results row missing them."""
     rows = read_result_rows(results_dir)
     changed = 0

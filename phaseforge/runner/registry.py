@@ -90,9 +90,7 @@ class RunnerState:
             "runs": self._runs,
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(
-            dir=str(self.path.parent), prefix=".state_", suffix=".tmp"
-        )
+        fd, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".state_", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)

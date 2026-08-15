@@ -19,6 +19,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "scipy>=1.11",  # mannwhitneyu for multi-seed head-to-head comparisons (D3)
     "filelock>=3.12",  # cross-process lock for the append-only results ledger
+    "packaging>=23.0",  # version parsing in the environment parity gate
     # Used only by the optional dataset archival/upload utility.
     "huggingface_hub>=1.0",
 ]
@@ -30,22 +31,25 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.8",
 ]
-# Temporary simulator pin for the ingestion pilot only. The final rollout
-# environment must be selected together with the matching robomimic dataset
-# release; see docs/plan/final_evaluation_plan.md section 4.1. Do not treat
-# this old pin as a validated benchmark environment.
+# Simulator pin for the state-only rollout protocol (docs/plan/
+# state_only_rollout_implementation_plan.md §4.1): the robomimic v0.4 v1.5
+# track (amandlek/robomimic v1.5/lift/ph/low_dim_v15.hdf5) was collected
+# with the robosuite v1.5.1 branch, whose PyPI metadata requires
+# mujoco>=3.2.3; 3.2.7 is the newest 3.2.x. The runtime parity gate
+# re-verifies the installed versions against the dataset's recorded
+# env_args and fails closed on any mismatch.
 # Install only on the evaluation machine: uv sync --extra rollout.
-# The former vision-benchmark simulation wrapper and rollout harness are
-# archived under legacy/ and are NOT part of the current protocol.
 rollout = [
-    "robosuite==1.4.0",
-    "mujoco==3.3.1",
+    "robosuite==1.5.1",
+    "mujoco==3.2.7",
 ]
 
 [project.scripts]
-phaseforge-train = "phaseforge.cli:train"
-phaseforge-eval  = "phaseforge.cli:evaluate"
-phaseforge-sweep = "phaseforge.runner.cli:main"
+phaseforge-train          = "phaseforge.cli:train"
+phaseforge-eval           = "phaseforge.cli:evaluate"
+phaseforge-sweep          = "phaseforge.runner.cli:main"
+phaseforge-gates          = "phaseforge.evaluations.rollout.gates_cli:gates"
+phaseforge-rollout-report = "phaseforge.evaluations.rollout.report_cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -63,6 +67,7 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"

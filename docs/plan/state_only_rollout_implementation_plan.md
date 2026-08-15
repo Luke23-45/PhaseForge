@@ -11,9 +11,9 @@ step. The existing offline pilot remains valid as an offline diagnostic.
 
 The immediate paper claim is:
 
-> In a pinned robomimic/robosuite Lift setting, phase-informed MoE router
-> initialization is evaluated using structured low-dimensional state, offline
-> routing diagnostics, and closed-loop simulator success.
+> In pinned robomimic/robosuite low-dimensional tasks, phase-informed MoE
+> router initialization is evaluated using structured state, offline routing
+> diagnostics, and closed-loop simulator success.
 
 The policy receives no RGB image, image embedding, language input, or VLA
 feature. Its input is the same declared structured state used by the offline
@@ -26,18 +26,24 @@ manipulation behavior; it is not required because the project lacks vision.
 
 ## 2. What is required now
 
-The required next experiment is a state-only Lift rollout study:
+The required next experiment is a state-only rollout study on all five
+robomimic manipulation tasks: Lift, Can, Square, Tool Hang, and Transport.
+Use Lift first as an engineering smoke test because it is the simplest task to
+debug. Lift-only results are not the final cross-task evaluation.
 
 1. pin a dataset/environment-compatible robosuite release;
-2. implement the state-only simulator adapter;
-3. validate the adapter with a scripted or state-oracle controller;
-4. evaluate the matched Lift model matrix in closed loop;
-5. persist per-episode results and uncertainty summaries;
-6. interpret rollout success together with the existing offline diagnostics.
+2. implement the shared state-only simulator adapter;
+3. validate the adapter on Lift with a scripted or state-oracle controller;
+4. run the same validation gates for every task;
+5. evaluate the matched model matrix separately on all five tasks in closed loop;
+6. persist per-episode results and uncertainty summaries;
+7. interpret per-task and aggregate rollout success together with the existing
+   offline diagnostics.
 
 The core Lift matrix is:
 
 - structured-state BC-MLP;
+- structured-state BC-RNN or an equivalent declared history baseline;
 - Scratch MoE;
 - Warm-Start MoE;
 - Phase-Pretrain Random-Router;
@@ -47,7 +53,8 @@ The core Lift matrix is:
   privileged diagnostics;
 - robot-only BC only as a separate negative control.
 
-Use the existing training seeds 42, 43, and 44 for the first complete matrix.
+Use the existing training seeds 42, 43, and 44 for the first complete
+five-task matrix.
 This three-seed result is descriptive. If the compute budget permits stronger
 inferential evidence, add seeds 45 and 46 before producing the final paper
 table; do not silently mix pilot and final results. Use the same frozen rollout
@@ -56,20 +63,17 @@ model and seed.
 
 ## 3. What is not required for this paper version
 
-These are not automatic gates for the focused single-step Lift state-policy
-paper:
+These are not automatic gates for the five-task, single-task-per-environment
+state-policy paper:
 
 - RGB observations or vision models;
 - LIBERO or a VLA benchmark;
-- BC-RNN, unless the paper claims history-dependent policies;
-- Can, Square, Tool Hang, or Transport, unless the paper claims cross-task
-  generalization;
 - a multitask policy;
 - an official Diffusion Policy reproduction.
 
-If any of these are added later, they require a separate declared experiment
-and a broadened claim. They must not silently become controls for the current
-single-step Lift hypothesis.
+The five tasks are evaluated as separate single-task policies. This is not a
+multitask-training claim. A shared multitask policy is a later experiment with
+its own task-conditioning protocol.
 
 ## 4. Implementation work
 
@@ -132,8 +136,9 @@ behavioral outcome.
 
 Do not rely on an undocumented arbitrary random seed bank. Before final
 training-checkpoint selection, generate or obtain a fixed set of 50 valid
-evaluation reset cases from the pinned task reset distribution. Store the
-serialized initial-state payload, reset seed, task, and environment hash.
+evaluation reset cases **for each task** from that task's pinned reset
+distribution. Store the serialized initial-state payload, reset seed, task,
+and environment hash.
 
 The cases must be disjoint from training demonstrations, validation data,
 checkpoint selection, and phase-label calibration. Every model and seed must
@@ -170,19 +175,20 @@ Run the following gates in order:
 1. environment construction and state-schema self-test;
 2. reset-and-replay of one recorded demonstration action sequence;
 3. action range, normalization, and gripper-convention test;
-4. scripted/state-oracle controller on the frozen Lift reset cases;
+4. scripted/state-oracle controller on the frozen reset cases for each task;
 5. random/no-op controller sanity check;
 6. one checkpoint through 10 smoke episodes.
 
-The scripted controller must solve the supported reset cases. If it fails,
+The scripted controller must solve the supported reset cases for each task. If it fails,
 repair the environment, reset cases, action mapping, or success predicate
 before evaluating learned policies. The 10-episode run is a smoke test only,
 never a final result.
 
-### 4.6 Evaluate the matched Lift matrix
+### 4.6 Evaluate the matched five-task matrix
 
 After the gates pass, run 50 episodes per task/reset bank for each of the three
-training seeds and each required model. Keep the following fixed:
+training seeds and each required model. Keep the following fixed within and
+across tasks:
 
 - state schema and normalization;
 - action convention and horizon;
@@ -204,13 +210,16 @@ The final report must separate:
 
 ## 5. Final statistical report
 
-For Lift, report:
+For every task, report:
 
 - every episode's success, validity, reset case, seed, horizon outcome, and
   failure category;
 - success rate for each model and training seed;
-- a 95% Wilson interval over valid episodes for each seed;
-- mean and sample standard deviation across the three training seeds;
+- a 95% Wilson interval over valid episodes for each task and seed;
+- mean and sample standard deviation across the three training seeds for each
+  task;
+- the unweighted macro-average of the five task-level success rates as a
+  secondary aggregate; never replace the per-task table with the macro-average;
 - paired PhaseForge-minus-baseline differences using identical reset cases, per
   training seed (exact McNemar + Newcombe 95% CI; no pooling across seeds);
   every seed's paired difference and its direction consistency are reported,
@@ -235,27 +244,18 @@ outcome using this decision table:
 | Scripted controller succeeds, BC fails | state/action/temporal/training issue; do not judge MoE yet |
 | BC succeeds, PhaseForge and controls match | routing hypothesis is not supported behaviorally |
 | PhaseForge improves routing only | mechanism-level offline result; no behavior claim |
-| PhaseForge improves rollout success with matched controls | behavioral evidence for the Lift state-only claim |
+| PhaseForge improves rollout success consistently across the five tasks with matched controls | behavioral evidence for the five-task state-only claim |
 
 ## 6. Optional extensions after the core result
 
 Add these only if the paper claim is intentionally broadened:
 
-### History extension
+### Single-task history control
 
-Implement a shared history contract and BC-RNN only if PhaseForge is changed
-to consume temporal history or the paper claims comparison with
-history-dependent policies. The robomimic study makes BC-RNN an important
-benchmark reference, but it is not a requirement for a narrowly defined
-single-step router-initialization study.
-
-### Cross-task extension
-
-Run Can, Square, Tool Hang, and Transport only if claiming cross-task or
-general manipulation behavior. Reuse the same state-only adapter interface,
-but freeze task-specific state schemas, reset distributions, horizons, and
-success predicates separately. Report per-task results first; use a macro
-average only as a secondary aggregate.
+Use the same declared history contract for BC-RNN and the PhaseForge policy
+matrix. The history baseline is required for the five-task benchmark claim;
+it is not evidence that PhaseForge itself is history-dependent unless the
+PhaseForge model consumes the same history.
 
 ### Multitask extension
 
@@ -275,11 +275,12 @@ assumed.
 ## 7. Publication boundary
 
 The current offline Lift report can support an offline mechanism/diagnostic
-paper if it is presented with that narrow claim.
+report if it is presented with that narrow claim.
 
-The state-only rollout implementation described here is required before
-claiming that PhaseForge improves manipulation behavior. It does not require
-images, a vision encoder, LIBERO, or comparison against VLA models.
+The five-task state-only rollout implementation described here is required
+before claiming that PhaseForge improves manipulation behavior across the
+project's task family. It does not require images, a vision encoder, LIBERO, or
+comparison against VLA models.
 
 No implementation, training run, or rollout has been performed as part of
 writing this plan.

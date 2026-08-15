@@ -150,9 +150,7 @@ class DataPipelineStateMachine:
         if models_cfg.get("num_phases") is not None:
             candidates.append(("models.num_phases", int(models_cfg.num_phases)))
 
-        mismatches = [
-            (name, val) for name, val in candidates if val != data_phases
-        ]
+        mismatches = [(name, val) for name, val in candidates if val != data_phases]
         if mismatches:
             details = ", ".join(f"{n}={v}" for n, v in mismatches)
             raise PipelineError(
@@ -301,7 +299,8 @@ class DataPipelineStateMachine:
             )
         logger.info(
             "  OK: source '%s' has %d .hdf5 files",
-            raw_suite_dir, len(hdf5_files),
+            raw_suite_dir,
+            len(hdf5_files),
         )
 
         self._raw_dir = raw_suite_dir
@@ -463,8 +462,7 @@ class DataPipelineStateMachine:
                 }
             )
             split_demo_keys[split_name] = sorted(
-                str(self._trajectories[i].get("demo_key", f"trajectory_{i}"))
-                for i in indices
+                str(self._trajectories[i].get("demo_key", f"trajectory_{i}")) for i in indices
             )
 
         raw_files: list[dict[str, Any]] = []
@@ -491,9 +489,7 @@ class DataPipelineStateMachine:
             )
             try:
                 if manifest_path.exists():
-                    dataset_manifest = json.loads(
-                        manifest_path.read_text(encoding="utf-8")
-                    )
+                    dataset_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Could not read the source manifest for provenance.",
@@ -503,8 +499,7 @@ class DataPipelineStateMachine:
         state_schema = {
             "schema_version": str(self.data_cfg.get("schema_version", "")),
             "keys": [
-                {"key": str(e["key"]), "dim": int(e["dim"])}
-                for e in self.data_cfg.state_keys
+                {"key": str(e["key"]), "dim": int(e["dim"])} for e in self.data_cfg.state_keys
             ],
             "state_dim": int(self.data_cfg.get("state_dim", 0)),
             "action_dim": int(self.data_cfg.get("action_dim", 7)),
@@ -533,9 +528,7 @@ class DataPipelineStateMachine:
             "configuration": OmegaConf.to_yaml(self.data_cfg, resolve=True),
         }
         if labeler_cfg is not None:
-            provenance["phase_labeler"] = OmegaConf.to_container(
-                labeler_cfg, resolve=True
-            )
+            provenance["phase_labeler"] = OmegaConf.to_container(labeler_cfg, resolve=True)
         environment_metadata: list[dict[str, Any]] = []
         seen_metadata: set[str] = set()
         for traj in self._trajectories:
@@ -609,8 +602,7 @@ class DataPipelineStateMachine:
         split_seed = int(split_cfg.get("seed", DEFAULT_SPLIT_SEED))
         if strategy not in {"task", "trajectory"}:
             raise PipelineError(
-                f"Unsupported data.split.strategy={strategy!r}; expected "
-                "'task' or 'trajectory'."
+                f"Unsupported data.split.strategy={strategy!r}; expected 'task' or 'trajectory'."
             )
         if not 0.0 <= val_ratio < 1.0:
             raise PipelineError("data.split.val_ratio must be in [0, 1).")
@@ -626,8 +618,7 @@ class DataPipelineStateMachine:
         if strategy == "trajectory":
             if bool(split_cfg.get("use_dataset_filters", True)):
                 filtered = [
-                    (i, traj.get("dataset_split"))
-                    for i, traj in enumerate(self._trajectories)
+                    (i, traj.get("dataset_split")) for i, traj in enumerate(self._trajectories)
                 ]
                 if any(split is not None for _, split in filtered):
                     missing = [i for i, split in filtered if split not in {"train", "val"}]
@@ -639,13 +630,13 @@ class DataPipelineStateMachine:
                     train_idx = [i for i, split in filtered if split == "train"]
                     val_idx = [i for i, split in filtered if split == "val"]
                     if not train_idx or not val_idx:
-                        raise PipelineError(
-                            "The HDF5 train/valid filters must both be non-empty."
-                        )
+                        raise PipelineError("The HDF5 train/valid filters must both be non-empty.")
                     logger.info(
                         "  Dataset-filter split: %d train trajectories, %d val "
                         "trajectories across %d tasks",
-                        len(train_idx), len(val_idx), len(task_ids),
+                        len(train_idx),
+                        len(val_idx),
+                        len(task_ids),
                     )
                     return {"train": train_idx, "val": val_idx}
 
@@ -657,16 +648,22 @@ class DataPipelineStateMachine:
                 if len(indices) < 2:
                     n_val = 0
                 else:
-                    n_val = min(
-                        len(indices) - 1,
-                        max(1, int(round(len(indices) * val_ratio))),
-                    ) if val_ratio > 0 else 0
+                    n_val = (
+                        min(
+                            len(indices) - 1,
+                            max(1, int(round(len(indices) * val_ratio))),
+                        )
+                        if val_ratio > 0
+                        else 0
+                    )
                 val_idx.extend(int(i) for i in indices[:n_val])
                 train_idx.extend(int(i) for i in indices[n_val:])
             logger.info(
                 "  Trajectory-level split: %d train trajectories, %d val "
                 "trajectories across %d tasks",
-                len(train_idx), len(val_idx), len(task_ids),
+                len(train_idx),
+                len(val_idx),
+                len(task_ids),
             )
             if val_ratio > 0 and task_ids and not val_idx:
                 raise PipelineError(
@@ -699,8 +696,10 @@ class DataPipelineStateMachine:
 
         logger.info(
             "  Task-level split: %d train tasks (%d trajs), %d val tasks (%d trajs)",
-            len(train_tasks), len(train_idx),
-            len(val_tasks), len(val_idx),
+            len(train_tasks),
+            len(train_idx),
+            len(val_tasks),
+            len(val_idx),
         )
         return {"train": train_idx, "val": val_idx}
 
@@ -750,9 +749,7 @@ class DataPipelineStateMachine:
                 "pin_memory": pin_memory,
             }
             if num_workers > 0:
-                loader_options["prefetch_factor"] = max(
-                    1, int(data_cfg.get("prefetch_factor", 2))
-                )
+                loader_options["prefetch_factor"] = max(1, int(data_cfg.get("prefetch_factor", 2)))
                 loader_options["persistent_workers"] = bool(
                     data_cfg.get("persistent_workers", False)
                 )
@@ -767,9 +764,7 @@ class DataPipelineStateMachine:
                 **loader_options,
             )
             result[split_name] = loader
-            logger.info(
-                f"  {split_name}: {len(dataset)} samples, {len(loader)} batches"
-            )
+            logger.info(f"  {split_name}: {len(dataset)} samples, {len(loader)} batches")
 
         return result
 
@@ -786,11 +781,7 @@ class DataPipelineStateMachine:
         if expected <= 0:
             return
         bad = sorted(
-            {
-                int(traj["state"].shape[-1])
-                for traj in trajs
-                if traj["state"].shape[-1] != expected
-            }
+            {int(traj["state"].shape[-1]) for traj in trajs if traj["state"].shape[-1] != expected}
         )
         if bad:
             raise PipelineError(

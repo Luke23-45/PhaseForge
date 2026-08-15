@@ -148,9 +148,7 @@ def _mark_run_failed(
         run_writer.mark_failed(exc)
         ledger.update_status(run_id, "failed")
     except Exception:
-        logger.exception(
-            "Failed to record the failed run (%s) in outputs bookkeeping.", run_id
-        )
+        logger.exception("Failed to record the failed run (%s) in outputs bookkeeping.", run_id)
 
 
 def _append_eval_result_row(
@@ -242,14 +240,13 @@ def _load_state_dict_checked(
         if not any(key.startswith(prefix) for prefix in expected_unexpected_prefixes)
     ]
 
-    expected_count = len(expected_missing) + (
-        len(result.unexpected_keys) - len(unexpected)
-    )
+    expected_count = len(expected_missing) + (len(result.unexpected_keys) - len(unexpected))
     if expected_count and not missing and not unexpected:
         logger.info(
-            "%s: %d key(s) differ under prefix(es) %s — expected, "
-            "skipped.",
-            context, expected_count, ", ".join(expected_unexpected_prefixes) or "-",
+            "%s: %d key(s) differ under prefix(es) %s — expected, skipped.",
+            context,
+            expected_count,
+            ", ".join(expected_unexpected_prefixes) or "-",
         )
         return
     if not missing and not unexpected:
@@ -351,15 +348,11 @@ def _finalize_training_run(
         try:
             write_reconciliation_record(output_dir, exc)
         except Exception:
-            logger.exception(
-                "Failed to write the reconciliation record for run %s.", run_id
-            )
+            logger.exception("Failed to write the reconciliation record for run %s.", run_id)
     try:
         _copy_data_provenance(cfg, output_dir)
     except Exception:
-        logger.exception(
-            "Failed to copy the cache data provenance into %s.", output_dir.name
-        )
+        logger.exception("Failed to copy the cache data provenance into %s.", output_dir.name)
     try:
         run_writer.mark_completed()
     except Exception:
@@ -383,9 +376,7 @@ def _finalize_training_run(
     try:
         ledger.update_status(run_id, "completed")
     except Exception:
-        logger.exception(
-            "Failed to update the ledger for completed run %s.", run_id
-        )
+        logger.exception("Failed to update the ledger for completed run %s.", run_id)
 
 
 def _append_training_summary_row(cfg: DictConfig, output_dir: Path) -> None:
@@ -400,8 +391,7 @@ def _append_training_summary_row(cfg: DictConfig, output_dir: Path) -> None:
     summary_path = output_dir / "metrics" / "summary.json"
     if not summary_path.is_file():
         raise FileNotFoundError(
-            f"No run-local summary at {summary_path} — the persistence "
-            "callback did not write one."
+            f"No run-local summary at {summary_path} — the persistence callback did not write one."
         )
     import json as _json
 
@@ -440,9 +430,7 @@ def _copy_data_provenance(cfg: DictConfig, output_dir: Path) -> None:
                 "cache hash — falling back to the computed data-config hash.",
                 exc_info=True,
             )
-    copy_cache_provenance(
-        output_dir, processed_cache_root(), config_hash_val
-    )
+    copy_cache_provenance(output_dir, processed_cache_root(), config_hash_val)
 
 
 def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
@@ -487,8 +475,11 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
                 model_name = getattr(cfg.models, "name", cfg.models._target_.split(".")[-1])
                 source_model = resolve_checkpoint_source(model_name)
                 auto_ckpt = find_latest_checkpoint(
-                    source_model, stage=1, base=cfg.project.output_dir,
-                    resolve_alias=False, seed=cfg.project.get("seed"),
+                    source_model,
+                    stage=1,
+                    base=cfg.project.output_dir,
+                    resolve_alias=False,
+                    seed=cfg.project.get("seed"),
                     require_seed=cfg.project.get("seed") is not None,
                 )
                 if auto_ckpt is not None:
@@ -515,9 +506,7 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
                 model,
                 ckpt["model_state_dict"],
                 "Stage 1 -> Stage 2 bootstrap load",
-                expected_unexpected_prefixes=(
-                    "moe_layer",
-                ) + _unused_stage1_head_prefixes(model),
+                expected_unexpected_prefixes=("moe_layer",) + _unused_stage1_head_prefixes(model),
             )
 
             model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
@@ -548,31 +537,37 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
         )
     from phaseforge.data.ingestion.cache_manager import CacheManager
 
-    trainer.add_callback(MetricPersistenceCallback(
-        run_dir=output_dir,
-        run_id=run_id,
-        data_config_hash=CacheManager.compute_hash(cfg.data),
-        source_stage1=source_stage1,
-    ))
+    trainer.add_callback(
+        MetricPersistenceCallback(
+            run_dir=output_dir,
+            run_id=run_id,
+            data_config_hash=CacheManager.compute_hash(cfg.data),
+            source_stage1=source_stage1,
+        )
+    )
 
     if hasattr(cfg.train, "early_stopping") or "early_stopping" in cfg.train:
         if cfg.train.early_stopping.get("enabled", True):
-            trainer.add_callback(EarlyStoppingCallback(
-                monitor=cfg.train.early_stopping.monitor,
-                mode=cfg.train.early_stopping.mode,
-                patience=cfg.train.early_stopping.patience,
-                min_delta=cfg.train.early_stopping.min_delta,
-            ))
+            trainer.add_callback(
+                EarlyStoppingCallback(
+                    monitor=cfg.train.early_stopping.monitor,
+                    mode=cfg.train.early_stopping.mode,
+                    patience=cfg.train.early_stopping.patience,
+                    min_delta=cfg.train.early_stopping.min_delta,
+                )
+            )
 
     # Save after metric tracking and early stopping have processed the epoch,
     # so checkpoint resume restores their post-epoch state.
-    trainer.add_callback(CheckpointCallback(
-        output_dir=output_dir / "checkpoints",
-        every_n_epochs=cfg.train.checkpoint.every_n_epochs,
-        monitor=cfg.train.checkpoint.monitor,
-        mode=cfg.train.checkpoint.mode,
-        save_top_k=cfg.train.checkpoint.save_top_k,
-    ))
+    trainer.add_callback(
+        CheckpointCallback(
+            output_dir=output_dir / "checkpoints",
+            every_n_epochs=cfg.train.checkpoint.every_n_epochs,
+            monitor=cfg.train.checkpoint.monitor,
+            mode=cfg.train.checkpoint.mode,
+            save_top_k=cfg.train.checkpoint.save_top_k,
+        )
+    )
 
     if cfg.project.wandb.mode != "disabled":
         trainer.add_callback(WandbLoggerCallback())
@@ -613,17 +608,14 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
     if ckpt_path:
         logger.info(f"Loading checkpoint from {ckpt_path}...")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        _load_state_dict_checked(
-            model, ckpt["model_state_dict"], "Evaluation checkpoint load"
-        )
+        _load_state_dict_checked(model, ckpt["model_state_dict"], "Evaluation checkpoint load")
         # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
         # so load_state_dict() leaves it at the __init__ default (1).
         if hasattr(model, "stage") and "stage" in ckpt:
             model.stage = ckpt["stage"]
     else:
         logger.warning(
-            "No checkpoint provided (train.stage1_ckpt_path). "
-            "Using randomly initialized model."
+            "No checkpoint provided (train.stage1_ckpt_path). Using randomly initialized model."
         )
     return model
 
@@ -671,24 +663,27 @@ def _finalize_eval_run(
     except Exception:
         logger.exception("Failed to mark eval run %s completed.", run_id)
     try:
-        write_artifact_manifest(
-            output_dir,
-            {
-                "resolved_config.yaml": "resolved_config.yaml",
-                "run_meta.json": "run_meta.json",
-                "metadata/environment.json": "metadata/environment.json",
-                "timings.json": "timings.json",
-                "eval_results.json": "eval_results.json",
-            },
-        )
+        artifact_manifest = {
+            "resolved_config.yaml": "resolved_config.yaml",
+            "run_meta.json": "run_meta.json",
+            "metadata/environment.json": "metadata/environment.json",
+            "timings.json": "timings.json",
+            "eval_results.json": "eval_results.json",
+        }
+        for extra in (
+            "episodes.jsonl",
+            "rollout_summary.json",
+            "metadata/data_provenance.json",
+        ):
+            if (output_dir / extra).is_file():
+                artifact_manifest[extra] = extra
+        write_artifact_manifest(output_dir, artifact_manifest)  # type: ignore[arg-type]
     except Exception:
         logger.exception("Failed to write the artifact manifest for eval run %s.", run_id)
     try:
         ledger.update_status(run_id, "completed")
     except Exception:
-        logger.exception(
-            "Failed to update the ledger for completed eval run %s.", run_id
-        )
+        logger.exception("Failed to update the ledger for completed eval run %s.", run_id)
 
 
 def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
@@ -728,20 +723,24 @@ def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
 
     # 3. Run the selected evaluator
     if eval_mode == "rollout":
-        raise ValueError(
-            "Rollout evaluation is not implemented for the current protocol. "
-            "The robomimic/robosuite protocol requires a separate simulator "
-            "adapter, reset distribution, success predicate, and paired test "
-            "episode runner. Use `eval.mode: offline` until that evaluator is "
-            "implemented and validated."
+        logger.info("Running state-only rollout evaluation on the frozen reset bank…")
+        from phaseforge.data.ingestion.cache_manager import sha256_file
+        from phaseforge.evaluations.rollout.runner import (
+            run_rollout_evaluation,
+        )
+
+        ckpt_path = cfg.train.get("stage1_ckpt_path")
+        checkpoint_sha256 = sha256_file(ckpt_path) if ckpt_path else ""
+        _ts, _tag, run_id = parse_run_dir(output_dir.name)
+        results = run_rollout_evaluation(
+            cfg, model, output_dir, run_id=run_id, checkpoint_sha256=checkpoint_sha256
         )
     else:
         logger.info("Running offline evaluation on validation data…")
         from phaseforge.evaluations.runners.offline_evaluator import OfflineEvaluator
 
         evaluator = OfflineEvaluator(cfg=cfg, model=model, dataloader=val_loader)
-
-    results = evaluator.run()
+        results = evaluator.run()
 
     # 4. Save results
     results_path = output_dir / "eval_results.json"

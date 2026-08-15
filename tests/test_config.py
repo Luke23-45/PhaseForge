@@ -81,8 +81,12 @@ def test_find_latest_checkpoint_require_seed_fails_hard(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="seed 43"):
         find_latest_checkpoint(
-            "bc", stage=1, base=tmp_path, resolve_alias=False,
-            seed=43, require_seed=True,
+            "bc",
+            stage=1,
+            base=tmp_path,
+            resolve_alias=False,
+            seed=43,
+            require_seed=True,
         )
 
 
@@ -146,10 +150,7 @@ def test_resolve_alias_looks_in_source_model_dir(tmp_path: Path) -> None:
     assert ckpt is not None
     assert "aaaa0001" in str(ckpt)
     assert (
-        find_latest_checkpoint(
-            "warmstart_moe", stage=1, base=tmp_path, resolve_alias=False
-        )
-        is None
+        find_latest_checkpoint("warmstart_moe", stage=1, base=tmp_path, resolve_alias=False) is None
     )
 
 

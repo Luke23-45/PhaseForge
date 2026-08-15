@@ -38,14 +38,14 @@ class Stage1Trainer(BaseTrainer):
         # Forward pass
         if out is None:
             out = self.model(batch)
-        
+
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
-        target_phase = batch["phase"]    # (B,) or (B, T)
-        mask = batch.get("padding_mask") # (B, T) boolean or None
-        
+        target_phase = batch["phase"]  # (B,) or (B, T)
+        mask = batch.get("padding_mask")  # (B, T) boolean or None
+
         lambda_phase = self.train_cfg.lambda_phase
-        
+
         # Action Loss (MSE)
         if mask is not None:
             # Masked MSE for variable length
@@ -54,7 +54,7 @@ class Stage1Trainer(BaseTrainer):
             action_loss = action_loss[mask].mean()
         else:
             action_loss = F.mse_loss(out.action_pred, target_action)
-            
+
         # Phase Loss (Cross Entropy)
         phase_loss = torch.tensor(0.0, device=self.device)
         if out.phase_logits is not None and lambda_phase > 0.0:
@@ -64,19 +64,19 @@ class Stage1Trainer(BaseTrainer):
                 logits_flat = logits.view(-1, logits.size(-1))
                 targets_flat = target_phase.view(-1)
                 mask_flat = mask.view(-1)
-                
+
                 # Filter by mask
                 logits_valid = logits_flat[mask_flat]
                 targets_valid = targets_flat[mask_flat]
-                
+
                 if len(targets_valid) > 0:
                     phase_loss = F.cross_entropy(logits_valid, targets_valid)
             else:
                 phase_loss = F.cross_entropy(logits, target_phase)
-                
+
         # Total Loss
         total_loss = action_loss + lambda_phase * phase_loss
-        
+
         metrics = {
             # Keep scalar metrics on-device until the trainer actually logs or
             # aggregates them. Calling .item() for every metric on every CUDA
@@ -85,7 +85,7 @@ class Stage1Trainer(BaseTrainer):
             "loss_action": action_loss.detach(),
             "loss_phase": phase_loss.detach() if lambda_phase > 0.0 else 0.0,
         }
-        
+
         return total_loss, metrics
 
     def _on_train_batch_processed(

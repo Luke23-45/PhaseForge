@@ -1,16 +1,23 @@
 """Rollout episode records and their summary statistics.
 
 ``eval/{model}/{ts}_{runid}/episodes.jsonl`` holds one append-only,
-schema-validated record per **attempted** rollout episode (final
-specification §5.4). Infrastructure failures, policy exceptions, invalid
-actions and simulator errors are never converted into failed task episodes:
-they are counted separately and invalidate the run until rerun.
+schema-validated record per **attempted** rollout episode (implementation
+plan §4.4/§5, strict metric from the professor review fix 4):
+
+* **Infrastructure failures** — simulator/environment errors while the
+  policy input was valid — are recorded as ``valid_episode=false``, never
+  converted into task outcomes, and invalidate the run until rerun.
+* **Policy failures** — NaN/non-finite/out-of-range actions and policy
+  exceptions — are recorded as *valid failed episodes* with a
+  ``failure_category`` from :data:`POLICY_FAILURE_CATEGORIES`. They are
+  labeled separately in the summaries and never silently dropped, but they
+  do not invalidate the run (rerunning reproduces them deterministically).
 
 This module implements the record schema, the append-only writer, the
 reader, and the pure statistics that feed ``rollout_success.csv`` and
 ``rollout_comparisons.csv``. It is deliberately independent of any
 simulator: the rollout adapter itself is wired in only after the
-simulator/version-parity gate (spec §9.5).
+simulator/version-parity gate (implementation plan §4.1).
 """
 
 from __future__ import annotations
@@ -47,6 +54,13 @@ _EPISODE_STR_NULLABLE = (
     "tag",
 )
 
+#: Frozen taxonomy of valid-episode failure categories. ``task_timeout`` is
+#: an honest task outcome (the horizon expired without success);
+#: ``policy_invalid_action`` and ``policy_exception`` are policy failures
+#: under the strict metric (plan §4.4) — valid episodes, counted in the
+#: success denominator, labeled separately, never invalidating the run.
+POLICY_FAILURE_CATEGORIES: frozenset[str] = frozenset({"policy_invalid_action", "policy_exception"})
+
 
 def _is_real_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
@@ -59,9 +73,10 @@ def validate_episode_record(row: dict[str, Any]) -> None:
 
     * ``success`` is present only for a valid completed episode (a valid
       record must carry it; an invalid one must not).
-    * ``failure_category`` is required only for a valid failure and must
-      come from a frozen taxonomy (any string here; the taxonomy itself is
-      enforced by the rollout adapter).
+    * ``failure_category`` is required only for a valid failure. The rollout
+      runner emits the frozen categories documented above; this shared schema
+      validator checks presence and type rather than vocabulary so legacy
+      provenance records remain readable.
     * Unknown top-level keys are rejected.
     """
     if not isinstance(row, dict):
@@ -69,25 +84,25 @@ def validate_episode_record(row: dict[str, Any]) -> None:
     missing = [k for k in EPISODE_REQUIRED if k not in row]
     if missing:
         raise SchemaError(f"Episode record missing required keys: {missing}")
-    known = set(EPISODE_REQUIRED) | set(_EPISODE_BOOL) | set(_EPISODE_INT) | set(
-        _EPISODE_STR_NULLABLE
-    ) | {"extra"}
+    known = (
+        set(EPISODE_REQUIRED)
+        | set(_EPISODE_BOOL)
+        | set(_EPISODE_INT)
+        | set(_EPISODE_STR_NULLABLE)
+        | {"extra"}
+    )
     unknown = sorted(set(row) - known)
     if unknown:
         raise SchemaError(f"Episode record has unknown top-level keys: {unknown}")
 
     for key in _EPISODE_STR:
         if not isinstance(row[key], str):
-            raise SchemaError(
-                f"Episode record[{key!r}] must be str, got {type(row[key]).__name__}"
-            )
+            raise SchemaError(f"Episode record[{key!r}] must be str, got {type(row[key]).__name__}")
     for key in _EPISODE_INT:
         if key not in row:
             continue
         if not _is_real_int(row[key]):
-            raise SchemaError(
-                f"Episode record[{key!r}] must be int, got {type(row[key]).__name__}"
-            )
+            raise SchemaError(f"Episode record[{key!r}] must be int, got {type(row[key]).__name__}")
     for key in _EPISODE_BOOL:
         if key not in row:
             continue
@@ -100,29 +115,23 @@ def validate_episode_record(row: dict[str, Any]) -> None:
             continue
         if not isinstance(row[key], str):
             raise SchemaError(
-                f"Episode record[{key!r}] must be str or null, "
-                f"got {type(row[key]).__name__}"
+                f"Episode record[{key!r}] must be str or null, got {type(row[key]).__name__}"
             )
 
     valid = row["valid_episode"]
     has_success = "success" in row
     if valid and not has_success:
-        raise SchemaError(
-            "Episode record is valid but missing the required 'success' field"
-        )
+        raise SchemaError("Episode record is valid but missing the required 'success' field")
     if not valid and has_success:
         raise SchemaError(
             "Episode record is invalid (infrastructure failure) but carries "
             "'success' — infra failures must not be converted into task outcomes"
         )
     if valid and not row.get("success") and "failure_category" not in row:
-        raise SchemaError(
-            "Valid failed episode is missing the required 'failure_category'"
-        )
+        raise SchemaError("Valid failed episode is missing the required 'failure_category'")
     if not valid and "failure_category" in row:
         raise SchemaError(
-            "Invalid episode records (infra failures) must not carry a "
-            "'failure_category'"
+            "Invalid episode records (infra failures) must not carry a 'failure_category'"
         )
     if "extra" in row and not isinstance(row["extra"], dict):
         raise SchemaError(
@@ -202,6 +211,85 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return max(0.0, centre - margin), min(1.0, centre + margin)
 
 
+def mcnemar_exact_p(b: int, c: int) -> float:
+    """Two-sided exact McNemar p-value for discordant pair counts ``b, c``.
+
+    Uses the binomial tail over the total discordant pairs ``n = b + c``
+    (the standard exact two-sided test)::
+
+        p = 2 * P(Bin(n, 0.5) <= min(b, c))
+
+    clamped to 1.0. With ``n == 0`` (no discordant pairs) the p-value is
+    1.0 — there is no evidence of a difference.
+    """
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = 0.0
+    for i in range(k + 1):
+        tail += math.comb(n, i)
+    p = 2.0 * tail / (2.0**n)
+    return min(1.0, p)
+
+
+def newcombe_ci(x1: int, n1: int, x2: int, n2: int, z: float = 1.96) -> tuple[float, float]:
+    """Newcombe hybrid score 95% confidence interval for ``p1 - p2``.
+
+    Unpaired proportions ``x1/n1`` and ``x2/n2`` (the professor review
+    required Newcombe CIs on the per-seed success-rate differences).
+    Returns ``(lower, upper)``; NaN when either denominator is zero.
+    """
+    if n1 <= 0 or n2 <= 0:
+        return float("nan"), float("nan")
+    l1, u1 = wilson_interval(x1, n1, z)
+    l2, u2 = wilson_interval(x2, n2, z)
+    p1, p2 = x1 / n1, x2 / n2
+    low = (p1 - p2) - math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2)
+    high = (p1 - p2) + math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2)
+    return low, high
+
+
+def holm_bonferroni(p_values: list[float]) -> list[float]:
+    """Holm-Bonferroni adjusted p-values (monotone non-decreasing, never > 1)."""
+    m = len(p_values)
+    if m == 0:
+        return []
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adjusted: list[float] = [1.0] * m
+    running = 0.0
+    for rank, idx in enumerate(order):
+        step = min(1.0, (m - rank) * p_values[idx])
+        running = max(running, step)
+        adjusted[idx] = running
+    return adjusted
+
+
+def _case_outcomes(
+    base_rows: list[dict[str, Any]], other_rows: list[dict[str, Any]]
+) -> tuple[int, int]:
+    """Pair valid episodes by ``episode_index``; return ``(base_wins, other_wins)``.
+
+    Only cases where **both** identities produced a valid episode are
+    paired (a missing/invalid side excludes the case from the paired test,
+    mirroring the offline paired evaluation). Discordant counts feed
+    :func:`mcnemar_exact_p`.
+    """
+    base = {
+        int(r["episode_index"]): bool(r.get("success")) for r in base_rows if r["valid_episode"]
+    }
+    other = {
+        int(r["episode_index"]): bool(r.get("success")) for r in other_rows if r["valid_episode"]
+    }
+    b = c = 0
+    for index in sorted(set(base) & set(other)):
+        if base[index] and not other[index]:
+            b += 1
+        elif other[index] and not base[index]:
+            c += 1
+    return b, c
+
+
 def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Per ``(task, model, tag, training_seed)`` success rows for the paper.
 
@@ -210,7 +298,8 @@ def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows, mirroring the offline aggregate tables.
 
     Each output row carries valid/success counts, the success rate over
-    valid episodes, the Wilson interval, and the number of invalid
+    valid episodes, the Wilson interval, policy-failure counts (strict
+    metric: labeled separately, never dropped) and the number of invalid
     (infrastructure-failure) attempts — which invalidate the run until
     rerun and are reported, never folded into the rate.
     """
@@ -226,6 +315,9 @@ def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         valid = [r for r in group if r["valid_episode"]]
         successes = sum(1 for r in valid if r.get("success"))
         invalid = len(group) - len(valid)
+        policy_failures = sum(
+            1 for r in valid if r.get("failure_category") in POLICY_FAILURE_CATEGORIES
+        )
         low, high = wilson_interval(successes, len(valid))
         out.append(
             {
@@ -238,6 +330,7 @@ def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "success_rate": (successes / len(valid)) if valid else float("nan"),
                 "wilson_ci95_low": low,
                 "wilson_ci95_high": high,
+                "policy_failures": policy_failures,
                 "invalid_attempts": invalid,
             }
         )
@@ -256,18 +349,25 @@ def paired_rollout_comparisons(
     protocol shares seeds across variants, so the pairing is exact). Only
     task/seed cells where both identities have valid episodes are emitted.
     Tagged variants of the baseline itself are never paired against it.
+
+    Beyond the rate difference each row carries **case-level** paired
+    statistics: discordant pair counts ``b`` (baseline wins) and ``c``
+    (other wins) over episodes paired 1:1 by ``episode_index``, the exact
+    McNemar p-value for those counts (plan §5), and the Newcombe CI on the
+    rate difference (professor review requirement).
     """
-    summaries = {
-        (s["task"], s["model"], s["tag"], int(s["training_seed"])): s
-        for s in summarize_episodes(rows)
-    }
+    by_identity: dict[tuple[str, str, str | None, int], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = (row["task"], row["model"], row.get("tag"), int(row["training_seed"]))
+        by_identity.setdefault(key, []).append(row)
+
+    summaries = {key: summarize_episodes(group)[0] for key, group in by_identity.items()}
     tasks = {key[0] for key in summaries}
     seeds = {int(key[3]) for key in summaries}
     identities = sorted(
         {(key[1], key[2]) for key in summaries},
         key=lambda i: (i[0], i[1] or ""),
     )
-    baseline_identity = (baseline, None)
 
     out: list[dict[str, Any]] = []
     for task in sorted(tasks):
@@ -276,11 +376,19 @@ def paired_rollout_comparisons(
             if base is None or not base["valid_episodes"]:
                 continue
             for model, tag in identities:
-                if (model, tag) == baseline_identity:
+                if model == baseline:
+                    # Skip the baseline itself and any tagged variant of
+                    # the baseline: comparing a model against itself under
+                    # a different tag is not a meaningful headline
+                    # comparison.
                     continue
                 other = summaries.get((task, model, tag, seed))
                 if other is None or not other["valid_episodes"]:
                     continue
+                b, c = _case_outcomes(
+                    by_identity[(task, baseline, None, seed)],
+                    by_identity[(task, model, tag, seed)],
+                )
                 out.append(
                     {
                         "task": task,
@@ -290,7 +398,25 @@ def paired_rollout_comparisons(
                         "tag": tag,
                         "baseline_success_rate": base["success_rate"],
                         "model_success_rate": other["success_rate"],
-                        "diff": other["success_rate"] - base["success_rate"],
+                        # The reference is PhaseForge by default. Keep the
+                        # public effect direction aligned with the protocol:
+                        # PhaseForge minus comparator.
+                        "diff": base["success_rate"] - other["success_rate"],
+                        "newcombe_ci95_low": newcombe_ci(
+                            base["successes"],
+                            base["valid_episodes"],
+                            other["successes"],
+                            other["valid_episodes"],
+                        )[0],
+                        "newcombe_ci95_high": newcombe_ci(
+                            base["successes"],
+                            base["valid_episodes"],
+                            other["successes"],
+                            other["valid_episodes"],
+                        )[1],
+                        "discordant_baseline_wins": b,
+                        "discordant_model_wins": c,
+                        "mcnemar_exact_p": mcnemar_exact_p(b, c),
                     }
                 )
     return out
@@ -298,10 +424,14 @@ def paired_rollout_comparisons(
 
 __all__ = [
     "EPISODE_REQUIRED",
+    "POLICY_FAILURE_CATEGORIES",
     "validate_episode_record",
     "append_episode_record",
     "read_episode_records",
     "wilson_interval",
+    "mcnemar_exact_p",
+    "newcombe_ci",
+    "holm_bonferroni",
     "summarize_episodes",
     "paired_rollout_comparisons",
 ]

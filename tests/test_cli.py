@@ -93,9 +93,7 @@ def test_apply_log_level_filters_info_records(caplog) -> None:
 
 def test_load_state_dict_checked_passes_on_perfect_match() -> None:
     model = _DummyModel()
-    cli._load_state_dict_checked(
-        model, model.state_dict(), "Evaluation checkpoint load"
-    )
+    cli._load_state_dict_checked(model, model.state_dict(), "Evaluation checkpoint load")
 
 
 def test_load_state_dict_checked_raises_on_missing_keys() -> None:
@@ -103,9 +101,7 @@ def test_load_state_dict_checked_raises_on_missing_keys() -> None:
     state_dict = model.state_dict()
     del state_dict["head.weight"]
     with pytest.raises(RuntimeError, match="1 missing"):
-        cli._load_state_dict_checked(
-            model, state_dict, "Evaluation checkpoint load"
-        )
+        cli._load_state_dict_checked(model, state_dict, "Evaluation checkpoint load")
 
 
 def test_load_state_dict_checked_raises_on_unexpected_keys() -> None:
@@ -113,9 +109,7 @@ def test_load_state_dict_checked_raises_on_unexpected_keys() -> None:
     state_dict = dict(model.state_dict())
     state_dict["moe_layer.router.gate_linear.weight"] = torch.zeros(4, 4)
     with pytest.raises(RuntimeError, match="unexpected"):
-        cli._load_state_dict_checked(
-            model, state_dict, "Evaluation checkpoint load"
-        )
+        cli._load_state_dict_checked(model, state_dict, "Evaluation checkpoint load")
 
 
 def test_load_state_dict_checked_allows_expected_prefix_at_info(caplog) -> None:
@@ -127,7 +121,9 @@ def test_load_state_dict_checked_allows_expected_prefix_at_info(caplog) -> None:
 
     with caplog.at_level(logging.INFO, logger="phaseforge.cli"):
         cli._load_state_dict_checked(
-            model, state_dict, "Stage 1 -> Stage 2 bootstrap load",
+            model,
+            state_dict,
+            "Stage 1 -> Stage 2 bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
@@ -140,14 +136,14 @@ def test_load_state_dict_checked_allows_expected_missing_prefix_at_info(caplog) 
     model = _DummyModel()
     model.moe_layer = torch.nn.Linear(4, 4)
     state_dict = {
-        key: value
-        for key, value in model.state_dict().items()
-        if not key.startswith("moe_layer")
+        key: value for key, value in model.state_dict().items() if not key.startswith("moe_layer")
     }
 
     with caplog.at_level(logging.INFO, logger="phaseforge.cli"):
         cli._load_state_dict_checked(
-            model, state_dict, "Stage 1 -> Stage 2 bootstrap load",
+            model,
+            state_dict,
+            "Stage 1 -> Stage 2 bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
@@ -163,7 +159,9 @@ def test_load_state_dict_checked_raises_when_unknown_keys_remain() -> None:
 
     with pytest.raises(RuntimeError, match="encoder.extra_bias"):
         cli._load_state_dict_checked(
-            model, state_dict, "Stage 1 -> Stage 2 bootstrap load",
+            model,
+            state_dict,
+            "Stage 1 -> Stage 2 bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
@@ -181,9 +179,7 @@ def _build_model_for_test(name: str) -> torch.nn.Module:
     # Model configs interpolate ${data.state_dim}/${data.action_dim}, so the
     # data block must be present for the config to resolve — same as the CLI.
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    return build_model(
-        DictConfig({"models": OmegaConf.load(path), "data": data_cfg})
-    )
+    return build_model(DictConfig({"models": OmegaConf.load(path), "data": data_cfg}))
 
 
 def test_stage1_bootstrap_load_matrix_all_cells() -> None:
@@ -207,7 +203,9 @@ def test_stage1_bootstrap_load_matrix_all_cells() -> None:
         model = _build_model_for_test(name)
         assert not any(k.startswith("phase_head") for k in model.state_dict())
         cli._load_state_dict_checked(
-            model, bc_sd, f"{name} <- bc bootstrap load",
+            model,
+            bc_sd,
+            f"{name} <- bc bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
@@ -216,7 +214,9 @@ def test_stage1_bootstrap_load_matrix_all_cells() -> None:
         model = _build_model_for_test(name)
         assert any(k.startswith("phase_head") for k in model.state_dict())
         cli._load_state_dict_checked(
-            model, pf_sd, f"{name} <- phaseforge bootstrap load",
+            model,
+            pf_sd,
+            f"{name} <- phaseforge bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
@@ -226,7 +226,9 @@ def test_stage1_bootstrap_load_matrix_all_cells() -> None:
     model = _build_model_for_test("phase_pretrain_random_router")
     assert not any(k.startswith("phase_head") for k in model.state_dict())
     cli._load_state_dict_checked(
-        model, pf_sd, "phase_pretrain_random_router <- phaseforge bootstrap load",
+        model,
+        pf_sd,
+        "phase_pretrain_random_router <- phaseforge bootstrap load",
         expected_unexpected_prefixes=("moe_layer", "phase_head"),
     )
 
@@ -240,18 +242,14 @@ def test_unused_stage1_head_prefixes_are_target_specific() -> None:
     assert cli._unused_stage1_head_prefixes(
         _build_model_for_test("phase_pretrain_random_router")
     ) == ("phase_head",)
-    assert cli._unused_stage1_head_prefixes(
-        _build_model_for_test("warmstart_moe")
-    ) == ("phase_head",)
+    assert cli._unused_stage1_head_prefixes(_build_model_for_test("warmstart_moe")) == (
+        "phase_head",
+    )
     assert cli._unused_stage1_head_prefixes(
         _build_model_for_test("plain_encoder_phase_bootstrap")
     ) == ("phase_head",)
-    assert cli._unused_stage1_head_prefixes(
-        _build_model_for_test("teacher_forced")
-    ) == ()
-    assert cli._unused_stage1_head_prefixes(
-        _build_model_for_test("phaseforge")
-    ) == ()
+    assert cli._unused_stage1_head_prefixes(_build_model_for_test("teacher_forced")) == ()
+    assert cli._unused_stage1_head_prefixes(_build_model_for_test("phaseforge")) == ()
 
 
 def test_phase_head_required_when_target_uses_it() -> None:
@@ -263,6 +261,8 @@ def test_phase_head_required_when_target_uses_it() -> None:
 
     with pytest.raises(RuntimeError, match="phase_head"):
         cli._load_state_dict_checked(
-            teacher_forced, bc_sd, "teacher_forced <- bc bootstrap load",
+            teacher_forced,
+            bc_sd,
+            "teacher_forced <- bc bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )

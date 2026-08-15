@@ -98,8 +98,7 @@ class RunLedger:
             )
         if row.status not in _VALID_STATUSES:
             raise ValueError(
-                f"Ledger row.status must be one of {sorted(_VALID_STATUSES)}, "
-                f"got {row.status!r}"
+                f"Ledger row.status must be one of {sorted(_VALID_STATUSES)}, got {row.status!r}"
             )
         if not row.created_at:
             row.created_at = datetime.now(UTC).isoformat()
@@ -122,9 +121,7 @@ class RunLedger:
 
     def update_status(self, run_id: str, status: str) -> None:
         if status not in _VALID_STATUSES:
-            raise ValueError(
-                f"status must be one of {sorted(_VALID_STATUSES)}, got {status!r}"
-            )
+            raise ValueError(f"status must be one of {sorted(_VALID_STATUSES)}, got {status!r}")
         with self.lock:
             rows = self._read_all_strict()
             found = False

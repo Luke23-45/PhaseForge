@@ -67,9 +67,7 @@ def test_metadata_failure_falls_back_to_sanity_check(tmp_path, monkeypatch) -> N
         raise RuntimeError("network down")
 
     monkeypatch.setattr(hf_downloader, "fetch_mirror_sha256", raise_meta)
-    result = download_hf_file(
-        "amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path
-    )
+    result = download_hf_file("amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path)
 
     assert result == dest
 
@@ -80,9 +78,7 @@ def test_metadata_failure_is_fatal_when_no_file(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(hf_downloader, "fetch_mirror_sha256", raise_meta)
     with pytest.raises(RuntimeError, match="network down"):
-        download_hf_file(
-            "amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path
-        )
+        download_hf_file("amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path)
 
 
 def test_fresh_download_sha_verified(tmp_path, monkeypatch) -> None:
@@ -94,9 +90,7 @@ def test_fresh_download_sha_verified(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(hf_downloader, "fetch_mirror_sha256", lambda *a: sha)
     monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **k: str(cached))
 
-    dest = download_hf_file(
-        "amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path
-    )
+    dest = download_hf_file("amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path)
 
     assert dest.name == "low_dim_v15.hdf5"
     assert _sha256_of(dest) == sha
@@ -107,15 +101,11 @@ def test_fresh_download_checksum_mismatch_removes_file(tmp_path, monkeypatch) ->
     cached.parent.mkdir()
     cached.write_bytes(b"payload")
 
-    monkeypatch.setattr(
-        hf_downloader, "fetch_mirror_sha256", lambda *a: "f" * 64
-    )
+    monkeypatch.setattr(hf_downloader, "fetch_mirror_sha256", lambda *a: "f" * 64)
     monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **k: str(cached))
 
     with pytest.raises(RuntimeError, match="refusing to ingest"):
-        download_hf_file(
-            "amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path
-        )
+        download_hf_file("amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path)
 
     assert not (tmp_path / "low_dim_v15.hdf5").exists()
 
@@ -128,9 +118,7 @@ def test_fresh_download_sanity_checked_when_no_checksum(tmp_path, monkeypatch) -
     monkeypatch.setattr(hf_downloader, "fetch_mirror_sha256", lambda *a: None)
     monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **k: str(cached))
 
-    dest = download_hf_file(
-        "amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path
-    )
+    dest = download_hf_file("amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path)
 
     assert dest.exists()
 
@@ -144,26 +132,20 @@ def test_fresh_download_invalid_hdf5_removed(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda **k: str(cached))
 
     with pytest.raises(RuntimeError, match="not a readable HDF5"):
-        download_hf_file(
-            "amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path
-        )
+        download_hf_file("amandlek/robomimic", "v1.5/lift/ph/low_dim_v15.hdf5", tmp_path)
 
     assert not (tmp_path / "low_dim_v15.hdf5").exists()
 
 
 def test_empty_basename_guard(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="no file name"):
-        download_hf_file(
-            "amandlek/robomimic", "", tmp_path, pinned_sha256="0" * 64
-        )
+        download_hf_file("amandlek/robomimic", "", tmp_path, pinned_sha256="0" * 64)
 
 
 def test_directory_destination_guard(tmp_path) -> None:
     (tmp_path / "ph").mkdir()
     with pytest.raises(RuntimeError, match="must name a file"):
-        download_hf_file(
-            "amandlek/robomimic", "v1.5/lift/ph", tmp_path
-        )
+        download_hf_file("amandlek/robomimic", "v1.5/lift/ph", tmp_path)
 
 
 def test_sanity_check_raises_on_garbage(tmp_path) -> None:

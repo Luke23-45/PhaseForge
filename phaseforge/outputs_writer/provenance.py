@@ -131,9 +131,7 @@ def write_artifact_manifest(
     metadata_dir = run_dir / "metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
     path = metadata_dir / "artifact_manifest.json"
-    path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return payload
 
 

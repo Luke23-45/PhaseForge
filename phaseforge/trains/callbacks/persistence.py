@@ -122,9 +122,7 @@ class MetricPersistenceCallback(Callback):
                 val = value.detach().to(device=device, dtype=torch.float32)
             else:
                 val = torch.as_tensor(float(value), device=device, dtype=torch.float32)
-            acc = self._train_acc.get(
-                key, torch.zeros((), device=device, dtype=torch.float32)
-            )
+            acc = self._train_acc.get(key, torch.zeros((), device=device, dtype=torch.float32))
             self._train_acc[key] = acc + val * n
         self._train_n += n
 
@@ -132,9 +130,7 @@ class MetricPersistenceCallback(Callback):
         self._last_val_metrics = {k: float(v) for k, v in val_metrics.items()}
         timing = trainer.epoch_timing()
 
-        val_total = val_metrics.get(
-            "loss_total", val_metrics.get("val/loss_total", float("nan"))
-        )
+        val_total = val_metrics.get("loss_total", val_metrics.get("val/loss_total", float("nan")))
         val_action = val_metrics.get(
             "loss_action", val_metrics.get("val/loss_action", float("nan"))
         )
@@ -144,12 +140,8 @@ class MetricPersistenceCallback(Callback):
             "epoch": int(trainer.current_epoch),
             "global_step": int(trainer.global_step),
             "train/lr": self._lr if self._lr is not None else float("nan"),
-            "epoch_wall_seconds": float(
-                timing.get("epoch_wall_seconds", float("nan"))
-            ),
-            "train_steps_per_second": float(
-                timing.get("train_steps_per_second", float("nan"))
-            ),
+            "epoch_wall_seconds": float(timing.get("epoch_wall_seconds", float("nan"))),
+            "train_steps_per_second": float(timing.get("train_steps_per_second", float("nan"))),
             "val/loss_total": float(val_total),
             "val/loss_action": float(val_action),
         }
@@ -178,9 +170,7 @@ class MetricPersistenceCallback(Callback):
             ):
                 row[key] = float(value)
             elif key.startswith("val/"):
-                logger.warning(
-                    "Dropping validation metric %r not in the curve schema.", key
-                )
+                logger.warning("Dropping validation metric %r not in the curve schema.", key)
 
         # Per-epoch checkpoint monitor name + value (Locked Decision 5).
         # val_metrics mixes unprefixed losses (``loss_total``) and prefixed
@@ -209,9 +199,7 @@ class MetricPersistenceCallback(Callback):
             wall = time.perf_counter() - self._wall_t0
 
         counts = trainer.parameter_counts()
-        best_epoch, best_monitor, best_ckpt, best_sha = self._best_checkpoint_info(
-            trainer
-        )
+        best_epoch, best_monitor, best_ckpt, best_sha = self._best_checkpoint_info(trainer)
 
         models_cfg = trainer.cfg.get("models")
         model_name = str(
@@ -219,9 +207,7 @@ class MetricPersistenceCallback(Callback):
             if models_cfg is not None
             else type(trainer.model).__name__
         )
-        stage = int(
-            getattr(trainer.model, "stage", trainer.train_cfg.get("stage", 1))
-        )
+        stage = int(getattr(trainer.model, "stage", trainer.train_cfg.get("stage", 1)))
 
         summary: dict[str, Any] = {
             "run_id": self.run_id,
@@ -301,9 +287,7 @@ class MetricPersistenceCallback(Callback):
             topk = getattr(callback, "_topk", None)
             best_epoch = int(topk[0][1]) if topk else None
             best_score = getattr(callback, "best_score", None)
-            best_monitor = (
-                float(best_score) if isinstance(best_score, (int, float)) else None
-            )
+            best_monitor = float(best_score) if isinstance(best_score, (int, float)) else None
             return best_epoch, best_monitor, rel, sha
         return None, None, None, None
 

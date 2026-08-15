@@ -104,9 +104,7 @@ def test_time_to_stable_routing_short_sequence_returns_T() -> None:
 
 def test_time_to_stable_result_marks_horizon_as_censored() -> None:
     logits = torch.zeros(10, 4)
-    result = time_to_stable_routing_result(
-        logits, window_size=100, consecutive_windows=5
-    )
+    result = time_to_stable_routing_result(logits, window_size=100, consecutive_windows=5)
     assert result.step == 10
     assert result.stabilized is False
 
@@ -123,9 +121,7 @@ def test_time_to_stable_result_marks_observed_convergence() -> None:
 
 
 def test_time_to_stable_result_includes_window_length() -> None:
-    result = time_to_stable_routing_result(
-        torch.zeros(6, 4), window_size=3, consecutive_windows=2
-    )
+    result = time_to_stable_routing_result(torch.zeros(6, 4), window_size=3, consecutive_windows=2)
     # Windows [0:3] and [1:4] complete after four observed timesteps.
     assert result.step == 4
     assert result.stabilized is True

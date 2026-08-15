@@ -29,8 +29,7 @@ def _validate_labels(phases: Tensor, expert_indices: Tensor) -> tuple[Tensor, Te
         e_top1 = expert_indices.view(-1)
     if p_flat.numel() != e_top1.numel():
         raise ValueError(
-            f"Shape mismatch: phases has {p_flat.numel()} elements, "
-            f"experts has {e_top1.numel()}"
+            f"Shape mismatch: phases has {p_flat.numel()} elements, experts has {e_top1.numel()}"
         )
     if p_flat.min() < 0 or e_top1.min() < 0:
         raise ValueError(
@@ -43,8 +42,8 @@ def _validate_labels(phases: Tensor, expert_indices: Tensor) -> tuple[Tensor, Te
 def phase_expert_nmi(phases: Tensor, expert_indices: Tensor) -> float:
     """Calculate Normalized Mutual Information (NMI) between phases and experts.
 
-    NMI measures the alignment between the assigned phase labels and the 
-    router's expert choices. 
+    NMI measures the alignment between the assigned phase labels and the
+    router's expert choices.
     1.0 = Perfect one-to-one mapping (experts specialize perfectly by phase).
     0.0 = Completely independent (router ignores phase structure).
 
@@ -67,7 +66,7 @@ def phase_expert_nmi(phases: Tensor, expert_indices: Tensor) -> float:
 
     # Calculate NMI using scikit-learn
     # We use 'arithmetic' average method as standard
-    return float(normalized_mutual_info_score(p_np, e_np, average_method='arithmetic'))
+    return float(normalized_mutual_info_score(p_np, e_np, average_method="arithmetic"))
 
 
 def build_contingency_matrix(
@@ -77,13 +76,13 @@ def build_contingency_matrix(
     num_experts: int,
 ) -> Tensor:
     """Build a P x E contingency matrix (heatmap) of phase-expert assignments.
-    
+
     Args:
         phases: Tensor of shape (B,) containing integer phase labels.
         expert_indices: Tensor of shape (B, K) containing top-K experts. Uses top-1.
         num_phases: Total number of phases (P).
         num_experts: Total number of experts (E).
-        
+
     Returns:
         Tensor of shape (num_phases, num_experts) containing normalized counts.
         Each row (phase) sums to 1.0.
@@ -99,23 +98,19 @@ def build_contingency_matrix(
         raise ValueError(f"num_experts must be >= 1, got {num_experts}")
     p_flat, e_top1 = _validate_labels(phases, expert_indices)
     if p_flat.max() >= num_phases:
-        raise ValueError(
-            f"phase label {p_flat.max().item()} out of range [0, {num_phases})"
-        )
+        raise ValueError(f"phase label {p_flat.max().item()} out of range [0, {num_phases})")
     if e_top1.max() >= num_experts:
-        raise ValueError(
-            f"expert index {e_top1.max().item()} out of range [0, {num_experts})"
-        )
-    
+        raise ValueError(f"expert index {e_top1.max().item()} out of range [0, {num_experts})")
+
     matrix = torch.zeros((num_phases, num_experts), dtype=torch.float32, device=phases.device)
-    
+
     for p, e in zip(p_flat, e_top1):
         matrix[p, e] += 1.0
-            
+
     # Row normalize so each phase's distribution sums to 1
     row_sums = matrix.sum(dim=1, keepdim=True)
-    
+
     # Avoid division by zero
     row_sums = torch.clamp(row_sums, min=1.0)
-    
+
     return matrix / row_sums

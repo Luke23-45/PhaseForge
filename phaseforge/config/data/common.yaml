@@ -1,4 +1,11 @@
 # Shared data parameters for the non-visual robomimic/robosuite protocol.
+#
+# DEPRECATED: this file is the legacy Lift config. The canonical Lift
+# config is now ``phaseforge/config/data/lift.yaml`` (identical content).
+# The five-task evaluation uses one of: ``lift``, ``can``, ``square``,
+# ``tool_hang``, ``transport``. ``common`` is accepted as a synonym for
+# ``lift`` to preserve backward compatibility with the original single-task
+# pilot; new code should reference the per-task YAML by name.
 
 batch_size: 256
 num_workers: 2

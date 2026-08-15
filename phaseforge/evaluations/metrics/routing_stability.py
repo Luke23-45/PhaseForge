@@ -64,21 +64,19 @@ def routing_entropy(gate_logits: Tensor, normalize: bool = True) -> Tensor:
 
     # Softmax probabilities (..., E)
     probs = F.softmax(gate_logits, dim=-1)
-    
+
     # log_probs, clamped for numerical stability
     log_probs = torch.log(probs.clamp(min=1e-8))
-    
+
     # Entropy: -sum(p * log(p)) over experts
     entropy = -torch.sum(probs * log_probs, dim=-1)  # (...,)
-    
+
     mean_entropy = entropy.mean()
-    
+
     if normalize and E > 1:
-        denom = torch.log(
-            torch.tensor(E, dtype=torch.float32, device=gate_logits.device)
-        )
+        denom = torch.log(torch.tensor(E, dtype=torch.float32, device=gate_logits.device))
         mean_entropy = mean_entropy / denom
-        
+
     return mean_entropy
 
 
@@ -183,13 +181,9 @@ def time_to_stable_routing_result(
     if int(window_size) < 1:
         raise ValueError(f"window_size must be >= 1, got {window_size}")
     if int(consecutive_windows) < 1:
-        raise ValueError(
-            f"consecutive_windows must be >= 1, got {consecutive_windows}"
-        )
+        raise ValueError(f"consecutive_windows must be >= 1, got {consecutive_windows}")
     if float(variance_threshold) < 0.0:
-        raise ValueError(
-            f"variance_threshold must be >= 0, got {variance_threshold}"
-        )
+        raise ValueError(f"variance_threshold must be >= 0, got {variance_threshold}")
     _validate_logits(gate_logits)
     probs = F.softmax(gate_logits, dim=-1)
     log_probs = torch.log(probs.clamp(min=1e-8))
@@ -212,12 +206,7 @@ def time_to_stable_routing_result(
                 # Window index j covers [j, j + window_size - 1]. The run
                 # beginning at hit completes after the final window's last
                 # timestep, reported as a one-based observed-step count.
-                step=(
-                    int(hits[0].item())
-                    + window_size
-                    + consecutive_windows
-                    - 1
-                ),
+                step=(int(hits[0].item()) + window_size + consecutive_windows - 1),
                 stabilized=True,
             )
 
@@ -259,21 +248,21 @@ class TimeToStableRouting:
 
     def update(self, step: int, variance: float) -> bool:
         """Update stability status.
-        
+
         Returns:
             True if newly stabilized on this step, False otherwise.
         """
         if self.is_stable:
             return False
-            
+
         if variance < self.variance_threshold:
             self.stable_count += 1
         else:
             self.stable_count = 0
-            
+
         if self.stable_count >= self.consecutive_windows:
             self.is_stable = True
             self.stable_step = step
             return True
-            
+
         return False

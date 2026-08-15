@@ -91,7 +91,7 @@ class CheckpointCallback(Callback):
         self._topk.append((score, epoch, snapshot))
         self._topk.sort(key=lambda entry: entry[0], reverse=(self.mode == "max"))
 
-        evicted = self._topk[self.save_top_k:]
+        evicted = self._topk[self.save_top_k :]
         self._topk = self._topk[: self.save_top_k]
         for _, _, path in evicted:
             path.unlink(missing_ok=True)

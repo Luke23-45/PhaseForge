@@ -42,9 +42,7 @@ def _fsm_for_model(model: str) -> DataPipelineStateMachine:
         if model == "phaseforge"
         else f"phaseforge/config/models/baselines/{model}.yaml"
     )
-    return DataPipelineStateMachine(
-        DictConfig({"models": OmegaConf.load(path), "data": data_cfg})
-    )
+    return DataPipelineStateMachine(DictConfig({"models": OmegaConf.load(path), "data": data_cfg}))
 
 
 def test_phase_consuming_models_are_detected() -> None:
@@ -75,9 +73,7 @@ class _FakeIngester:
 
 def _fsm_with_fake_ingester(model: str) -> DataPipelineStateMachine:
     fsm = _fsm_for_model(model)
-    fsm.data_cfg.ingester = DictConfig(
-        {"_target_": _FakeIngester}, flags={"allow_objects": True}
-    )
+    fsm.data_cfg.ingester = DictConfig({"_target_": _FakeIngester}, flags={"allow_objects": True})
     fsm._raw_dir = Path("fake-raw-dir")
     return fsm
 
@@ -90,26 +86,20 @@ def test_degenerate_phases_fail_loud_for_phase_consuming_models() -> None:
 
 def test_degenerate_phases_only_warn_for_label_free_models(caplog) -> None:
     fsm = _fsm_with_fake_ingester("bc")
-    with caplog.at_level(
-        logging.WARNING, logger="phaseforge.data.ingestion.state_machine"
-    ):
+    with caplog.at_level(logging.WARNING, logger="phaseforge.data.ingestion.state_machine"):
         fsm._ingest_source()
     assert "no samples for phase" in caplog.text
     assert fsm._trajectories
 
 
-def _fsm_with_missing_source(
-    tmp_path: Path, auto_download: bool
-) -> DataPipelineStateMachine:
+def _fsm_with_missing_source(tmp_path: Path, auto_download: bool) -> DataPipelineStateMachine:
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
     data_cfg.source.dir = str(tmp_path / "no_such_raw")
     data_cfg.source.auto_download = auto_download
     return DataPipelineStateMachine(
         DictConfig(
             {
-                "models": OmegaConf.load(
-                    "phaseforge/config/models/phaseforge.yaml"
-                ),
+                "models": OmegaConf.load("phaseforge/config/models/phaseforge.yaml"),
                 "data": data_cfg,
             }
         )
@@ -131,9 +121,7 @@ def test_missing_source_with_auto_download_enters_provision_state(tmp_path) -> N
     assert fsm._raw_dir is not None
 
 
-def test_provision_source_downloads_verified_file(
-    tmp_path, monkeypatch
-) -> None:
+def test_provision_source_downloads_verified_file(tmp_path, monkeypatch) -> None:
     from phaseforge.data.ingestion.states import PipelineState
 
     fsm = _fsm_with_missing_source(tmp_path, auto_download=True)
@@ -148,9 +136,7 @@ def test_provision_source_downloads_verified_file(
         calls.append((repo_id, path, Path(dest_dir), pinned_sha256))
         return downloaded
 
-    monkeypatch.setattr(
-        "phaseforge.data.ingestion.state_machine.download_hf_file", fake_download
-    )
+    monkeypatch.setattr("phaseforge.data.ingestion.state_machine.download_hf_file", fake_download)
     fsm._provision_source()
     assert calls == [
         (

@@ -161,8 +161,7 @@ def test_oracle_moe_reports_stage_2() -> None:
 
 def test_phase_pretrain_random_router_builds() -> None:
     cfg = _make_plain_cfg(
-        "phaseforge.models.baselines.phase_pretrain_random_router."
-        "PhasePretrainRandomRouterModel"
+        "phaseforge.models.baselines.phase_pretrain_random_router.PhasePretrainRandomRouterModel"
     )
     # Warm-start structure takes no num_phases (no centroid bootstrap).
     del cfg.models.num_phases
@@ -172,17 +171,14 @@ def test_phase_pretrain_random_router_builds() -> None:
 
 def test_plain_encoder_phase_bootstrap_builds() -> None:
     cfg = _make_plain_cfg(
-        "phaseforge.models.baselines.plain_encoder_phase_bootstrap."
-        "PlainEncoderPhaseBootstrapModel"
+        "phaseforge.models.baselines.plain_encoder_phase_bootstrap.PlainEncoderPhaseBootstrapModel"
     )
     model = build_model(cfg)
     assert isinstance(model, PlainEncoderPhaseBootstrapModel)
 
 
 def test_teacher_forced_builds() -> None:
-    cfg = _make_phase_cfg(
-        "phaseforge.models.baselines.teacher_forced.TeacherForcedMoEModel"
-    )
+    cfg = _make_phase_cfg("phaseforge.models.baselines.teacher_forced.TeacherForcedMoEModel")
     model = build_model(cfg)
     assert isinstance(model, TeacherForcedMoEModel)
 
@@ -244,7 +240,10 @@ def test_phase_pretrain_random_router_keeps_random_router() -> None:
 def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
     encoder, action_head, router, expert, _ = _make_components()
     model = PlainEncoderPhaseBootstrapModel(
-        encoder=encoder, action_head=action_head, router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        router=router,
+        expert=expert,
         num_phases=3,
     )
     assert model.stage == 1
@@ -269,9 +268,7 @@ def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
     assert model.stage == 2
     got = model.moe_layer.router.gate_linear.weight.data[:3]
     assert torch.allclose(got, expected, atol=1e-6)
-    assert torch.allclose(
-        model.moe_layer.router.gate_linear.bias.data, torch.zeros(4), atol=1e-6
-    )
+    assert torch.allclose(model.moe_layer.router.gate_linear.bias.data, torch.zeros(4), atol=1e-6)
 
     # Experts warm-started from the action head (within the symmetry-breaking
     # jitter tolerance; same reasoning as the random-router test above).
@@ -295,8 +292,11 @@ def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
 def test_teacher_forced_training_routes_by_gt_phase() -> None:
     encoder, action_head, router, expert, phase_head = _make_components()
     model = TeacherForcedMoEModel(
-        encoder=encoder, action_head=action_head, phase_head=phase_head,
-        router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
     )
     model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
     assert model.stage == 2
@@ -312,8 +312,11 @@ def test_teacher_forced_training_routes_by_gt_phase() -> None:
 def test_teacher_forced_eval_routes_by_predicted_phase() -> None:
     encoder, action_head, router, expert, phase_head = _make_components()
     model = TeacherForcedMoEModel(
-        encoder=encoder, action_head=action_head, phase_head=phase_head,
-        router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
     )
     model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
 
@@ -331,8 +334,11 @@ def test_teacher_forced_eval_routes_by_predicted_phase() -> None:
 def test_teacher_forced_get_action_is_label_free() -> None:
     encoder, action_head, router, expert, phase_head = _make_components()
     model = TeacherForcedMoEModel(
-        encoder=encoder, action_head=action_head, phase_head=phase_head,
-        router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
     )
     model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
     model.eval()
@@ -349,8 +355,11 @@ def test_teacher_forced_get_action_is_label_free() -> None:
 def test_teacher_forced_freezes_stage1_bundle() -> None:
     encoder, action_head, router, expert, phase_head = _make_components()
     model = TeacherForcedMoEModel(
-        encoder=encoder, action_head=action_head, phase_head=phase_head,
-        router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
     )
     model.freeze_encoder()
     assert all(not p.requires_grad for p in model.encoder.parameters())
@@ -367,9 +376,7 @@ def test_teacher_forced_freezes_stage1_bundle() -> None:
 def test_warm_start_exact_copy_when_jitter_disabled() -> None:
     _, action_head, _, _, _ = _make_components()
     expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
-    warm_start_experts_from_action_head(
-        nn.ModuleList([expert]), action_head, jitter_std=0.0
-    )
+    warm_start_experts_from_action_head(nn.ModuleList([expert]), action_head, jitter_std=0.0)
     assert torch.equal(expert.hidden[0].weight, action_head.trunk[0].weight)
     assert torch.equal(expert.output_proj.weight, action_head.mean_head.weight)
 
@@ -380,18 +387,14 @@ def test_warm_start_rejects_architecture_mismatch() -> None:
     # ActionHead: the warm start must fail loudly, not copy partially.
     deep_expert = ExpertMLP(input_dim=32, hidden_dims=[64, 64], output_dim=7)
     with pytest.raises(ValueError, match="cannot fill"):
-        warm_start_experts_from_action_head(
-            nn.ModuleList([deep_expert]), action_head
-        )
+        warm_start_experts_from_action_head(nn.ModuleList([deep_expert]), action_head)
 
 
 def test_warm_start_rejects_negative_jitter() -> None:
     _, action_head, _, _, _ = _make_components()
     expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
     with pytest.raises(ValueError, match="jitter_std"):
-        warm_start_experts_from_action_head(
-            nn.ModuleList([expert]), action_head, jitter_std=-0.1
-        )
+        warm_start_experts_from_action_head(nn.ModuleList([expert]), action_head, jitter_std=-0.1)
 
 
 def test_warm_started_experts_are_independent_copies() -> None:
@@ -423,7 +426,10 @@ def test_moe_layer_clones_have_independent_storage() -> None:
 def test_plain_bootstrap_rejects_absent_phase() -> None:
     encoder, action_head, router, expert, _ = _make_components()
     model = PlainEncoderPhaseBootstrapModel(
-        encoder=encoder, action_head=action_head, router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        router=router,
+        expert=expert,
         num_phases=3,
     )
     # Restrict the phases to {0, 1}: phase 2 never appears.
@@ -439,8 +445,11 @@ def test_plain_bootstrap_rejects_absent_phase() -> None:
 def test_bootstrap_freezes_unused_stage1_heads() -> None:
     encoder, action_head, router, expert, phase_head = _make_components()
     model = PhaseBootstrappedMoE(
-        encoder=encoder, action_head=action_head, phase_head=phase_head,
-        router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
     )
     model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
     assert model.stage == 2
@@ -453,8 +462,11 @@ def test_bootstrap_freezes_unused_stage1_heads() -> None:
 def test_frozen_encoder_stays_in_eval_after_train() -> None:
     encoder, action_head, router, expert, phase_head = _make_components()
     model = PhaseBootstrappedMoE(
-        encoder=encoder, action_head=action_head, phase_head=phase_head,
-        router=router, expert=expert,
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
     )
     model.freeze_encoder()
     assert all(not p.requires_grad for p in model.encoder.parameters())
@@ -468,9 +480,7 @@ def test_frozen_encoder_stays_in_eval_after_train() -> None:
 
 def test_oracle_requires_phase_labels() -> None:
     encoder, _, router, expert, _ = _make_components()
-    model = OraclePhaseMoEModel(
-        encoder=encoder, router=router, expert=expert, num_phases=3
-    )
+    model = OraclePhaseMoEModel(encoder=encoder, router=router, expert=expert, num_phases=3)
     with pytest.raises(RuntimeError, match="requires ground-truth"):
         model({"state": torch.randn(4, 151)})
 
@@ -493,7 +503,10 @@ def test_router_normalize_input_produces_cosine_logits() -> None:
     x = torch.randn(8, 32)
     centroids = torch.nn.functional.normalize(torch.randn(4, 32), dim=-1)
     router = TopKRouter(
-        latent_dim=32, num_experts=4, top_k=2, noise_std=0.0,
+        latent_dim=32,
+        num_experts=4,
+        top_k=2,
+        noise_std=0.0,
         normalize_input=True,
     )
     router.gate_linear.weight.data.copy_(centroids)

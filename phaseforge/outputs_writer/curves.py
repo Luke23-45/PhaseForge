@@ -101,29 +101,23 @@ def validate_curve_row(row: dict[str, Any]) -> None:
     if unknown:
         raise SchemaError(f"Curve row has unknown top-level keys: {unknown}")
     if not isinstance(row["run_id"], str):
-        raise SchemaError(
-            f"Curve row['run_id'] must be str, got {type(row['run_id']).__name__}"
-        )
+        raise SchemaError(f"Curve row['run_id'] must be str, got {type(row['run_id']).__name__}")
     for key in _CURVE_INT_FIELDS:
         if not _is_real_int(row[key]):
-            raise SchemaError(
-                f"Curve row[{key!r}] must be int, got {type(row[key]).__name__}"
-            )
+            raise SchemaError(f"Curve row[{key!r}] must be int, got {type(row[key]).__name__}")
     for key in CURVE_CORE_REQUIRED:
         if key in _CURVE_INT_FIELDS or key == "run_id":
             continue
         if not _is_real_numeric(row[key]):
             raise SchemaError(
-                f"Curve row[{key!r}] must be finite or NaN numeric, "
-                f"got {type(row[key]).__name__}"
+                f"Curve row[{key!r}] must be finite or NaN numeric, got {type(row[key]).__name__}"
             )
     for key in CURVE_OPTIONAL_NUMERIC:
         if key not in row:
             continue
         if not _is_real_numeric(row[key]):
             raise SchemaError(
-                f"Curve row[{key!r}] must be finite or NaN numeric, "
-                f"got {type(row[key]).__name__}"
+                f"Curve row[{key!r}] must be finite or NaN numeric, got {type(row[key]).__name__}"
             )
     if "checkpoint_monitor" in row:
         if not isinstance(row["checkpoint_monitor"], str):
@@ -132,9 +126,7 @@ def validate_curve_row(row: dict[str, Any]) -> None:
                 f"{type(row['checkpoint_monitor']).__name__}"
             )
         if "checkpoint_monitor_value" not in row:
-            raise SchemaError(
-                "Curve row has checkpoint_monitor without checkpoint_monitor_value"
-            )
+            raise SchemaError("Curve row has checkpoint_monitor without checkpoint_monitor_value")
     if "peak_gpu_memory_mb" in row and row["peak_gpu_memory_mb"] is not None:
         if not _is_real_numeric(row["peak_gpu_memory_mb"]):
             raise SchemaError(
@@ -143,9 +135,7 @@ def validate_curve_row(row: dict[str, Any]) -> None:
                 f"{type(row['peak_gpu_memory_mb']).__name__}"
             )
     if "extra" in row and not isinstance(row["extra"], dict):
-        raise SchemaError(
-            f"Curve row['extra'] must be dict, got {type(row['extra']).__name__}"
-        )
+        raise SchemaError(f"Curve row['extra'] must be dict, got {type(row['extra']).__name__}")
 
 
 #: Required fields of ``metrics/summary.json`` (final specification §5.2).
@@ -180,8 +170,7 @@ def _validate_summary_numeric_nullable(row: dict[str, Any], key: str) -> None:
         return
     if not _is_real_numeric(value):
         raise SchemaError(
-            f"Summary[{key!r}] must be finite or NaN numeric or null, "
-            f"got {type(value).__name__}"
+            f"Summary[{key!r}] must be finite or NaN numeric or null, got {type(value).__name__}"
         )
 
 
@@ -217,77 +206,66 @@ def validate_summary(summary: dict[str, Any]) -> None:
     if unknown:
         raise SchemaError(f"Summary has unknown top-level keys: {unknown}")
 
-    for key in ("run_id", "model", "config_hash", "data_config_hash", "git_sha",
-                "device", "started_at", "finished_at", "data_provenance_path"):
+    for key in (
+        "run_id",
+        "model",
+        "config_hash",
+        "data_config_hash",
+        "git_sha",
+        "device",
+        "started_at",
+        "finished_at",
+        "data_provenance_path",
+    ):
         value = summary[key]
         if value is not None and not isinstance(value, str):
-            raise SchemaError(
-                f"Summary[{key!r}] must be str or null, got {type(value).__name__}"
-            )
+            raise SchemaError(f"Summary[{key!r}] must be str or null, got {type(value).__name__}")
     for key in ("tag", "method"):
         if key not in summary:
             continue
         value = summary[key]
         if value is not None and not isinstance(value, str):
-            raise SchemaError(
-                f"Summary[{key!r}] must be str or null, got {type(value).__name__}"
-            )
+            raise SchemaError(f"Summary[{key!r}] must be str or null, got {type(value).__name__}")
     if summary["kind"] not in ("train", "eval"):
-        raise SchemaError(
-            f"Summary['kind'] must be 'train' or 'eval', got {summary['kind']!r}"
-        )
+        raise SchemaError(f"Summary['kind'] must be 'train' or 'eval', got {summary['kind']!r}")
     if not _is_real_int(summary["stage"]):
-        raise SchemaError(
-            f"Summary['stage'] must be int, got {type(summary['stage']).__name__}"
-        )
+        raise SchemaError(f"Summary['stage'] must be int, got {type(summary['stage']).__name__}")
     seed = summary["seed"]
     if seed is not None and not _is_real_int(seed):
-        raise SchemaError(
-            f"Summary['seed'] must be int or null, got {type(seed).__name__}"
-        )
+        raise SchemaError(f"Summary['seed'] must be int or null, got {type(seed).__name__}")
     for key in ("epochs_run", "trainable_params", "total_params"):
         if not _is_real_int(summary[key]):
-            raise SchemaError(
-                f"Summary[{key!r}] must be int, got {type(summary[key]).__name__}"
-            )
+            raise SchemaError(f"Summary[{key!r}] must be int, got {type(summary[key]).__name__}")
     best_epoch = summary["best_epoch"]
     if best_epoch is not None and not _is_real_int(best_epoch):
         raise SchemaError(
-            f"Summary['best_epoch'] must be int or null, "
-            f"got {type(best_epoch).__name__}"
+            f"Summary['best_epoch'] must be int or null, got {type(best_epoch).__name__}"
         )
     for key in _SUMMARY_NUMERIC_NULLABLE:
         _validate_summary_numeric_nullable(summary, key)
     if not isinstance(summary["final_val"], dict):
         raise SchemaError(
-            f"Summary['final_val'] must be dict, "
-            f"got {type(summary['final_val']).__name__}"
+            f"Summary['final_val'] must be dict, got {type(summary['final_val']).__name__}"
         )
     if not isinstance(summary["extra"], dict):
-        raise SchemaError(
-            f"Summary['extra'] must be dict, got {type(summary['extra']).__name__}"
-        )
+        raise SchemaError(f"Summary['extra'] must be dict, got {type(summary['extra']).__name__}")
     for key in ("best_checkpoint", "best_checkpoint_sha256", "run_dir"):
         if key not in summary:
             continue
         value = summary[key]
         if value is not None and not isinstance(value, str):
-            raise SchemaError(
-                f"Summary[{key!r}] must be str or null, got {type(value).__name__}"
-            )
+            raise SchemaError(f"Summary[{key!r}] must be str or null, got {type(value).__name__}")
     if "source_stage1" in summary:
         value = summary["source_stage1"]
         if value is not None and not isinstance(value, dict):
             raise SchemaError(
-                f"Summary['source_stage1'] must be dict or null, "
-                f"got {type(value).__name__}"
+                f"Summary['source_stage1'] must be dict or null, got {type(value).__name__}"
             )
     if "global_steps" in summary:
         value = summary["global_steps"]
         if value is not None and not _is_real_int(value):
             raise SchemaError(
-                f"Summary['global_steps'] must be int or null, "
-                f"got {type(value).__name__}"
+                f"Summary['global_steps'] must be int or null, got {type(value).__name__}"
             )
     for key in ("lambda_phase", "balance_coeff"):
         if key not in summary:
@@ -302,8 +280,7 @@ def validate_summary(summary: dict[str, Any]) -> None:
         value = summary["freeze_encoder"]
         if value is not None and not isinstance(value, bool):
             raise SchemaError(
-                f"Summary['freeze_encoder'] must be bool or null, "
-                f"got {type(value).__name__}"
+                f"Summary['freeze_encoder'] must be bool or null, got {type(value).__name__}"
             )
 
 

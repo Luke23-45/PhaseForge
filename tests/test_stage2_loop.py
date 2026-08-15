@@ -131,9 +131,7 @@ def _make_trainer(model: torch.nn.Module, val_loader: DataLoader) -> Stage2Train
             },
         }
     )
-    return Stage2Trainer(
-        cfg=cfg, model=model, train_loader=val_loader, val_loader=val_loader
-    )
+    return Stage2Trainer(cfg=cfg, model=model, train_loader=val_loader, val_loader=val_loader)
 
 
 def test_validate_reports_routing_diagnostics() -> None:
@@ -205,9 +203,7 @@ def test_fit_with_epoch_progressbar_completes() -> None:
     validation metrics, and must be closed even on the normal path.
     """
     model = CountingMoEModel(num_experts=3)
-    trainer = _make_trainer(
-        model, DataLoader(_DictDataset(num=16, seed=7), batch_size=8)
-    )
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=16, seed=7), batch_size=8))
     trainer.train_cfg.epoch_progressbar = True
 
     trainer.fit()
@@ -226,7 +222,7 @@ def test_validate_losses_are_sample_weighted() -> None:
     val_metrics = trainer._validate()
 
     # action_pred == 0 => per-sample MSE == action^2.
-    expected = float((dataset.actions ** 2).mean())
+    expected = float((dataset.actions**2).mean())
     assert val_metrics["loss_action"] == pytest.approx(expected, rel=1e-6)
     assert val_metrics["loss_total"] == pytest.approx(expected, rel=1e-6)
 

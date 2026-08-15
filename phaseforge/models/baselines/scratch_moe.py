@@ -13,7 +13,7 @@ from phaseforge.models.components.router import TopKRouter
 
 class ScratchMoEModel(BaseManipulationModel):
     """MoE trained entirely from scratch (Stage 2 only).
-    
+
     No Stage 1 pretraining. Random initialization for everything.
     """
 
@@ -34,10 +34,10 @@ class ScratchMoEModel(BaseManipulationModel):
     def forward(self, batch: dict[str, Tensor]) -> ModelOutput:
         state = batch["state"]
         latent = self.encoder(state)
-        
+
         moe_out = self.moe_layer(latent)
         self._last_gate_logits = moe_out.gate_logits.detach()
-        
+
         return ModelOutput(
             action_pred=moe_out.combined_output,
             phase_logits=None,

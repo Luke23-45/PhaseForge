@@ -168,7 +168,7 @@ uv run python scripts/summarize_eval.py --outputs outputs --baseline phaseforge
 Writes under `outputs/_summaries/`:
 - `aggregates.csv` — per (model, stage) mean/std/n per metric
 - `bootstrap_ci.csv` — percentile bootstrap 95% CIs
-- `paired_wilcoxon.csv` — one-sided Wilcoxon vs `phaseforge`, paired on
+- `paired_wilcoxon.csv` — two-sided Wilcoxon vs `phaseforge`, paired on
   (stage, seed)
 - `metrics.json` — per (model, stage) per-metric means for the paper text
 

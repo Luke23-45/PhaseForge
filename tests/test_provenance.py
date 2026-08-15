@@ -60,6 +60,7 @@ from phaseforge.utils.config import checkpoint_source_info
 # Factories
 # ---------------------------------------------------------------------------
 
+
 def make_curve(
     *,
     run_id: str = "a1b2c3d4",
@@ -149,6 +150,7 @@ def make_episode(
 # ---------------------------------------------------------------------------
 # Curve schema + writer
 # ---------------------------------------------------------------------------
+
 
 class TestCurveSchema:
     def test_valid_core_row_passes(self) -> None:
@@ -336,6 +338,7 @@ class TestCurveWriter:
 # Training summary ledger
 # ---------------------------------------------------------------------------
 
+
 class TestTrainingSummaryLedger:
     def test_append_and_read_roundtrip(self, tmp_path: Path) -> None:
         results_dir = tmp_path / "_results"
@@ -370,9 +373,7 @@ class TestTrainingSummaryLedger:
         assert record["run_id"] == "aaaa0001"
         assert "boom" in record["error"]
 
-    def test_reconcile_builds_ledger_from_run_local_summaries(
-        self, tmp_path: Path
-    ) -> None:
+    def test_reconcile_builds_ledger_from_run_local_summaries(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
         run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
         metrics = run_dir / "metrics"
@@ -381,9 +382,7 @@ class TestTrainingSummaryLedger:
             json.dumps(make_summary(run_id="aaaa0001", stage=1)), encoding="utf-8"
         )
         # A pre-existing ledger row must be preserved, not duplicated.
-        append_training_summary_row(
-            tmp_path / "_results", make_summary(run_id="cccc0003", seed=99)
-        )
+        append_training_summary_row(tmp_path / "_results", make_summary(run_id="cccc0003", seed=99))
 
         result = reconcile_training_ledger(tmp_path / "_results", outputs)
         assert result["scanned"] == 1
@@ -403,9 +402,7 @@ class TestTrainingSummaryLedger:
         (metrics / "summary.json").write_text(
             json.dumps(make_summary(run_id="aaaa0001")), encoding="utf-8"
         )
-        append_training_summary_row(
-            tmp_path / "_results", make_summary(run_id="aaaa0001")
-        )
+        append_training_summary_row(tmp_path / "_results", make_summary(run_id="aaaa0001"))
         result = reconcile_training_ledger(tmp_path / "_results", outputs)
         assert result["duplicates"] == 1
         assert result["appended"] == 0
@@ -431,6 +428,7 @@ class TestTrainingSummaryLedger:
 # Provenance copy + artifact manifest
 # ---------------------------------------------------------------------------
 
+
 class TestProvenance:
     def test_sha256_file(self, tmp_path: Path) -> None:
         path = tmp_path / "data.txt"
@@ -450,9 +448,7 @@ class TestProvenance:
         run_dir = tmp_path / "run"
         payload = copy_cache_provenance(run_dir, cache, "hash1234")
         assert payload["config_hash"] == "hash1234"
-        written = json.loads(
-            (run_dir / "metadata" / "data_provenance.json").read_text()
-        )
+        written = json.loads((run_dir / "metadata" / "data_provenance.json").read_text())
         assert written["provenance"]["raw_files"] == {"a.pt": "aa"}
 
     def test_copy_cache_provenance_missing_manifest(self, tmp_path: Path) -> None:
@@ -490,6 +486,7 @@ class TestProvenance:
 # ---------------------------------------------------------------------------
 # Episodes
 # ---------------------------------------------------------------------------
+
 
 class TestEpisodes:
     def test_valid_success_record_passes(self) -> None:
@@ -530,9 +527,7 @@ class TestEpisodes:
     def test_append_read_roundtrip(self, tmp_path: Path) -> None:
         output_dir = tmp_path / "eval_run"
         append_episode_record(output_dir, make_episode(episode_index=0))
-        append_episode_record(
-            output_dir, make_episode(episode_index=1, success=False)
-        )
+        append_episode_record(output_dir, make_episode(episode_index=1, success=False))
         rows = read_episode_records(output_dir)
         assert len(rows) == 2
         assert rows[1]["success"] is False
@@ -562,14 +557,16 @@ class TestEpisodes:
             make_episode(task="push", model="phaseforge", seed=42, episode_index=2, success=False),
             make_episode(task="push", model="bc", seed=42, episode_index=0),
             make_episode(
-                task="push", model="phaseforge", seed=42, episode_index=3,
-                valid=False, exception="Timeout",
+                task="push",
+                model="phaseforge",
+                seed=42,
+                episode_index=3,
+                valid=False,
+                exception="Timeout",
             ),
         ]
         summaries = summarize_episodes(rows)
-        by_key = {
-            (s["task"], s["model"], s["tag"], s["training_seed"]): s for s in summaries
-        }
+        by_key = {(s["task"], s["model"], s["tag"], s["training_seed"]): s for s in summaries}
         pf = by_key[("push", "phaseforge", None, 42)]
         assert pf["valid_episodes"] == 3
         assert pf["successes"] == 2
@@ -582,19 +579,13 @@ class TestEpisodes:
         # ``bc`` and ``bc``/``robot_only`` share a model name; their rollout
         # episodes must never be merged into one success row.
         rows = [
-            make_episode(task="push", model="bc", seed=42, episode_index=i)
-            for i in range(3)
+            make_episode(task="push", model="bc", seed=42, episode_index=i) for i in range(3)
         ] + [
-            make_episode(
-                task="push", model="bc", tag="robot_only", seed=42, episode_index=i
-            )
+            make_episode(task="push", model="bc", tag="robot_only", seed=42, episode_index=i)
             for i in range(3)
         ]
         summaries = summarize_episodes(rows)
-        by_key = {
-            (s["task"], s["model"], s["tag"], s["training_seed"]): s
-            for s in summaries
-        }
+        by_key = {(s["task"], s["model"], s["tag"], s["training_seed"]): s for s in summaries}
         assert by_key[("push", "bc", None, 42)]["valid_episodes"] == 3
         assert by_key[("push", "bc", "robot_only", 42)]["valid_episodes"] == 3
         assert len(summaries) == 2
@@ -624,12 +615,11 @@ class TestEpisodes:
 # Phase accumulator
 # ---------------------------------------------------------------------------
 
+
 class TestPhaseAccumulator:
     def test_micro_and_balanced(self) -> None:
         acc = _PhaseAccumulator(device=torch.device("cpu"), num_phases=2)
-        logits = torch.tensor(
-            [[1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0]]
-        )
+        logits = torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
         targets = torch.tensor([0, 1, 1, 0])
         acc.update(logits, targets)
         micro, balanced = acc.compute()
@@ -640,9 +630,7 @@ class TestPhaseAccumulator:
 
     def test_imbalanced_balanced_recall(self) -> None:
         acc = _PhaseAccumulator(device=torch.device("cpu"), num_phases=2)
-        logits = torch.tensor(
-            [[1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [0.0, 1.0]]
-        )
+        logits = torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 1.0], [0.0, 1.0]])
         targets = torch.tensor([0, 0, 1, 1, 1])
         acc.update(logits, targets)
         micro, balanced = acc.compute()
@@ -685,6 +673,7 @@ class TestPhaseAccumulator:
 # ---------------------------------------------------------------------------
 # Persistence callback (end-to-end on a fake trainer)
 # ---------------------------------------------------------------------------
+
 
 def _persistence_cfg(stage: int, model_name: str) -> DictConfig:
     return DictConfig(
@@ -843,8 +832,13 @@ class TestPersistenceCallback:
         assert summary["freeze_encoder"] is False
         assert summary["data_config_hash"] == "cachedatahash"
         assert summary["source_stage1"] == {
-            "run_id": None, "checkpoint": None, "sha256": None,
-            "model": None, "seed": None, "config_hash": None, "git_commit": None,
+            "run_id": None,
+            "checkpoint": None,
+            "sha256": None,
+            "model": None,
+            "seed": None,
+            "config_hash": None,
+            "git_commit": None,
         }
 
     def test_bc_omits_phase_fields(self, tmp_path: Path) -> None:
@@ -856,9 +850,7 @@ class TestPersistenceCallback:
             "loss_action": torch.tensor(0.040),
             "loss_phase": torch.tensor(0.0),
         }
-        _run_callback(
-            cfg, model, run_dir, metrics, {"loss_total": 0.043, "loss_action": 0.042}
-        )
+        _run_callback(cfg, model, run_dir, metrics, {"loss_total": 0.043, "loss_action": 0.042})
         rows = TrainingCurveWriter(run_dir).read_curves()
         assert "train/loss_phase" not in rows[0]
         assert "val/loss_phase" not in rows[0]
@@ -935,6 +927,7 @@ class TestPersistenceCallback:
 # Summarize tooling
 # ---------------------------------------------------------------------------
 
+
 class TestTrainingSummaries:
     def test_aggregate_rows_mean_std_over_seeds(self) -> None:
         rows = [
@@ -969,9 +962,7 @@ class TestTrainingSummaries:
         # not crash the cost table, it is simply excluded from the means.
         rows = [
             make_summary(run_id="a1", seed=42, wall_seconds=100.0, global_steps=100),
-            make_summary(
-                run_id="b2", seed=43, wall_seconds=None, global_steps=None
-            ),
+            make_summary(run_id="b2", seed=43, wall_seconds=None, global_steps=None),
         ]
         costs = training_cost_rows(rows)
         cost = costs[0]
@@ -988,7 +979,11 @@ class TestTrainingSummaries:
         ]
         rows += [
             make_summary(
-                run_id=f"ro{s}", model="bc", tag="robot_only", stage=1, seed=s,
+                run_id=f"ro{s}",
+                model="bc",
+                tag="robot_only",
+                stage=1,
+                seed=s,
                 wall_seconds=60.0,
             )
             for s in (42, 43, 44)
@@ -1030,7 +1025,9 @@ class TestTrainingSummaries:
         curve_rows = [
             {"model": "phaseforge", "stage": 1, "seed": 42, **make_curve(run_id="a", epoch=1)},
             {
-                "model": "phaseforge", "stage": 1, "seed": 43,
+                "model": "phaseforge",
+                "stage": 1,
+                "seed": 43,
                 **make_curve(run_id="b", epoch=1, global_step=150),
             },
         ]
@@ -1045,11 +1042,15 @@ class TestTrainingSummaries:
         # must be NaN (n=0), not a KeyError.
         curve_rows = [
             {
-                "model": "phaseforge", "stage": 1, "seed": 42,
+                "model": "phaseforge",
+                "stage": 1,
+                "seed": 42,
                 **make_curve(run_id="a", epoch=1),
             },
             {
-                "model": "phaseforge", "stage": 1, "seed": 43,
+                "model": "phaseforge",
+                "stage": 1,
+                "seed": 43,
                 **make_curve(run_id="b", epoch=1, global_step=150),
                 "val/routing_entropy": 0.5,
             },
@@ -1069,18 +1070,14 @@ class TestTrainingSummaries:
             ("aaaa0001", 42, 1),
             ("bbbb0002", 43, 1),
         ):
-            run_dir = (
-                outputs / "phaseforge" / "stage1" / f"2026-01-01_00-00-00_{run_id}"
-            )
+            run_dir = outputs / "phaseforge" / "stage1" / f"2026-01-01_00-00-00_{run_id}"
             metrics = run_dir / "metrics"
             metrics.mkdir(parents=True)
             (metrics / "summary.json").write_text(
                 json.dumps(make_summary(run_id=run_id, seed=seed)),
                 encoding="utf-8",
             )
-            TrainingCurveWriter(run_dir).append_curve_row(
-                make_curve(run_id=run_id, epoch=epoch)
-            )
+            TrainingCurveWriter(run_dir).append_curve_row(make_curve(run_id=run_id, epoch=epoch))
         reconcile_training_ledger(outputs / "_results", outputs)
 
         paths = summarize_training(outputs)
@@ -1105,15 +1102,11 @@ class TestTrainingSummaries:
         reconcile_training_ledger(outputs / "_results", outputs)
         first = summarize_training(outputs)
         second = summarize_training(outputs)
-        assert first["training_aggregates"].read_text() == second[
-            "training_aggregates"
-        ].read_text()
+        assert first["training_aggregates"].read_text() == second["training_aggregates"].read_text()
 
     def test_summarize_rollout_end_to_end(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
-        eval_run = (
-            outputs / "eval" / "phaseforge" / "2026-01-01_00-00-00_cccc0003"
-        )
+        eval_run = outputs / "eval" / "phaseforge" / "2026-01-01_00-00-00_cccc0003"
         for model in ("phaseforge", "bc"):
             for idx in range(4):
                 append_episode_record(
@@ -1145,6 +1138,7 @@ class TestTrainingSummaries:
 # ---------------------------------------------------------------------------
 # Checkpoint source resolution
 # ---------------------------------------------------------------------------
+
 
 class TestCheckpointSourceInfo:
     def _source(self, tmp_path: Path) -> Path:

@@ -67,9 +67,9 @@ class StateOnlyDataset(Dataset):
         traj = self.trajectories[traj_idx]
         end_t = start_t + self.sequence_length
 
-        state = traj["state"][start_t:end_t]    # (seq_len, S)
-        action = traj["action"][start_t:end_t]   # (seq_len, A)
-        phase = traj["phase"][start_t:end_t]     # (seq_len,)
+        state = traj["state"][start_t:end_t]  # (seq_len, S)
+        action = traj["action"][start_t:end_t]  # (seq_len, A)
+        phase = traj["phase"][start_t:end_t]  # (seq_len,)
         task_id = torch.tensor(traj["task_id"], dtype=torch.long)
 
         # Trajectory identity (offline-eval contract, issues register E9):
@@ -84,9 +84,9 @@ class StateOnlyDataset(Dataset):
         if self.sequence_length == 1:
             # Squeeze the time dimension for single-step training
             return {
-                "state": state.squeeze(0),   # (S,)
-                "action": action.squeeze(0), # (A,)
-                "phase": phase.squeeze(0),   # scalar
+                "state": state.squeeze(0),  # (S,)
+                "action": action.squeeze(0),  # (A,)
+                "phase": phase.squeeze(0),  # scalar
                 "task_id": task_id,
                 "trajectory_id": trajectory_id,
                 "trajectory_position": trajectory_position,

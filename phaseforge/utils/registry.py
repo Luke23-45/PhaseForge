@@ -44,9 +44,11 @@ def build_trainer(cfg: DictConfig, model, train_loader, val_loader):
     stage = cfg.train.get("stage", 1)
     if stage == 1:
         from phaseforge.trains.loops.stage1_loop import Stage1Trainer
+
         return Stage1Trainer(cfg=cfg, model=model, train_loader=train_loader, val_loader=val_loader)
     elif stage == 2:
         from phaseforge.trains.loops.stage2_loop import Stage2Trainer
+
         return Stage2Trainer(cfg=cfg, model=model, train_loader=train_loader, val_loader=val_loader)
     else:
         raise ValueError(f"Unknown training stage: {stage}. Must be 1 or 2.")

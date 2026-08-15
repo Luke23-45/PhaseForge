@@ -25,14 +25,14 @@ def action_l2_threshold_rate(
     """
     if predicted_actions.numel() == 0:
         return 0.0
-        
+
     # Calculate pairwise L2 distances
     l2_errors = torch.norm(predicted_actions - target_actions, p=2, dim=-1)
-    
+
     # Count how many are below threshold
     successes = (l2_errors <= l2_threshold).sum().item()
     total = l2_errors.numel()
-    
+
     return successes / total
 
 
@@ -114,7 +114,7 @@ def boundary_action_smoothness(
         raise ValueError(f"boundary_window must be >= 0, got {boundary_window}")
     if predicted_actions.ndim != 3 or phases.ndim != 2:
         # Require sequence dimension to detect boundaries
-        return float('nan')
+        return float("nan")
     if predicted_actions.numel() == 0 or phases.numel() == 0:
         raise ValueError("predicted_actions/phases must not be empty")
     if not torch.isfinite(predicted_actions).all():
@@ -124,41 +124,41 @@ def boundary_action_smoothness(
 
     B, T, _ = predicted_actions.shape
     if T < 2:
-        return float('nan')
-        
+        return float("nan")
+
     # Detect transitions: phases[t] != phases[t-1]
     # mask is (B, T-1)
-    transitions = (phases[:, 1:] != phases[:, :-1])
-    
+    transitions = phases[:, 1:] != phases[:, :-1]
+
     boundary_mask = torch.zeros((B, T), dtype=torch.bool, device=predicted_actions.device)
-    
+
     has_boundary = False
-    
+
     for b in range(B):
         # Indices where a transition occurs (offset by 1 because diff)
         transition_idxs = torch.where(transitions[b])[0] + 1
-        
+
         for t_idx in transition_idxs:
             has_boundary = True
             start = max(0, int(t_idx.item()) - boundary_window)
             end = min(T, int(t_idx.item()) + boundary_window + 1)
             boundary_mask[b, start:end] = True
-            
+
     if not has_boundary:
-        return float('nan')
-        
+        return float("nan")
+
     # We don't have the ground truth actions here directly to compute error against,
     # so we measure the smoothness (temporal difference) of the predicted actions
-    # at the boundaries. 
+    # at the boundaries.
     # High smoothness means the model doesn't jerk violently at transitions.
-    
+
     diffs = predicted_actions[:, 1:] - predicted_actions[:, :-1]
-    diffs_l2 = torch.norm(diffs, p=2, dim=-1) # (B, T-1)
-    
+    diffs_l2 = torch.norm(diffs, p=2, dim=-1)  # (B, T-1)
+
     # Apply mask (excluding the last element which we diff'd against)
     valid_diffs = diffs_l2[boundary_mask[:, :-1]]
-    
+
     if valid_diffs.numel() == 0:
-        return float('nan')
-        
+        return float("nan")
+
     return valid_diffs.mean().item()

@@ -107,9 +107,7 @@ class RunWriter:
         path = self._write_lifecycle_marker(_STATUS_FAILED)
         if exc is not None:
             (self.run_dir / "logs").mkdir(exist_ok=True)
-            (self.run_dir / "logs" / "exception.txt").write_text(
-                repr(exc), encoding="utf-8"
-            )
+            (self.run_dir / "logs" / "exception.txt").write_text(repr(exc), encoding="utf-8")
         return path
 
     def _write_lifecycle_marker(self, status: str) -> Path:
@@ -164,9 +162,7 @@ class RunWriter:
             "wall_seconds": float(wall),
             "status": _STATUS_COMPLETED if finished else _STATUS_FAILED,
         }
-        path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-        )
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return path
 
 

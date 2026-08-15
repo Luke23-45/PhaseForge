@@ -53,18 +53,18 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
     ) -> None:
         super().__init__()
         self.encoder = encoder
-        
+
         # Stage 1 components
         self.action_head = action_head
         self.phase_head = phase_head
-        
+
         # Stage 2 components
         self.moe_layer = MoELayer(router=router, experts=expert)
-        
+
         # Internal state to track which stage the model is currently configured for
         self._stage = 1
         self._encoder_frozen = False
-        
+
         # Storage for the most recent routing information for metrics tracking
         self._last_gate_logits: Tensor | None = None
 
@@ -119,7 +119,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             # Stage 1: Generalist action prediction + phase classification
             action_pred = self.action_head(latent)
             phase_logits = self.phase_head(latent)
-            
+
             return ModelOutput(
                 action_pred=action_pred,
                 phase_logits=phase_logits,
@@ -128,14 +128,14 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 expert_indices=None,
                 gate_logits=None,
             )
-            
+
         elif self._stage == 2:
             # Stage 2: MoE routing
             moe_out = self.moe_layer(latent)
-            
+
             # Store gate logits for metric callbacks
             self._last_gate_logits = moe_out.gate_logits.detach()
-            
+
             return ModelOutput(
                 action_pred=moe_out.combined_output,
                 phase_logits=None,  # Phase head is ignored in Stage 2
@@ -150,7 +150,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
     def get_action(self, state: Tensor) -> Tensor:
         """Inference path without auxiliary outputs or gradients."""
         latent = self.encoder(state)
-        
+
         if self._stage == 1:
             return self.action_head(latent)
         else:
@@ -206,7 +206,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         for batch in dataloader:
             state = batch["state"].to(device, non_blocking=non_blocking)
             phase = batch["phase"].to(device, non_blocking=non_blocking)
-            
+
             # Handle sequence length dimension if present
             if state.ndim == 3:
                 state = state.view(-1, state.size(-1))
@@ -218,7 +218,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             # Expand phase to match latent dims: (B, D)
             phase_expanded = phase.unsqueeze(1).expand_as(latent)
             phase_sums.scatter_add_(0, phase_expanded, latent)
-            
+
             # Count occurrences of each phase
             counts = torch.bincount(phase, minlength=num_phases).float()
             phase_counts += counts
@@ -249,20 +249,20 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         # normalize_input=True, so L is a true cosine similarity between the
         # (normalized) latent and each (unit-norm) centroid — not a raw dot
         # product with an unnormalized latent.
-        
+
         # We normalize centroids to ensure stable initial logits
         centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
-        
+
         router_weight = self.moe_layer.router.gate_linear.weight.data
         router_bias = self.moe_layer.router.gate_linear.bias.data
-        
+
         # Assign centroids to the first min(P, E) experts
         limit = min(num_phases, num_experts)
         router_weight[:limit] = centroids_normalized[:limit]
-        
+
         # Zero the bias to let dot product dominate initially
         router_bias.zero_()
-        
+
         logger.info(f"Initialized router weights with {limit} phase centroids.")
 
         # 3. Initialize Experts with ActionHead weights
@@ -272,7 +272,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         # symmetry-breaking jitter so the router can learn to differentiate
         # experts from the action loss.
         warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
-        
+
         # Stage 1 heads are not part of the Stage 2 computation graph; exclude
         # them from the optimizer so trainable-parameter counts and optimizer
         # state reflect the Stage 2 architecture.
@@ -280,9 +280,9 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             param.requires_grad = False
         for param in self.phase_head.parameters():
             param.requires_grad = False
-            
+
         logger.info("Initialized all experts with Stage 1 ActionHead weights.")
-        
+
         # Automatically transition to Stage 2
         self.stage = 2
         logger.info("MoE Bootstrapping complete. Ready for Stage 2.")

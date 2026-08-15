@@ -41,9 +41,7 @@ class RunningStatNormalizer:
         D = batch.shape[-1]
         bad = sorted(i for i in self._ignore if i < 0 or i >= D)
         if bad:
-            raise ValueError(
-                f"ignore_dims indices {bad} out of range for state_dim {D}"
-            )
+            raise ValueError(f"ignore_dims indices {bad} out of range for state_dim {D}")
         keep = np.ones(D, dtype=np.float64)
         for i in self._ignore:
             keep[i] = 0.0
@@ -120,10 +118,12 @@ class FrozenNormalizer:
 
     def save(self, path) -> None:
         import torch
+
         torch.save({"mean": self.mean, "std": self.std}, path)
 
     @classmethod
     def load(cls, path) -> FrozenNormalizer:
         import torch
+
         data = torch.load(path, weights_only=False)
         return cls(mean=data["mean"], std=data["std"])

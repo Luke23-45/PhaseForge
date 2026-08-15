@@ -45,14 +45,14 @@ def expert_utilization(expert_indices: Tensor, num_experts: int) -> Tensor:
 
     # Flatten indices to 1D
     indices_flat = expert_indices.view(-1)
-    
+
     # Bincount to get absolute usage, minlength ensures output shape is (E,)
     counts = torch.bincount(indices_flat, minlength=num_experts).float()
-    
+
     # Normalize to fractions
     total_assignments = max(1, len(indices_flat))
     fractions = counts / total_assignments
-    
+
     return fractions
 
 
@@ -99,16 +99,14 @@ def expert_utilization_balance(fractions: Tensor) -> float:
 
     # Clamp for numerical stability
     probs = fractions.clamp(min=1e-8)
-    
+
     # Entropy: -sum(p * log(p))
     entropy = -torch.sum(probs * torch.log(probs))
-    
+
     # Normalize by log(E)
-    denom = torch.log(
-        torch.tensor(E, dtype=torch.float32, device=fractions.device)
-    )
+    denom = torch.log(torch.tensor(E, dtype=torch.float32, device=fractions.device))
     normalized_entropy = entropy / denom
-    
+
     return normalized_entropy.item()
 
 
@@ -130,9 +128,7 @@ def collapse_rate(fractions: Tensor, threshold_factor: float = 5.0) -> float:
             or contains negative/non-finite values.
     """
     if float(threshold_factor) <= 0.0:
-        raise ValueError(
-            f"threshold_factor must be > 0, got {threshold_factor}"
-        )
+        raise ValueError(f"threshold_factor must be > 0, got {threshold_factor}")
     E = fractions.size(0)
     if E == 0:
         return 0.0
@@ -141,5 +137,5 @@ def collapse_rate(fractions: Tensor, threshold_factor: float = 5.0) -> float:
 
     threshold = 1.0 / (threshold_factor * E)
     collapsed_count = (fractions < threshold).sum().item()
-    
+
     return collapsed_count / E

@@ -101,9 +101,7 @@ class _PhaseAccumulator:
         micro = float((correct_acc.sum() / total_acc.sum()).item())
         recall = correct_acc / total_acc
         valid = total_acc > 0
-        balanced = (
-            float(recall[valid].mean().item()) if valid.any() else float("nan")
-        )
+        balanced = float(recall[valid].mean().item()) if valid.any() else float("nan")
         return micro, balanced
 
 
@@ -111,7 +109,7 @@ class BaseTrainer(ABC):
     """Abstract base class for all training loops.
 
     Defines a standard lifecycle:
-    fit -> [on_train_start] -> loop epochs -> [on_epoch_start] -> train_epoch -> 
+    fit -> [on_train_start] -> loop epochs -> [on_epoch_start] -> train_epoch ->
     validate -> [on_epoch_end] -> end loop -> [on_train_end].
 
     Subclasses must implement _compute_loss.
@@ -126,7 +124,7 @@ class BaseTrainer(ABC):
     ) -> None:
         self.cfg = cfg
         self.train_cfg = cfg.train
-        
+
         requested_device = str(cfg.project.get("device", "cuda"))
         if requested_device.startswith("cuda") and not torch.cuda.is_available():
             logger.warning(
@@ -136,17 +134,17 @@ class BaseTrainer(ABC):
             requested_device = "cpu"
         self.device = torch.device(requested_device)
         self.model = model.to(self.device)
-        
+
         self.train_loader = train_loader
         self.val_loader = val_loader
-        
+
         self.epochs = self.train_cfg.epochs
         self.grad_clip_norm = self.train_cfg.grad_clip_norm
         self.log_every_n_steps = self.train_cfg.log_every_n_steps
-        
+
         self.optimizer = instantiate(self.train_cfg.optimizer, params=self.model.parameters())
         self.scheduler = instantiate(self.train_cfg.scheduler, optimizer=self.optimizer)
-        
+
         self.callbacks: list[Any] = []
         self.current_epoch = 0
         self.global_step = 0
@@ -284,9 +282,7 @@ class BaseTrainer(ABC):
         return {
             "epoch_wall_seconds": float(epoch_wall_seconds),
             "train_steps_per_second": (
-                float(steps_in_epoch / train_seconds)
-                if train_seconds > 0.0
-                else float("nan")
+                float(steps_in_epoch / train_seconds) if train_seconds > 0.0 else float("nan")
             ),
             "steps_in_epoch": float(steps_in_epoch),
             "peak_gpu_memory_mb": self._peak_gpu_memory_mb(),
@@ -350,9 +346,7 @@ class BaseTrainer(ABC):
                 if models_cfg is not None
                 else type(self.model).__name__
             )
-            stage_name = self.train_cfg.get(
-                "stage", getattr(self.model, "stage", "?")
-            )
+            stage_name = self.train_cfg.get("stage", getattr(self.model, "stage", "?"))
             epoch_pbar = tqdm(
                 epoch_iter,
                 total=max(0, self.epochs - self.current_epoch),
@@ -416,38 +410,38 @@ class BaseTrainer(ABC):
     def _train_epoch(self) -> None:
         self.model.train()
         self._reset_train_pool()
-        
+
         use_pbar = self.train_cfg.get("rich_progressbar", False)
-        
+
         if use_pbar:
             try:
                 from tqdm.rich import tqdm
             except ImportError:
                 from tqdm import tqdm
-                
+
             pbar = tqdm(
-                self.train_loader, 
+                self.train_loader,
                 desc=f"Epoch {self.current_epoch}/{self.epochs} [Train]",
-                leave=False
+                leave=False,
             )
             iterable = pbar
         else:
             pbar = None
             iterable = self.train_loader
-            
+
         for batch_idx, batch in enumerate(iterable):
             # Move batch to device
             batch = self._move_batch(batch)
-            
+
             self.optimizer.zero_grad(set_to_none=True)
-            
+
             # Subclasses implement the specific loss logic. The forward pass
             # is separated so the same outputs feed the loss, the per-batch
             # persistence hook, and subclass train-phase accumulators.
             out = self._forward(batch)
             loss, metrics = self._compute_loss(batch, out=out)
             n = self._batch_sample_count(batch)
-            
+
             # Fail fast on non-finite losses: a NaN/Inf loss would otherwise
             # corrupt the optimizer state and the checkpoint silently.
             if not torch.isfinite(loss):
@@ -502,7 +496,7 @@ class BaseTrainer(ABC):
                 n=n,
                 step=self.global_step,
             )
-            
+
             should_log = self.global_step % self.log_every_n_steps == 0
             if should_log:
                 self._trigger_callbacks(
@@ -510,11 +504,9 @@ class BaseTrainer(ABC):
                     step=self.global_step,
                     metrics={k: self._metric_to_float(v) for k, v in metrics.items()},
                 )
-                
+
             if pbar is not None:
-                postfix = {
-                    k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()
-                }
+                postfix = {k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()}
                 postfix["loss"] = f"{loss.item():.4f}"
                 pbar.set_postfix(postfix)
 
@@ -550,44 +542,40 @@ class BaseTrainer(ABC):
     def _validate(self) -> dict[str, float]:
         if self.val_loader is None:
             return {}
-            
+
         self.model.eval()
         agg_metrics: dict[str, float] = {}
         total_samples = 0
         self._reset_validation_pool()
-        
+
         use_pbar = self.train_cfg.get("rich_progressbar", False)
-        
+
         if use_pbar:
             try:
                 from tqdm.rich import tqdm
             except ImportError:
                 from tqdm import tqdm
-                
+
             pbar = tqdm(
-                self.val_loader, 
-                desc=f"Epoch {self.current_epoch}/{self.epochs} [Val]",
-                leave=False
+                self.val_loader, desc=f"Epoch {self.current_epoch}/{self.epochs} [Val]", leave=False
             )
             iterable = pbar
         else:
             pbar = None
             iterable = self.val_loader
-            
+
         for batch in iterable:
             batch = self._move_batch(batch)
-            
+
             # Reuse the forward outputs for the losses and the validation
             # accumulators (single forward pass per batch).
             out = self._forward(batch)
             _, metrics = self._compute_loss(batch, out=out)
-            
+
             if pbar is not None:
-                postfix = {
-                    k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()
-                }
+                postfix = {k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()}
                 pbar.set_postfix(postfix)
-                
+
             # Weight per-batch metrics by the number of valid samples so the
             # final (short) validation batch does not get the same weight as a
             # full batch (validation uses drop_last=False).
@@ -598,9 +586,9 @@ class BaseTrainer(ABC):
             for k, v in metrics.items():
                 agg_metrics[k] = agg_metrics.get(k, 0.0) + self._metric_to_float(v) * n
             total_samples += n
-            
+
         if total_samples > 0:
             agg_metrics = {k: v / total_samples for k, v in agg_metrics.items()}
             self._finalize_validation_pool(agg_metrics)
-            
+
         return agg_metrics

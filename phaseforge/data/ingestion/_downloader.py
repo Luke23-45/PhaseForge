@@ -45,9 +45,7 @@ def download_files(
 
         if dest.exists():
             if expected_sha and not _verify_sha256(dest, expected_sha):
-                logger.warning(
-                    f"Checksum mismatch for existing {filename}. Re-downloading."
-                )
+                logger.warning(f"Checksum mismatch for existing {filename}. Re-downloading.")
                 dest.unlink()
             else:
                 logger.info(f"  {filename} already present. Skipping download.")
@@ -66,22 +64,18 @@ def _download_with_retry(url: str, dest: Path, expected_sha: str | None) -> None
             if expected_sha:
                 if not _verify_sha256(dest, expected_sha):
                     dest.unlink(missing_ok=True)
-                    raise RuntimeError(
-                        f"SHA-256 mismatch for {dest.name}. File deleted."
-                    )
+                    raise RuntimeError(f"SHA-256 mismatch for {dest.name}. File deleted.")
             logger.info(f"  Downloaded {dest.name} successfully.")
             return
         except Exception as exc:
             logger.warning(f"  Attempt {attempt} failed: {exc}")
             dest.unlink(missing_ok=True)
             if attempt < _MAX_RETRIES:
-                sleep_s = _BACKOFF_BASE ** attempt
+                sleep_s = _BACKOFF_BASE**attempt
                 logger.info(f"  Retrying in {sleep_s}s…")
                 time.sleep(sleep_s)
 
-    raise RuntimeError(
-        f"Failed to download {url} after {_MAX_RETRIES} attempts."
-    )
+    raise RuntimeError(f"Failed to download {url} after {_MAX_RETRIES} attempts.")
 
 
 def _stream_download(url: str, dest: Path) -> None:

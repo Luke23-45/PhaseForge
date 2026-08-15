@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class WarmStartMoEModel(BaseManipulationModel):
     """MoE trained with a Warm-Start approach.
-    
+
     Stage 1: Pretrain encoder + action_head (λ_phase = 0).
     Stage 2: Bootstrap MoE, but with random router init (no phase centroids).
     """
@@ -111,7 +111,7 @@ class WarmStartMoEModel(BaseManipulationModel):
     def bootstrap_moe(self, dataloader: DataLoader, device: torch.device | str = "cuda") -> None:
         """Standard warm-start: Initialize experts from ActionHead, but leave router random."""
         self.to(device)
-        
+
         # 1. Router remains randomly initialized (standard MoE initialization)
         logger.info("WarmStartMoE: Leaving router randomly initialized.")
 

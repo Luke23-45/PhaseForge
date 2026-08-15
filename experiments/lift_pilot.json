@@ -1,7 +1,7 @@
 {
   "name": "lift_pilot",
   "task": "Lift",
-  "description": "Frozen single-task Lift pilot matrix (notebook methods 1-9). One row = a complete run: every training stage in order, then the offline evaluation of the final-stage checkpoint. Seed 42 first; expand to 42, 43, 44 after the pilot gates pass.",
+  "description": "Frozen single-task Lift pilot matrix (notebook methods 1-9). One row = a complete run: every training stage in order, then the state-only rollout evaluation (eval.mode=rollout) of the final-stage checkpoint on the frozen reset bank. Seed 42 first; expand to 42, 43, 44 after the pilot gates pass.",
   "seeds": [42, 43, 44],
   "defaults": [
     "train.early_stopping.enabled=false"
@@ -15,7 +15,8 @@
       "data": "common",
       "stages": [1, 2],
       "stage2_source": "self",
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 2,
@@ -25,7 +26,8 @@
       "data": "common",
       "stages": [1],
       "stage2_source": null,
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 3,
@@ -36,7 +38,8 @@
       "tag": "robot_only",
       "stages": [1],
       "stage2_source": null,
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 4,
@@ -46,7 +49,8 @@
       "data": "common",
       "stages": [2],
       "stage2_source": null,
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 5,
@@ -56,7 +60,8 @@
       "data": "common",
       "stages": [2],
       "stage2_source": "bc",
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 6,
@@ -66,7 +71,8 @@
       "data": "common",
       "stages": [2],
       "stage2_source": "phaseforge",
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 7,
@@ -76,7 +82,8 @@
       "data": "common",
       "stages": [2],
       "stage2_source": "bc",
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 8,
@@ -86,7 +93,8 @@
       "data": "common",
       "stages": [2],
       "stage2_source": "phaseforge",
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     },
     {
       "index": 9,
@@ -96,7 +104,8 @@
       "data": "common",
       "stages": [2],
       "stage2_source": null,
-      "evaluate": true
+      "evaluate": true,
+      "evaluate_mode": "rollout"
     }
   ]
 }

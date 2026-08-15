@@ -119,9 +119,7 @@ def _find_run(
     tag: str | None,
 ) -> Path:
     if not search_dir.is_dir():
-        raise CheckpointError(
-            f"No {kind} runs found under {search_dir} for seed {seed}."
-        )
+        raise CheckpointError(f"No {kind} runs found under {search_dir} for seed {seed}.")
     for run in _iter_runs_newest_first(search_dir):
         if not _is_completed(run):
             continue
@@ -187,13 +185,13 @@ def resolve_checkpoint_path(
     strict seed+tag scan (so manually launched runs work too). The returned
     path is the one the evaluation step loads.
     """
-    rel = state.get_ckpt(method.name, seed, stage) if state is not None else None
+    rel = state.get_ckpt(method.phase_key, seed, stage) if state is not None else None
     if rel:
         candidate = (outputs_base / rel).resolve()
         if candidate.is_file():
             return candidate
     run_dir = resolve_run_dir(
-        outputs_base, method.model_name, stage, seed=seed, tag=method.tag
+        outputs_base, method.model_name, stage, seed=seed, tag=method.output_tag
     )
     ckpt = run_dir / _REQUIRED_CKPT_REL
     if not ckpt.is_file():

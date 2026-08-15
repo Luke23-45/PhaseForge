@@ -54,10 +54,7 @@ class RobomimicHDF5Ingester:
         self.action_low = float(action_range[0])
         self.action_high = float(action_range[1])
         self.respect_dataset_filters = bool(respect_dataset_filters)
-        self.state_specs = [
-            (str(entry["key"]), int(entry["dim"]))
-            for entry in state_keys
-        ]
+        self.state_specs = [(str(entry["key"]), int(entry["dim"])) for entry in state_keys]
         if not self.state_specs:
             raise ValueError("state_keys must contain at least one low-dimensional key")
         if phase_labeler is None:
@@ -168,8 +165,7 @@ class RobomimicHDF5Ingester:
                     raise ValueError(f"{path}:{demo_key} has no obs group")
 
                 arrays = [
-                    self._read_obs(obs, key, dim, path, demo_key)
-                    for key, dim in self.state_specs
+                    self._read_obs(obs, key, dim, path, demo_key) for key, dim in self.state_specs
                 ]
                 lengths = {arr.shape[0] for arr in arrays}
                 if len(lengths) != 1 or next(iter(lengths)) == 0:
@@ -185,12 +181,9 @@ class RobomimicHDF5Ingester:
                     raise ValueError(
                         f"{path}:{demo_key} action_dim={action.shape[1]} != {self.action_dim}"
                     )
-                if (
-                    action.size
-                    and (
-                        float(action.min()) < self.action_low - 1e-5
-                        or float(action.max()) > self.action_high + 1e-5
-                    )
+                if action.size and (
+                    float(action.min()) < self.action_low - 1e-5
+                    or float(action.max()) > self.action_high + 1e-5
                 ):
                     raise ValueError(
                         f"{path}:{demo_key} actions fall outside the declared "

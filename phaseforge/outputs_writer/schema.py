@@ -135,33 +135,22 @@ def validate_row(row: dict[str, Any]) -> None:
     missing = [k for k in _CORE_REQUIRED if k not in row]
     if missing:
         raise SchemaError(f"Row missing required keys: {missing}")
-    known = (
-        set(_CORE_REQUIRED)
-        | set(OPTIONAL_METRIC_FIELDS)
-        | set(_STR_OR_NULL_FIELDS)
-        | {"extra"}
-    )
+    known = set(_CORE_REQUIRED) | set(OPTIONAL_METRIC_FIELDS) | set(_STR_OR_NULL_FIELDS) | {"extra"}
     unknown = sorted(set(row) - known)
     if unknown:
         raise SchemaError(f"Row has unknown top-level keys: {unknown}")
     for key in _INT_FIELDS:
         if not _is_real_int(row[key]):
-            raise SchemaError(
-                f"Row[{key!r}] must be int, got {type(row[key]).__name__}"
-            )
+            raise SchemaError(f"Row[{key!r}] must be int, got {type(row[key]).__name__}")
     for key in _STR_FIELDS:
         if not isinstance(row[key], str):
-            raise SchemaError(
-                f"Row[{key!r}] must be str, got {type(row[key]).__name__}"
-            )
+            raise SchemaError(f"Row[{key!r}] must be str, got {type(row[key]).__name__}")
     for key in _STR_OR_NULL_FIELDS:
         if key not in row:
             continue
         value = row[key]
         if value is not None and not isinstance(value, str):
-            raise SchemaError(
-                f"Row[{key!r}] must be str or null, got {type(value).__name__}"
-            )
+            raise SchemaError(f"Row[{key!r}] must be str or null, got {type(value).__name__}")
     if "action_mse" in row and not _is_real_numeric(row["action_mse"]):
         raise SchemaError(
             f"Row['action_mse'] must be finite or NaN, got {type(row['action_mse']).__name__}"
@@ -170,13 +159,9 @@ def validate_row(row: dict[str, Any]) -> None:
         if key not in row:
             continue
         if not _is_real_numeric(row[key]):
-            raise SchemaError(
-                f"Row[{key!r}] must be finite or NaN, got {type(row[key]).__name__}"
-            )
+            raise SchemaError(f"Row[{key!r}] must be finite or NaN, got {type(row[key]).__name__}")
     if "extra" in row and not isinstance(row["extra"], dict):
-        raise SchemaError(
-            f"Row['extra'] must be dict, got {type(row['extra']).__name__}"
-        )
+        raise SchemaError(f"Row['extra'] must be dict, got {type(row['extra']).__name__}")
 
 
 __all__ = [

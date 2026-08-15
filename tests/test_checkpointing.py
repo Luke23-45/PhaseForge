@@ -57,9 +57,7 @@ def _make_cfg() -> DictConfig:
 
 
 def _make_trainer() -> _TinyTrainer:
-    return _TinyTrainer(
-        cfg=_make_cfg(), model=_StageModel(), train_loader=None, val_loader=None
-    )
+    return _TinyTrainer(cfg=_make_cfg(), model=_StageModel(), train_loader=None, val_loader=None)
 
 
 def test_save_top_k_prunes_and_updates_alias(tmp_path: Path) -> None:
@@ -86,9 +84,7 @@ def test_save_top_k_prunes_and_updates_alias(tmp_path: Path) -> None:
     ]
 
     alias = torch.load(tmp_path / "checkpoint_best.pt", weights_only=False)
-    best = torch.load(
-        tmp_path / "checkpoint_best_epoch_0002.pt", weights_only=False
-    )
+    best = torch.load(tmp_path / "checkpoint_best_epoch_0002.pt", weights_only=False)
     assert alias["epoch"] == 2
     assert best["epoch"] == 2
     # The alias is a copy of the rank-1 snapshot.
@@ -126,9 +122,7 @@ def test_resume_restores_rng_epoch_step_and_callback_state(tmp_path: Path) -> No
     early_stopping.best_score = 1.0
     trainer_a.callbacks = [early_stopping]
 
-    cb = CheckpointCallback(
-        output_dir=tmp_path, every_n_epochs=10, save_top_k=1
-    )
+    cb = CheckpointCallback(output_dir=tmp_path, every_n_epochs=10, save_top_k=1)
     # Capture the RNG state the checkpoint will record, immediately before
     # saving (model construction above already consumed RNG).
     torch.manual_seed(999)

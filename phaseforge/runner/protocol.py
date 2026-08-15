@@ -20,7 +20,27 @@ from pathlib import Path
 from typing import Any
 
 _VALID_STAGES = frozenset({1, 2})
-_VALID_DATA = frozenset({"common", "robot_only"})
+# Per-task data configs (lift, can, square, tool_hang, transport) plus the
+# two task-agnostic variants (common, robot_only). Each maps to a YAML
+# file under ``phaseforge/config/data/`` whose ``source.task_name`` drives
+# the ingestion path for that benchmark task.
+_VALID_DATA = frozenset(
+    {
+        "common",
+        "robot_only",
+        "robot_only_lift",
+        "robot_only_can",
+        "robot_only_square",
+        "robot_only_tool_hang",
+        "robot_only_transport",
+        "lift",
+        "can",
+        "square",
+        "tool_hang",
+        "transport",
+    }
+)
+_VALID_EVAL_MODES = frozenset({"rollout", "offline"})
 
 
 class ProtocolError(ValueError):
@@ -40,6 +60,8 @@ class Method:
     stage2_source: str | None
     evaluate: bool
     tag: str | None = None
+    evaluate_mode: str = "rollout"
+    task: str | None = None
 
     @property
     def model_name(self) -> str:
@@ -53,8 +75,25 @@ class Method:
 
     @property
     def phase_key(self) -> str:
-        """Registry key prefix for this method's phases (stable identity)."""
+        """Registry key prefix for this method's phases (stable identity).
+
+        For the five-task protocol, methods trained on different tasks share
+        the same ``name`` but must have distinct output trees. Including the
+        task in the phase_key prevents cross-task checkpoint collisions.
+        """
+        if self.task:
+            return f"{self.task}/{self.name}"
         return self.name
+
+    @property
+    def output_tag(self) -> str | None:
+        """Tag used to isolate this method's artifacts from other tasks."""
+        parts: list[str] = []
+        if self.task:
+            parts.append(self.task)
+        if self.tag:
+            parts.append(self.tag)
+        return "__".join(parts) if parts else None
 
 
 @dataclass(frozen=True)
@@ -68,15 +107,15 @@ class Protocol:
     defaults: tuple[str, ...]
     methods: tuple[Method, ...]
 
-    def method_by_name(self, name: str) -> Method | None:
+    def method_by_name(self, name: str, *, task: str | None = None) -> Method | None:
         for m in self.methods:
-            if m.name == name:
+            if m.name == name and (task is None or m.task == task):
                 return m
         return None
 
-    def method_by_index(self, index: int) -> Method | None:
+    def method_by_index(self, index: int, *, task: str | None = None) -> Method | None:
         for m in self.methods:
-            if m.index == index:
+            if m.index == index and (task is None or m.task == task):
                 return m
         return None
 
@@ -87,7 +126,7 @@ class Protocol:
         references raise a :class:`ProtocolError` listing every valid option.
         """
         selected: list[Method] = []
-        seen: set[str] = set()
+        seen: set[tuple[str | None, str]] = set()
         for ref in refs:
             method: Method | None = None
             if ref.isdigit():
@@ -98,15 +137,22 @@ class Protocol:
                         f"{[m.index for m in self.methods]}."
                     )
             else:
-                method = self.method_by_name(ref)
-                if method is None:
+                matches = [m for m in self.methods if m.name == ref]
+                if not matches:
                     raise ProtocolError(
-                        f"Unknown method {ref!r}. Valid names: "
-                        f"{[m.name for m in self.methods]}."
+                        f"Unknown method {ref!r}. Valid names: {[m.name for m in self.methods]}."
                     )
-            if method.name not in seen:
+                if len(matches) > 1:
+                    tasks = [m.task or "default" for m in matches]
+                    raise ProtocolError(
+                        f"Method name {ref!r} is ambiguous across tasks {tasks}; "
+                        "select it by manifest index."
+                    )
+                method = matches[0]
+            identity = (method.task, method.name)
+            if identity not in seen:
                 selected.append(method)
-                seen.add(method.name)
+                seen.add(identity)
         return sorted(selected, key=lambda m: m.index)
 
 
@@ -158,9 +204,7 @@ def _parse_method(raw: dict[str, Any]) -> Method:
                 f"got {stage2_source!r}."
             )
         if 2 not in stages:
-            raise ProtocolError(
-                f"Method {name!r}: 'stage2_source' set but method has no stage 2."
-            )
+            raise ProtocolError(f"Method {name!r}: 'stage2_source' set but method has no stage 2.")
 
     evaluate = raw.get("evaluate", True)
     if not isinstance(evaluate, bool):
@@ -169,6 +213,17 @@ def _parse_method(raw: dict[str, Any]) -> Method:
     tag = raw.get("tag")
     if tag is not None and (not isinstance(tag, str) or not tag):
         raise ProtocolError(f"Method {name!r}: 'tag' must be a non-empty string or null.")
+
+    evaluate_mode = str(raw.get("evaluate_mode", "rollout"))
+    if evaluate_mode not in _VALID_EVAL_MODES:
+        raise ProtocolError(
+            f"Method {name!r}: 'evaluate_mode' must be one of "
+            f"{sorted(_VALID_EVAL_MODES)}, got {evaluate_mode!r}."
+        )
+
+    task = raw.get("task")
+    if task is not None and (not isinstance(task, str) or not task):
+        raise ProtocolError(f"Method {name!r}: 'task' must be a non-empty string or null.")
 
     return Method(
         index=index,
@@ -180,6 +235,8 @@ def _parse_method(raw: dict[str, Any]) -> Method:
         stage2_source=stage2_source,
         evaluate=evaluate,
         tag=tag,
+        evaluate_mode=evaluate_mode,
+        task=task,
     )
 
 
@@ -225,31 +282,45 @@ def load_protocol(path: str | Path) -> Protocol:
         raise ProtocolError(f"Protocol {name!r}: 'methods' must be a non-empty list.")
 
     methods: list[Method] = [_parse_method(m) for m in methods_raw]
-    seen_indices: dict[int, str] = {}
-    seen_names: set[str] = set()
+    seen_indices: dict[tuple[str | None, int], str] = {}
+    seen_names: set[tuple[str | None, str]] = set()
     for m in methods:
-        if m.index in seen_indices:
+        task_key: str | None = m.task
+        # Method identity is (task, name) under the five-task protocol:
+        # the same baseline name (e.g. "phaseforge") appears five times,
+        # once per task. Single-task protocols (lift_pilot.json) leave
+        # ``task`` null and the identity collapses to ``name``.
+        identity: tuple[str | None, str] = (task_key, m.name)
+        index_key: tuple[str | None, int] = (task_key, m.index)
+        if index_key in seen_indices:
             raise ProtocolError(
-                f"Duplicate method index {m.index} ({m.name!r} vs {seen_indices[m.index]!r})."
+                f"Duplicate method index {m.index} for task {task_key!r} "
+                f"({m.name!r} vs {seen_indices[index_key]!r})."
             )
-        if m.name in seen_names:
-            raise ProtocolError(f"Duplicate method name {m.name!r}.")
-        seen_indices[m.index] = m.name
-        seen_names.add(m.name)
-    methods.sort(key=lambda m: m.index)
+        if identity in seen_names:
+            raise ProtocolError(
+                f"Duplicate method name {m.name!r}"
+                + (f" for task {task_key!r}" if task_key else ".")
+            )
+        seen_indices[index_key] = m.name
+        seen_names.add(identity)
+    methods.sort(key=lambda m: (m.task is None, m.task or "", m.index))
 
-    # Cross-checks: a stage2_source provider must be a real method, and the
-    # provided stage 1 must come from a single-task "common" run (no tag) —
-    # otherwise dependency injection would point at the wrong output tree.
-    providers = {m.name for m in methods}
+    # Cross-checks: a stage2_source provider must be a real method in the
+    # SAME task, and the provided stage 1 must come from the default
+    # (no variant tag) cell of that task — otherwise dependency injection
+    # would point at the wrong output tree.
     for m in methods:
         if m.stage2_source in ("bc", "phaseforge"):
-            if m.stage2_source not in providers:
+            provider = next(
+                (p for p in methods if p.name == m.stage2_source and p.task == m.task),
+                None,
+            )
+            if provider is None:
                 raise ProtocolError(
-                    f"Method {m.name!r}: 'stage2_source' {m.stage2_source!r} is not a "
-                    "method in this protocol."
+                    f"Method {m.name!r} (task={m.task!r}): 'stage2_source' "
+                    f"{m.stage2_source!r} is not a method in this task."
                 )
-            provider = next(p for p in methods if p.name == m.stage2_source)
             if 1 not in provider.stages:
                 raise ProtocolError(
                     f"Method {m.name!r}: provider {provider.name!r} has no stage 1."
@@ -296,7 +367,7 @@ class Step:
     @property
     def phase_key(self) -> str:
         """Registry phase key (stable identity for resume/skip logic)."""
-        return f"{self.method.name}/{self.seed}/{self.registry_phase}"
+        return f"{self.method.phase_key}/{self.seed}/{self.registry_phase}"
 
     def required_checkpoint(self) -> tuple[str, int] | None:
         """The ``(model, stage)`` artifact this step must load, or ``None``.
@@ -358,13 +429,14 @@ def build_plan(
         raise ProtocolError(f"--stage must be 1 or 2, got {stage}.")
 
     seed_list = _validate_seed_filter(protocol, seeds)
-    selected_names = {m.name for m in methods}
+    selected_identities = {(m.task, m.name) for m in methods}
 
     deps: list[Step] = []
     if with_dependencies and not eval_only and stage is None:
         for m in methods:
-            if m.stage2_source in ("bc", "phaseforge") and m.stage2_source not in selected_names:
-                provider = protocol.method_by_name(m.stage2_source)
+            provider_identity = (m.task, m.stage2_source)
+            if m.stage2_source in ("bc", "phaseforge") and provider_identity not in selected_identities:
+                provider = protocol.method_by_name(m.stage2_source, task=m.task)
                 if provider is None:
                     raise ProtocolError(
                         f"Method {m.name!r}: provider {m.stage2_source!r} is missing "
@@ -374,10 +446,10 @@ def build_plan(
                     deps.append(
                         Step(kind="train", method=provider, seed=seed, stage=1, dependency=True)
                     )
-        seen: set[tuple[str, int]] = set()
+        seen: set[tuple[str | None, str, int]] = set()
         deduped: list[Step] = []
         for step in deps:
-            key = (step.method.name, step.seed)
+            key = (step.method.task, step.method.name, step.seed)
             if key not in seen:
                 seen.add(key)
                 deduped.append(step)
@@ -393,11 +465,8 @@ def build_plan(
             for stage_n in method.stages:
                 if stage is not None and stage_n != stage:
                     continue
-                steps.append(
-                    Step(kind="train", method=method, seed=seed, stage=stage_n)
-                )
+                steps.append(Step(kind="train", method=method, seed=seed, stage=stage_n))
             if method.evaluate and not skip_eval and stage is None:
                 steps.append(Step(kind="eval", method=method, seed=seed))
 
     return deps + steps
-

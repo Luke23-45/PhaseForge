@@ -185,9 +185,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         B = latent.size(0)
         E = self.moe_layer.router.num_experts
 
-        if expert_indices.numel() and (
-            expert_indices.min() < 0 or expert_indices.max() >= E
-        ):
+        if expert_indices.numel() and (expert_indices.min() < 0 or expert_indices.max() >= E):
             raise ValueError(
                 f"Teacher-forced phase labels must map to experts in [0, {E - 1}], "
                 f"got range [{int(expert_indices.min())}, {int(expert_indices.max())}]."
@@ -204,9 +202,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         self._last_gate_logits = gate_logits.detach()
 
         out_dim = self.moe_layer.experts[0].output_dim
-        combined_output = torch.zeros(
-            (B, out_dim), dtype=latent.dtype, device=latent.device
-        )
+        combined_output = torch.zeros((B, out_dim), dtype=latent.dtype, device=latent.device)
 
         for expert_idx, expert_net in enumerate(self.moe_layer.experts):
             match_mask = (expert_indices == expert_idx).squeeze(-1)

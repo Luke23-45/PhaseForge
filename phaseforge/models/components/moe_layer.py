@@ -15,11 +15,12 @@ from phaseforge.models.components.router import RouterOutput, TopKRouter
 
 class MoEOutput(NamedTuple):
     """Output from the MoE Layer."""
-    combined_output: Tensor     # (B, output_dim) Final action prediction
-    routing_weights: Tensor     # (B, K)
-    expert_indices: Tensor      # (B, K)
-    balance_loss: Tensor        # scalar
-    gate_logits: Tensor         # (B, E)
+
+    combined_output: Tensor  # (B, output_dim) Final action prediction
+    routing_weights: Tensor  # (B, K)
+    expert_indices: Tensor  # (B, K)
+    balance_loss: Tensor  # scalar
+    gate_logits: Tensor  # (B, E)
 
 
 class MoELayer(nn.Module):
@@ -42,7 +43,7 @@ class MoELayer(nn.Module):
     ) -> None:
         super().__init__()
         self.router = router
-        
+
         # Handle expert instantiation
         if isinstance(experts, nn.ModuleList):
             self.experts: nn.ModuleList[ExpertMLP] = experts  # type: ignore[type-arg]
@@ -50,9 +51,9 @@ class MoELayer(nn.Module):
             self.experts = nn.ModuleList(experts)
         elif isinstance(experts, ExpertMLP):
             # Clone the single expert template E times.
-            self.experts = nn.ModuleList([
-                copy.deepcopy(experts) for _ in range(router.num_experts)
-            ])
+            self.experts = nn.ModuleList(
+                [copy.deepcopy(experts) for _ in range(router.num_experts)]
+            )
             # Re-initialize every clone independently: bit-identical clones
             # make the combined output invariant to the router's weights
             # (top-k weights sum to 1), so the router would receive no
@@ -60,8 +61,7 @@ class MoELayer(nn.Module):
             for expert in self.experts:
                 if not isinstance(expert, ExpertMLP):
                     raise TypeError(
-                        f"All experts must be ExpertMLP instances, "
-                        f"got {type(expert).__name__}"
+                        f"All experts must be ExpertMLP instances, got {type(expert).__name__}"
                     )
                 expert.reset_parameters()
         else:
@@ -93,55 +93,53 @@ class MoELayer(nn.Module):
 
         # 1. Route inputs
         router_out: RouterOutput = self.router(latent)
-        weights = router_out.weights    # (B, K)
-        indices = router_out.indices    # (B, K)
+        weights = router_out.weights  # (B, K)
+        indices = router_out.indices  # (B, K)
 
         # Retrieve the output dimension from the first expert to preallocate
         out_dim = cast(ExpertMLP, self.experts[0]).output_dim
-        
+
         # Final combined output tensor: (B, out_dim)
-        combined_output = torch.zeros(
-            (B, out_dim), dtype=latent.dtype, device=latent.device
-        )
+        combined_output = torch.zeros((B, out_dim), dtype=latent.dtype, device=latent.device)
 
         # 2. Dispatch to experts and combine
-        # Implementation note: For small K (e.g., 2) and E (e.g., 6-8), iterating over 
-        # experts is often faster than complex scatter/gather batched operations due to 
+        # Implementation note: For small K (e.g., 2) and E (e.g., 6-8), iterating over
+        # experts is often faster than complex scatter/gather batched operations due to
         # kernel launch overheads. We use the loop-over-experts approach.
-        
+
         # Flatten indices and weights for easier masking
         # We need to find which items in the batch go to which expert
-        
+
         for expert_idx, expert_net in enumerate(self.experts):
             # Find all locations where this expert was selected
             # match_mask: (B, K) boolean tensor
-            match_mask = (indices == expert_idx)
-            
+            match_mask = indices == expert_idx
+
             # Check if this expert was selected at all in this batch
             if not match_mask.any():
                 continue
-                
+
             # Find the batch indices that selected this expert
             # batch_idx: 1D tensor of batch indices
             # k_idx: 1D tensor of the k-th choice (0 to K-1)
             batch_idx, k_idx = torch.where(match_mask)
-            
+
             # Gather the latents for this expert
             # expert_inputs: (N, D) where N is the number of items routed to this expert
             expert_inputs = latent[batch_idx]
-            
+
             # Forward pass through the expert
             # expert_outputs: (N, out_dim)
             expert_outputs = expert_net(expert_inputs)
-            
+
             # Gather the corresponding weights
             # expert_weights: (N, 1)
             expert_weights = weights[batch_idx, k_idx].unsqueeze(-1)
-            
+
             # Accumulate into the combined output
             # combined_output[batch_idx] += expert_outputs * expert_weights
             # Note: We use scatter_add_ to safely handle cases where the same expert
-            # might somehow be selected multiple times for the same batch item 
+            # might somehow be selected multiple times for the same batch item
             # (though topk should prevent this, it's safer).
             weighted_outputs = expert_outputs * expert_weights
             combined_output.index_add_(0, batch_idx, weighted_outputs)

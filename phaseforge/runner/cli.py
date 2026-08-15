@@ -48,7 +48,11 @@ from phaseforge.runner.resolver import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MANIFEST = "experiments/lift_pilot.json"
+#: Default protocol manifest. The full five-task evaluation lives in
+#: ``experiments/five_task.json``; ``experiments/lift_pilot.json`` is the
+#: original single-task pilot that remains useful for debugging the
+#: rollout pipeline.
+DEFAULT_MANIFEST = "experiments/five_task.json"
 
 
 def _split_list(values: list[str]) -> list[str]:
@@ -187,8 +191,19 @@ def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
         return None
     model, stage = req
     try:
+        source_tag = (
+            step.method.output_tag
+            if step.method.stage2_source == "self"
+            else step.method.task
+        )
         return resolve_stage_ckpt(
-            outputs_base, model, stage, seed=step.seed, tag=None
+            outputs_base,
+            model,
+            stage,
+            seed=step.seed,
+            # A Stage 2 dependency consumes either this method's own tagged
+            # Stage 1 cell or the task's default provider cell.
+            tag=source_tag,
         )
     except CheckpointError as exc:
         raise CheckpointError(
@@ -198,9 +213,7 @@ def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
         ) from exc
 
 
-def _eval_target(
-    step: Step, outputs_base: Path, state: RunnerState
-) -> Path:
+def _eval_target(step: Step, outputs_base: Path, state: RunnerState) -> Path:
     return resolve_checkpoint_path(
         outputs_base,
         step.method,
@@ -210,12 +223,10 @@ def _eval_target(
     )
 
 
-def _should_skip_eval(
-    step: Step, outputs_base: Path, state: RunnerState, force: bool
-) -> bool:
+def _should_skip_eval(step: Step, outputs_base: Path, state: RunnerState, force: bool) -> bool:
     if force:
         return False
-    entry = state.get(step.method.name, step.seed, "eval")
+    entry = state.get(step.method.phase_key, step.seed, "eval")
     if entry is None or entry.get("status") != "completed":
         return False
     try:
@@ -235,13 +246,11 @@ def _print_plan(
         print(f"  {index:>3}. {step.label:<48} {status}{tag}")
 
 
-def _step_done(
-    step: Step, outputs_base: Path, state: RunnerState, force: bool
-) -> bool:
+def _step_done(step: Step, outputs_base: Path, state: RunnerState, force: bool) -> bool:
     if force:
         return False
     if step.kind == "train":
-        return state.is_complete(step.method.name, step.seed, step.registry_phase)
+        return state.is_complete(step.method.phase_key, step.seed, step.registry_phase)
     return _should_skip_eval(step, outputs_base, state, force=False)
 
 
@@ -268,8 +277,8 @@ def _print_summary(protocol: Protocol, state: RunnerState, counts: dict[str, int
         for seed in protocol.seeds:
             statuses = []
             for phase in phases:
-                entry = state.get(method.name, seed, phase)
-                if state.is_complete(method.name, seed, phase):
+                entry = state.get(method.phase_key, seed, phase)
+                if state.is_complete(method.phase_key, seed, phase):
                     statuses.append("ok")
                 elif entry is not None and entry.get("status") == "failed":
                     statuses.append("FAIL")
@@ -346,10 +355,10 @@ def run(args: argparse.Namespace) -> int:
                     outputs_base,
                     step.method.model_name,
                     seed=step.seed,
-                    tag=step.method.tag,
+                    tag=step.method.output_tag,
                 )
                 state.mark(
-                    step.method.name,
+                    step.method.phase_key,
                     step.seed,
                     "eval",
                     ckpt=ckpt_abs.relative_to(outputs_base).as_posix(),
@@ -363,13 +372,13 @@ def run(args: argparse.Namespace) -> int:
                     step.method.model_name,
                     step.stage,
                     seed=step.seed,
-                    tag=step.method.tag,
+                    tag=step.method.output_tag,
                 )
                 ckpt_rel = stage_checkpoint_relative(
                     outputs_base, run_dir, step.method.model_name, step.stage
                 )
                 state.mark(
-                    step.method.name,
+                    step.method.phase_key,
                     step.seed,
                     step.registry_phase,
                     run_dir=run_dir.relative_to(outputs_base).as_posix(),
@@ -378,7 +387,7 @@ def run(args: argparse.Namespace) -> int:
             counts["run"] += 1
             print(f"{prefix} OK {step.label}")
         except (CheckpointError, CommandError) as exc:
-            state.mark_failed(step.method.name, step.seed, step.registry_phase, str(exc))
+            state.mark_failed(step.method.phase_key, step.seed, step.registry_phase, str(exc))
             counts["failed"] += 1
             print(f"{prefix} FAILED {step.label}: {exc}", file=sys.stderr)
             if not args.continue_on_error:
@@ -398,9 +407,7 @@ def _print_dry_run(
             ckpt_abs = _eval_target(step, outputs_base, state)
         else:
             ckpt_abs = _require_stage2_prereq(step, outputs_base)
-        cmd = step_command(
-            step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=defaults
-        )
+        cmd = step_command(step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=defaults)
         print(f"  [dry-run] WOULD RUN  {step.label}")
         print(f"    $ {' '.join(cmd)}")
     except CheckpointError as exc:

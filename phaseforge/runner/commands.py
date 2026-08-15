@@ -9,7 +9,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from phaseforge.runner.protocol import Step
+from phaseforge.runner.protocol import Method, Step
+
+
+def _effective_tag(method: Method) -> str | None:
+    """Compose the effective output tag.
+
+    The five-task protocol trains the same method name on multiple tasks;
+    without a task-prefixed tag, the output trees for, e.g.,
+    ``phaseforge/Lift`` and ``phaseforge/Can`` would collide on the same
+    directory. The task tag is appended to any explicit ``method.tag``
+    the manifest carries, so the negative control's ``robot_only`` tag
+    survives (for example ``Lift__robot_only``). The separator is
+    filesystem-safe because the tag is embedded in one run-directory name.
+    """
+    return method.output_tag
 
 
 def train_command(
@@ -37,8 +51,9 @@ def train_command(
     ]
     if method.data != "common":
         cmd.append(f"data={method.data}")
-    if method.tag:
-        cmd.append(f"project.tag={method.tag}")
+    effective_tag = _effective_tag(method)
+    if effective_tag:
+        cmd.append(f"project.tag={effective_tag}")
     if method.name:
         cmd.append(f"project.method={method.name}")
     if ckpt_path is not None:
@@ -57,7 +72,10 @@ def eval_command(
     """Build ``phaseforge-eval`` argv for an evaluation step.
 
     The historical override name is ``train.stage1_ckpt_path`` but it is the
-    checkpoint actually evaluated (the method's final-stage artifact).
+    checkpoint actually evaluated (the method's final-stage artifact). The
+    evaluation mode comes from the method's ``evaluate_mode`` (rollout by
+    default), so the runner never evaluates the state-only protocol with
+    the offline metric.
     """
     method = step.method
     cmd = [
@@ -66,11 +84,13 @@ def eval_command(
         f"project.seed={step.seed}",
         f"project.output_dir={outputs_base}",
         f"train.stage1_ckpt_path={ckpt_path}",
+        f"eval.mode={method.evaluate_mode}",
     ]
     if method.data != "common":
         cmd.append(f"data={method.data}")
-    if method.tag:
-        cmd.append(f"project.tag={method.tag}")
+    effective_tag = _effective_tag(method)
+    if effective_tag:
+        cmd.append(f"project.tag={effective_tag}")
     if method.name:
         cmd.append(f"project.method={method.name}")
     cmd.extend(defaults)

@@ -74,7 +74,7 @@ def _nanstd(values: list[float]) -> float:
         return float("nan")
     mean = sum(finite) / len(finite)
     var = sum((v - mean) ** 2 for v in finite) / (len(finite) - 1)
-    return float(var ** 0.5)
+    return float(var**0.5)
 
 
 def _summary_scalar(row: dict[str, Any], key: str) -> float | None:
@@ -83,13 +83,12 @@ def _summary_scalar(row: dict[str, Any], key: str) -> float | None:
         return row["final_val"][key]
     return row.get(key)
 
+
 def training_aggregate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Per ``(model, tag, stage)`` mean/std/n over seeds of the final scalars."""
     grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:
-        grouped.setdefault(
-            (row["model"], row.get("tag") or "", int(row["stage"])), []
-        ).append(row)
+        grouped.setdefault((row["model"], row.get("tag") or "", int(row["stage"])), []).append(row)
 
     final_val_keys: list[str] = []
     for row in rows:
@@ -135,9 +134,7 @@ def training_cost_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Per ``(model, tag, stage)`` appendix cost table rows."""
     grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
     for row in rows:
-        grouped.setdefault(
-            (row["model"], row.get("tag") or "", int(row["stage"])), []
-        ).append(row)
+        grouped.setdefault((row["model"], row.get("tag") or "", int(row["stage"])), []).append(row)
 
     out: list[dict[str, Any]] = []
     for (model, tag, stage), group in grouped.items():
@@ -207,9 +204,7 @@ def read_training_curves(
     return out
 
 
-def write_training_aggregates_csv(
-    rows: list[dict[str, Any]], path: Path
-) -> Path:
+def write_training_aggregates_csv(rows: list[dict[str, Any]], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     aggregates = training_aggregate_rows(rows)
     if not aggregates:
@@ -253,7 +248,11 @@ def write_training_curves_csv(curve_rows: list[dict[str, Any]], path: Path) -> P
         for key, value in row.items():
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 if key not in metric_keys and key not in {
-                    "model", "stage", "epoch", "global_step", "seed",
+                    "model",
+                    "stage",
+                    "epoch",
+                    "global_step",
+                    "seed",
                 }:
                     metric_keys.append(key)
 
@@ -352,9 +351,7 @@ def summarize_training(outputs_base: str | Path) -> dict[str, Path]:
         "training_aggregates": write_training_aggregates_csv(
             rows, summaries / "training_aggregates.csv"
         ),
-        "training_cost": write_training_cost_csv(
-            rows, summaries / "training_cost.csv"
-        ),
+        "training_cost": write_training_cost_csv(rows, summaries / "training_cost.csv"),
     }
     curve_rows = read_training_curves(outputs_base, rows)
     paths["training_curves"] = write_training_curves_csv(
@@ -363,9 +360,7 @@ def summarize_training(outputs_base: str | Path) -> dict[str, Path]:
     return paths
 
 
-def summarize_rollout(
-    outputs_base: str | Path, *, baseline: str = "phaseforge"
-) -> dict[str, Path]:
+def summarize_rollout(outputs_base: str | Path, *, baseline: str = "phaseforge") -> dict[str, Path]:
     """Rebuild the rollout summary artifacts from every ``episodes.jsonl``.
 
     Scans ``eval/`` run directories for episode records, validates each

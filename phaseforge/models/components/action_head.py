@@ -41,8 +41,7 @@ class ActionHead(nn.Module):
             self.log_std_head = nn.Linear(hidden_dim, output_dim)
         else:
             raise ValueError(
-                f"Unknown head_type: '{head_type}'. "
-                "Use 'deterministic' or 'gaussian'."
+                f"Unknown head_type: '{head_type}'. Use 'deterministic' or 'gaussian'."
             )
 
         self._init_weights()

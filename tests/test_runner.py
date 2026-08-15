@@ -210,9 +210,7 @@ def test_build_plan_multi_seed() -> None:
 
 def test_build_plan_stage_filter() -> None:
     protocol = _protocol()
-    plan = build_plan(
-        protocol, [protocol.method_by_name("phaseforge")], seeds=[42], stage=1
-    )
+    plan = build_plan(protocol, [protocol.method_by_name("phaseforge")], seeds=[42], stage=1)
     assert len(plan) == 1
     assert plan[0].stage == 1
     assert plan[0].kind == "train"
@@ -220,18 +218,14 @@ def test_build_plan_stage_filter() -> None:
 
 def test_build_plan_eval_only() -> None:
     protocol = _protocol()
-    plan = build_plan(
-        protocol, [protocol.method_by_name("phaseforge")], seeds=[42], eval_only=True
-    )
+    plan = build_plan(protocol, [protocol.method_by_name("phaseforge")], seeds=[42], eval_only=True)
     assert len(plan) == 1
     assert plan[0].kind == "eval"
 
 
 def test_build_plan_skip_eval() -> None:
     protocol = _protocol()
-    plan = build_plan(
-        protocol, [protocol.method_by_name("phaseforge")], seeds=[42], skip_eval=True
-    )
+    plan = build_plan(protocol, [protocol.method_by_name("phaseforge")], seeds=[42], skip_eval=True)
     assert [s.kind for s in plan] == ["train", "train"]
 
 
@@ -393,8 +387,14 @@ def test_registry_corrupt_state_is_loud(tmp_path: Path) -> None:
 
 
 def _make_run(
-    base: Path, model: str, stage: int, name: str, seed: int, tag=None,
-    completed: bool = True, seed_dir: bool = True,
+    base: Path,
+    model: str,
+    stage: int,
+    name: str,
+    seed: int,
+    tag=None,
+    completed: bool = True,
+    seed_dir: bool = True,
 ) -> None:
     run_dir = base / model / f"stage{stage}"
     if seed_dir:
@@ -431,8 +431,7 @@ def test_resolve_run_dir_ignores_crashed_runs(tmp_path: Path) -> None:
     # A run killed after its last checkpoint save but before mark_completed
     # has run_meta + checkpoint_best.pt but no .completed marker. It must
     # never be selected as an eval target.
-    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42,
-              completed=False)
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42, completed=False)
     _make_run(tmp_path, "bc", 1, "2026-08-03_10-00-00_aaaa0003", seed=42)
 
     assert resolve_run_dir(tmp_path, "bc", 1, seed=42).name == "2026-08-03_10-00-00_aaaa0003"
@@ -441,8 +440,7 @@ def test_resolve_run_dir_ignores_crashed_runs(tmp_path: Path) -> None:
 
 
 def test_checkpoint_exists_false_for_crashed_run(tmp_path: Path) -> None:
-    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42,
-              completed=False)
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42, completed=False)
     assert not checkpoint_exists(tmp_path, "bc", 1, seed=42)
 
 
@@ -454,10 +452,8 @@ def test_resolve_run_dir_missing_stage(tmp_path: Path) -> None:
 def test_resolve_run_dir_legacy_layout(tmp_path: Path) -> None:
     # Runs written before seeds became a directory dimension sit directly
     # under stage{N}/; the resolver must still find and seed-filter them.
-    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42,
-              seed_dir=False)
-    _make_run(tmp_path, "bc", 1, "2026-08-03_10-00-00_aaaa0003", seed=43,
-              seed_dir=False)
+    _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42, seed_dir=False)
+    _make_run(tmp_path, "bc", 1, "2026-08-03_10-00-00_aaaa0003", seed=43, seed_dir=False)
 
     assert resolve_run_dir(tmp_path, "bc", 1, seed=42).name == "2026-08-01_10-00-00_aaaa0001"
     assert resolve_run_dir(tmp_path, "bc", 1, seed=43).name == "2026-08-03_10-00-00_aaaa0003"
@@ -489,7 +485,10 @@ def test_resolve_checkpoint_path_prefers_registry(tmp_path: Path) -> None:
     _make_run(tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", seed=42)
     state = RunnerState(tmp_path / "state.json")
     state.mark(
-        "phaseforge", 42, "stage2", run_dir="x",
+        "phaseforge",
+        42,
+        "stage2",
+        run_dir="x",
         ckpt="phaseforge/stage2/old/checkpoint_best.pt",
     )
     (tmp_path / "phaseforge" / "stage2" / "old").mkdir(parents=True, exist_ok=True)
@@ -509,8 +508,7 @@ def test_stage2_resolves_exact_untagged_provider_ckpt(tmp_path: Path) -> None:
     mismatch. The runner must resolve the exact untagged artifact instead.
     """
     _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
-    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42,
-              tag="robot_only")
+    _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42, tag="robot_only")
     step = _step("warmstart_moe", 42, "stage2")
     ckpt = runner_cli._require_stage2_prereq(step, tmp_path)
     assert ckpt is not None
@@ -543,10 +541,14 @@ def test_cli_dry_run_prints_commands_without_executing(tmp_path: Path, capsys) -
     outputs = tmp_path / "outputs"
     args = runner_cli.parse_args(
         [
-            "--manifest", str(protocol_path),
-            "--outputs", str(outputs),
-            "--methods", "bc",
-            "--seeds", "42",
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(outputs),
+            "--methods",
+            "bc",
+            "--seeds",
+            "42",
             "--dry-run",
         ]
     )
@@ -567,10 +569,14 @@ def test_cli_dry_run_with_state_complete_skips(tmp_path: Path, capsys) -> None:
     state.mark("bc", 42, "stage1", run_dir="bc/stage1/x", ckpt="bc/stage1/x/c.pt")
     args = runner_cli.parse_args(
         [
-            "--manifest", str(protocol_path),
-            "--outputs", str(outputs),
-            "--methods", "bc",
-            "--seeds", "42",
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(outputs),
+            "--methods",
+            "bc",
+            "--seeds",
+            "42",
             "--dry-run",
         ]
     )
@@ -579,9 +585,7 @@ def test_cli_dry_run_with_state_complete_skips(tmp_path: Path, capsys) -> None:
     assert "skip bc seed=42 stage1 (already completed)" in out
 
 
-def test_cli_continue_on_error_records_failures(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
+def test_cli_continue_on_error_records_failures(tmp_path: Path, monkeypatch, capsys) -> None:
     protocol_path = _write_protocol(tmp_path, _valid_doc())
 
     def _boom(*args, **kwargs) -> None:
@@ -591,10 +595,14 @@ def test_cli_continue_on_error_records_failures(
     outputs = tmp_path / "outputs"
     args = runner_cli.parse_args(
         [
-            "--manifest", str(protocol_path),
-            "--outputs", str(outputs),
-            "--methods", "phaseforge",
-            "--seeds", "42",
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(outputs),
+            "--methods",
+            "phaseforge",
+            "--seeds",
+            "42",
             "--continue-on-error",
         ]
     )
@@ -616,10 +624,14 @@ def test_cli_fails_fast_without_continue_on_error(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(runner_cli, "run_step", _boom)
     args = runner_cli.parse_args(
         [
-            "--manifest", str(protocol_path),
-            "--outputs", str(tmp_path / "outputs"),
-            "--methods", "phaseforge",
-            "--seeds", "42",
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(tmp_path / "outputs"),
+            "--methods",
+            "phaseforge",
+            "--seeds",
+            "42",
         ]
     )
     assert runner_cli.run(args) == 1

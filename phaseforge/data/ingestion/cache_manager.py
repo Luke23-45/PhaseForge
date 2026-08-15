@@ -23,7 +23,9 @@ def git_commit() -> str:
         repo = Path(__file__).resolve().parents[3]
         result = subprocess.run(
             ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.stdout.strip() if result.returncode == 0 else ""
     except Exception:  # noqa: BLE001
@@ -109,21 +111,14 @@ class CacheManager:
             source = data_cfg.get("source")
             if source is not None and source.get("dir"):
                 src_dir = Path(str(source["dir"]))
-                manifest_path = Path(
-                    str(source.get("manifest_path") or src_dir / "MANIFEST.json")
-                )
+                manifest_path = Path(str(source.get("manifest_path") or src_dir / "MANIFEST.json"))
                 files = sorted(src_dir.glob("*.hdf5")) if src_dir.exists() else []
-                ctx["raw_files"] = [
-                    {"name": p.name, "size": p.stat().st_size}
-                    for p in files
-                ]
+                ctx["raw_files"] = [{"name": p.name, "size": p.stat().st_size} for p in files]
 
                 download_manifest: dict[str, Any] | None = None
                 if manifest_path.exists():
                     try:
-                        download_manifest = json.loads(
-                            manifest_path.read_text(encoding="utf-8")
-                        )
+                        download_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                     except (OSError, json.JSONDecodeError):
                         logger.warning(
                             "Could not read dataset manifest %s while computing "
@@ -189,9 +184,7 @@ class CacheManager:
         context = CacheManager.provenance_context(data_cfg)
         if extra_context:
             context = {**context, **extra_context}
-        config = OmegaConf.to_container(
-            data_cfg, resolve=True, throw_on_missing=True
-        )
+        config = OmegaConf.to_container(data_cfg, resolve=True, throw_on_missing=True)
         # The source location is machine-specific and must not make an
         # otherwise identical cache unusable after moving the data root. Raw
         # file identity is already represented by ``context`` above.
@@ -240,7 +233,7 @@ class CacheManager:
         # 1. Try exact match first
         if self._is_valid_cache(config_hash):
             return config_hash
-            
+
         # 2. Try fallback if allowed
         if not enforce_strict:
             if self.cache_root.exists():
@@ -308,9 +301,7 @@ class CacheManager:
             (tmp_dir / "task_index.json").write_text(json.dumps(task_index, indent=2))
 
         # Human-readable split task names (Gate 7 audit)
-        split_task_names = (
-            (provenance or {}).get("split_task_names") if provenance else None
-        )
+        split_task_names = (provenance or {}).get("split_task_names") if provenance else None
         if split_task_names:
             for fname, key in (
                 ("train_tasks.txt", "train"),

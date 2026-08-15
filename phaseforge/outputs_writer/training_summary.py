@@ -37,9 +37,7 @@ def _json_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def append_training_summary_row(
-    results_dir: str | Path, summary: dict[str, Any]
-) -> Path:
+def append_training_summary_row(results_dir: str | Path, summary: dict[str, Any]) -> Path:
     """Validate ``summary`` and append it to ``training_summary.jsonl``.
 
     Idempotent per ``run_id``: if a row for the same run already exists,

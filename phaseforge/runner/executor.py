@@ -38,12 +38,8 @@ def step_command(
     if step.kind == "eval":
         if ckpt_path is None:
             raise CommandError(f"Eval step {step.label} has no checkpoint to evaluate.")
-        return eval_command(
-            step, ckpt_path=ckpt_path, outputs_base=outputs_base, defaults=defaults
-        )
-    return train_command(
-        step, outputs_base=outputs_base, defaults=defaults, ckpt_path=ckpt_path
-    )
+        return eval_command(step, ckpt_path=ckpt_path, outputs_base=outputs_base, defaults=defaults)
+    return train_command(step, outputs_base=outputs_base, defaults=defaults, ckpt_path=ckpt_path)
 
 
 def run_step(
@@ -63,9 +59,7 @@ def run_step(
     """
     if step.kind == "eval" and ckpt_path is None:
         raise CommandError(f"Eval step {step.label} has no checkpoint to evaluate.")
-    cmd = step_command(
-        step, ckpt_path=ckpt_path, outputs_base=outputs_base, defaults=defaults
-    )
+    cmd = step_command(step, ckpt_path=ckpt_path, outputs_base=outputs_base, defaults=defaults)
     executable = _resolve_script(cmd[0])
     argv = [executable, f"project.log_level={log_level}"] + cmd[1:]
 

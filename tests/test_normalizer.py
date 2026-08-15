@@ -47,9 +47,7 @@ def test_ignored_dims_frozen_to_identity() -> None:
 
 def test_mask_dims_survive_normalization_as_binary() -> None:
     """Normalizing a 0/1 mask with identity stats leaves it unchanged."""
-    frozen = _finalized(
-        [np.array([[0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])], ignore={0}
-    )
+    frozen = _finalized([np.array([[0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])], ignore={0})
     mask = np.array([[0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])
     out = frozen.normalize(torch.from_numpy(mask)).numpy()
     np.testing.assert_allclose(out[:, [0]], mask[:, [0]], atol=1e-6)
@@ -59,9 +57,7 @@ def test_no_ignore_behaves_identically_to_plain_stats() -> None:
     batches = [np.random.default_rng(0).normal(size=(8, 5)) for _ in range(3)]
     with_ignore = _finalized(batches, ignore=set())
     data = np.concatenate(batches, axis=0)
-    np.testing.assert_allclose(
-        with_ignore.mean.numpy(), data.mean(axis=0), atol=1e-6
-    )
+    np.testing.assert_allclose(with_ignore.mean.numpy(), data.mean(axis=0), atol=1e-6)
     np.testing.assert_allclose(
         with_ignore.std.numpy(),
         torch.from_numpy(np.sqrt(data.var(axis=0, ddof=1)) + 1e-6).float().numpy(),

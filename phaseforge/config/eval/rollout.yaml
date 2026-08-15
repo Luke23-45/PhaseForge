@@ -1,0 +1,60 @@
+# config/eval/rollout.yaml — State-only rollout evaluation (plan §4.1/§4.4)
+#
+# Select with `eval=rollout`. This is the protocol's evaluation mode: the
+# model is rolled out in the simulator from the frozen reset bank with the
+# strict metric (infrastructure failures invalidate the run; policy failures
+# are valid failed episodes, labeled separately).
+#
+# This config is task-agnostic. The dataset's pinned env_args
+# (resolved through the cache as ``env_metadata``) is the authoritative
+# source for ``env_name`` and ``env_version``. Per-task data configs in
+# ``phaseforge/config/data/`` (``lift``, ``can``, ``square``, ``tool_hang``,
+# ``transport``) drive the ingestion path for each of the five benchmark
+# tasks; the rollout layer picks them up via ``data.source.task_name``.
+
+mode: "rollout"
+
+env:
+  # The dataset's env_args (persisted in the cache as env_metadata) is the
+  # authoritative pin. An explicit ``expected_env_name`` here overrides
+  # the cache-derived value; leave null for the default task-relative
+  # behavior (recommended).
+  expected_env_name: null
+  # Collection environment per robomimic v0.4's v1.5 track. The gate
+  # compares the installed version against the dataset's env_version first.
+  robosuite_requirement: "==1.5.1"
+  mujoco_requirement: "==3.2.7"
+
+bank:
+  # Frozen reset bank: {num_cases} cases seeded from a fresh simulator,
+  # content-hash-identified, SHA-256-verified on every load. Regeneration
+  # changes the bank_id; existing banks are never silently overwritten.
+  num_cases: 50
+  seed: 2026
+  auto_generate: true
+  max_attempts_per_case: 40
+
+episodes:
+  # null -> the horizon recorded in the dataset's env_kwargs
+  # (Lift/Can/Square/ToolHang: 500; Transport: 700).
+  horizon: null
+  # Tolerance on the declared [-1, 1] action contract before a policy
+  # action counts as policy_invalid_action.
+  action_tolerance: 0.0001
+  checkpoint_sha256: null
+
+gates:
+  # Gate 4 threshold: fraction of bank cases the scripted controller must
+  # solve (1.0 = all 50; the controller is the pipeline's training-free
+  # end-to-end validation). The scripted controller class is dispatched
+  # on bank.task via the task registry.
+  scripted_threshold: 1.0
+  # Gate 5 sanity sweep (no-op + random), subsampled for speed.
+  random_sanity_episodes: 20
+  random_sanity_horizon: 200
+  random_sanity_success_max: 0.05
+  # Gate 2 demo replay (raw HDF5 required; skipped loudly when absent).
+  replay_demos: 1
+  replay_tolerance: 0.001
+  # Gate 6 checkpoint smoke episodes (skipped loudly when no checkpoint).
+  smoke_episodes: 10

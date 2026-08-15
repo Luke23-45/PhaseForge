@@ -62,9 +62,7 @@ class RuleBasedPhaseLabeler:
         if median_filter_size < 1:
             raise ValueError("median_filter_size must be a positive integer")
         if not gripper_closed_threshold < gripper_open_threshold:
-            raise ValueError(
-                "gripper_closed_threshold must be below gripper_open_threshold"
-            )
+            raise ValueError("gripper_closed_threshold must be below gripper_open_threshold")
         self.num_phases = int(num_phases)
         self.closed_threshold = float(gripper_closed_threshold)
         self.open_threshold = float(gripper_open_threshold)
@@ -74,9 +72,7 @@ class RuleBasedPhaseLabeler:
         self.eef_pos_slice = tuple(int(v) for v in eef_pos_slice)
         self.gripper_slice = tuple(int(v) for v in gripper_qpos_slice)
 
-    def _calibrate_aperture(
-        self, aperture: np.ndarray
-    ) -> tuple[np.ndarray, float, float]:
+    def _calibrate_aperture(self, aperture: np.ndarray) -> tuple[np.ndarray, float, float]:
         """Return (signal, closed_level, open_level) for the hysteresis.
 
         The levels are calibrated from the demonstration's observed aperture

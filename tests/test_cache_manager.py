@@ -192,9 +192,7 @@ def test_save_manifest_records_full_provenance(tmp_path: Path) -> None:
     provenance = {
         "dataset_manifest": {"source": "robomimic", "commit_sha": "a" * 40},
         "code_git_commit": "deadbeef",
-        "raw_files": [
-            {"name": "demo_1.hdf5", "size": 123, "sha256": "a" * 64}
-        ],
+        "raw_files": [{"name": "demo_1.hdf5", "size": 123, "sha256": "a" * 64}],
         "state_schema": {
             "keys": [{"key": "robot0_joint_pos", "dim": 7}],
             "state_dim": 23,
@@ -221,9 +219,7 @@ def test_save_manifest_records_full_provenance(tmp_path: Path) -> None:
     assert manifest["complete"] is True
     assert manifest["provenance"]["raw_files"][0]["sha256"] == "a" * 64
     assert manifest["provenance"]["code_git_commit"] == "deadbeef"
-    assert (
-        manifest["provenance"]["dataset_manifest"]["commit_sha"] == "a" * 40
-    )
+    assert manifest["provenance"]["dataset_manifest"]["commit_sha"] == "a" * 40
 
     train_tasks = (cache_dir / "train_tasks.txt").read_text().splitlines()
     val_tasks = (cache_dir / "validation_tasks.txt").read_text().splitlines()

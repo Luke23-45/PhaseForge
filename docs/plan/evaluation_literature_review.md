@@ -181,7 +181,7 @@ Source: https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm
 - **Cochran's Q**: an optional omnibus test for more than two paired models; it is not required for the primary three-seed analysis.
 - **Dietterich (1998) warning:** the resampled paired t-test (pooling episodes across seeds) has a **high false-positive rate** — do not pool episodes as if independent; the 5×2cv paired t-test is the recommended algorithm-comparison test when training sets vary.
 - **Do not use Barnard's exact test for this comparison:** Barnard's test is formulated for independent two-sample binary outcomes; for the same reset case evaluated by two policies, the standard matched-pairs test is exact McNemar (above; cf. the McNemar paired-binary reference below).
-- **Per-seed paired differences:** compute the paired success-rate difference per (model, seed) on the identical reset cases; the final claim is made at the **seed level** (e.g., mean of per-seed paired differences), never by pooling all 150 episodes as independent training replicates.
+- **Per-seed paired differences:** compute the paired success-rate difference per task and (model, seed) on the identical reset cases; the final claim is made at the **seed level** (e.g., task-level differences followed by an unweighted macro-average), never by pooling episodes as independent training replicates.
 - **Our existing two-sided exact Wilcoxon** on per-seed aggregates is the right test *at the seed level* — with n=3 seeds the minimum attainable p is 0.25, so it can only reject if all three seeds agree in direction; this must be stated (our report already does).
 
 Sources: https://www.statstest.com/paired-evaluation-mcnemar-test-before-after-classification · https://stresearch-dev.github.io/eval-stats-toolkit · https://sebastianraschka.com/pdf/lecture-notes/stat479fs18/11_eval-algo_slides.pdf · https://pmc.ncbi.nlm.nih.gov/articles/PMC2902578/ · McNemar paired-binary reference: https://pmc.ncbi.nlm.nih.gov/articles/PMC3716987/
@@ -208,7 +208,7 @@ Source: https://ar5iv.labs.arxiv.org/html/1806.08295 (code: https://github.com/f
 
 ### 5.5 Episode-level vs seed-level inference — avoid the pooling trap
 
-- **Correct layering:** (1) per (model, seed): Wilson CI on the 50 episodes; (2) per (model): mean ± s.d. across seeds (or per-seed bars); (3) pairwise: **paired analysis on identical reset cases** — per-seed paired differences, exact McNemar per seed, and a Newcombe 95% CI for the paired difference; do not pool episodes across seeds as independent replicates (Dietterich 1998) — plus paired two-sided exact Wilcoxon across seed means.
+- **Correct layering:** (1) per task and (model, seed): Wilson CI on the 50 episodes; (2) per task and model: mean ± s.d. across seeds; (3) pairwise: **paired analysis on identical reset cases** — per-task, per-seed paired differences, exact McNemar per seed, and a Newcombe 95% CI for the paired difference; do not pool episodes across seeds as independent replicates (Dietterich 1998). Report the unweighted macro-average across task-level rates only as an aggregate summary.
 - **Wrong:** treating all episodes as independent for a t-test across methods (Dietterich's resampled t-test warning; Colas's bootstrap warning) — inflates significance.
 
 ### 5.6 Multiple comparisons
@@ -277,25 +277,25 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 
 ---
 
-## 10. Synthesis — recommended protocol for the PhaseForge state-only Lift rollout
+## 10. Synthesis — recommended protocol for the PhaseForge five-task state-only rollout
 
 | Protocol element | Recommendation | Justified by |
 |---|---|---|
 | Environment/dataset freeze | Pin robosuite version pair with dataset metadata; record hashes | plan §4.1; robomimic track warning |
 | Adapter validation | Scripted/oracle controller must solve all reset cases before learned policies | §9; ACT; plan §4.5 |
-| Reset cases | **50 fixed serialized initial states**, disjoint from training/val, identical order for all models and seeds | implementation plan (reset-case protocol); paired-design statistics §5.2 |
-| Episodes per (model, seed) | **50 selected evaluation episodes** (Wilson ±12–14 pp) — a defensible precedent, not a universal statistical minimum. Increasing to 100–200 is an optional predeclared precision extension. | §5.1; robomimic; Diffusion Policy |
+| Reset cases | **50 fixed serialized initial states per task**, disjoint from training/val, identical order for all models and seeds within each task | implementation plan (reset-case protocol); paired-design statistics §5.2 |
+| Episodes per (task, model, seed) | **50 selected evaluation episodes** (Wilson ±12–14 pp) — a defensible precedent, not a universal statistical minimum. Increasing to 100–200 is an optional predeclared precision extension. | §5.1; robomimic; Diffusion Policy |
 | Seeds | Use 3 trained seeds for the first descriptive matrix. If stronger inferential evidence is required, add seeds 45 and 46 before the final paper table; do not silently mix pilot and final results. | §5.4 Colas |
 | Checkpoint rule | **Predeclared validation-based rule** (`best val/loss_action`), evaluated on a **completely separate frozen rollout bank**; rule reported clearly. Rollout-based selection (separate selection bank; robomimic/DP practice) only as a later ablation comparing the two procedures | §4.4; §4.1 (robomimic C4) |
 | Inference rule | Deterministic single-step, fixed action contract; no ensembling unless declared | ACT temporal ensembling; CI-MSE |
-| Primary outcome | Success rate per (model, seed) with **Wilson 95% CIs**; mean ± s.d. across seeds; per-seed bars (performance-profile style) | §5.1; §5.3; robomimic |
+| Primary outcome | Success rate per task, model, and seed with **Wilson 95% CIs**; mean ± s.d. across seeds per task; unweighted macro-average across the five task-level rates as a secondary aggregate | §5.1; §5.3; robomimic |
 | Pairwise comparison | **Paired on identical reset cases**: per-seed paired differences; exact McNemar (binomial when b+c<25) + Newcombe 95% CI for the paired delta; **no pooling across seeds**; final claim at seed level and remains descriptive (n=3 cannot support population-level significance); paired two-sided exact Wilcoxon across seed means as a secondary check (min p=0.25 at n=3, stated) | §5.2; §5.5; Dietterich 1998 |
 | Multiple comparisons | Declare PhaseForge versus the five matched, non-privileged comparators as the primary family and apply Bonferroni-Holm (or another declared correction); privileged and negative-control rows remain descriptive | §5.6; PMC 2902578 |
 | Invalid episodes | Infrastructure failures excluded from the success denominator; policy-caused NaNs/invalid actions/safety violations reported as policy failures under a strict metric, labeled separately | §3.9; plan §4.4 |
 | Routing diagnostics | Report fraction-to-top-expert, balance coefficient, entropy (over time), collapse, NMI vs phase labels — as diagnostics; note balance-vs-specialization tension (MoE-DP: balance-only → homogenization, entropy-only → collapse) | §6 |
 | Secondary metrics | Action MSE, smoothness, task progress — labeled diagnostic-only | §8 |
 | Controls | Robot-only BC separate appendix; teacher-forced/oracle labeled privileged; scripted + random gates | §9 |
-| Claim boundary | "State-only offline diagnostic + closed-loop success on Lift"; no vision/history/cross-task claims | plan §1 |
+| Claim boundary | "State-only offline diagnostic + closed-loop success across five separate robomimic tasks"; no vision or multitask claims | plan §1 |
 | Contextual references | Published Lift (PH) values (BC ≈ 100%, BC-RNN 1.00/0.96) as context only; direct comparison requires matching the full dataset/environment/action/reset/checkpoint protocols | §3.10 |
 
 ---
@@ -308,9 +308,9 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 4. **Aggregation and tests:** report per-seed Wilson intervals and paired PhaseForge-minus-baseline differences on identical reset cases. Use exact McNemar/Newcombe within each seed, do not pool episodes across seeds, and keep the three-seed conclusion descriptive. Do not use a t-test on three seed means.
 5. **Multiple comparisons:** the primary comparison family is PhaseForge versus the five matched, non-privileged comparators: BC-MLP, Scratch MoE, Warm-Start MoE, Phase-Pretrain Random-Router, and Plain-Encoder Phase-Bootstrap. Apply a declared multiplicity correction to those comparisons. Teacher/oracle routing and robot-only BC are diagnostic or negative-control rows, not primary baselines.
 6. **MoE regularization:** do not add a new load-balance auxiliary loss to the primary experiment. Keep the current PhaseForge objective fixed and report balance, entropy, collapse, and specialization diagnostics. Any new regularizer is a separate ablation.
-7. **Robustness:** defer physics perturbation, randomized-reset, and cross-task robustness until the nominal Lift evaluator is validated and the core result is complete.
+7. **Robustness:** defer physics perturbation and randomized-reset robustness until the nominal five-task evaluator is validated and the core result is complete.
 8. **Phase metrics:** retain NMI, balanced accuracy, boundary statistics, and routing health as secondary mechanism diagnostics. They cannot replace rollout success.
-9. **History and references:** keep BC-RNN and published Lift numbers as contextual/optional extensions only. The current claim is single-step state-only Lift behavior, not history-dependent or cross-task superiority.
+9. **History and references:** include BC-RNN as the declared temporal control baseline for the five-task comparison. Published Lift numbers remain contextual references only; they are not pass/fail targets for any task.
 
 ---
 

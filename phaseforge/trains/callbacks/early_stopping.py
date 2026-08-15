@@ -42,7 +42,7 @@ class EarlyStoppingCallback(Callback):
 
         # The training loop does not prefix keys with 'val/', so we strip it if provided
         monitor_key = self.monitor.replace("val/", "")
-        
+
         if monitor_key not in val_metrics:
             logger.warning(
                 "Early stopping monitor '%s' (resolved to '%s') not found "
@@ -54,7 +54,7 @@ class EarlyStoppingCallback(Callback):
             return
 
         current_score = val_metrics[monitor_key]
-        
+
         # Check for improvement
         improved = False
         if self.mode == "min":
@@ -63,7 +63,7 @@ class EarlyStoppingCallback(Callback):
         else:
             if current_score > self.best_score + self.min_delta:
                 improved = True
-                
+
         if improved:
             self.best_score = current_score
             self.wait_count = 0

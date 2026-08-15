@@ -45,15 +45,15 @@ def _build_demo(
 
 
 CANONICAL_SEGMENTS = [
-    (60, None, 0.02),   # approach
-    (20, None, 0.0),    # pre-grasp hold (open, stationary)
+    (60, None, 0.02),  # approach
+    (20, None, 0.0),  # pre-grasp hold (open, stationary)
     (10, None, 0.002),  # grasp close
-    (15, None, 0.0),    # grip hold
-    (40, None, 0.03),   # transport
+    (15, None, 0.0),  # grip hold
+    (40, None, 0.03),  # transport
     (20, None, 0.003),  # place
-    (10, None, 0.02),   # release + retract start
-    (20, None, 0.02),   # retract
-    (15, None, 0.0),    # settle
+    (10, None, 0.02),  # release + retract start
+    (20, None, 0.02),  # retract
+    (15, None, 0.0),  # settle
 ]
 
 
@@ -84,8 +84,8 @@ def _first_occurrence(phases: np.ndarray) -> dict[int, int]:
 @pytest.mark.parametrize(
     ("open_aperture", "closed_aperture"),
     [
-        (0.04, 0.0),    # magnitude convention, closed at the low end
-        (0.0, 0.04),    # magnitude convention, closed at the high end
+        (0.04, 0.0),  # magnitude convention, closed at the low end
+        (0.0, 0.04),  # magnitude convention, closed at the high end
     ],
 )
 def test_all_six_phases_populated(open_aperture, closed_aperture) -> None:
@@ -134,18 +134,14 @@ def test_panda_antisymmetric_fingers_all_six_phases() -> None:
     aperture must be the finger excursion magnitude; all six phases must
     populate (the cloud failure produced only phases {2, 3})."""
     labeler = RuleBasedPhaseLabeler()
-    phases = labeler.label(
-        _canonical_panda(open_aperture=0.020833, closed_aperture=0.04)
-    )
+    phases = labeler.label(_canonical_panda(open_aperture=0.020833, closed_aperture=0.04))
 
     assert set(phases.tolist()) == {0, 1, 2, 3, 4, 5}
 
 
 def test_panda_antisymmetric_fingers_phase_order() -> None:
     labeler = RuleBasedPhaseLabeler()
-    phases = labeler.label(
-        _canonical_panda(open_aperture=0.020833, closed_aperture=0.04)
-    )
+    phases = labeler.label(_canonical_panda(open_aperture=0.020833, closed_aperture=0.04))
     first = _first_occurrence(phases)
 
     assert first[0] == 0
@@ -155,9 +151,7 @@ def test_panda_antisymmetric_fingers_phase_order() -> None:
 
 def test_constant_aperture_falls_back_to_absolute_thresholds() -> None:
     labeler = RuleBasedPhaseLabeler()
-    segments = [
-        (n, 0.04, speed) for n, _unused, speed in CANONICAL_SEGMENTS
-    ]
+    segments = [(n, 0.04, speed) for n, _unused, speed in CANONICAL_SEGMENTS]
     phases = labeler.label(_build_demo(0.04, 0.04, segments))
 
     assert set(phases.tolist()).issubset({0, 1})

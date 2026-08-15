@@ -14,7 +14,7 @@ from phaseforge.models.components.router import TopKRouter
 
 class OraclePhaseMoEModel(BaseManipulationModel):
     """MoE trained with Oracle routing (ground truth phases).
-    
+
     During training, the router is bypassed, and the ground truth phase
     labels are used to perfectly select the corresponding expert.
     Provides an upper bound on performance.
@@ -29,11 +29,11 @@ class OraclePhaseMoEModel(BaseManipulationModel):
     ) -> None:
         super().__init__()
         self.encoder = encoder
-        
+
         # We enforce deterministic routing, Top-1
         router.top_k = 1
         router.noise_std = 0.0
-        
+
         self.moe_layer = MoELayer(router=router, experts=expert)
         self.num_phases = num_phases
         if num_phases < 1:
@@ -64,7 +64,7 @@ class OraclePhaseMoEModel(BaseManipulationModel):
         # ORACLE ROUTING (Training)
         latent = self.encoder(state)
         B = latent.size(0)
-        
+
         # Flatten time dim if sequence
         if latent.ndim == 3:
             latent = latent.view(-1, latent.size(-1))
@@ -79,13 +79,13 @@ class OraclePhaseMoEModel(BaseManipulationModel):
                 f"got range [{int(phase.min())}, {int(phase.max())}]."
             )
         expert_indices = phase.unsqueeze(-1)  # (B, 1)
-        
+
         # Oracle weights are 1.0 (perfect certainty)
         routing_weights = torch.ones((B, 1), device=latent.device)  # (B, 1)
-        
+
         # Generate dummy logits for metric compatibility
         gate_logits = torch.zeros((B, E), device=latent.device)
-        gate_logits.scatter_(1, expert_indices, 100.0) # Highly peaked
+        gate_logits.scatter_(1, expert_indices, 100.0)  # Highly peaked
         self._last_gate_logits = gate_logits.detach()
 
         # Gather output
@@ -96,11 +96,11 @@ class OraclePhaseMoEModel(BaseManipulationModel):
             match_mask = (expert_indices == expert_idx).squeeze(-1)
             if not match_mask.any():
                 continue
-            
+
             batch_idx = torch.where(match_mask)[0]
             expert_inputs = latent[batch_idx]
             expert_outputs = expert_net(expert_inputs)
-            
+
             combined_output.index_copy_(0, batch_idx, expert_outputs)
 
         return ModelOutput(

@@ -48,17 +48,17 @@ class Stage2Trainer(BaseTrainer):
         """Override fit to handle encoder freezing before the loop starts."""
         if self.train_cfg.freeze_encoder:
             self.model.freeze_encoder()
-            
+
         # Re-initialize optimizer because freezing might have changed requires_grad
         from hydra.utils import instantiate
-        
+
         active_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = instantiate(self.train_cfg.optimizer, params=active_params)
         self.scheduler = instantiate(self.train_cfg.scheduler, optimizer=self.optimizer)
-        
+
         n_params = sum(p.numel() for p in active_params)
         logger.info(f"Stage 2 initialized. Trainable parameters: {n_params}")
-        
+
         super().fit()
 
     def _compute_loss(
@@ -68,24 +68,24 @@ class Stage2Trainer(BaseTrainer):
         # validation loop, to avoid a double forward).
         if out is None:
             out = self.model(batch)
-        
+
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
-        mask = batch.get("padding_mask") # (B, T) boolean or None
-        
+        mask = batch.get("padding_mask")  # (B, T) boolean or None
+
         # Action Loss (MSE)
         if mask is not None:
             action_loss = F.mse_loss(out.action_pred, target_action, reduction="none")
             action_loss = action_loss[mask].mean()
         else:
             action_loss = F.mse_loss(out.action_pred, target_action)
-            
+
         # Balance Loss
         balance_loss = out.aux_losses.get("balance", torch.tensor(0.0, device=self.device))
-        
+
         # Total Loss
         total_loss = action_loss + balance_loss
-        
+
         metrics = {
             # Defer .item() until the trainer logs/aggregates the metric so
             # the hot training loop does not synchronize CUDA every batch.
@@ -93,7 +93,7 @@ class Stage2Trainer(BaseTrainer):
             "loss_action": action_loss.detach(),
             "loss_balance": balance_loss.detach(),
         }
-        
+
         return total_loss, metrics
 
     @torch.inference_mode()
@@ -109,7 +109,7 @@ class Stage2Trainer(BaseTrainer):
         """
         if self.val_loader is None:
             return {}
-            
+
         self.model.eval()
         agg_metrics: dict[str, float] = {}
         total_samples = 0
@@ -168,30 +168,22 @@ class Stage2Trainer(BaseTrainer):
                 num_experts = gate_logits_all[0].size(-1)
             else:
                 num_experts = int(expert_indices.max().item()) + 1
-            topk_fractions = expert_utilization.expert_utilization(
-                expert_indices, num_experts
-            )
-            top1_fractions = expert_utilization.expert_utilization_top1(
-                expert_indices, num_experts
-            )
-            agg_metrics["val/topk_balance_score"] = (
-                expert_utilization.expert_utilization_balance(topk_fractions)
-            )
-            agg_metrics["val/top1_balance_score"] = (
-                expert_utilization.expert_utilization_balance(top1_fractions)
-            )
-            agg_metrics["val/topk_collapse_rate"] = expert_utilization.collapse_rate(
+            topk_fractions = expert_utilization.expert_utilization(expert_indices, num_experts)
+            top1_fractions = expert_utilization.expert_utilization_top1(expert_indices, num_experts)
+            agg_metrics["val/topk_balance_score"] = expert_utilization.expert_utilization_balance(
                 topk_fractions
             )
-            agg_metrics["val/top1_collapse_rate"] = expert_utilization.collapse_rate(
+            agg_metrics["val/top1_balance_score"] = expert_utilization.expert_utilization_balance(
                 top1_fractions
             )
+            agg_metrics["val/topk_collapse_rate"] = expert_utilization.collapse_rate(topk_fractions)
+            agg_metrics["val/top1_collapse_rate"] = expert_utilization.collapse_rate(top1_fractions)
 
         if gate_logits_all:
             gate_logits = torch.cat(gate_logits_all, dim=0)
-            agg_metrics["val/routing_entropy"] = (
-                routing_stability.routing_entropy(gate_logits, normalize=True).item()
-            )
+            agg_metrics["val/routing_entropy"] = routing_stability.routing_entropy(
+                gate_logits, normalize=True
+            ).item()
 
         if self._val_routing_acc.has_data:
             acc, balanced = self._val_routing_acc.compute()

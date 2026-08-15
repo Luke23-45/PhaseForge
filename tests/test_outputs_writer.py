@@ -43,6 +43,7 @@ from phaseforge.outputs_writer.writer import RunWriter, parse_run_dir
 # Fixtures / factories
 # ---------------------------------------------------------------------------
 
+
 def make_row(
     *,
     model: str = "phaseforge",
@@ -85,6 +86,7 @@ def make_result_row(**kwargs) -> ResultRow:
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
+
 
 class TestSchema:
     def test_valid_full_row_passes(self) -> None:
@@ -187,6 +189,7 @@ class TestSchema:
 # Results ledger
 # ---------------------------------------------------------------------------
 
+
 class TestResults:
     def test_append_and_read_roundtrip(self, tmp_path: Path) -> None:
         results_dir = tmp_path / "_results"
@@ -240,6 +243,7 @@ class TestResults:
 # ---------------------------------------------------------------------------
 # Run ledger
 # ---------------------------------------------------------------------------
+
 
 class TestLedger:
     def _row(self, run_id: str, **overrides) -> LedgerRow:
@@ -336,9 +340,7 @@ class TestLedger:
         assert [r.run_id for r in rows] == ["aaaaaaaa"]
         assert rows[0].status == "completed"
 
-    def test_update_status_refuses_to_rewrite_corrupted_ledger(
-        self, tmp_path: Path
-    ) -> None:
+    def test_update_status_refuses_to_rewrite_corrupted_ledger(self, tmp_path: Path) -> None:
         """Mid-file corruption must surface (not be silently dropped) when the
         rewrite path runs — otherwise a corrupt row would be lost forever."""
         ledger = RunLedger(tmp_path / "_ledger")
@@ -346,9 +348,7 @@ class TestLedger:
         ledger.append(self._row("bbbbbbbb"))
         with open(ledger.jsonl_path, encoding="utf-8") as f:
             text = f.read()
-        ledger.jsonl_path.write_text(
-            '{"run_id": "broken"\n' + text, encoding="utf-8"
-        )
+        ledger.jsonl_path.write_text('{"run_id": "broken"\n' + text, encoding="utf-8")
         with pytest.raises(json.JSONDecodeError):
             ledger.update_status("aaaaaaaa", "completed")
         # The source of truth is untouched — no silent data loss.
@@ -358,6 +358,7 @@ class TestLedger:
 # ---------------------------------------------------------------------------
 # RunWriter
 # ---------------------------------------------------------------------------
+
 
 class TestRunWriter:
     def _run_dir(self, tmp_path: Path, name: str = "2026-01-01_00-00-00_a1b2c3d4") -> Path:
@@ -424,6 +425,7 @@ class TestRunWriter:
 # Environment fingerprint
 # ---------------------------------------------------------------------------
 
+
 class TestMetadata:
     def test_collect_environment_shape(self) -> None:
         env = collect_environment(
@@ -447,6 +449,7 @@ class TestMetadata:
 # ---------------------------------------------------------------------------
 # Tables / aggregation
 # ---------------------------------------------------------------------------
+
 
 class TestTables:
     def test_aggregate_rows_groups_and_counts(self) -> None:
@@ -485,8 +488,12 @@ class TestTables:
         ]
         rows += [
             make_result_row(
-                model="bc", tag="robot_only", stage=1, seed=s,
-                action_mse=0.020, with_metrics=False,
+                model="bc",
+                tag="robot_only",
+                stage=1,
+                seed=s,
+                action_mse=0.020,
+                with_metrics=False,
             )
             for s in (42, 43, 44)
         ]
@@ -510,8 +517,12 @@ class TestTables:
         ]
         rows += [
             make_result_row(
-                model="bc", tag="robot_only", stage=1, seed=s,
-                action_mse=0.02, with_metrics=False,
+                model="bc",
+                tag="robot_only",
+                stage=1,
+                seed=s,
+                action_mse=0.02,
+                with_metrics=False,
             )
             for s in (42, 43, 44)
         ]
@@ -535,8 +546,12 @@ class TestTables:
         ]
         rows += [
             make_result_row(
-                model="bc", tag="robot_only", stage=1, seed=s,
-                action_mse=0.02, with_metrics=False,
+                model="bc",
+                tag="robot_only",
+                stage=1,
+                seed=s,
+                action_mse=0.02,
+                with_metrics=False,
             )
             for s in (42, 43, 44)
         ]
@@ -544,9 +559,7 @@ class TestTables:
             make_result_row(model="scratch_moe", stage=1, seed=s, action_mse=0.05)
             for s in (42, 43, 44)
         ]
-        path = write_paired_wilcoxon_csv(
-            rows, tmp_path / "paired_wilcoxon.csv", baseline="bc"
-        )
+        path = write_paired_wilcoxon_csv(rows, tmp_path / "paired_wilcoxon.csv", baseline="bc")
         text = path.read_text()
         assert text.splitlines()[0].startswith("method_a,tag_a,method_b,tag_b,metric")
         assert "scratch_moe" in text
@@ -601,9 +614,7 @@ class TestTables:
         )
 
     def test_csv_writers_produce_headers(self, tmp_path: Path) -> None:
-        rows = [
-            make_result_row(model="phaseforge", stage=2, seed=s) for s in (42, 43, 44)
-        ]
+        rows = [make_result_row(model="phaseforge", stage=2, seed=s) for s in (42, 43, 44)]
         rows += [
             make_result_row(model="scratch_moe", stage=2, seed=s, action_mse=0.06)
             for s in (42, 43, 44)
@@ -631,6 +642,7 @@ class TestTables:
 # ---------------------------------------------------------------------------
 # Summarize
 # ---------------------------------------------------------------------------
+
 
 class TestSummarize:
     def test_summarize_all_raises_without_results(self, tmp_path: Path) -> None:
@@ -670,6 +682,7 @@ class TestSummarize:
 # Backfill migration
 # ---------------------------------------------------------------------------
 
+
 class TestBackfillTags:
     def _write_run_meta(self, outputs: Path, model: str, run_id: str, *, tag: str) -> None:
         run_dir = outputs / model / "stage1" / f"2026-01-01_00-00-00_{run_id}"
@@ -690,9 +703,7 @@ class TestBackfillTags:
         row["ckpt_path"] = (
             "outputs/bc/stage1/seed42/2026-01-01_00-00-00_aa000001/checkpoints/checkpoint_best.pt"
         )
-        (results_dir / "results.jsonl").write_text(
-            json.dumps(row) + "\n", encoding="utf-8"
-        )
+        (results_dir / "results.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
         report = backfill_results(results_dir, collect_run_meta(outputs))
         assert report == {"changed": 1, "rows": 1}
         rows = read_result_rows(results_dir)
@@ -711,9 +722,7 @@ class TestBackfillTags:
         row["ckpt_path"] = (
             "outputs/bc/stage1/seed42/2026-01-01_00-00-00_aa000001/checkpoints/checkpoint_best.pt"
         )
-        (results_dir / "results.jsonl").write_text(
-            json.dumps(row) + "\n", encoding="utf-8"
-        )
+        (results_dir / "results.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
         backfill_results(results_dir, collect_run_meta(outputs))
         rows = read_result_rows(results_dir)
         assert rows[0]["tag"] == "robot_only"
