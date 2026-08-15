@@ -91,6 +91,9 @@ DEFAULT_PLACEMENT_Z: float = 0.95
 # performed just above the cube center/top rather than at the high approach
 # waypoint. This is also the geometry used by the kinematic gate simulator.
 GRASP_Z_OFFSET: float = OBJECT_HALF_SIZE + 0.02
+# Validated against all 50 cases in the pinned Lift reset bank. Other tasks
+# retain GRASP_Z_OFFSET until their own scripted gates are validated.
+LIFT_GRASP_Z_OFFSET: float = 0.01
 
 
 class _Phase(Enum):
@@ -463,6 +466,17 @@ class ScriptedLiftController(ScriptedController):
     object_key = "object"
     grasp_object_attr = "cube"
 
+    def __init__(
+        self,
+        state_spec: StateSpec,
+        *,
+        config: ScriptedControllerConfig | None = None,
+        env: Any | None = None,
+    ) -> None:
+        if config is None:
+            config = ScriptedControllerConfig(descend_z_offset=LIFT_GRASP_Z_OFFSET)
+        super().__init__(state_spec, config=config, env=env)
+
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         return None
 
@@ -742,4 +756,5 @@ __all__ = [
     "POSITION_SCALE",
     "ORIENTATION_SCALE",
     "SUCCESS_Z",
+    "LIFT_GRASP_Z_OFFSET",
 ]

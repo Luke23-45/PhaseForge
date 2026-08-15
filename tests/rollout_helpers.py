@@ -29,6 +29,7 @@ from phaseforge.evaluations.rollout.reset_bank import ResetBank, ResetCase
 
 TABLE_HEIGHT = 0.8
 SUCCESS_Z = TABLE_HEIGHT + 0.04
+GRASP_Z_OFFSET = 0.01
 
 #: Supported tasks for the kinematic fake simulator.
 SUPPORTED_TASKS: tuple[str, ...] = ("Lift", "Can", "Square", "ToolHang", "Transport")
@@ -116,13 +117,13 @@ class FakeLiftSim:
             and gripper >= 0.9
             and abs(self.eef[0] - self.cube[0]) < 0.04
             and abs(self.eef[1] - self.cube[1]) < 0.04
-            and abs(self.eef[2] - (self.cube[2] + 0.04)) < self.grasp_z_window
+            and abs(self.eef[2] - (self.cube[2] + GRASP_Z_OFFSET)) < self.grasp_z_window
         ):
             self.grasped = True
         elif self.grasped and gripper <= -0.5:
             self.grasped = False
         if self.grasped:
-            self.cube = self.eef - np.array([0.0, 0.0, 0.04])
+            self.cube = self.eef - np.array([0.0, 0.0, GRASP_Z_OFFSET])
         self.t += 1
 
     @property

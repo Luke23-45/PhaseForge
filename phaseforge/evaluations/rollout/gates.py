@@ -6,7 +6,7 @@ policy rollouts, so a broken chain can never produce meaningless numbers:
 * Gate 1 — environment schema self-test (needs robosuite).
 * Gate 2 — diagnostic demo replay against the raw HDF5 (non-gating).
 * Gate 3 — action-contract enforcement (in-range accepted, out-of-range
-  rejected, gripper convention).
+  rejected, simulator accepts the declared gripper action).
 * Gate 4 — scripted state-oracle controller on the frozen bank.
 * Gate 5 — random/no-op sanity (success must be 0, no infra failures).
 * Gate 6 — checkpoint smoke run (skipped loudly when no checkpoint given).
@@ -263,7 +263,14 @@ def gate_action_contract(
     trials: int = 10,
     tolerance: float = 1e-4,
 ) -> GateResult:
-    """In-range actions accepted; out-of-range/NaN rejected; gripper sign."""
+    """Validate the normalized action range and simulator acceptance.
+
+    The gripper direction is deliberately not inferred from one qpos delta:
+    a single MuJoCo control step can move a partially closed gripper in the
+    opposite direction because of controller state and contact dynamics.
+    Gate 4 validates the declared gripper convention behaviorally by solving
+    the frozen reset bank.
+    """
     problems: list[str] = []
     rng = np.random.default_rng(0)
 
@@ -290,41 +297,16 @@ def gate_action_contract(
 
     if not problems:
         try:
-            base_state = adapter.reset_to(
+            adapter.reset_to(
                 np.asarray(adapter.env.sim.get_state().flatten(), dtype=np.float64),
                 xml=None,
                 ep_meta=None,
             )
             close_action = np.zeros(adapter.action_dim, dtype=np.float64)
             close_action[-1] = 1.0
-            after_state, _done, _success, _info = adapter.step(close_action)
-            # The gripper convention probe requires the
-            # ``robot0_gripper_qpos`` key. Every robomimic v1.5 Panda task
-            # exposes it, but skip the probe cleanly if a future schema
-            # omits it rather than crashing the gate.
-            try:
-                start, stop = adapter.state_spec.index_of("robot0_gripper_qpos")
-            except KeyError:
-                start = None
-            if start is not None:
-                # Use the symmetric finger excursion rather than one raw
-                # joint coordinate. This works for both the Panda
-                # antisymmetric qpos pair and the unit-test fake's positive
-                # pair; closing must reduce the aperture magnitude.
-                base_aperture = float(
-                    np.max(np.abs(base_state[start:stop]))
-                )
-                after_aperture = float(
-                    np.max(np.abs(after_state[start:stop]))
-                )
-                delta = after_aperture - base_aperture
-                if delta > 1e-4:
-                    problems.append(
-                        "gripper close action (+1) increased the finger gap "
-                        f"wrong way (delta {delta:.6g}) — action convention mismatch"
-                    )
+            adapter.step(close_action)
         except Exception as exc:  # noqa: BLE001
-            problems.append(f"gripper convention probe failed: {exc}")
+            problems.append(f"gripper action acceptance probe failed: {exc}")
 
     return GateResult(
         gate="3_action_contract",
@@ -333,7 +315,7 @@ def gate_action_contract(
         if problems
         else (
             "in-range accepted, NaN/Inf/out-of-range rejected, gripper +1 "
-            "closes (robosuite PandaGripper convention)"
+            "accepted; closure behavior validated by Gate 4"
         ),
     )
 

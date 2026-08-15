@@ -6,6 +6,7 @@ import numpy as np
 
 from phaseforge.evaluations.rollout.scripted_controller import (
     GRASP_HOLD_STEPS,
+    LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
     ScriptedLiftConfig,
     ScriptedLiftController,
@@ -122,7 +123,7 @@ class TestClosedLoop:
         )
         ctrl.act(approach_state, 0)
         grasp_state = state_from_parts(
-            np.array([0.0, 0.0, 0.8 + 0.0415]),
+            np.array([0.0, 0.0, 0.8 + LIFT_GRASP_Z_OFFSET]),
             np.array([0.0, 0.0, 0.8]),
         )
         for t in range(1, GRASP_HOLD_STEPS + 2):

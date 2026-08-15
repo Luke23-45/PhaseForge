@@ -160,7 +160,7 @@ class TestScriptedController:
             make_bank(3),
             lift_state_spec(),
             threshold=1.0,
-            controller_config=ScriptedControllerConfig(descend_z_offset=0.04),
+            controller_config=ScriptedControllerConfig(descend_z_offset=0.01),
         )
         assert result.status == "PASS", result.detail
 
