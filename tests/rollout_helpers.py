@@ -29,7 +29,10 @@ from phaseforge.evaluations.rollout.reset_bank import ResetBank, ResetCase
 
 TABLE_HEIGHT = 0.8
 SUCCESS_Z = TABLE_HEIGHT + 0.04
-GRASP_Z_OFFSET = 0.01
+LIFT_GRASP_Z_OFFSET = 0.01
+# Matches ScriptedControllerConfig.descend_z_offset for placement tasks:
+# OBJECT_HALF_SIZE (0.0215) + the 0.02 m clearance used by the real oracle.
+PLACEMENT_GRASP_Z_OFFSET = 0.0415
 
 #: Supported tasks for the kinematic fake simulator.
 SUPPORTED_TASKS: tuple[str, ...] = ("Lift", "Can", "Square", "ToolHang", "Transport")
@@ -88,6 +91,9 @@ class FakeLiftSim:
         self.rng = rng or np.random.default_rng(0)
         self.grasp_z_window = grasp_z_window
         self.task = task
+        self.grasp_z_offset = (
+            LIFT_GRASP_Z_OFFSET if task == "Lift" else PLACEMENT_GRASP_Z_OFFSET
+        )
         self._receptacle_offset = _receptacle_offset_for(task)
         self.reset()
 
@@ -117,13 +123,14 @@ class FakeLiftSim:
             and gripper >= 0.9
             and abs(self.eef[0] - self.cube[0]) < 0.04
             and abs(self.eef[1] - self.cube[1]) < 0.04
-            and abs(self.eef[2] - (self.cube[2] + GRASP_Z_OFFSET)) < self.grasp_z_window
+            and abs(self.eef[2] - (self.cube[2] + self.grasp_z_offset))
+            < self.grasp_z_window
         ):
             self.grasped = True
         elif self.grasped and gripper <= -0.5:
             self.grasped = False
         if self.grasped:
-            self.cube = self.eef - np.array([0.0, 0.0, GRASP_Z_OFFSET])
+            self.cube = self.eef - np.array([0.0, 0.0, self.grasp_z_offset])
         self.t += 1
 
     @property

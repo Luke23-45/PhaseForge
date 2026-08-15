@@ -69,7 +69,8 @@ GRIPPER_CLOSE: float = 1.0
 #: Steps to hold the gripper closed before lifting.
 GRASP_HOLD_STEPS: int = 25
 
-#: Steps to hold the gripper open above the placement target before releasing.
+#: Steps to settle above the placement target while keeping the object held
+#: before releasing it.
 PLACE_HOLD_STEPS: int = 10
 
 #: If the end-effector makes no progress within this many steps while
@@ -316,21 +317,29 @@ class ScriptedController:
 
         if self._phase is _Phase.TRANSPORT and has_placement and placement is not None:
             assert placement is not None
+            # Move over the receptacle at the lifted height first. Descending
+            # toward the final placement point while crossing the bin wall
+            # can make the gripper collide with the receptacle and stall
+            # before reaching its xy target. The separate PLACE phase then
+            # performs the vertical descent and release.
+            transport_target = np.array(
+                [placement[0], placement[1], max(float(placement[2]), config.lift_z)],
+                dtype=np.float64,
+            )
             if (
                 abs(placement[0] - eef[0]) < config.position_scale
                 and abs(placement[1] - eef[1]) < config.position_scale
-                and abs(placement[2] - eef[2]) < config.position_scale
             ):
                 self._phase = _Phase.PLACE
                 self._place_started_at = t
             else:
-                return self._track(placement, GRIPPER_CLOSE, eef, t)
+                return self._track(transport_target, GRIPPER_CLOSE, eef, t)
 
         if self._phase is _Phase.PLACE and placement is not None:
             assert self._place_started_at is not None
             if t - self._place_started_at >= config.place_hold_steps:
-                return self._hold_action(GRIPPER_OPEN)
-            return self._track(placement, GRIPPER_OPEN, eef, t)
+                return self._track(placement, GRIPPER_OPEN, eef, t)
+            return self._track(placement, GRIPPER_CLOSE, eef, t)
 
         return self._hold_action(GRIPPER_OPEN)
 
