@@ -303,6 +303,64 @@ class TestClosedLoop:
         not_ready_state[9 + 7] = 0.24
         assert not ctrl._placement_release_ready(not_ready_state)
 
+    def test_square_reapproaches_after_native_grasp_is_lost(self) -> None:
+        """A dropped SquareNut must not be transported using a stale target."""
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class SquareNut:
+            contact_geoms = ["square_nut_geom"]
+
+        class DroppedSquareEnv:
+            nuts = [SquareNut()]
+            nut_id = 0
+            object_site_ids = [0]
+            peg1_body_id = 1
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {
+                            "site_xpos": np.array([[0.2, 0.3, 0.84]]),
+                            "body_xpos": np.array(
+                                [[0.0, 0.0, 0.0], [0.2, 0.3, 0.85]]
+                            ),
+                        },
+                    )(),
+                },
+            )()
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return False
+
+        ctrl = ScriptedSquareController(square_spec, env=DroppedSquareEnv())
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.0, 1.0]
+        state[9 + 7 : 9 + 10] = [0.1, 0.2, 0.83]
+        ctrl._phase = _Phase.LIFT
+        ctrl._placement_snapshot = np.array([99.0, 99.0, 99.0])
+
+        action = ctrl.act(state, t=37)
+
+        assert ctrl.phase_name == "APPROACH"
+        assert ctrl._placement_snapshot is None
+        assert ctrl._grasp_started_at is None
+        assert action[6] == GRIPPER_OPEN
+
     def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 

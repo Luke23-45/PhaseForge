@@ -748,7 +748,24 @@ class ScriptedSquareController(ScriptedController):
         controller's target and the environment's own success predicate.
         """
         if self._phase in (_Phase.LIFT, _Phase.TRANSPORT, _Phase.PLACE):
-            if self._native_grasp_status() is not False:
+            native_grasp = self._native_grasp_status()
+            if native_grasp is False:
+                # SquareNut contact is transient under robosuite OSC. The
+                # old controller kept executing the held-object trajectory
+                # after contact was lost, making PLACE chase a stale eef/body
+                # offset while the nut remained on the table. A state-oracle
+                # controller may use this same privileged contact guard as
+                # the initial grasp check; recover by returning to APPROACH
+                # and reacquiring the current handle.
+                self._phase = _Phase.APPROACH
+                self._approach_done = False
+                self._grasp_started_at = None
+                self._placement_snapshot = None
+                self._stall_since = None
+                self._last_target = None
+                self._last_target_distance = None
+                self._stalled_from_phase = None
+            else:
                 self._placement_snapshot = self.placement_target(state)
         return super().act(state, t)
 
