@@ -10,6 +10,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
     SQUARE_LIFT_ACTION_LIMIT,
+    SQUARE_LIFT_SETTLE_STEPS,
     ScriptedCanController,
     ScriptedControllerConfig,
     ScriptedLiftConfig,
@@ -371,6 +372,65 @@ class TestClosedLoop:
             gripper=1.0,
         )
         assert np.isclose(action[2], SQUARE_LIFT_ACTION_LIMIT)
+
+    def test_square_settles_before_first_lift_command(self) -> None:
+        """Square holds the confirmed grasp before applying upward motion."""
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class SquareNut:
+            contact_geoms = ["square_nut_geom"]
+
+        class HeldSquareEnv:
+            nuts = [SquareNut()]
+            nut_id = 0
+            object_site_ids = [0]
+            peg1_body_id = 1
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {
+                            "site_xpos": np.array([[0.2, 0.3, 0.84]]),
+                            "body_xpos": np.array(
+                                [[0.0, 0.0, 0.0], [0.2, 0.3, 0.85]]
+                            ),
+                        },
+                    )(),
+                },
+            )()
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return True
+
+        ctrl = ScriptedSquareController(square_spec, env=HeldSquareEnv())
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.0, 0.84]
+        state[9 + 7 : 9 + 10] = [0.0, 0.0, 0.83]
+        ctrl._phase = _Phase.GRASP
+        ctrl._grasp_started_at = 0
+
+        action = ctrl.act(state, t=ctrl.config.grasp_hold_steps)
+
+        assert ctrl.phase_name == "LIFT"
+        assert ctrl._square_lift_started_at == ctrl.config.grasp_hold_steps
+        assert action[6] == 1.0
+        assert np.isclose(action[2], 0.0)
+        assert SQUARE_LIFT_SETTLE_STEPS > 0
 
     def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec

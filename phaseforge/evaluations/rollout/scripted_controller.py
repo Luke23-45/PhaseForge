@@ -108,6 +108,9 @@ SQUARE_GRASP_HOLD_STEPS: int = 5
 # scale. Only Square's vertical lift command is limited; approach, transport,
 # and release keep the normal normalized action contract.
 SQUARE_LIFT_ACTION_LIMIT: float = 0.05
+# Give the thin nut a few simulator steps to settle under a closed gripper
+# before introducing any upward motion. Contact is rechecked on every step.
+SQUARE_LIFT_SETTLE_STEPS: int = 10
 
 
 class _Phase(Enum):
@@ -707,6 +710,10 @@ class ScriptedSquareController(ScriptedController):
             )
         super().__init__(state_spec, config=config, env=env)
 
+    def reset(self) -> None:
+        super().reset()
+        self._square_lift_started_at: int | None = None
+
     def grasp_pos(self, state: np.ndarray) -> np.ndarray:
         """Use NutAssembly's active handle site for approach and descent.
 
@@ -766,9 +773,20 @@ class ScriptedSquareController(ScriptedController):
                 self._last_target = None
                 self._last_target_distance = None
                 self._stalled_from_phase = None
+                self._square_lift_started_at = None
             else:
                 self._placement_snapshot = self.placement_target(state)
-        return super().act(state, t)
+        phase_before = self._phase
+        action = super().act(state, t)
+        if phase_before is _Phase.GRASP and self._phase is _Phase.LIFT:
+            self._square_lift_started_at = t
+        if (
+            self._phase is _Phase.LIFT
+            and self._square_lift_started_at is not None
+            and t - self._square_lift_started_at < SQUARE_LIFT_SETTLE_STEPS
+        ):
+            return self._hold_action(GRIPPER_CLOSE)
+        return action
 
     def _placement_release_ready(self, state: np.ndarray) -> bool:
         """Require the nut body to satisfy robosuite's placement geometry.
