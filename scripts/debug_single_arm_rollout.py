@@ -125,6 +125,47 @@ def _native_metrics(env: Any, controller: Any, state: np.ndarray) -> dict[str, A
             ).copy()
     except Exception as exc:  # noqa: BLE001 - diagnostics retain the cause
         metrics["nut_geometry_native_error"] = f"{type(exc).__name__}: {exc}"
+
+    # ToolHang-specific facts expose the complete geometry used by
+    # robosuite's success predicate: tool body, tool-hole center, hook line,
+    # frame assembly, and whether the released tool is still touching the
+    # gripper. This keeps a failed gate diagnosable from one trace.
+    try:
+        site_ids = getattr(env, "obj_site_id", {})
+        body_ids = getattr(env, "obj_body_id", {})
+        hole_pos: np.ndarray | None = None
+        if "tool" in body_ids and "tool_hole1_center" in site_ids:
+            tool_pos = np.asarray(
+                env.sim.data.body_xpos[int(body_ids["tool"])], dtype=np.float64
+            ).copy()
+            hole_pos = np.asarray(
+                env.sim.data.site_xpos[int(site_ids["tool_hole1_center"])],
+                dtype=np.float64,
+            ).copy()
+            metrics["tool_position_native"] = tool_pos
+            metrics["tool_hole_position_native"] = hole_pos
+            metrics["eef_to_tool_distance_native"] = float(
+                np.linalg.norm(controller.eef_pos(state) - tool_pos)
+            )
+            metrics["eef_to_tool_hole_distance_native"] = float(
+                np.linalg.norm(controller.eef_pos(state) - hole_pos)
+            )
+        if "frame_hang_site" in site_ids:
+            hook_pos = np.asarray(
+                env.sim.data.site_xpos[int(site_ids["frame_hang_site"])],
+                dtype=np.float64,
+            ).copy()
+            metrics["frame_hang_site_position_native"] = hook_pos
+            if hole_pos is not None:
+                metrics["tool_hole_to_hook_distance_native"] = float(
+                    np.linalg.norm(hole_pos - hook_pos)
+                )
+        if hasattr(env, "_check_frame_assembled"):
+            metrics["frame_assembled_native"] = bool(env._check_frame_assembled())
+        if hasattr(env, "_check_tool_on_frame"):
+            metrics["tool_on_frame_native"] = bool(env._check_tool_on_frame())
+    except Exception as exc:  # noqa: BLE001 - diagnostics retain the cause
+        metrics["tool_geometry_native_error"] = f"{type(exc).__name__}: {exc}"
     metrics["object_state"] = _jsonable(state)
     return metrics
 

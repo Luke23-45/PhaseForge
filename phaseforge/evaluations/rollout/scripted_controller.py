@@ -745,7 +745,7 @@ class ScriptedToolHangController(ScriptedController):
     # (7), so the tool absolute xyz is object[28 + 7 : 28 + 10].
     object_position_slice = (35, 38)
 
-    def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
+    def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         config = self.config
         if self.env is not None and hasattr(self.env, "obj_site_id"):
             site_id = int(self.env.obj_site_id["frame_hang_site"])
@@ -760,7 +760,13 @@ class ScriptedToolHangController(ScriptedController):
                 # Preserve the current tool orientation while transporting;
                 # this converts the hook target from hole position to tool
                 # body position without assuming a hard-coded tool offset.
-                return hook - (hole_pos - tool_pos)
+                tool_target = hook - (hole_pos - tool_pos)
+                # The base phase machine tracks the end-effector, whereas
+                # ToolHang's success predicate evaluates the tool hole. Keep
+                # the grasp-time eef-to-tool-body offset so the tool body is
+                # transported to the geometry-derived target.
+                eef_to_tool = self.eef_pos(state) - self.object_pos(state)
+                return tool_target + eef_to_tool
             # Move the tool hole to the hook line while keeping a small
             # clearance above it; the env's _check_success remains the only
             # success predicate. This is a geometry-aware oracle, not a

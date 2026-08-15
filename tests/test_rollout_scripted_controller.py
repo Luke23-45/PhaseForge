@@ -13,6 +13,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedLiftConfig,
     ScriptedLiftController,
     ScriptedSquareController,
+    ScriptedToolHangController,
     _Phase,
 )
 from tests.rollout_helpers import (
@@ -232,4 +233,47 @@ class TestClosedLoop:
         state[9 + 7 : 9 + 10] = [0.3, 0.4, 0.8]
         assert np.allclose(
             ctrl.placement_target(state), [0.0, 0.1, 0.96], atol=1e-6
+        )
+
+    def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        tool_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 44),
+        )
+
+        class ToolHangEnv:
+            obj_site_id = {"frame_hang_site": 0, "tool_hole1_center": 1}
+            obj_body_id = {"tool": 0}
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {
+                            "site_xpos": np.array(
+                                [[0.2, 0.3, 1.0], [0.1, 0.3, 0.9]]
+                            ),
+                            "body_xpos": np.array([[0.0, 0.3, 0.9]]),
+                        },
+                    )(),
+                },
+            )()
+
+        ctrl = ScriptedToolHangController(tool_spec, env=ToolHangEnv())
+        state = np.zeros(tool_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.2, 1.1]
+        state[9 + 35 : 9 + 38] = [0.0, 0.3, 0.9]
+        # Desired tool body target is hook - (hole - body) = (0.1, 0.3, 1.0);
+        # add the current eef-to-body offset (0, -0.1, 0.2).
+        assert np.allclose(
+            ctrl.placement_target(state), [0.1, 0.2, 1.2], atol=1e-6
         )
