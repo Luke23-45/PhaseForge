@@ -617,6 +617,9 @@ class ScriptedSquareController(ScriptedController):
 
     #: Absolute peg xy for the NutAssemblySquare task.
     PEG_XY: tuple[float, float] = (-0.12, -0.08)
+    #: The square nut center must sit slightly above the peg body. The
+    #: controller target is the eef center, so include the grasp offset below.
+    PEG_OBJECT_Z_OFFSET: float = 0.02
 
     object_key = "object"
     object_position_slice = (7, 10)
@@ -625,8 +628,14 @@ class ScriptedSquareController(ScriptedController):
         config = self.config
         if self.env is not None and hasattr(self.env, "peg1_body_id"):
             peg = self._env_body_pos(self.env, int(self.env.peg1_body_id))
-            return np.array([peg[0], peg[1], config.placement_z])
-        return np.array([self.PEG_XY[0], self.PEG_XY[1], config.placement_z])
+            object_z = peg[2] + self.PEG_OBJECT_Z_OFFSET
+            return np.array(
+                [peg[0], peg[1], object_z + config.descend_z_offset]
+            )
+        object_z = TABLE_HEIGHT + self.PEG_OBJECT_Z_OFFSET
+        return np.array(
+            [self.PEG_XY[0], self.PEG_XY[1], object_z + config.descend_z_offset]
+        )
 
     def is_success(self, state: np.ndarray) -> bool:
         """Leave the complete peg predicate to the simulator adapter."""

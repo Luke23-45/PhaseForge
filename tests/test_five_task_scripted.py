@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from phaseforge.evaluations.rollout.scripted_controller import (
+    TABLE_HEIGHT,
     ScriptedCanController,
     ScriptedController,
     ScriptedLiftController,
@@ -149,3 +150,13 @@ def test_placement_target_distinct_per_task() -> None:
         assert target is not None
         assert target.shape == (3,)
         assert target[2] > 0.0  # placement is above the table
+
+
+def test_square_target_places_nut_below_success_height() -> None:
+    controller = ScriptedSquareController(lift_state_spec())
+    target = controller.placement_target(np.zeros(19))
+    assert target is not None
+    expected_object_z = TABLE_HEIGHT + controller.PEG_OBJECT_Z_OFFSET
+    expected_eef_z = expected_object_z + controller.config.descend_z_offset
+    assert np.isclose(target[2], expected_eef_z)
+    assert expected_object_z < TABLE_HEIGHT + 0.05
