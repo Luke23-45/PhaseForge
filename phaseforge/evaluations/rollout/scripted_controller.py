@@ -149,7 +149,6 @@ class _TransportPhase(Enum):
     LID_CLEAR = auto()
     PAYLOAD_APPROACH = auto()
     PAYLOAD_DESCEND = auto()
-    PAYLOAD_CREEP = auto()
     PAYLOAD_GRASP = auto()
     PAYLOAD_LIFT = auto()
     TRANSPORT = auto()
@@ -1048,29 +1047,24 @@ class ScriptedTransportController(ScriptedController):
     #: the geometry fix does not establish contact on a specific reset.
     GRASP_CONFIRM_STEPS: int = 60
 
-    #: Payload descend altitude above the hammer body center.  ``payload_pos``
-    #: is the hammer's composite body center (mid-handle), and the hammer
-    #: settles in the bin at an unknown orientation (sampler yaw +/-30 deg
-    #: plus toppling after placement), so a fixed small descend offset (like
-    #: the trash cube's 1 cm) cannot guarantee both fingerpads contact the
-    #: hammer's thin (3 cm) handle.  Descend to a safe altitude, then creep
-    #: down step-by-step until a pad contacts the payload (see
-    #: :attr:`PAYLOAD_CREEP_STEP` / :attr:`PAYLOAD_CREEP_FLOOR`).
-    PAYLOAD_DESCEND_Z_OFFSET: float = 0.10
+    #: Payload descend target relative to the hammer body center.  The target
+    #: is set BELOW the body center so the OSC action saturates at -1 from
+    #: the end of PAYLOAD_APPROACH (~10 cm above), driving the eef into the
+    #: hammer at max speed.  When the eef contacts the hammer, the pads
+    #: physically touch (even with the gripper still open) and the OSC
+    #: keeps pushing -- the gripper then closes during PAYLOAD_GRASP and
+    #: ``_check_grasp`` succeeds because both pads are already in contact.
+    #: -0.02 is safely above the bin floor (~1-2 cm below body center) so
+    #: the eef cannot plunge through the floor if contact never happens.
+    PAYLOAD_DESCEND_Z_OFFSET: float = -0.02
 
-    #: Downward creep step per control step during PAYLOAD_CREEP (4 mm,
-    #: ~2x the OSC per-step resolution at the default 0.05 position scale).
-    PAYLOAD_CREEP_STEP: float = 0.004
-
-    #: Lowest altitude (relative to the hammer body center) the creep is
-    #: allowed to reach before declaring a failed payload grasp.  The hammer
-    #: bottom is ~1.5 cm below the body center when lying flat, so this is
-    #: well past it -- if no pad contact happened by then, the grasp failed.
-    PAYLOAD_CREEP_FLOOR: float = -0.03
-
-    #: Max steps the creep may run before declaring a failed payload grasp
-    #: (bounds a case where the eef is blocked above the payload).
-    PAYLOAD_CREEP_MAX_STEPS: int = 120
+    #: Safety bound for PAYLOAD_DESCEND.  With the saturated OSC action the
+    #: eef covers the ~13 cm descent in ~130 steps at the env's OSC speed;
+    #: 150 is a generous upper bound that still fires before the 700-step
+    #: horizon is consumed.  Without this bound, an unreachable target
+    #: (e.g., the eef xy drifts off the hammer) would leave the controller
+    #: stuck in DESCEND until the horizon expires.
+    PAYLOAD_DESCEND_HOLD_STEPS: int = 150
 
     object_key = "object"
 
@@ -1148,9 +1142,9 @@ class ScriptedTransportController(ScriptedController):
         """True if any gripper fingerpad of ``arm_index`` contacts the object.
 
         Unlike :meth:`_native_transport_grasp` (which needs both pads in a
-        closed pinch), this only needs a single pad contact.  Used by the
-        PAYLOAD_CREEP descent to find the hammer's surface regardless of the
-        orientation it settled in.
+        closed pinch), this only needs a single pad contact.  Used to
+        confirm the eef has reached the hammer during PAYLOAD_DESCEND,
+        regardless of which orientation the hammer settled in.
         """
         if self.env is None:
             return None
@@ -1161,7 +1155,17 @@ class ScriptedTransportController(ScriptedController):
             return None
         if arm_index >= len(robots) or object_name not in objects:
             return None
-        gripper = getattr(robots[arm_index], "gripper", None)
+        # ``robot.gripper`` is a dict {arm_name: GripperModel} in the
+        # opposed two-arm config; ``_native_transport_grasp`` happens to
+        # work because ``env._check_grasp`` accepts the dict directly, but
+        # ``check_contact`` needs a single GripperModel with ``important_geoms``.
+        gripper_mapping = getattr(robots[arm_index], "gripper", None)
+        if not isinstance(gripper_mapping, dict):
+            return None
+        arms = getattr(robots[arm_index], "arms", ())
+        gripper = gripper_mapping.get(arms[0]) if arms else None
+        if gripper is None:
+            gripper = next(iter(gripper_mapping.values()), None)
         important = getattr(gripper, "important_geoms", None)
         if (
             important is None
@@ -1285,41 +1289,25 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             if self._both_reached(targets, eef0, eef1):
                 self._transport_phase = _TransportPhase.PAYLOAD_DESCEND
+                self._transport_started_at = t
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.PAYLOAD_DESCEND:
+            assert self._transport_started_at is not None
             targets = (payload_descend, hold1)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance:
-                self._transport_phase = _TransportPhase.PAYLOAD_CREEP
-                self._transport_started_at = t
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
-
-        if self._transport_phase is _TransportPhase.PAYLOAD_CREEP:
-            assert self._transport_started_at is not None
-            creep_target = np.array(
-                [
-                    eef0[0],
-                    eef0[1],
-                    max(
-                        eef0[2] - self.PAYLOAD_CREEP_STEP,
-                        payload[2] + self.PAYLOAD_CREEP_FLOOR,
-                    ),
-                ],
-                dtype=np.float64,
+            steps_in_descend = t - self._transport_started_at
+            reached = (
+                np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance
             )
-            if self._transport_pad_contact(0, "payload"):
+            if (
+                reached
+                or self._transport_pad_contact(0, "payload")
+                or steps_in_descend >= self.PAYLOAD_DESCEND_HOLD_STEPS
+            ):
                 self._transport_phase = _TransportPhase.PAYLOAD_GRASP
                 self._transport_started_at = t
-            elif (
-                eef0[2] <= payload[2] + self.PAYLOAD_CREEP_FLOOR + 1e-6
-                or t - self._transport_started_at >= self.PAYLOAD_CREEP_MAX_STEPS
-            ):
-                self._stalled_from_phase = self._transport_phase.name
-                self._transport_phase = _TransportPhase.STALLED
-            return self._two_arm_action(
-                (creep_target, hold1), eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE)
-            )
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.PAYLOAD_GRASP:
             assert self._transport_started_at is not None

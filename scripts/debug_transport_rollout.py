@@ -133,7 +133,7 @@ def _native_grasps(controller: Any) -> dict[str, Any]:
 
 
 def _pad_contacts(controller: Any) -> dict[str, Any]:
-    """Fingerpad contact probes used by the payload creep descent."""
+    """Fingerpad contact probes used to confirm the payload descent reached the hammer."""
     probes: dict[str, Any] = {}
     for arm_index, object_name in ((0, "payload"), (0, "lid"), (1, "trash")):
         key = f"arm{arm_index}_pad_{object_name}"
@@ -185,13 +185,10 @@ def _phase_targets(
 
     payload_approach = payload + np.array([0.0, 0.0, config.approach_z_offset])
     payload_descend = payload + np.array([0.0, 0.0, controller.PAYLOAD_DESCEND_Z_OFFSET])
-    payload_creep_floor = payload + np.array([0.0, 0.0, controller.PAYLOAD_CREEP_FLOOR])
     if phase == "PAYLOAD_APPROACH":
         return payload_approach, eef1.copy()
     if phase == "PAYLOAD_DESCEND":
         return payload_descend, eef1.copy()
-    if phase == "PAYLOAD_CREEP":
-        return payload_creep_floor, eef1.copy()
     if phase == "PAYLOAD_GRASP":
         return eef0.copy(), eef1.copy()
 
