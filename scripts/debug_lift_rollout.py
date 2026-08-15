@@ -250,6 +250,17 @@ def _trace_case(
     ]
     record["native_grasp_observed"] = any(grasp_values)
     record["native_grasp_checks_available"] = bool(grasp_values)
+    verified_grasp_steps = [
+        step
+        for step in record["steps"]
+        if step["sim_metrics"].get("grasp_check") is True
+        and step["phase_after"] in {"GRASP", "LIFT"}
+        and step["gripper_action"] < 0.0
+    ]
+    record["verified_grasp_observed"] = bool(verified_grasp_steps)
+    record["first_verified_grasp_step"] = (
+        verified_grasp_steps[0]["t"] if verified_grasp_steps else None
+    )
     return _jsonable(record)
 
 
@@ -356,10 +367,19 @@ def main() -> None:
                         "descend_z_offset": offset,
                         "success": bool(trace["success"]),
                         "native_grasp_observed": bool(trace["native_grasp_observed"]),
+                        "verified_grasp_observed": bool(
+                            trace["verified_grasp_observed"]
+                        ),
                         "first_grasp_step": first_grasp,
+                        "first_verified_grasp_step": trace[
+                            "first_verified_grasp_step"
+                        ],
                         "final_phase": trace["final_phase"],
                         "final_cube_body_pos": final_step.get("sim_metrics", {}).get(
                             "cube_body_pos"
+                        ),
+                        "final_gripper_qpos_state": final_step.get(
+                            "gripper_qpos_state_after"
                         ),
                         "gripper_qpos_native_error": final_step.get(
                             "sim_metrics", {}
