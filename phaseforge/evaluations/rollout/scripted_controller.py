@@ -115,6 +115,10 @@ SQUARE_LIFT_SETTLE_STEPS: int = 10
 # dropped.  OSC contact can flicker while the gripper is settling; hold still
 # with the fingers closed for a short confirmation window before recovering.
 SQUARE_GRASP_LOSS_CONFIRM_STEPS: int = 5
+# Placement contact is more sensitive because the nut is colliding with the
+# peg. Allow one false native-contact sample, but do not freeze the placement
+# controller while waiting for confirmation.
+SQUARE_PLACE_GRASP_LOSS_CONFIRM_STEPS: int = 2
 # NutAssembly's reach term is ``1 - tanh(10 * distance) < 0.6``.  Keep the
 # same threshold when deciding whether the released nut is clear of the eef.
 SQUARE_SUCCESS_REACH_DISTANCE: float = float(np.arctanh(0.4) / 10.0)
@@ -856,13 +860,14 @@ class ScriptedSquareController(ScriptedController):
                 self._square_place_grasp_loss_streak += 1
                 if (
                     self._square_place_grasp_loss_streak
-                    < SQUARE_GRASP_LOSS_CONFIRM_STEPS
+                    >= SQUARE_PLACE_GRASP_LOSS_CONFIRM_STEPS
                 ):
-                    # Contact can flicker exactly as the nut reaches the peg.
-                    # Keep the placement target and gripper closed while the
-                    # simulator confirms whether the nut was actually lost.
-                    return self._hold_action(GRIPPER_CLOSE)
-                self._reset_square_grasp_recovery()
+                    # Contact can flicker exactly as the nut reaches the peg,
+                    # but persistent loss must recover promptly so the
+                    # remaining horizon is not consumed in PLACE. The first
+                    # false sample intentionally falls through to the normal
+                    # closed placement action.
+                    self._reset_square_grasp_recovery()
             else:
                 self._square_place_grasp_loss_streak = 0
         else:
