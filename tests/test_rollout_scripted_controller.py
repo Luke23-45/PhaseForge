@@ -12,6 +12,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedControllerConfig,
     ScriptedLiftConfig,
     ScriptedLiftController,
+    ScriptedSquareController,
     _Phase,
 )
 from tests.rollout_helpers import (
@@ -178,4 +179,34 @@ class TestClosedLoop:
                 return False
 
         ctrl = ScriptedCanController(can_spec, env=IndexedCanEnv())
+        assert ctrl._native_grasp_status() is False
+
+    def test_square_resolves_indexed_robosuite_nut_for_grasp_guard(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class SquareNut:
+            contact_geoms = ["square_nut_geom"]
+            name = "SquareNut"
+
+        class IndexedSquareEnv:
+            nuts = [SquareNut()]
+            nut_id = 0
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                assert object_geoms == ["square_nut_geom"]
+                return False
+
+        ctrl = ScriptedSquareController(square_spec, env=IndexedSquareEnv())
         assert ctrl._native_grasp_status() is False

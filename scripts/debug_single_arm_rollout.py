@@ -87,6 +87,34 @@ def _native_metrics(env: Any, controller: Any, state: np.ndarray) -> dict[str, A
         metrics["gripper_arm"] = arm
     except Exception as exc:  # noqa: BLE001 - diagnostics retain the cause
         metrics["gripper_qpos_native_error"] = f"{type(exc).__name__}: {exc}"
+
+    # NutAssembly-specific facts make Square failures distinguishable without
+    # rendering images: active nut pose, peg pose, native on_peg result, and
+    # robosuite's cached objects_on_pegs flag.
+    try:
+        nuts = getattr(env, "nuts", None)
+        nut_id = getattr(env, "nut_id", None)
+        body_ids = getattr(env, "obj_body_id", {})
+        if nuts is not None and nut_id is not None:
+            nut = nuts[int(nut_id)]
+            nut_pos = np.asarray(
+                env.sim.data.body_xpos[body_ids[nut.name]], dtype=np.float64
+            ).copy()
+            metrics["nut_id_native"] = int(nut_id)
+            metrics["nut_name_native"] = str(nut.name)
+            metrics["nut_position_native"] = nut_pos
+            metrics["eef_to_nut_distance_native"] = float(
+                np.linalg.norm(controller.eef_pos(state) - nut_pos)
+            )
+            peg_id = int(getattr(env, "peg1_body_id"))
+            peg_pos = np.asarray(env.sim.data.body_xpos[peg_id], dtype=np.float64).copy()
+            metrics["peg1_position_native"] = peg_pos
+            metrics["on_peg_native"] = bool(env.on_peg(nut_pos, int(nut_id)))
+            metrics["objects_on_pegs_native"] = np.asarray(
+                getattr(env, "objects_on_pegs", []), dtype=np.float64
+            ).copy()
+    except Exception as exc:  # noqa: BLE001 - diagnostics retain the cause
+        metrics["nut_geometry_native_error"] = f"{type(exc).__name__}: {exc}"
     metrics["object_state"] = _jsonable(state)
     return metrics
 

@@ -429,6 +429,17 @@ class ScriptedController:
             except (IndexError, KeyError, TypeError, ValueError):
                 pass
 
+        # NutAssembly stores the active Square / Round nut separately from
+        # PickPlace's ``objects`` list. Resolve the selected nut so the
+        # controller cannot advance on a timer while holding nothing.
+        nuts = getattr(self.env, "nuts", None)
+        nut_id = getattr(self.env, "nut_id", None)
+        if nuts is not None and nut_id is not None:
+            try:
+                candidates.append(nuts[int(nut_id)])
+            except (IndexError, KeyError, TypeError, ValueError):
+                pass
+
         for attr in ("can", "nut", "tool", "cube"):
             candidates.append(getattr(self.env, attr, None))
 
