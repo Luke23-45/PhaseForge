@@ -111,6 +111,13 @@ SQUARE_LIFT_ACTION_LIMIT: float = 0.05
 # Give the thin nut a few simulator steps to settle under a closed gripper
 # before introducing any upward motion. Contact is rechecked on every step.
 SQUARE_LIFT_SETTLE_STEPS: int = 10
+# A single false contact result is not enough evidence that the thin nut was
+# dropped.  OSC contact can flicker while the gripper is settling; hold still
+# with the fingers closed for a short confirmation window before recovering.
+SQUARE_GRASP_LOSS_CONFIRM_STEPS: int = 5
+# NutAssembly's reach term is ``1 - tanh(10 * distance) < 0.6``.  Keep the
+# same threshold when deciding whether the released nut is clear of the eef.
+SQUARE_SUCCESS_REACH_DISTANCE: float = float(np.arctanh(0.4) / 10.0)
 
 
 class _Phase(Enum):
@@ -714,6 +721,7 @@ class ScriptedSquareController(ScriptedController):
     def reset(self) -> None:
         super().reset()
         self._square_lift_started_at: int | None = None
+        self._square_grasp_loss_streak = 0
 
     def grasp_pos(self, state: np.ndarray) -> np.ndarray:
         """Use NutAssembly's active handle site for approach and descent.
@@ -756,30 +764,34 @@ class ScriptedSquareController(ScriptedController):
         oracle: the transition to release is still governed by the base
         controller's target and the environment's own success predicate.
         """
-        # In PLACE, native grasp=False is expected: the nut may already have
-        # been released. Only LIFT/TRANSPORT represent a still-held object;
-        # contact loss in those phases requires a fresh approach.
+        # During LIFT / TRANSPORT, debounce a false native contact result.
+        # NutAssembly's OSC contact can flicker while the nut is settling; an
+        # immediate reset moves the eef away and turns a recoverable contact
+        # blip into a real drop.  If the false result persists, recover by
+        # reacquiring the current handle instead of following a stale target.
         if self._phase in (_Phase.LIFT, _Phase.TRANSPORT):
             native_grasp = self._native_grasp_status()
             if native_grasp is False:
-                # SquareNut contact is transient under robosuite OSC. The
-                # old controller kept executing the held-object trajectory
-                # after contact was lost, making PLACE chase a stale eef/body
-                # offset while the nut remained on the table. A state-oracle
-                # controller may use this same privileged contact guard as
-                # the initial grasp check; recover by returning to APPROACH
-                # and reacquiring the current handle.
-                self._phase = _Phase.APPROACH
-                self._approach_done = False
-                self._grasp_started_at = None
-                self._placement_snapshot = None
-                self._stall_since = None
-                self._last_target = None
-                self._last_target_distance = None
-                self._stalled_from_phase = None
-                self._square_lift_started_at = None
+                self._square_grasp_loss_streak += 1
+                if self._square_grasp_loss_streak < SQUARE_GRASP_LOSS_CONFIRM_STEPS:
+                    return self._hold_action(GRIPPER_CLOSE)
+                self._reset_square_grasp_recovery()
             else:
+                self._square_grasp_loss_streak = 0
                 self._placement_snapshot = self.placement_target(state)
+        else:
+            self._square_grasp_loss_streak = 0
+
+        # Once in PLACE, a false contact is not an intentional release: the
+        # base controller has not opened the gripper yet.  If the nut is not
+        # already on the peg, reacquire it instead of holding closed forever
+        # at an unreachable placement target.  If the authoritative geometry
+        # says it is already placed, let the base controller open and retract.
+        if self._phase is _Phase.PLACE:
+            native_grasp = self._native_grasp_status()
+            if native_grasp is False and not self._placement_release_ready(state):
+                self._reset_square_grasp_recovery()
+
         phase_before = self._phase
         action = super().act(state, t)
         if phase_before is _Phase.GRASP and self._phase is _Phase.LIFT:
@@ -791,6 +803,19 @@ class ScriptedSquareController(ScriptedController):
         ):
             return self._hold_action(GRIPPER_CLOSE)
         return action
+
+    def _reset_square_grasp_recovery(self) -> None:
+        """Return to handle acquisition after a confirmed Square drop."""
+        self._phase = _Phase.APPROACH
+        self._approach_done = False
+        self._grasp_started_at = None
+        self._placement_snapshot = None
+        self._stall_since = None
+        self._last_target = None
+        self._last_target_distance = None
+        self._stalled_from_phase = None
+        self._square_lift_started_at = None
+        self._square_grasp_loss_streak = 0
 
     def _placement_release_ready(self, state: np.ndarray) -> bool:
         """Require the nut body to satisfy robosuite's placement geometry.
@@ -806,10 +831,29 @@ class ScriptedSquareController(ScriptedController):
         peg = self._env_body_pos(self.env, int(self.env.peg1_body_id))
         obj = self.object_pos(state)
         eef = self.eef_pos(state)
-        xy_error = float(np.linalg.norm(obj[:2] - peg[:2]))
-        below_peg = float(obj[2]) < float(peg[2]) + 0.015
-        clear_of_gripper = float(np.linalg.norm(eef - obj)) > 0.045
-        return xy_error <= 0.025 and below_peg and clear_of_gripper
+        nut_id = int(getattr(self.env, "nut_id", 0))
+
+        # Use robosuite's own NutAssembly geometry when available.  Its
+        # on_peg predicate is the publication-facing task success contract;
+        # duplicating it with a peg-relative z threshold was stricter and
+        # caused the controller to wait forever after the simulator accepted
+        # a valid placement.
+        on_peg = getattr(self.env, "on_peg", None)
+        if callable(on_peg):
+            on_peg_result = bool(on_peg(obj, nut_id))
+        else:
+            table_offset = np.asarray(
+                getattr(self.env, "table_offset", [0.0, 0.0, float(peg[2]) - 0.03]),
+                dtype=np.float64,
+            )
+            on_peg_result = bool(
+                np.all(np.abs(obj[:2] - peg[:2]) < 0.03)
+                and obj[2] < table_offset[2] + 0.05
+            )
+        clear_of_gripper = (
+            float(np.linalg.norm(eef - obj)) > SQUARE_SUCCESS_REACH_DISTANCE
+        )
+        return on_peg_result and clear_of_gripper
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         config = self.config

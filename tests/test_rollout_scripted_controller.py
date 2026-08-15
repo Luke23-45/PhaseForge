@@ -9,6 +9,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     GRIPPER_OPEN,
     LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
+    SQUARE_GRASP_LOSS_CONFIRM_STEPS,
     SQUARE_LIFT_ACTION_LIMIT,
     SQUARE_LIFT_SETTLE_STEPS,
     ScriptedCanController,
@@ -305,8 +306,8 @@ class TestClosedLoop:
         not_ready_state[9 + 7] = 0.24
         assert not ctrl._placement_release_ready(not_ready_state)
 
-    def test_square_reapproaches_after_native_grasp_is_lost(self) -> None:
-        """A dropped SquareNut must not be transported using a stale target."""
+    def test_square_debounces_transient_native_grasp_loss(self) -> None:
+        """A one-step contact flicker must not trigger a re-approach."""
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 
         square_spec = StateSpec(
@@ -357,6 +358,122 @@ class TestClosedLoop:
         ctrl._placement_snapshot = np.array([99.0, 99.0, 99.0])
 
         action = ctrl.act(state, t=37)
+
+        assert ctrl.phase_name == "LIFT"
+        assert action[6] == 1.0
+
+    def test_square_reapproaches_after_confirmed_native_grasp_loss(self) -> None:
+        """A persistent drop must not transport using a stale target."""
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class SquareNut:
+            contact_geoms = ["square_nut_geom"]
+
+        class DroppedSquareEnv:
+            nuts = [SquareNut()]
+            nut_id = 0
+            object_site_ids = [0]
+            peg1_body_id = 1
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {
+                            "site_xpos": np.array([[0.2, 0.3, 0.84]]),
+                            "body_xpos": np.array(
+                                [[0.0, 0.0, 0.0], [0.2, 0.3, 0.85]]
+                            ),
+                        },
+                    )(),
+                },
+            )()
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return False
+
+        ctrl = ScriptedSquareController(square_spec, env=DroppedSquareEnv())
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.0, 1.0]
+        state[9 + 7 : 9 + 10] = [0.1, 0.2, 0.83]
+        ctrl._phase = _Phase.LIFT
+        ctrl._placement_snapshot = np.array([99.0, 99.0, 99.0])
+
+        for t in range(SQUARE_GRASP_LOSS_CONFIRM_STEPS):
+            action = ctrl.act(state, t=37 + t)
+
+        assert ctrl.phase_name == "APPROACH"
+        assert ctrl._placement_snapshot is None
+        assert ctrl._grasp_started_at is None
+        assert action[6] == GRIPPER_OPEN
+
+    def test_square_reapproaches_if_contact_is_lost_during_place(self) -> None:
+        """A lost pre-release contact must be recovered, not held forever."""
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class SquareNut:
+            contact_geoms = ["square_nut_geom"]
+
+        class ReleasedSquareEnv:
+            nuts = [SquareNut()]
+            nut_id = 0
+            object_site_ids = [0]
+            peg1_body_id = 1
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {
+                            "site_xpos": np.array([[0.2, 0.3, 0.84]]),
+                            "body_xpos": np.array(
+                                [[0.0, 0.0, 0.0], [0.2, 0.3, 0.85]]
+                            ),
+                        },
+                    )(),
+                },
+            )()
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return False
+
+        ctrl = ScriptedSquareController(square_spec, env=ReleasedSquareEnv())
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.0, 1.0]
+        state[9 + 7 : 9 + 10] = [0.1, 0.2, 0.83]
+        ctrl._phase = _Phase.PLACE
+        ctrl._place_started_at = 0
+        ctrl._placement_snapshot = np.array([0.2, 0.3, 0.86])
+
+        action = ctrl.act(state, t=10)
 
         assert ctrl.phase_name == "APPROACH"
         assert ctrl._placement_snapshot is None
@@ -431,62 +548,6 @@ class TestClosedLoop:
         assert action[6] == 1.0
         assert np.isclose(action[2], 0.0)
         assert SQUARE_LIFT_SETTLE_STEPS > 0
-
-    def test_square_does_not_regrasp_during_place(self) -> None:
-        """Loss of contact during placement is a release, not a drop recovery."""
-        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
-
-        square_spec = StateSpec(
-            keys=(
-                "robot0_eef_pos",
-                "robot0_eef_quat",
-                "robot0_gripper_qpos",
-                "object",
-            ),
-            dims=(3, 4, 2, 14),
-        )
-
-        class SquareNut:
-            contact_geoms = ["square_nut_geom"]
-
-        class ReleasedSquareEnv:
-            nuts = [SquareNut()]
-            nut_id = 0
-            object_site_ids = [0]
-            peg1_body_id = 1
-            sim = type(
-                "Sim",
-                (),
-                {
-                    "data": type(
-                        "Data",
-                        (),
-                        {
-                            "site_xpos": np.array([[0.2, 0.3, 0.84]]),
-                            "body_xpos": np.array(
-                                [[0.0, 0.0, 0.0], [0.2, 0.3, 0.85]]
-                            ),
-                        },
-                    )(),
-                },
-            )()
-            robots = [type("Robot", (), {"gripper": object()})()]
-
-            @staticmethod
-            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
-                return False
-
-        ctrl = ScriptedSquareController(square_spec, env=ReleasedSquareEnv())
-        state = np.zeros(square_spec.dim, dtype=np.float32)
-        state[0:3] = [0.0, 0.0, 1.0]
-        state[9 + 7 : 9 + 10] = [0.1, 0.2, 0.83]
-        ctrl._phase = _Phase.PLACE
-        ctrl._place_started_at = 0
-        ctrl._placement_snapshot = np.array([0.2, 0.3, 0.86])
-
-        ctrl.act(state, t=10)
-
-        assert ctrl.phase_name == "PLACE"
 
     def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
