@@ -724,6 +724,24 @@ class ScriptedSquareController(ScriptedController):
             )
         return action
 
+    def act(self, state: np.ndarray, t: int) -> np.ndarray:
+        """Track the nut body to the peg while the nut is held.
+
+        The nut is grasped at its handle, while robosuite's placement
+        predicate evaluates the nut root-body position.  A single
+        grasp-time ``eef - body`` offset is not invariant under the small
+        rotations introduced by OSC contact dynamics.  Once the controller
+        has verified the grasp, refresh the end-effector target from the
+        current low-dimensional body state before each held LIFT / TRANSPORT
+        / PLACE step.  This is closed-loop state feedback, not a success
+        oracle: the transition to release is still governed by the base
+        controller's target and the environment's own success predicate.
+        """
+        if self._phase in (_Phase.LIFT, _Phase.TRANSPORT, _Phase.PLACE):
+            if self._native_grasp_status() is not False:
+                self._placement_snapshot = self.placement_target(state)
+        return super().act(state, t)
+
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         config = self.config
         if self.env is not None and hasattr(self.env, "peg1_body_id"):

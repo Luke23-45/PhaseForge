@@ -237,6 +237,63 @@ class TestClosedLoop:
             ctrl.placement_target(state), [0.0, 0.1, 0.96], atol=1e-6
         )
 
+    def test_square_refreshes_held_placement_from_current_body_offset(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class SquareNut:
+            contact_geoms = ["square_nut_geom"]
+            name = "SquareNut"
+
+        class HeldSquareEnv:
+            nuts = [SquareNut()]
+            nut_id = 0
+            object_site_ids = [0]
+            peg1_body_id = 1
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {
+                            "site_xpos": np.array([[0.2, 0.3, 0.4]]),
+                            "body_xpos": np.array(
+                                [[0.0, 0.0, 0.0], [0.2, 0.3, 0.85]]
+                            ),
+                        },
+                    )(),
+                },
+            )()
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return True
+
+        ctrl = ScriptedSquareController(square_spec, env=HeldSquareEnv())
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.2, 1.1]
+        state[9 + 7 : 9 + 10] = [0.1, 0.2, 0.9]
+        ctrl._phase = _Phase.TRANSPORT
+        ctrl._placement_snapshot = np.array([99.0, 99.0, 99.0])
+
+        ctrl.act(state, t=0)
+
+        # Peg target [0.2, 0.3, 0.86] plus the current eef-to-body offset
+        # [-0.1, 0.0, 0.2].
+        assert np.allclose(ctrl._placement_snapshot, [0.1, 0.3, 1.06])
+
     def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 
