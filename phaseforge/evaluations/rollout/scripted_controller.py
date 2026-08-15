@@ -98,6 +98,9 @@ LIFT_GRASP_Z_OFFSET: float = 0.01
 # SquareNut is grasped around its handle / center plane. A positive offset
 # places the Panda eef above the thin nut and misses native contact.
 SQUARE_GRASP_Z_OFFSET: float = 0.0
+# SquareNut contact is transient under the default OSC settling dynamics;
+# validate it promptly before the thin nut slips from the closed gripper.
+SQUARE_GRASP_HOLD_STEPS: int = 5
 
 
 class _Phase(Enum):
@@ -646,7 +649,10 @@ class ScriptedSquareController(ScriptedController):
         env: Any | None = None,
     ) -> None:
         if config is None:
-            config = ScriptedControllerConfig(descend_z_offset=SQUARE_GRASP_Z_OFFSET)
+            config = ScriptedControllerConfig(
+                descend_z_offset=SQUARE_GRASP_Z_OFFSET,
+                grasp_hold_steps=SQUARE_GRASP_HOLD_STEPS,
+            )
         super().__init__(state_spec, config=config, env=env)
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
