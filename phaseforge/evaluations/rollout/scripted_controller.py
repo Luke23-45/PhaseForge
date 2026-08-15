@@ -83,7 +83,7 @@ STALL_PROGRESS: float = 1e-4
 
 #: Default placement target height (relative to the table) for tasks that
 #: transport an object to a separate receptacle.
-DEFAULT_PLACEMENT_Z: float = 0.95
+DEFAULT_PLACEMENT_Z: float = 1.15
 
 
 class _Phase(Enum):
@@ -103,15 +103,15 @@ class ScriptedControllerConfig:
     position_scale: float = POSITION_SCALE
     orientation_scale: float = ORIENTATION_SCALE
     success_z: float = SUCCESS_Z
-    descend_z_offset: float = 0.02
-    approach_z_offset: float = 0.12
-    lift_z: float = 0.95
+    descend_z_offset: float = 0.18
+    approach_z_offset: float = 0.28
+    lift_z: float = 1.15
     placement_z: float = DEFAULT_PLACEMENT_Z
     grasp_hold_steps: int = GRASP_HOLD_STEPS
     place_hold_steps: int = PLACE_HOLD_STEPS
     stall_steps: int = STALL_STEPS
     stall_progress: float = STALL_PROGRESS
-    position_tolerance: float = 0.025
+    position_tolerance: float = 0.03
 
 
 class ScriptedController:
@@ -591,7 +591,10 @@ class ScriptedTransportController(ScriptedController):
         # The first two phases align both grippers with their objects. The
         # objects are absolute positions in the published object vector.
         if self._transport_phase is _Phase.APPROACH:
-            targets = (payload + np.array([0.0, 0.0, 0.12]), trash + np.array([0.0, 0.0, 0.12]))
+            targets = (
+                payload + np.array([0.0, 0.0, self.config.approach_z_offset]),
+                trash + np.array([0.0, 0.0, self.config.approach_z_offset]),
+            )
             if (
                 max(
                     np.linalg.norm(targets[0] - eef0),
@@ -603,7 +606,10 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
 
         if self._transport_phase is _Phase.DESCEND:
-            targets = (payload + np.array([0.0, 0.0, 0.04]), trash + np.array([0.0, 0.0, 0.04]))
+            targets = (
+                payload + np.array([0.0, 0.0, self.config.descend_z_offset]),
+                trash + np.array([0.0, 0.0, self.config.descend_z_offset]),
+            )
             if (
                 max(
                     np.linalg.norm(targets[0] - eef0),
@@ -622,13 +628,16 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action((eef0, eef1), eef0, eef1, GRIPPER_CLOSE)
 
         if self._transport_phase is _Phase.LIFT:
-            z = max(float(target_bin[2]), float(trash_bin[2])) + 0.18
+            z = max(float(target_bin[2]), float(trash_bin[2])) + self.config.lift_z - TABLE_HEIGHT
             targets = (np.array([payload[0], payload[1], z]), np.array([trash[0], trash[1], z]))
             if min(eef0[2], eef1[2]) >= z - self.config.position_scale:
                 self._transport_phase = _Phase.TRANSPORT
             return self._two_arm_action(targets, eef0, eef1, GRIPPER_CLOSE)
 
-        targets = (target_bin + np.array([0.0, 0.0, 0.08]), trash_bin + np.array([0.0, 0.0, 0.08]))
+        targets = (
+            target_bin + np.array([0.0, 0.0, self.config.descend_z_offset + 0.02]),
+            trash_bin + np.array([0.0, 0.0, self.config.descend_z_offset + 0.02]),
+        )
         if self._transport_phase is _Phase.TRANSPORT:
             if (
                 max(

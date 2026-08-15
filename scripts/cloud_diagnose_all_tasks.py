@@ -37,7 +37,6 @@ from hydra import compose, initialize
 from phaseforge.evaluations.envs.env_metadata import PinnedEnvMetadata
 from phaseforge.evaluations.envs.robosuite_adapter import RobosuiteStateAdapter, StateSpec
 from phaseforge.evaluations.envs.task_registry import TASK_REGISTRY
-from phaseforge.evaluations.rollout.reset_bank import generate_reset_bank, load_reset_bank
 from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedCanController,
     ScriptedControllerConfig,
@@ -46,7 +45,6 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedToolHangController,
     ScriptedTransportController,
 )
-from phaseforge.utils.config import output_base_dir
 
 TASK_CONTROLLERS = {
     "lift": ScriptedLiftController,
@@ -71,7 +69,7 @@ def inspect_dataset_demos(hdf5_path: Path) -> dict[str, Any]:
         data = f["data"]
         demo_keys = sorted(data.keys())
         stats["demos"] = len(demo_keys)
-        sample_keys = demo_keys[:min(5, len(demo_keys))]
+        sample_keys = demo_keys[: min(5, len(demo_keys))]
 
         grasps = []
         for k in sample_keys:
@@ -115,9 +113,9 @@ def run_task_diagnostics(
     verbose: bool = True,
 ) -> dict[str, Any]:
     """Run full physical telemetry trace for a single task."""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"DIAGNOSING TASK: {task_name.upper()}")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     with initialize(version_base="1.3", config_path="../phaseforge/config"):
         cfg = compose(config_name="main", overrides=[f"data={task_name}", "eval=rollout"])
@@ -142,18 +140,39 @@ def run_task_diagnostics(
         print("Using dev fallback metadata (no local HDF5 found)")
 
     adapter = RobosuiteStateAdapter(meta, state_spec, action_dim=cfg.data.action_dim)
-    base = output_base_dir(cfg)
-    bank_dir = base / "_reset_banks"
-    banks = list(bank_dir.glob("*.json")) if bank_dir.exists() else []
+    try:
+        from phaseforge.evaluations.rollout.runner import load_or_generate_bank
 
-    if banks:
-        bank = load_reset_bank(banks[0])
-    else:
-        print(f"Generating reset bank with {num_cases} cases...")
-        bank = generate_reset_bank(adapter, num_cases=num_cases, seed=42)
+        bank = load_or_generate_bank(cfg, meta)
+    except Exception as exc:
+        print(f"Standard bank loading fallback ({exc}) — sampling fresh resets from adapter...")
+        from phaseforge.evaluations.rollout.reset_bank import ResetCase
+
+        cases = []
+        for i in range(num_cases):
+            adapter.env.reset()
+            st = np.asarray(adapter.env.sim.get_state().flatten(), dtype=np.float32)
+            cases.append(ResetCase(index=i, states=st))
+
+        class _SimpleBank:
+            def __init__(self, c: list[ResetCase]) -> None:
+                self.cases = c
+
+        bank = _SimpleBank(cases)
 
     controller_cls = TASK_CONTROLLERS[task_name]
-    config = ScriptedControllerConfig()
+    recommended_dz = float(demo_stats.get("median_dz_grasp", 0.18))
+    config = ScriptedControllerConfig(
+        descend_z_offset=recommended_dz,
+        approach_z_offset=recommended_dz + 0.10,
+        lift_z=recommended_dz + 0.97,
+        position_tolerance=0.03,
+    )
+    print(
+        f"Controller Config: descend_z_offset={config.descend_z_offset:.4f} m, "
+        f"approach_z_offset={config.approach_z_offset:.4f} m, "
+        f"lift_z={config.lift_z:.4f} m"
+    )
 
     test_cases = bank.cases[:num_cases]
     case_results = []
@@ -162,9 +181,7 @@ def run_task_diagnostics(
     eef_s, eef_e = state_spec.index_of("robot0_eef_pos")
     obj_s, obj_e = state_spec.index_of("object")
     grip_s, grip_e = (
-        state_spec.index_of("robot0_gripper_qpos")
-        if "robot0_gripper_qpos" in keys
-        else (0, 0)
+        state_spec.index_of("robot0_gripper_qpos") if "robot0_gripper_qpos" in keys else (0, 0)
     )
 
     for case_idx, case in enumerate(test_cases):
@@ -196,7 +213,7 @@ def run_task_diagnostics(
                 if verbose and case_idx == 0:
                     print(
                         f"  [t={t:3d}] Phase: {str(last_phase):10s} -> {phase:10s}  "
-                        f"eef_z={eef[2]:.4f}  obj_z={obj[2] if len(obj)>2 else 0:.4f}  "
+                        f"eef_z={eef[2]:.4f}  obj_z={obj[2] if len(obj) > 2 else 0:.4f}  "
                         f"act_grip={action[6]:+.1f}"
                     )
                 last_phase = phase
@@ -227,12 +244,11 @@ def run_task_diagnostics(
         }
         case_results.append(c_res)
         print(
-            f"Case {case_idx:2d}: {status:18s} "
-            f"(steps={final_t:3d}, final_phase={ctrl.phase_name})"
+            f"Case {case_idx:2d}: {status:18s} (steps={final_t:3d}, final_phase={ctrl.phase_name})"
         )
 
     rate = successes / len(test_cases)
-    print(f"\nTask {task_name.upper()} Rate: {successes}/{len(test_cases)} ({rate*100:.1f}%)")
+    print(f"\nTask {task_name.upper()} Rate: {successes}/{len(test_cases)} ({rate * 100:.1f}%)")
     adapter.close()
 
     return {
@@ -268,9 +284,7 @@ def main() -> None:
     args = parser.parse_args()
 
     tasks_to_run = (
-        ["lift", "can", "square", "tool_hang", "transport"]
-        if args.task == "all"
-        else [args.task]
+        ["lift", "can", "square", "tool_hang", "transport"] if args.task == "all" else [args.task]
     )
 
     all_results = {}
@@ -287,9 +301,9 @@ def main() -> None:
     with open(out_path, "w") as f:
         json.dump(all_results, f, indent=2)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("FINAL CLOUD DIAGNOSTIC SUMMARY")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     for t_name, r in all_results.items():
         if "error" in r:
             print(f"  {t_name:12s} : ERROR ({r['error']})")

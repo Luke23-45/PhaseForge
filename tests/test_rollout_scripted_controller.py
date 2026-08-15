@@ -30,13 +30,13 @@ class TestPhases:
         ctrl = _controller()
         state = state_from_parts(np.array([0.05, 0.05, 0.87]), np.array([-0.1, 0.02, 0.8]))
         action = ctrl.act(state, t=0)
-        # target = cube + (0,0,0.12) = (-0.1, 0.02, 0.92); delta positive in z
+        # target = cube + (0,0,0.28) = (-0.1, 0.02, 1.08); delta positive in z
         assert _eef_of(action)[2] > 0
         assert action[6] == 1.0
 
     def test_descend_target(self) -> None:
         ctrl = _controller()
-        state = state_from_parts(np.array([-0.1, 0.02, 0.92]), np.array([-0.1, 0.02, 0.8]))
+        state = state_from_parts(np.array([-0.1, 0.02, 1.08]), np.array([-0.1, 0.02, 0.8]))
         action = ctrl.act(state, t=0)
         assert _eef_of(action)[2] < 0
 

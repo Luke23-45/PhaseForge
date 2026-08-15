@@ -27,12 +27,10 @@ from hydra import compose, initialize
 
 from phaseforge.evaluations.envs.env_metadata import PinnedEnvMetadata
 from phaseforge.evaluations.envs.robosuite_adapter import RobosuiteStateAdapter, StateSpec
-from phaseforge.evaluations.rollout.reset_bank import generate_reset_bank, load_reset_bank
 from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedControllerConfig,
     ScriptedLiftController,
 )
-from phaseforge.utils.config import output_base_dir
 
 
 def inspect_hdf5_grasps(hdf5_path: Path) -> dict[str, float]:
@@ -82,8 +80,8 @@ def inspect_hdf5_grasps(hdf5_path: Path) -> dict[str, float]:
         mean_dz = float(np.mean(dz_at_grasp))
         median_dz = float(np.median(dz_at_grasp))
         print(f"\n---> Dataset grasp stats over {len(dz_at_grasp)} demos:")
-        print(f"     Mean (eef_z - cube_z):   {mean_dz:+.4f} m ({mean_dz*100:+.2f} cm)")
-        print(f"     Median (eef_z - cube_z): {median_dz:+.4f} m ({median_dz*100:+.2f} cm)")
+        print(f"     Mean (eef_z - cube_z):   {mean_dz:+.4f} m ({mean_dz * 100:+.2f} cm)")
+        print(f"     Median (eef_z - cube_z): {median_dz:+.4f} m ({median_dz * 100:+.2f} cm)")
         min_eef, max_eef = min(eef_z_at_grasp), max(eef_z_at_grasp)
         min_cube, max_cube = min(cube_z_at_grasp), max(cube_z_at_grasp)
         print(f"     Min/Max eef_z:           [{min_eef:.4f}, {max_eef:.4f}]")
@@ -144,14 +142,11 @@ def test_parameter_sweep(
             rate = successes / len(test_cases)
             print(
                 f"  descend_z_offset={dz_offset:+.4f} m, pos_tol={pos_tol:.3f} m  --> "
-                f"Solved: {successes:2d}/{len(test_cases)} ({rate*100:5.1f}%) "
+                f"Solved: {successes:2d}/{len(test_cases)} ({rate * 100:5.1f}%) "
                 f"{'FAIL: ' + str(timeout_phases) if rate < 1.0 else '[PASS]'}"
             )
             if rate == 1.0:
-                print(
-                    f"\n>>> OPTIMAL: descend_z_offset={dz_offset}, "
-                    f"position_tolerance={pos_tol}"
-                )
+                print(f"\n>>> OPTIMAL: descend_z_offset={dz_offset}, position_tolerance={pos_tol}")
                 break
         if rate == 1.0:
             break
@@ -178,13 +173,25 @@ def main() -> None:
     meta = PinnedEnvMetadata.from_hdf5(hdf5_path)
     adapter = RobosuiteStateAdapter(meta, state_spec, action_dim=cfg.data.action_dim)
 
-    base = output_base_dir(cfg)
-    bank_dir = base / "_reset_banks"
-    banks = list(bank_dir.glob("*.json"))
-    if banks:
-        bank = load_reset_bank(banks[0])
-    else:
-        bank = generate_reset_bank(adapter, num_cases=10, seed=42)
+    try:
+        from phaseforge.evaluations.rollout.runner import load_or_generate_bank
+
+        bank = load_or_generate_bank(cfg, meta)
+    except Exception as exc:
+        print(f"Bank fallback ({exc}) — sampling fresh resets from adapter...")
+        from phaseforge.evaluations.rollout.reset_bank import ResetCase
+
+        cases = []
+        for i in range(10):
+            adapter.env.reset()
+            st = np.asarray(adapter.env.sim.get_state().flatten(), dtype=np.float32)
+            cases.append(ResetCase(index=i, states=st))
+
+        class _SimpleBank:
+            def __init__(self, c: list[ResetCase]) -> None:
+                self.cases = c
+
+        bank = _SimpleBank(cases)
 
     test_parameter_sweep(adapter, bank, state_spec, recommended_dz)
     adapter.close()
