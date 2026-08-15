@@ -108,6 +108,26 @@ def _native_metrics(env: Any, controller: Any, state: np.ndarray) -> dict[str, A
             metrics["eef_to_nut_distance_native"] = float(
                 np.linalg.norm(controller.eef_pos(state) - nut_pos)
             )
+            if hasattr(controller, "_square_yaw_error"):
+                metrics["square_controller_yaw_error"] = float(
+                    controller._square_yaw_error
+                )
+                try:
+                    eef_quat_start, eef_quat_end = controller.state_spec.index_of(
+                        "robot0_eef_quat"
+                    )
+                    object_start, object_end = controller.state_spec.index_of("object")
+                    eef_quat = state[eef_quat_start:eef_quat_end]
+                    object_vec = state[object_start:object_end]
+                    if object_vec.shape[0] >= 14:
+                        metrics["square_eef_yaw"] = float(
+                            controller._yaw_from_xyzw(eef_quat)
+                        )
+                        metrics["square_object_yaw"] = float(
+                            controller._yaw_from_xyzw(object_vec[10:14])
+                        )
+                except (AttributeError, TypeError, ValueError):
+                    pass
             site_ids = getattr(env, "object_site_ids", None)
             if site_ids is not None:
                 handle_pos = np.asarray(

@@ -490,6 +490,32 @@ class TestClosedLoop:
         )
         assert np.isclose(action[2], SQUARE_LIFT_ACTION_LIMIT)
 
+    def test_square_aligns_gripper_yaw_to_rotated_nut(self) -> None:
+        """A rotated SquareNut must not be approached with zero yaw action."""
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        square_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+        ctrl = ScriptedSquareController(square_spec)
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        state[0:3] = [0.0, 0.0, 1.0]
+        state[3:7] = [0.0, 0.0, 0.0, 1.0]
+        state[9 + 7 : 9 + 10] = [0.2, 0.2, 0.83]
+        yaw = 1.0
+        state[9 + 10 : 9 + 14] = [0.0, 0.0, np.sin(yaw / 2), np.cos(yaw / 2)]
+
+        action = ctrl.act(state, t=0)
+
+        assert abs(action[5]) > 0.1
+        assert np.all(np.abs(action) <= 1.0 + 1e-6)
+
     def test_square_settles_before_first_lift_command(self) -> None:
         """Square holds the confirmed grasp before applying upward motion."""
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec

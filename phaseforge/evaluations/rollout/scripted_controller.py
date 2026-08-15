@@ -118,6 +118,10 @@ SQUARE_GRASP_LOSS_CONFIRM_STEPS: int = 5
 # NutAssembly's reach term is ``1 - tanh(10 * distance) < 0.6``.  Keep the
 # same threshold when deciding whether the released nut is clear of the eef.
 SQUARE_SUCCESS_REACH_DISTANCE: float = float(np.arctanh(0.4) / 10.0)
+# SquareNut's handle is fixed along the object's local +x axis.  The Panda
+# gripper is symmetric under a pi yaw flip, so align to the nearest equivalent
+# object yaw rather than commanding an unnecessarily long rotation.
+SQUARE_YAW_ALIGNMENT_TOLERANCE: float = 0.03
 
 
 class _Phase(Enum):
@@ -717,11 +721,55 @@ class ScriptedSquareController(ScriptedController):
                 grasp_hold_steps=SQUARE_GRASP_HOLD_STEPS,
             )
         super().__init__(state_spec, config=config, env=env)
+        self.eef_quat_start, self.eef_quat_end = state_spec.index_of(
+            "robot0_eef_quat"
+        )
 
     def reset(self) -> None:
         super().reset()
         self._square_lift_started_at: int | None = None
         self._square_grasp_loss_streak = 0
+        self._square_yaw_error = 0.0
+
+    @staticmethod
+    def _yaw_from_xyzw(quat: np.ndarray) -> float:
+        """Return global yaw for robosuite's ``xyzw`` quaternion layout."""
+        quat = np.asarray(quat, dtype=np.float64)
+        norm = float(np.linalg.norm(quat))
+        if norm <= 1e-12:
+            return 0.0
+        x, y, z, w = quat / norm
+        return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
+    def _update_yaw_error(self, state: np.ndarray) -> None:
+        """Compute the shortest symmetric yaw correction for the gripper."""
+        eef_quat = np.asarray(state[self.eef_quat_start : self.eef_quat_end])
+        obj = np.asarray(state[self.obj_start : self.obj_end])
+        # robomimic's Square object observation is relative pose (7) followed
+        # by absolute pose (7); the absolute quaternion is obj[10:14].
+        if eef_quat.shape != (4,) or obj.shape[0] < 14:
+            self._square_yaw_error = 0.0
+            return
+        eef_yaw = self._yaw_from_xyzw(eef_quat)
+        object_yaw = self._yaw_from_xyzw(obj[10:14])
+        error = object_yaw - eef_yaw
+        # The fingers are unchanged by a pi flip. Wrap into [-pi/2, pi/2).
+        self._square_yaw_error = float((error + np.pi / 2.0) % np.pi - np.pi / 2.0)
+
+    def _hold_action(self, gripper: float) -> np.ndarray:
+        """Close / open while preserving the required handle yaw."""
+        action = super()._hold_action(gripper)
+        if (
+            self._phase
+            in (_Phase.APPROACH, _Phase.DESCEND, _Phase.GRASP, _Phase.LIFT, _Phase.TRANSPORT)
+            and abs(self._square_yaw_error) > SQUARE_YAW_ALIGNMENT_TOLERANCE
+        ):
+            action[5] = np.clip(
+                self._square_yaw_error / self.config.orientation_scale,
+                -1.0,
+                1.0,
+            )
+        return action
 
     def grasp_pos(self, state: np.ndarray) -> np.ndarray:
         """Use NutAssembly's active handle site for approach and descent.
@@ -745,6 +793,16 @@ class ScriptedSquareController(ScriptedController):
         self, delta: np.ndarray, gripper: float
     ) -> np.ndarray:
         action = super()._normalized_action(delta, gripper)
+        if (
+            self._phase
+            in (_Phase.APPROACH, _Phase.DESCEND, _Phase.GRASP, _Phase.LIFT, _Phase.TRANSPORT)
+            and abs(self._square_yaw_error) > SQUARE_YAW_ALIGNMENT_TOLERANCE
+        ):
+            action[5] = np.clip(
+                self._square_yaw_error / self.config.orientation_scale,
+                -1.0,
+                1.0,
+            )
         if self._phase is _Phase.LIFT:
             action[2] = np.clip(
                 action[2], -SQUARE_LIFT_ACTION_LIMIT, SQUARE_LIFT_ACTION_LIMIT
@@ -764,6 +822,7 @@ class ScriptedSquareController(ScriptedController):
         oracle: the transition to release is still governed by the base
         controller's target and the environment's own success predicate.
         """
+        self._update_yaw_error(state)
         # During LIFT / TRANSPORT, debounce a false native contact result.
         # NutAssembly's OSC contact can flicker while the nut is settling; an
         # immediate reset moves the eef away and turns a recoverable contact
