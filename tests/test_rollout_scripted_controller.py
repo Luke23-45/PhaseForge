@@ -9,6 +9,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     GRIPPER_OPEN,
     LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
+    SQUARE_LIFT_ACTION_LIMIT,
     ScriptedCanController,
     ScriptedControllerConfig,
     ScriptedLiftConfig,
@@ -360,6 +361,16 @@ class TestClosedLoop:
         assert ctrl._placement_snapshot is None
         assert ctrl._grasp_started_at is None
         assert action[6] == GRIPPER_OPEN
+
+    def test_square_lift_uses_small_vertical_increment(self) -> None:
+        """Square's thin nut receives a bounded first lift command."""
+        ctrl = ScriptedSquareController(lift_state_spec())
+        ctrl._phase = _Phase.LIFT
+        action = ctrl._normalized_action(
+            np.array([0.0, 0.0, 1.0]),
+            gripper=1.0,
+        )
+        assert np.isclose(action[2], SQUARE_LIFT_ACTION_LIMIT)
 
     def test_tool_hang_placement_preserves_eef_to_tool_offset(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec

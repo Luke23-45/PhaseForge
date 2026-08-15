@@ -100,13 +100,14 @@ LIFT_GRASP_Z_OFFSET: float = 0.01
 # SquareNut is grasped around its handle / center plane. A positive offset
 # places the Panda eef above the thin nut and misses native contact.
 SQUARE_GRASP_Z_OFFSET: float = 0.0
-# SquareNut contact is transient under the default OSC settling dynamics;
-# validate it promptly before the thin nut slips from the closed gripper.
+# SquareNut contact is transient under the OSC settling dynamics. Hold long
+# enough to confirm contact, then use a small vertical increment so the thin
+# nut is not pulled out of the gripper on the first lift step.
 SQUARE_GRASP_HOLD_STEPS: int = 5
-# A full OSC lift delta pulls the thin nut out of transient contact. Limit
-# only Square's vertical lift command; approach, transport, and release keep
-# the normal normalized action contract.
-SQUARE_LIFT_ACTION_LIMIT: float = 0.2
+# 0.05 corresponds to a nominal 2.5 mm OSC delta with the pinned position
+# scale. Only Square's vertical lift command is limited; approach, transport,
+# and release keep the normal normalized action contract.
+SQUARE_LIFT_ACTION_LIMIT: float = 0.05
 
 
 class _Phase(Enum):
