@@ -409,9 +409,14 @@ def main() -> None:
         max_steps = int(
             adapter.horizon if args.max_steps is None else args.max_steps
         )
-        if max_steps <= 0 or max_steps > adapter.horizon:
+        # The bank may be pinned to a shorter horizon than the protocol default
+        # (Transport: protocol=700, some banks=500). Allow the user to run the
+        # full protocol horizon regardless of the bank pin, since the adapter
+        # does not enforce an internal step limit (``done`` is always False).
+        protocol_horizon = TaskSpec.from_protocol(bank.task).horizon
+        if max_steps <= 0 or max_steps > protocol_horizon:
             raise ValueError(
-                f"--max-steps must be in 1..{adapter.horizon}, got {max_steps}"
+                f"--max-steps must be in 1..{protocol_horizon}, got {max_steps}"
             )
 
         print(
