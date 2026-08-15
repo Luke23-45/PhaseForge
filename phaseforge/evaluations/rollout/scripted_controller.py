@@ -28,7 +28,7 @@ with policy behavior and these explicitly pinned position offsets.
 
 Phase progression for tasks with a placement phase (Can, Square, ToolHang):
 
-    APPROACH -> DESCEND -> GRASP_HOLD -> LIFT -> TRANSPORT -> PLACE
+    APPROACH -> DESCEND -> GRASP_HOLD -> LIFT -> TRANSPORT -> PLACE -> RETRACT
 
 Phase progression for tasks without placement (Lift):
 
@@ -104,6 +104,7 @@ class _Phase(Enum):
     LIFT = auto()
     TRANSPORT = auto()
     PLACE = auto()
+    RETRACT = auto()
     STALLED = auto()
 
 
@@ -338,8 +339,34 @@ class ScriptedController:
         if self._phase is _Phase.PLACE and placement is not None:
             assert self._place_started_at is not None
             if t - self._place_started_at >= config.place_hold_steps:
-                return self._track(placement, GRIPPER_OPEN, eef, t)
+                self._phase = _Phase.RETRACT
+                retract_target = np.array(
+                    [
+                        placement[0],
+                        placement[1],
+                        max(
+                            float(placement[2]) + 0.10,
+                            config.lift_z + config.approach_z_offset,
+                        ),
+                    ],
+                    dtype=np.float64,
+                )
+                return self._track(retract_target, GRIPPER_OPEN, eef, t)
             return self._track(placement, GRIPPER_CLOSE, eef, t)
+
+        if self._phase is _Phase.RETRACT and placement is not None:
+            retract_target = np.array(
+                [
+                    placement[0],
+                    placement[1],
+                    max(
+                        float(placement[2]) + 0.10,
+                        config.lift_z + config.approach_z_offset,
+                    ),
+                ],
+                dtype=np.float64,
+            )
+            return self._track(retract_target, GRIPPER_OPEN, eef, t)
 
         return self._hold_action(GRIPPER_OPEN)
 
