@@ -72,39 +72,39 @@
   "offset_sweep": [
     {
       "descend_z_offset": 0.0,
-      "success": false,
+      "success": true,
       "native_grasp_observed": true,
-      "verified_grasp_observed": false,
-      "first_grasp_step": 20,
-      "first_verified_grasp_step": null,
-      "final_phase": "DESCEND",
+      "verified_grasp_observed": true,
+      "first_grasp_step": 28,
+      "first_verified_grasp_step": 28,
+      "final_phase": "LIFT",
       "final_cube_body_pos": [
-        0.004425349546738064,
-        0.018189085168077875,
-        0.8214968072704812
+        0.0081251004046335,
+        0.022674156700209773,
+        0.8472203166736518
       ],
       "final_gripper_qpos_state": [
-        0.0007768852519802749,
-        -0.00022266965243034065
+        0.024850958958268166,
+        -0.02517806738615036
       ],
       "gripper_qpos_native_error": null
     },
     {
       "descend_z_offset": 0.01,
-      "success": false,
+      "success": true,
       "native_grasp_observed": true,
-      "verified_grasp_observed": false,
-      "first_grasp_step": 21,
-      "first_verified_grasp_step": null,
-      "final_phase": "DESCEND",
+      "verified_grasp_observed": true,
+      "first_grasp_step": 27,
+      "first_verified_grasp_step": 27,
+      "final_phase": "LIFT",
       "final_cube_body_pos": [
-        0.01926337522203256,
-        0.02343198739863362,
-        0.8152777546318505
+        0.008112646091253384,
+        0.0226829715939495,
+        0.8472640282734556
       ],
       "final_gripper_qpos_state": [
-        0.0006325131980702281,
-        -0.00036705483216792345
+        0.024183906614780426,
+        -0.02375614084303379
       ],
       "gripper_qpos_native_error": null
     },
@@ -117,13 +117,13 @@
       "first_verified_grasp_step": null,
       "final_phase": "GRASP",
       "final_cube_body_pos": [
-        0.010910261552964238,
-        0.022723255267213326,
-        0.8213409342284295
+        0.01303179719605437,
+        0.021862396885653897,
+        0.8204196872056907
       ],
       "final_gripper_qpos_state": [
-        0.039994437247514725,
-        -0.040000177919864655
+        0.0004978454089723527,
+        -0.000501746719237417
       ],
       "gripper_qpos_native_error": null
     },
@@ -138,11 +138,11 @@
       "final_cube_body_pos": [
         0.010954649187624454,
         0.02276298962533474,
-        0.8206464650154666
+        0.8200663003575975
       ],
       "final_gripper_qpos_state": [
-        0.03999850153923035,
-        -0.03999968618154526
+        0.0005009702290408313,
+        -0.0004985887208022177
       ],
       "gripper_qpos_native_error": null
     },
@@ -157,11 +157,11 @@
       "final_cube_body_pos": [
         0.010954649187624454,
         0.02276298962533474,
-        0.8214792782481264
+        0.8203181428695815
       ],
       "final_gripper_qpos_state": [
-        0.03999779745936394,
-        -0.04000005125999451
+        0.000497164495754987,
+        -0.0005024161073379219
       ],
       "gripper_qpos_native_error": null
     },
@@ -176,11 +176,11 @@
       "final_cube_body_pos": [
         0.010954649187624454,
         0.02276298962533474,
-        0.820329239136969
+        0.820563068910626
       ],
       "final_gripper_qpos_state": [
-        0.03999587893486023,
-        -0.040000125765800476
+        0.0004948321147821844,
+        -0.0005047970917075872
       ],
       "gripper_qpos_native_error": null
     },
@@ -195,11 +195,11 @@
       "final_cube_body_pos": [
         0.010954649187624454,
         0.02276298962533474,
-        0.8202339152957658
+        0.8207003157696073
       ],
       "final_gripper_qpos_state": [
-        0.03999859467148781,
-        -0.039999742060899734
+        0.0004950882284902036,
+        -0.0005044923746027052
       ],
       "gripper_qpos_native_error": null
     }
