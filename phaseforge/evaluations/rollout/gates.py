@@ -45,6 +45,7 @@ from phaseforge.evaluations.envs.task_registry import (
     is_known_task,
 )
 from phaseforge.evaluations.rollout.reset_bank import ResetBank
+from phaseforge.evaluations.rollout.scripted_controller import ScriptedControllerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +349,7 @@ def gate_scripted_controller(
     state_spec: StateSpec,
     *,
     threshold: float = 1.0,
+    controller_config: ScriptedControllerConfig | None = None,
 ) -> GateResult:
     """The training-free controller must solve the frozen bank at
     ``threshold`` (default: all cases). Failures are task outcomes only.
@@ -377,7 +379,11 @@ def gate_scripted_controller(
         # The oracle may read pinned simulator geometry (target-bin, peg,
         # hook, and transport-bin poses) but never images. Learned policies
         # remain restricted to the declared low-dimensional state vector.
-        controller = controller_cls(state_spec, env=getattr(adapter, "env", None))
+        controller = controller_cls(
+            state_spec,
+            env=getattr(adapter, "env", None),
+            config=controller_config,
+        )
         try:
             state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
         except Exception as exc:  # noqa: BLE001
@@ -648,6 +654,18 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
             bank = load_or_generate_bank(cfg, meta)
 
         gates = cfg.eval.get("gates", {})
+        scripted_offset = gates.get("scripted_descend_z_offset")
+        scripted_config = None
+        if scripted_offset is not None:
+            scripted_offset = float(scripted_offset)
+            if not np.isfinite(scripted_offset) or scripted_offset < 0.0:
+                raise ValueError(
+                    "eval.gates.scripted_descend_z_offset must be a finite "
+                    "non-negative number"
+                )
+            scripted_config = ScriptedControllerConfig(
+                descend_z_offset=scripted_offset
+            )
         results = [
             gate_env_schema(
                 adapter,
@@ -670,6 +688,7 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
                 bank,
                 spec,
                 threshold=float(gates.get("scripted_threshold", 1.0)),
+                controller_config=scripted_config,
             ),
             gate_random_noop_sanity(
                 adapter,

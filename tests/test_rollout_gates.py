@@ -150,6 +150,20 @@ class TestScriptedController:
         assert result.status == "FAIL"
         assert result.metrics["infra_failures"] > 0
 
+    def test_accepts_explicit_scripted_geometry_override(self) -> None:
+        from phaseforge.evaluations.rollout.scripted_controller import (
+            ScriptedControllerConfig,
+        )
+
+        result = gate_scripted_controller(
+            FakeAdapter(horizon=500),  # type: ignore[arg-type]
+            make_bank(3),
+            lift_state_spec(),
+            threshold=1.0,
+            controller_config=ScriptedControllerConfig(descend_z_offset=0.04),
+        )
+        assert result.status == "PASS", result.detail
+
 
 class TestRandomNoop:
     def test_no_successes_no_infra(self) -> None:

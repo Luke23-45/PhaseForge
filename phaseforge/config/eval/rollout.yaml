@@ -49,6 +49,10 @@ gates:
   # end-to-end validation). The scripted controller class is dispatched
   # on bank.task via the task registry.
   scripted_threshold: 1.0
+  # Optional geometry probe override for Gate 4. null uses the controller's
+  # pinned production default. Set this only for a deliberate bank-wide
+  # validation sweep, e.g. scripted_descend_z_offset=0.01.
+  scripted_descend_z_offset: null
   # Gate 5 sanity sweep (no-op + random), subsampled for speed.
   random_sanity_episodes: 20
   random_sanity_horizon: 200
