@@ -101,6 +101,10 @@ SQUARE_GRASP_Z_OFFSET: float = 0.0
 # SquareNut contact is transient under the default OSC settling dynamics;
 # validate it promptly before the thin nut slips from the closed gripper.
 SQUARE_GRASP_HOLD_STEPS: int = 5
+# A full OSC lift delta pulls the thin nut out of transient contact. Limit
+# only Square's vertical lift command; approach, transport, and release keep
+# the normal normalized action contract.
+SQUARE_LIFT_ACTION_LIMIT: float = 0.2
 
 
 class _Phase(Enum):
@@ -654,6 +658,16 @@ class ScriptedSquareController(ScriptedController):
                 grasp_hold_steps=SQUARE_GRASP_HOLD_STEPS,
             )
         super().__init__(state_spec, config=config, env=env)
+
+    def _normalized_action(
+        self, delta: np.ndarray, gripper: float
+    ) -> np.ndarray:
+        action = super()._normalized_action(delta, gripper)
+        if self._phase is _Phase.LIFT:
+            action[2] = np.clip(
+                action[2], -SQUARE_LIFT_ACTION_LIMIT, SQUARE_LIFT_ACTION_LIMIT
+            )
+        return action
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
