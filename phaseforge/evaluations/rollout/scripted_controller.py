@@ -12,7 +12,8 @@ normalized OSC delta actions exactly like the dataset's:
 0.5, 0.5)`` (Panda default, matched by the robomimic action_scale
 contract). Subclasses override three hooks:
 
-* ``object_pos(state)`` -- 3D point to approach and grasp.
+* ``grasp_pos(state)`` -- 3D point to approach and grasp (by default the
+  manipulated object's state-vector position).
 * ``placement_target(state)`` -- 3D point to release above. ``None`` means
   the task has no separate placement phase (e.g. Lift only needs to lift).
 * ``is_success(state)`` -- environment's success predicate (mirrored from
@@ -139,7 +140,8 @@ class ScriptedControllerConfig:
 class ScriptedController:
     """Base phase-machine controller emitting normalized OSC delta actions.
 
-    Subclasses override :meth:`object_pos`, :meth:`placement_target`, and
+    Subclasses override :meth:`object_pos`, :meth:`grasp_pos`,
+    :meth:`placement_target`, and
     :meth:`is_success` to specialize for a specific task. Tasks that do
     not require a separate placement step (Lift) leave
     :meth:`placement_target` returning ``None``; the phase machine then
@@ -233,6 +235,15 @@ class ScriptedController:
         # during ingestion and therefore cannot silently take this path.
         return obj[:3].copy()
 
+    def grasp_pos(self, state: np.ndarray) -> np.ndarray:
+        """World-space point used for the approach and grasp descent.
+
+        Most tasks grasp near the manipulated object's state-vector position.
+        Tasks with an explicit simulator handle site can override this hook
+        without changing the state-only policy interface.
+        """
+        return self.object_pos(state)
+
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         """3D target above the receptacle; ``None`` if no placement phase.
 
@@ -258,7 +269,7 @@ class ScriptedController:
         """Return a normalized action ``(7,)`` for step ``t`` of an episode."""
         config = self.config
         eef = self.eef_pos(state)
-        obj = self.object_pos(state)
+        grasp = self.grasp_pos(state)
         placement = self._placement_target()
         has_placement = placement is not None
 
@@ -271,7 +282,7 @@ class ScriptedController:
             )
 
         if self._phase is _Phase.APPROACH and not self._approach_done:
-            target = obj + np.array([0.0, 0.0, config.approach_z_offset])
+            target = grasp + np.array([0.0, 0.0, config.approach_z_offset])
             if np.linalg.norm(target - eef) < config.position_tolerance:
                 self._approach_done = True
                 self._phase = _Phase.DESCEND
@@ -279,7 +290,7 @@ class ScriptedController:
                 return self._track(target, GRIPPER_OPEN, eef, t)
 
         if self._phase is _Phase.DESCEND:
-            target = obj + np.array([0.0, 0.0, config.descend_z_offset])
+            target = grasp + np.array([0.0, 0.0, config.descend_z_offset])
             xy_dist = float(np.linalg.norm(target[:2] - eef[:2]))
             dist_3d = float(np.linalg.norm(target - eef))
             vertical_dist = abs(float(eef[2] - target[2]))
@@ -658,6 +669,24 @@ class ScriptedSquareController(ScriptedController):
                 grasp_hold_steps=SQUARE_GRASP_HOLD_STEPS,
             )
         super().__init__(state_spec, config=config, env=env)
+
+    def grasp_pos(self, state: np.ndarray) -> np.ndarray:
+        """Use NutAssembly's active handle site for approach and descent.
+
+        The SquareNut state position is its body/reference position, while
+        robosuite's grasp geometry is the handle site. The site is resolved
+        from the pinned environment at rollout time; the learned policy
+        remains strictly state-only.
+        """
+        if self.env is not None:
+            site_ids = getattr(self.env, "object_site_ids", None)
+            nut_id = getattr(self.env, "nut_id", None)
+            if site_ids is not None and nut_id is not None:
+                try:
+                    return self._env_site_pos(self.env, int(site_ids[int(nut_id)]))
+                except (IndexError, KeyError, TypeError, ValueError):
+                    pass
+        return self.object_pos(state)
 
     def _normalized_action(
         self, delta: np.ndarray, gripper: float

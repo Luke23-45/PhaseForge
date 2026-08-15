@@ -201,6 +201,18 @@ class TestClosedLoop:
         class IndexedSquareEnv:
             nuts = [SquareNut()]
             nut_id = 0
+            object_site_ids = [0]
+            sim = type(
+                "Sim",
+                (),
+                {
+                    "data": type(
+                        "Data",
+                        (),
+                        {"site_xpos": np.array([[0.2, 0.3, 0.4]])},
+                    )(),
+                },
+            )()
             robots = [type("Robot", (), {"gripper": object()})()]
 
             @staticmethod
@@ -210,3 +222,5 @@ class TestClosedLoop:
 
         ctrl = ScriptedSquareController(square_spec, env=IndexedSquareEnv())
         assert ctrl._native_grasp_status() is False
+        state = np.zeros(square_spec.dim, dtype=np.float32)
+        assert np.allclose(ctrl.grasp_pos(state), [0.2, 0.3, 0.4])
