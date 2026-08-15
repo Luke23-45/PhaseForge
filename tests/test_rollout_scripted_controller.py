@@ -6,6 +6,7 @@ import numpy as np
 
 from phaseforge.evaluations.rollout.scripted_controller import (
     GRASP_HOLD_STEPS,
+    GRIPPER_OPEN,
     LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
     ScriptedCanController,
@@ -14,6 +15,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedLiftController,
     ScriptedSquareController,
     ScriptedToolHangController,
+    ScriptedTransportController,
     _Phase,
 )
 from tests.rollout_helpers import (
@@ -277,3 +279,35 @@ class TestClosedLoop:
         assert np.allclose(
             ctrl.placement_target(state), [0.1, 0.2, 1.2], atol=1e-6
         )
+
+    def test_transport_uses_full_two_arm_state_and_action_contract(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        transport_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "robot1_eef_pos",
+                "robot1_eef_quat",
+                "robot1_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 3, 4, 2, 41),
+        )
+        ctrl = ScriptedTransportController(transport_spec)
+        state = np.zeros(transport_spec.dim, dtype=np.float32)
+        object_start, _ = transport_spec.index_of("object")
+        state[object_start : object_start + 3] = [0.1, -0.2, 0.82]
+        state[object_start + 7 : object_start + 10] = [0.2, 0.2, 0.82]
+        state[object_start + 14 : object_start + 17] = [0.1, -0.2, 0.95]
+        state[object_start + 21 : object_start + 24] = [-0.2, 0.2, 0.8]
+        state[object_start + 24 : object_start + 27] = [0.2, 0.3, 0.8]
+
+        action = ctrl.act(state, 0)
+        assert action.shape == (14,)
+        assert np.all(np.isfinite(action))
+        assert np.all(np.abs(action) <= 1.0)
+        assert action[6] == GRIPPER_OPEN
+        assert action[13] == GRIPPER_OPEN
+        assert ctrl.phase_name == "LID_APPROACH"

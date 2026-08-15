@@ -120,6 +120,23 @@ class _Phase(Enum):
     STALLED = auto()
 
 
+class _TransportPhase(Enum):
+    """Privileged oracle phases for the two-arm Transport task."""
+
+    LID_APPROACH = auto()
+    LID_DESCEND = auto()
+    LID_GRASP = auto()
+    LID_LIFT = auto()
+    LID_CLEAR = auto()
+    PAYLOAD_APPROACH = auto()
+    PAYLOAD_DESCEND = auto()
+    PAYLOAD_GRASP = auto()
+    PAYLOAD_LIFT = auto()
+    TRANSPORT = auto()
+    PLACE = auto()
+    DONE = auto()
+
+
 @dataclass(frozen=True)
 class ScriptedControllerConfig:
     """Tunables for the scripted controllers (defaults = validated values)."""
@@ -780,24 +797,25 @@ class ScriptedToolHangController(ScriptedController):
 
 
 class ScriptedTransportController(ScriptedController):
-    """Coordinated state oracle for the TwoArmTransport task.
+    """State-oracle controller for robosuite's two-arm Transport task.
 
-    Transport uses two Panda arms and the full state-only dataset has a
-    59-dimensional observation and 14-dimensional action. This controller
-    The 41-dimensional transport object state exposes payload/trash and both
-    target-bin positions. The controller moves the payload with robot0 and
-    removes trash with robot1, then releases both objects in their respective
-    bins. It uses no images and the adapter still decides success via the
-    environment's own ``_check_success`` predicate.
+    The real task is ordered: remove the start-bin lid, pick the payload,
+    remove the trash, and release both objects in their target bins. The
+    controller uses only the declared low-dimensional state for target
+    positions; simulator geometry is used only for the privileged grasp
+    guard in this training-free gate oracle.
     """
 
-    #: Absolute bin xy for the single-arm Transport approximation.
     BIN_XY: tuple[float, float] = (-0.18, 0.12)
+    LID_CLEAR_OFFSET = np.array([-0.22, 0.0, 0.05], dtype=np.float64)
+    BIN_OBJECT_Z_OFFSET: float = 0.02
+
+    object_key = "object"
 
     def __init__(self, state_spec: StateSpec, **kwargs) -> None:
         super().__init__(state_spec, **kwargs)
         if not self._two_arm:
-            return  # retained for the legacy single-arm kinematic unit fake
+            return
         if self.obj_end - self.obj_start != 41:
             raise ValueError(
                 "Transport oracle requires the registered 41-dimensional "
@@ -807,115 +825,217 @@ class ScriptedTransportController(ScriptedController):
 
     def reset(self) -> None:
         super().reset()
-        self._transport_phase = _Phase.APPROACH
+        self._transport_phase = _TransportPhase.LID_APPROACH
         self._transport_started_at: int | None = None
+        self._lid_clear_target: np.ndarray | None = None
+        self._payload_eef_offset: np.ndarray | None = None
+        self._trash_eef_offset: np.ndarray | None = None
+        self._place_targets: tuple[np.ndarray, np.ndarray] | None = None
+
+    @property
+    def phase_name(self) -> str:
+        """Expose the two-arm phase in gate reports and diagnostics."""
+        if self._two_arm:
+            return self._transport_phase.name
+        return super().phase_name
 
     def _transport_values(
         self, state: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         obj = np.asarray(state[self.obj_start : self.obj_end], dtype=np.float64)
-        return obj[0:3], obj[7:10], obj[21:24], obj[24:27]
+        return obj[0:3], obj[7:10], obj[14:17], obj[21:24], obj[24:27]
 
-    def _transport_action(
+    def _eef1_pos(self, state: np.ndarray) -> np.ndarray:
+        return np.asarray(state[self.eef1_start : self.eef1_end], dtype=np.float64)
+
+    def _both_reached(
         self,
-        state: np.ndarray,
-        t: int,
-    ) -> np.ndarray:
-        payload, trash, target_bin, trash_bin = self._transport_values(state)
-        eef0 = self.eef_pos(state)
-        eef1 = np.asarray(state[self.eef1_start : self.eef1_end], dtype=np.float64)
-        payload_done = bool(state[self.obj_start + 27] > 0.5)
-        trash_done = bool(state[self.obj_start + 28] > 0.5)
-        if payload_done and trash_done:
-            return self._hold_action(GRIPPER_OPEN)
+        targets: tuple[np.ndarray, np.ndarray],
+        eef0: np.ndarray,
+        eef1: np.ndarray,
+        tolerance: float | None = None,
+    ) -> bool:
+        tol = self.config.position_tolerance if tolerance is None else tolerance
+        return max(
+            np.linalg.norm(targets[0] - eef0),
+            np.linalg.norm(targets[1] - eef1),
+        ) <= tol
 
-        # The first two phases align both grippers with their objects. The
-        # objects are absolute positions in the published object vector.
-        if self._transport_phase is _Phase.APPROACH:
-            targets = (
-                payload + np.array([0.0, 0.0, self.config.approach_z_offset]),
-                trash + np.array([0.0, 0.0, self.config.approach_z_offset]),
-            )
-            if (
-                max(
-                    np.linalg.norm(targets[0] - eef0),
-                    np.linalg.norm(targets[1] - eef1),
-                )
-                < self.config.position_tolerance
-            ):
-                self._transport_phase = _Phase.DESCEND
-            return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
-
-        if self._transport_phase is _Phase.DESCEND:
-            targets = (
-                payload + np.array([0.0, 0.0, self.config.descend_z_offset]),
-                trash + np.array([0.0, 0.0, self.config.descend_z_offset]),
-            )
-            if (
-                max(
-                    np.linalg.norm(targets[0] - eef0),
-                    np.linalg.norm(targets[1] - eef1),
-                )
-                < self.config.position_tolerance
-            ):
-                self._transport_phase = _Phase.GRASP
-                self._transport_started_at = t
-            return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
-
-        if self._transport_phase is _Phase.GRASP:
-            assert self._transport_started_at is not None
-            if t - self._transport_started_at >= self.config.grasp_hold_steps:
-                self._transport_phase = _Phase.LIFT
-            return self._two_arm_action((eef0, eef1), eef0, eef1, GRIPPER_CLOSE)
-
-        if self._transport_phase is _Phase.LIFT:
-            z = max(float(target_bin[2]), float(trash_bin[2])) + self.config.lift_z - TABLE_HEIGHT
-            targets = (np.array([payload[0], payload[1], z]), np.array([trash[0], trash[1], z]))
-            if min(eef0[2], eef1[2]) >= z - self.config.position_scale:
-                self._transport_phase = _Phase.TRANSPORT
-            return self._two_arm_action(targets, eef0, eef1, GRIPPER_CLOSE)
-
-        targets = (
-            target_bin + np.array([0.0, 0.0, self.config.descend_z_offset + 0.02]),
-            trash_bin + np.array([0.0, 0.0, self.config.descend_z_offset + 0.02]),
-        )
-        if self._transport_phase is _Phase.TRANSPORT:
-            if (
-                max(
-                    np.linalg.norm(targets[0] - eef0),
-                    np.linalg.norm(targets[1] - eef1),
-                )
-                < self.config.position_scale
-            ):
-                self._transport_phase = _Phase.PLACE
-                self._transport_started_at = t
-            return self._two_arm_action(targets, eef0, eef1, GRIPPER_CLOSE)
-        assert self._transport_phase is _Phase.PLACE
-        assert self._transport_started_at is not None
-        if t - self._transport_started_at >= self.config.place_hold_steps:
-            return self._hold_action(GRIPPER_OPEN)
-        return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
+    def _native_transport_grasp(self, arm_index: int, object_name: str) -> bool | None:
+        """Use robosuite's native contact predicate for a real grasp."""
+        if self.env is None:
+            return None
+        checker = getattr(self.env, "_check_grasp", None)
+        robots = getattr(self.env, "robots", None)
+        objects = getattr(getattr(self.env, "transport", None), "objects", None)
+        if not callable(checker) or robots is None or objects is None:
+            return None
+        if arm_index >= len(robots) or object_name not in objects:
+            return None
+        obj = objects[object_name]
+        geoms = getattr(obj, "contact_geoms", None)
+        gripper = getattr(robots[arm_index], "gripper", None)
+        if geoms is None or gripper is None:
+            return None
+        try:
+            return bool(checker(gripper=gripper, object_geoms=geoms))
+        except Exception:  # noqa: BLE001 - diagnostic oracle must not crash
+            return None
 
     def _two_arm_action(
         self,
         targets: tuple[np.ndarray, np.ndarray],
         eef0: np.ndarray,
         eef1: np.ndarray,
-        gripper: float,
+        grippers: tuple[float, float],
     ) -> np.ndarray:
         action = np.zeros(14, dtype=np.float64)
-        action[0:3] = np.clip((targets[0] - eef0) / self.config.position_scale, -1.0, 1.0)
-        action[6] = gripper
-        action[7:10] = np.clip((targets[1] - eef1) / self.config.position_scale, -1.0, 1.0)
-        action[13] = gripper
+        action[0:3] = np.clip(
+            (targets[0] - eef0) / self.config.position_scale, -1.0, 1.0
+        )
+        action[6] = grippers[0]
+        action[7:10] = np.clip(
+            (targets[1] - eef1) / self.config.position_scale, -1.0, 1.0
+        )
+        action[13] = grippers[1]
         return action
+
+    def _transport_action(self, state: np.ndarray, t: int) -> np.ndarray:
+        payload, trash, lid_handle, target_bin, trash_bin = self._transport_values(state)
+        eef0 = self.eef_pos(state)
+        eef1 = self._eef1_pos(state)
+        hold1 = eef1.copy()
+
+        if self._lid_clear_target is None:
+            self._lid_clear_target = lid_handle + self.LID_CLEAR_OFFSET
+
+        lid_approach = lid_handle + np.array([0.0, 0.0, self.config.approach_z_offset])
+        lid_grasp = lid_handle.copy()
+        trash_approach = trash + np.array([0.0, 0.0, self.config.approach_z_offset])
+        trash_grasp = trash + np.array([0.0, 0.0, self.config.descend_z_offset])
+
+        if self._transport_phase is _TransportPhase.LID_APPROACH:
+            targets = (lid_approach, trash_approach)
+            if self._both_reached(targets, eef0, eef1):
+                self._transport_phase = _TransportPhase.LID_DESCEND
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+
+        if self._transport_phase is _TransportPhase.LID_DESCEND:
+            targets = (lid_grasp, trash_grasp)
+            if self._both_reached(targets, eef0, eef1):
+                self._transport_phase = _TransportPhase.LID_GRASP
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+
+        if self._transport_phase is _TransportPhase.LID_GRASP:
+            assert self._transport_started_at is not None
+            if t - self._transport_started_at >= self.config.grasp_hold_steps:
+                lid_grasped = self._native_transport_grasp(0, "lid")
+                trash_grasped = self._native_transport_grasp(1, "trash")
+                if lid_grasped is not False and trash_grasped is not False:
+                    self._transport_phase = _TransportPhase.LID_LIFT
+            return self._two_arm_action(
+                (eef0, eef1), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
+            )
+
+        if self._transport_phase is _TransportPhase.LID_LIFT:
+            lid_lift = np.array([eef0[0], eef0[1], max(eef0[2], 1.08)])
+            targets = (lid_lift, hold1)
+            if eef0[2] >= 1.08 - self.config.position_scale:
+                self._transport_phase = _TransportPhase.LID_CLEAR
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.LID_CLEAR:
+            targets = (self._lid_clear_target, hold1)
+            if np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance:
+                self._transport_phase = _TransportPhase.PAYLOAD_APPROACH
+                return self._two_arm_action(
+                    targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE)
+                )
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
+
+        payload_approach = payload + np.array([0.0, 0.0, self.config.approach_z_offset])
+        payload_grasp = payload + np.array([0.0, 0.0, self.config.descend_z_offset])
+
+        if self._transport_phase is _TransportPhase.PAYLOAD_APPROACH:
+            targets = (payload_approach, hold1)
+            if self._both_reached(targets, eef0, eef1):
+                self._transport_phase = _TransportPhase.PAYLOAD_DESCEND
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.PAYLOAD_DESCEND:
+            targets = (payload_grasp, hold1)
+            if np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance:
+                self._transport_phase = _TransportPhase.PAYLOAD_GRASP
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.PAYLOAD_GRASP:
+            assert self._transport_started_at is not None
+            if t - self._transport_started_at >= self.config.grasp_hold_steps:
+                payload_grasped = self._native_transport_grasp(0, "payload")
+                trash_grasped = self._native_transport_grasp(1, "trash")
+                if payload_grasped is not False and trash_grasped is not False:
+                    self._payload_eef_offset = eef0 - payload
+                    self._trash_eef_offset = eef1 - trash
+                    self._transport_phase = _TransportPhase.PAYLOAD_LIFT
+            return self._two_arm_action(
+                (eef0, eef1), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
+            )
+
+        assert self._payload_eef_offset is not None
+        assert self._trash_eef_offset is not None
+        lift_z = max(float(target_bin[2]), float(trash_bin[2])) + 0.20
+        if self._transport_phase is _TransportPhase.PAYLOAD_LIFT:
+            targets = (
+                np.array([eef0[0], eef0[1], max(eef0[2], lift_z)]),
+                np.array([eef1[0], eef1[1], max(eef1[2], lift_z)]),
+            )
+            if min(eef0[2], eef1[2]) >= lift_z - self.config.position_scale:
+                payload_target = target_bin.copy()
+                payload_target[2] += self.BIN_OBJECT_Z_OFFSET
+                trash_target = trash_bin.copy()
+                trash_target[2] += self.BIN_OBJECT_Z_OFFSET
+                self._place_targets = (
+                    payload_target + self._payload_eef_offset,
+                    trash_target + self._trash_eef_offset,
+                )
+                self._transport_phase = _TransportPhase.TRANSPORT
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
+
+        assert self._place_targets is not None
+        if self._transport_phase is _TransportPhase.TRANSPORT:
+            targets = (
+                np.array([self._place_targets[0][0], self._place_targets[0][1], lift_z]),
+                np.array([self._place_targets[1][0], self._place_targets[1][1], lift_z]),
+            )
+            if self._both_reached(targets, eef0, eef1):
+                self._transport_phase = _TransportPhase.PLACE
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.PLACE:
+            assert self._transport_started_at is not None
+            if (
+                self._both_reached(self._place_targets, eef0, eef1)
+                and t - self._transport_started_at >= self.config.place_hold_steps
+            ):
+                self._transport_phase = _TransportPhase.DONE
+                return self._two_arm_action(
+                    self._place_targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN)
+                )
+            return self._two_arm_action(
+                self._place_targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
+            )
+
+        return self._two_arm_action(
+            (eef0, eef1), eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN)
+        )
 
     def act(self, state: np.ndarray, t: int) -> np.ndarray:
         if self._two_arm:
             return self._transport_action(state, t)
         return super().act(state, t)
-
-    object_key = "object"
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
