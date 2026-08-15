@@ -138,6 +138,8 @@ class TestScriptedController:
         assert result.status == "PASS", result.detail
         assert result.metrics["successes"] == 3
         assert result.metrics["infra_failures"] == 0
+        assert result.metrics["timeout_case_indices"] == []
+        assert result.metrics["timeout_phase_by_case"] == {}
 
     def test_fails_on_infra(self) -> None:
         adapter = FakeAdapter(FakeLiftSim(), fail_step_with=InfrastructureError("boom"))

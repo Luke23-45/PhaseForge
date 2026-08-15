@@ -356,6 +356,8 @@ def gate_scripted_controller(
     timeouts = 0
     failures_detail: list[str] = []
     failure_phases: dict[str, int] = {}
+    timeout_case_indices: list[int] = []
+    timeout_phase_by_case: dict[str, str] = {}
 
     for case in bank.cases:
         # The oracle may read pinned simulator geometry (target-bin, peg,
@@ -392,6 +394,8 @@ def gate_scripted_controller(
                 controller, "phase_name", "unknown"
             )
             failure_phases[phase] = failure_phases.get(phase, 0) + 1
+            timeout_case_indices.append(int(case.index))
+            timeout_phase_by_case[str(case.index)] = str(phase)
             failures_detail.append(f"case {case.index}: timed out in phase {phase}")
 
     rate = successes / len(bank.cases) if bank.cases else float("nan")
@@ -411,6 +415,8 @@ def gate_scripted_controller(
             "timeouts": timeouts,
             "infra_failures": infra,
             "timeout_phases": failure_phases,
+            "timeout_case_indices": timeout_case_indices,
+            "timeout_phase_by_case": timeout_phase_by_case,
         },
     )
 

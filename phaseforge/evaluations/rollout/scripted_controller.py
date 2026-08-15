@@ -444,8 +444,13 @@ class ScriptedController:
     def _track(self, target: np.ndarray, gripper: float, eef: np.ndarray, t: int) -> np.ndarray:
         # Run the watchdog only for an active tracking command. Phase
         # transition checks above get first chance to recognize that the
-        # target has already been reached.
-        self._watchdog(eef, target, t)
+        # target has already been reached. PLACE is deliberately excluded:
+        # it is a bounded contact-sensitive settling/release phase, and OSC
+        # contact can temporarily stop reducing the eef-to-target distance.
+        # The fixed place_hold_steps limit still forces release and RETRACT;
+        # the simulator's success predicate remains the only success signal.
+        if self._phase is not _Phase.PLACE:
+            self._watchdog(eef, target, t)
         if self._phase is _Phase.STALLED:
             placement = self._placement_target()
             return self._hold_action(

@@ -9,8 +9,10 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
     ScriptedCanController,
+    ScriptedControllerConfig,
     ScriptedLiftConfig,
     ScriptedLiftController,
+    _Phase,
 )
 from tests.rollout_helpers import (
     SUCCESS_Z,
@@ -95,6 +97,23 @@ class TestPhases:
 
 
 class TestClosedLoop:
+    def test_place_settling_is_not_aborted_by_progress_watchdog(self) -> None:
+        ctrl = ScriptedCanController(
+            lift_state_spec(),
+            config=ScriptedControllerConfig(stall_steps=1, stall_progress=1.0),
+        )
+        ctrl._phase = _Phase.PLACE
+        ctrl._place_started_at = 0
+        eef = np.array([0.0, 0.0, 1.0])
+        target = np.array([0.5, 0.5, 0.8])
+
+        for t in range(5):
+            action = ctrl._track(target, 1.0, eef, t)
+            assert np.all(np.isfinite(action))
+
+        assert ctrl.phase_name == "PLACE"
+        assert ctrl.stalled_from_phase is None
+
     def test_solves_all_seeded_starts(self) -> None:
         for seed in range(5):
             sim = FakeLiftSim(np.random.default_rng(seed))
