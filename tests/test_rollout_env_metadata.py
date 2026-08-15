@@ -185,7 +185,7 @@ class TestDevFallbackPerTask:
         "protocol_name, env_name, horizon",
         [
             ("Lift", "Lift", 500),
-            ("Can", "Can", 500),
+            ("Can", "PickPlaceCan", 500),
             ("Square", "NutAssemblySquare", 500),
             ("ToolHang", "ToolHang", 500),
             ("Transport", "TwoArmTransport", 700),

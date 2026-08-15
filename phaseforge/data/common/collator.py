@@ -11,9 +11,9 @@ from torch import Tensor
 class PhaseAwareCollator:
     """Custom ``collate_fn`` for DataLoader.
 
-    For fixed-length sequences (sequence_length=1), this is equivalent to
-    default collation. For variable-length sequences, pads to the maximum
-    length in the batch and returns a boolean padding mask.
+    For single-step samples this is equivalent to default collation. For
+    temporal samples, pads to the maximum length in the batch and returns a
+    boolean validity mask (``True`` means the timestep is real data).
     """
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, Tensor]:
@@ -23,18 +23,23 @@ class PhaseAwareCollator:
 
         if not has_time_dim:
             # Single-step: simple stack
-            return {
+            out = {
                 "state": torch.stack([b["state"] for b in batch]),  # (B, S)
                 "action": torch.stack([b["action"] for b in batch]),  # (B, A)
                 "phase": torch.stack([b["phase"] for b in batch]),  # (B,)
-                "task_id": torch.stack([b["task_id"] for b in batch]),  # (B,)
-                # Trajectory identity (issues register E9): lets offline
-                # evaluation regroup single-step batches into episodes.
-                "trajectory_id": torch.stack([b["trajectory_id"] for b in batch]),  # (B,)
-                "trajectory_position": torch.stack(
-                    [b["trajectory_position"] for b in batch]
+                "task_id": torch.stack(
+                    [torch.as_tensor(b["task_id"], dtype=torch.long) for b in batch]
                 ),  # (B,)
             }
+            if "trajectory_id" in first:
+                out["trajectory_id"] = torch.stack(
+                    [torch.as_tensor(b["trajectory_id"], dtype=torch.long) for b in batch]
+                )
+            if "trajectory_position" in first:
+                out["trajectory_position"] = torch.stack(
+                    [torch.as_tensor(b["trajectory_position"], dtype=torch.long) for b in batch]
+                )
+            return out
 
         # Multi-step: pad to max length
         lengths = [b["state"].shape[0] for b in batch]
@@ -54,12 +59,21 @@ class PhaseAwareCollator:
             phase_padded[i, :T] = sample["phase"]
             mask[i, :T] = True  # True where valid
 
-        return {
+        out = {
             "state": state_padded,  # (B, max_T, S)
             "action": action_padded,  # (B, max_T, A)
             "phase": phase_padded,  # (B, max_T)
-            "task_id": torch.stack([b["task_id"] for b in batch]),  # (B,)
-            "trajectory_id": torch.stack([b["trajectory_id"] for b in batch]),  # (B,)
-            "trajectory_position": torch.stack([b["trajectory_position"] for b in batch]),  # (B,)
+            "task_id": torch.stack(
+                [torch.as_tensor(b["task_id"], dtype=torch.long) for b in batch]
+            ),  # (B,)
             "padding_mask": mask,  # (B, max_T) — True = valid
         }
+        if "trajectory_id" in first:
+            out["trajectory_id"] = torch.stack(
+                [torch.as_tensor(b["trajectory_id"], dtype=torch.long) for b in batch]
+            )
+        if "trajectory_position" in first:
+            out["trajectory_position"] = torch.stack(
+                [torch.as_tensor(b["trajectory_position"], dtype=torch.long) for b in batch]
+            )
+        return out

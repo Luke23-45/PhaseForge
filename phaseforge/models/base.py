@@ -52,9 +52,11 @@ class BaseManipulationModel(nn.Module, ABC):
 
         Args:
             batch: Dict with keys:
-                - ``"state"``:   (B, state_dim)
-                - ``"action"``:  (B, action_dim) — ground truth
-                - ``"phase"``:   (B,) int — phase labels (may be ignored)
+                - ``"state"``:   (B, state_dim) or (B, T, state_dim)
+                - ``"action"``:  (B, action_dim) or (B, T, action_dim)
+                  — ground truth
+                - ``"phase"``:   (B,) or (B, T) int — phase labels
+                  (may be ignored)
                 - ``"task_id"``: (B,) int
         """
         ...
@@ -69,7 +71,9 @@ class BaseManipulationModel(nn.Module, ABC):
             state: (B, state_dim) or (1, state_dim)
 
         Returns:
-            action: (B, action_dim)
+            action: (B, action_dim). Temporal models may consume one
+                timestep at a time and retain recurrent state; sequence
+                inputs return (B, T, action_dim).
         """
         ...
 

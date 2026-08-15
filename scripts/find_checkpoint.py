@@ -110,7 +110,9 @@ def cmd_latest(args: argparse.Namespace) -> None:
     """Print the path to the latest checkpoint for *model+stage*."""
     source = resolve_checkpoint_source(args.model) if args.resolve else args.model
     ckpt = find_latest_checkpoint(
-        args.model, stage=args.stage, base=args.base,
+        args.model,
+        stage=args.stage,
+        base=args.base,
         resolve_alias=args.resolve,
     )
     if ckpt is None:
@@ -169,7 +171,8 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--base", default="outputs",
+        "--base",
+        default="outputs",
         help="Base output directory (default: outputs)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -179,7 +182,10 @@ def main() -> None:
     p_latest.add_argument("--model", required=True, help="Model name")
     p_latest.add_argument("--stage", type=int, default=1, help="Stage (1 or 2)")
     p_latest.add_argument(
-        "--no-resolve", dest="resolve", action="store_false", default=True,
+        "--no-resolve",
+        dest="resolve",
+        action="store_false",
+        default=True,
         help="Disable model alias resolution (e.g. warmstart_moe → bc)",
     )
     p_latest.set_defaults(func=cmd_latest)
@@ -189,7 +195,10 @@ def main() -> None:
     p_list.add_argument("--model", required=True, help="Model name")
     p_list.add_argument("--stage", type=int, default=1, help="Stage (1 or 2)")
     p_list.add_argument(
-        "--no-resolve", dest="resolve", action="store_false", default=True,
+        "--no-resolve",
+        dest="resolve",
+        action="store_false",
+        default=True,
         help="Disable model alias resolution",
     )
     p_list.set_defaults(func=cmd_list)
@@ -201,7 +210,8 @@ def main() -> None:
     # validate
     p_val = sub.add_parser("validate", help="Validate checkpoint file(s)")
     p_val.add_argument(
-        "checkpoint", nargs="+",
+        "checkpoint",
+        nargs="+",
         help="Path(s) to checkpoint_best.pt to validate",
     )
     p_val.set_defaults(func=cmd_validate)

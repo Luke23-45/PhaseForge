@@ -250,12 +250,13 @@ outcome using this decision table:
 
 Add these only if the paper claim is intentionally broadened:
 
-### Single-task history control
+### Single-task history control (implemented)
 
-Use the same declared history contract for BC-RNN and the PhaseForge policy
-matrix. The history baseline is required for the five-task benchmark claim;
-it is not evidence that PhaseForge itself is history-dependent unless the
-PhaseForge model consumes the same history.
+The BC-RNN implementation now uses the same state/action schema and a
+declared ten-step history window. It is required as a temporal comparator for
+the five-task benchmark claim. PhaseForge remains a single-state model in this
+protocol, so BC-RNN is not a history-matched ablation of PhaseForge and cannot
+be used to claim that PhaseForge itself is history-dependent.
 
 ### Multitask extension
 
@@ -277,13 +278,15 @@ assumed.
 The current offline Lift report can support an offline mechanism/diagnostic
 report if it is presented with that narrow claim.
 
-The five-task state-only rollout implementation described here is required
-before claiming that PhaseForge improves manipulation behavior across the
-project's task family. It does not require images, a vision encoder, LIBERO, or
-comparison against VLA models.
+The five-task state-only rollout implementation described here is now present,
+including task-aware oracle controllers, schema checks, and BC-RNN. A paper
+claim that PhaseForge improves manipulation behavior remains blocked until the
+real simulator gates and the complete three-seed matrix finish successfully.
+It does not require images, a vision encoder, LIBERO, or comparison against VLA
+models.
 
-No implementation, training run, or rollout has been performed as part of
-writing this plan.
+This plan records the protocol and implementation boundary; it does not imply
+that the simulator gates or training runs have already been completed.
 
 ## 8. Literature basis
 

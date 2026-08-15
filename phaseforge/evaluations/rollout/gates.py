@@ -321,7 +321,10 @@ def gate_scripted_controller(
     failures_detail: list[str] = []
 
     for case in bank.cases:
-        controller = controller_cls(state_spec)
+        # The oracle may read pinned simulator geometry (target-bin, peg,
+        # hook, and transport-bin poses) but never images. Learned policies
+        # remain restricted to the declared low-dimensional state vector.
+        controller = controller_cls(state_spec, env=getattr(adapter, "env", None))
         try:
             state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
         except Exception as exc:  # noqa: BLE001

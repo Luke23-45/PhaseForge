@@ -170,11 +170,31 @@ class RolloutEvaluator:
         except Exception as exc:  # noqa: BLE001 — simulator misuse is infra
             return self._episode(case, RolloutOutcome(valid=False, exception=str(exc)))
 
-        if self.policy is not None and hasattr(self.policy, "reset"):
-            try:
-                self.policy.reset()
-            except Exception:  # noqa: BLE001 — a broken reset hook is a policy bug
-                pass
+        # Both externally supplied policies and stateful model objects may
+        # carry episode history. Reset each independently; swallowing a
+        # broken reset would leak one episode into the next and invalidate a
+        # recurrent baseline, so surface it as a policy failure.
+        reset_targets = []
+        if self.policy is not None:
+            reset_targets.append(("policy", self.policy))
+        if self.model is not None and self.model is not self.policy:
+            reset_targets.append(("model", self.model))
+        for label, target in reset_targets:
+            reset = getattr(target, "reset", None)
+            if callable(reset):
+                try:
+                    reset()
+                except Exception as exc:  # noqa: BLE001 — policy state bug
+                    return self._episode(
+                        case,
+                        RolloutOutcome(
+                            valid=True,
+                            steps=0,
+                            termination_reason=FAILURE_POLICY_EXCEPTION,
+                            failure_category=FAILURE_POLICY_EXCEPTION,
+                            exception=f"{label}.reset failed: {type(exc).__name__}: {exc}",
+                        ),
+                    )
 
         steps = 0
         while steps < self.horizon:
@@ -371,6 +391,17 @@ def state_spec_from_config(cfg: DictConfig) -> StateSpec:
         raise EnvParityError(
             f"data.state_keys sum to {spec.dim} but data.state_dim declares {declared}."
         )
+    data_source = cfg.data.get("source")
+    task_name = data_source.get("task_name") if data_source is not None else None
+    if task_name is not None:
+        from phaseforge.evaluations.envs.task_registry import validate_task_schema
+
+        validate_task_schema(
+            str(task_name),
+            spec.keys,
+            spec.dims,
+            int(cfg.data.action_dim),
+        )
     return spec
 
 
@@ -432,9 +463,7 @@ def load_or_generate_bank(cfg: DictConfig, meta: PinnedEnvMetadata) -> ResetBank
     num_cases = int(cfg.eval.bank.get("num_cases", 50))
     configured_expected_env = cfg.eval.env.get("expected_env_name")
     expected_env_name = (
-        str(configured_expected_env)
-        if configured_expected_env is not None
-        else meta.env_name
+        str(configured_expected_env) if configured_expected_env is not None else meta.env_name
     )
     versions = verify_environment_parity(
         meta,
@@ -465,8 +494,7 @@ def load_or_generate_bank(cfg: DictConfig, meta: PinnedEnvMetadata) -> ResetBank
             mismatches.append("env_canonical does not match the pinned dataset metadata")
         if bank.robosuite_version != versions["robosuite"]:
             mismatches.append(
-                f"robosuite_version={bank.robosuite_version!r} "
-                f"(expected {versions['robosuite']!r})"
+                f"robosuite_version={bank.robosuite_version!r} (expected {versions['robosuite']!r})"
             )
         if mismatches:
             raise EnvParityError(

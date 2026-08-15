@@ -38,6 +38,11 @@ _VALID_DATA = frozenset(
         "square",
         "tool_hang",
         "transport",
+        "lift_rnn",
+        "can_rnn",
+        "square_rnn",
+        "tool_hang_rnn",
+        "transport_rnn",
     }
 )
 _VALID_EVAL_MODES = frozenset({"rollout", "offline"})
@@ -435,7 +440,10 @@ def build_plan(
     if with_dependencies and not eval_only and stage is None:
         for m in methods:
             provider_identity = (m.task, m.stage2_source)
-            if m.stage2_source in ("bc", "phaseforge") and provider_identity not in selected_identities:
+            if (
+                m.stage2_source in ("bc", "phaseforge")
+                and provider_identity not in selected_identities
+            ):
                 provider = protocol.method_by_name(m.stage2_source, task=m.task)
                 if provider is None:
                     raise ProtocolError(

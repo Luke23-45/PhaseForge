@@ -28,9 +28,7 @@ import shutil
 import sys
 from pathlib import Path
 
-_RUN_DIR_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_[^_]+)?_[0-9a-f]{8}$"
-)
+_RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_[^_]+)?_[0-9a-f]{8}$")
 
 
 def find_failed_run_dirs(outputs: Path) -> list[Path]:

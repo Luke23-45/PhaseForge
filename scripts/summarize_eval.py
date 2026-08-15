@@ -35,8 +35,7 @@ def main() -> None:
     parser.add_argument(
         "--baseline",
         default="phaseforge",
-        help="Reference method for the paired Wilcoxon CSV "
-        "(default: %(default)s).",
+        help="Reference method for the paired Wilcoxon CSV (default: %(default)s).",
     )
     args = parser.parse_args()
 

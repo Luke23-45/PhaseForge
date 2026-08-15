@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from phaseforge.data.common.dataset import StateOnlyDataset
@@ -26,6 +25,20 @@ def test_sequence_length_one_yields_flat_samples() -> None:
     assert sample["phase"].ndim == 0
 
 
-def test_sequence_length_greater_than_one_rejected() -> None:
-    with pytest.raises(ValueError, match="sequence_length=3"):
-        StateOnlyDataset([_traj()], sequence_length=3)
+def test_sequence_length_returns_temporal_windows() -> None:
+    dataset = StateOnlyDataset([_traj(T=5)], sequence_length=3, stride=2)
+    assert len(dataset) == 2
+    sample = dataset[1]
+    assert sample["state"].shape == (3, 3)
+    assert sample["action"].shape == (3, 2)
+    assert sample["phase"].shape == (3,)
+    assert int(sample["trajectory_position"]) == 2
+
+
+def test_invalid_sequence_parameters_rejected() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="positive"):
+        StateOnlyDataset([_traj()], sequence_length=0)
+    with pytest.raises(ValueError, match="positive"):
+        StateOnlyDataset([_traj()], stride=0)

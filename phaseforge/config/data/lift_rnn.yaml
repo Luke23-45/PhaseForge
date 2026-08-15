@@ -1,0 +1,7 @@
+# Temporal-history variant of the canonical Lift state schema.
+defaults:
+  - lift
+  - _self_
+
+sequence_length: 10
+stride: 1

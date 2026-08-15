@@ -23,7 +23,7 @@ def inspect_cache(cache_dir: str):
         print()
     else:
         print("No manifest.json found.")
-    
+
     # 2. Norm stats
     norm_file = cache_path / "norm_stats.pt"
     if norm_file.exists():
@@ -52,7 +52,7 @@ def inspect_cache(cache_dir: str):
                     print(f"  {k}: shape={tuple(v.shape)} dtype={v.dtype}")
                 else:
                     print(f"  {k}: {v}")
-            
+
             # Print phase distribution for this trajectory if it exists
             if "phase" in first_traj:
                 unique, counts = torch.unique(first_traj["phase"], return_counts=True)
@@ -62,18 +62,19 @@ def inspect_cache(cache_dir: str):
     else:
         print("No trajectories/ directory found.")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inspect PhaseForge cached data.")
     # Default to the hash we saw in your logs
-    parser.add_argument("--hash", type=str, default="a4c74be17f117a4b",
-                        help="The config hash directory name (e.g. a4c74be17f117a4b)")
-    parser.add_argument("--data-root", type=str, default="data",
-                        help="Path to the 'data' folder")
+    parser.add_argument(
+        "--hash",
+        type=str,
+        default="a4c74be17f117a4b",
+        help="The config hash directory name (e.g. a4c74be17f117a4b)",
+    )
+    parser.add_argument("--data-root", type=str, default="data", help="Path to the 'data' folder")
     args = parser.parse_args()
-    
+
     cache_dir = Path(args.data_root) / "processed" / "cache" / args.hash
     print(f"Inspecting Cache Directory: {cache_dir}\n")
     inspect_cache(str(cache_dir))
-
-
-

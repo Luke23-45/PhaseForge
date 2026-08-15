@@ -192,9 +192,7 @@ def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
     model, stage = req
     try:
         source_tag = (
-            step.method.output_tag
-            if step.method.stage2_source == "self"
-            else step.method.task
+            step.method.output_tag if step.method.stage2_source == "self" else step.method.task
         )
         return resolve_stage_ckpt(
             outputs_base,

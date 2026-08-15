@@ -30,6 +30,7 @@ from phaseforge.evaluations.envs.task_registry import (
     is_known_task,
     known_protocol_tasks,
     protocol_for_env_name,
+    validate_task_schema,
 )
 
 __all__ = [
@@ -55,5 +56,6 @@ __all__ = [
     "is_known_task",
     "known_protocol_tasks",
     "protocol_for_env_name",
+    "validate_task_schema",
     "verify_environment_parity",
 ]

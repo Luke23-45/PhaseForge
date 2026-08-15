@@ -22,9 +22,9 @@ class StateOnlyDataset(Dataset):
             - ``"phase"``:   Tensor (T,) int64
             - ``"task_id"``: int
         sequence_length: Number of consecutive timesteps per sample.
-            Only ``1`` (single-step) is supported: sequence-aware training
-            (batches with a time dimension) is not implemented for the MoE
-            models and training loops, and any other value raises.
+            A value greater than one returns a fixed-length ``(T, ...)``
+            window for temporal models such as BC-RNN. Single-step models
+            retain the historical flat sample contract.
         stride: Step between consecutive samples within a trajectory.
     """
 
@@ -35,19 +35,13 @@ class StateOnlyDataset(Dataset):
         stride: int = 1,
     ) -> None:
         super().__init__()
-        if sequence_length != 1:
-            raise ValueError(
-                f"sequence_length={sequence_length} is not supported: "
-                "sequence-aware training (batch tensors with a time dimension) "
-                "is not implemented for the MoE models and training loops "
-                "(MoELayer expects 2D latents, and the Stage 1/2 losses do not "
-                "handle (B, T, P) logits consistently). Keep "
-                "data.sequence_length=1 (single-step) until sequence support "
-                "is implemented end to end."
-            )
+        if int(sequence_length) < 1:
+            raise ValueError("sequence_length must be a positive integer")
+        if int(stride) < 1:
+            raise ValueError("stride must be a positive integer")
         self.trajectories = trajectories
-        self.sequence_length = 1
-        self.stride = stride
+        self.sequence_length = int(sequence_length)
+        self.stride = int(stride)
         self._index_map = self._build_index_map()
 
     def _build_index_map(self) -> list[tuple[int, int]]:

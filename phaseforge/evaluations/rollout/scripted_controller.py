@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Any
 
 import numpy as np
 
@@ -129,8 +130,15 @@ class ScriptedController:
         state_spec: StateSpec,
         *,
         config: ScriptedControllerConfig | None = None,
+        env: Any | None = None,
     ) -> None:
         self.state_spec = state_spec
+        # The oracle may use simulator geometry (target-bin / peg / hook
+        # poses) but never pixels. Learned policies still receive only the
+        # declared state vector. Keeping geometry on the oracle side avoids
+        # hard-coded coordinates that silently break under a pinned reset
+        # distribution.
+        self.env = env
         self.eef_start, self.eef_end = state_spec.index_of(self.eef_key)
         self.obj_start, self.obj_end = state_spec.index_of(self.object_key)
         # Transport has a second arm and therefore a 14-dimensional action
@@ -322,6 +330,12 @@ class ScriptedController:
             action[13] = GRIPPER_OPEN
         return action
 
+    def _env_site_pos(self, env: Any, site_id: int) -> np.ndarray:
+        return np.asarray(env.sim.data.site_xpos[site_id], dtype=np.float64).copy()
+
+    def _env_body_pos(self, env: Any, body_id: int) -> np.ndarray:
+        return np.asarray(env.sim.data.body_xpos[body_id], dtype=np.float64).copy()
+
     def _watchdog(self, eef: np.ndarray, t: int) -> None:
         """Abandon an episode when tracking makes no progress.
 
@@ -372,25 +386,33 @@ class ScriptedCanController(ScriptedController):
     """
 
     #: Absolute receptacle xy for the Can task (mirrors the fake sim).
+    # Fallback only for the unit-test kinematic simulator. Real rollouts use
+    # the pinned PickPlaceCan env's target-bin geometry below.
     RECEPTACLE_XY: tuple[float, float] = (0.15, 0.15)
 
     object_key = "object"
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
+        if self.env is not None:
+            placements = getattr(self.env, "target_bin_placements", None)
+            object_id = getattr(self.env, "object_id", None)
+            if placements is not None and object_id is not None:
+                target = np.asarray(placements[int(object_id)], dtype=np.float64)
+                return np.array([target[0], target[1], target[2] + 0.06])
+            if hasattr(self.env, "bin2_pos"):
+                target = np.asarray(self.env.bin2_pos, dtype=np.float64).copy()
+                return np.array([target[0], target[1], config.placement_z])
         return np.array([self.RECEPTACLE_XY[0], self.RECEPTACLE_XY[1], config.placement_z])
 
     def is_success(self, state: np.ndarray) -> bool:
-        """Mirror of env._check_success: can in bin AND lifted."""
-        obj = self.object_pos(state)
-        if obj[2] <= self.config.success_z:
-            return False
-        placement = self._placement_target()
-        assert placement is not None
-        return bool(
-            abs(obj[0] - placement[0]) < self.config.position_scale
-            and abs(obj[1] - placement[1]) < self.config.position_scale
-        )
+        """Do not substitute an xy proxy for the environment predicate.
+
+        The adapter owns the real ``PickPlaceCan._check_success`` result;
+        this controller therefore keeps tracking until the runner observes
+        simulator success.
+        """
+        return False
 
 
 class ScriptedSquareController(ScriptedController):
@@ -408,19 +430,14 @@ class ScriptedSquareController(ScriptedController):
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
+        if self.env is not None and hasattr(self.env, "peg1_body_id"):
+            peg = self._env_body_pos(self.env, int(self.env.peg1_body_id))
+            return np.array([peg[0], peg[1], config.placement_z])
         return np.array([self.PEG_XY[0], self.PEG_XY[1], config.placement_z])
 
     def is_success(self, state: np.ndarray) -> bool:
-        """Mirror of env._check_success: nut on peg AND lifted."""
-        obj = self.object_pos(state)
-        if obj[2] <= self.config.success_z:
-            return False
-        placement = self._placement_target()
-        assert placement is not None
-        return bool(
-            abs(obj[0] - placement[0]) < self.config.position_scale
-            and abs(obj[1] - placement[1]) < self.config.position_scale
-        )
+        """Leave the complete peg predicate to the simulator adapter."""
+        return False
 
 
 class ScriptedToolHangController(ScriptedController):
@@ -437,34 +454,158 @@ class ScriptedToolHangController(ScriptedController):
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
+        if self.env is not None and hasattr(self.env, "obj_site_id"):
+            site_id = int(self.env.obj_site_id["frame_hang_site"])
+            hook = self._env_site_pos(self.env, site_id)
+            body_ids = getattr(self.env, "obj_body_id", {})
+            tool_body_id = body_ids.get("tool")
+            if tool_body_id is not None:
+                tool_pos = self._env_body_pos(self.env, int(tool_body_id))
+                hole_pos = self._env_site_pos(
+                    self.env, int(self.env.obj_site_id["tool_hole1_center"])
+                )
+                # Preserve the current tool orientation while transporting;
+                # this converts the hook target from hole position to tool
+                # body position without assuming a hard-coded tool offset.
+                return hook - (hole_pos - tool_pos)
+            # Move the tool hole to the hook line while keeping a small
+            # clearance above it; the env's _check_success remains the only
+            # success predicate. This is a geometry-aware oracle, not a
+            # simplified xy/z success proxy.
+            return np.array([hook[0], hook[1], hook[2] + 0.02])
         return np.array([self.RACK_XY[0], self.RACK_XY[1], config.placement_z])
 
     def is_success(self, state: np.ndarray) -> bool:
-        """Mirror of env._check_success: tool on rack AND lifted."""
-        obj = self.object_pos(state)
-        if obj[2] <= self.config.success_z:
-            return False
-        placement = self._placement_target()
-        assert placement is not None
-        return bool(
-            abs(obj[0] - placement[0]) < self.config.position_scale
-            and abs(obj[1] - placement[1]) < self.config.position_scale
-        )
+        """Leave the contact-and-geometry predicate to the simulator."""
+        return False
 
 
 class ScriptedTransportController(ScriptedController):
-    """Dimensional smoke controller for the TwoArmTransport task.
+    """Coordinated state oracle for the TwoArmTransport task.
 
     Transport uses two Panda arms and the full state-only dataset has a
     59-dimensional observation and 14-dimensional action. This controller
-    drives only robot0 and leaves robot1 open/neutral, so it is useful for
-    action-shape smoke tests but is not a valid Gate-4 success oracle. A
-    final five-task behavioral claim requires a coordinated two-arm
-    controller before Transport can be admitted to the strict scripted gate.
+    The 41-dimensional transport object state exposes payload/trash and both
+    target-bin positions. The controller moves the payload with robot0 and
+    removes trash with robot1, then releases both objects in their respective
+    bins. It uses no images and the adapter still decides success via the
+    environment's own ``_check_success`` predicate.
     """
 
     #: Absolute bin xy for the single-arm Transport approximation.
     BIN_XY: tuple[float, float] = (-0.18, 0.12)
+
+    def __init__(self, state_spec: StateSpec, **kwargs) -> None:
+        super().__init__(state_spec, **kwargs)
+        if not self._two_arm:
+            return  # retained for the legacy single-arm kinematic unit fake
+        if self.obj_end - self.obj_start != 41:
+            raise ValueError(
+                "Transport oracle requires the registered 41-dimensional "
+                "object state; refusing a single-object approximation."
+            )
+        self.eef1_start, self.eef1_end = state_spec.index_of("robot1_eef_pos")
+
+    def reset(self) -> None:
+        super().reset()
+        self._transport_phase = _Phase.APPROACH
+        self._transport_started_at: int | None = None
+
+    def _transport_values(
+        self, state: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        obj = np.asarray(state[self.obj_start : self.obj_end], dtype=np.float64)
+        return obj[0:3], obj[7:10], obj[21:24], obj[24:27]
+
+    def _transport_action(
+        self,
+        state: np.ndarray,
+        t: int,
+    ) -> np.ndarray:
+        payload, trash, target_bin, trash_bin = self._transport_values(state)
+        eef0 = self.eef_pos(state)
+        eef1 = np.asarray(state[self.eef1_start : self.eef1_end], dtype=np.float64)
+        payload_done = bool(state[self.obj_start + 27] > 0.5)
+        trash_done = bool(state[self.obj_start + 28] > 0.5)
+        if payload_done and trash_done:
+            return self._hold_action(GRIPPER_OPEN)
+
+        # The first two phases align both grippers with their objects. The
+        # objects are absolute positions in the published object vector.
+        if self._transport_phase is _Phase.APPROACH:
+            targets = (payload + np.array([0.0, 0.0, 0.12]), trash + np.array([0.0, 0.0, 0.12]))
+            if (
+                max(
+                    np.linalg.norm(targets[0] - eef0),
+                    np.linalg.norm(targets[1] - eef1),
+                )
+                < self.config.position_tolerance
+            ):
+                self._transport_phase = _Phase.DESCEND
+            return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
+
+        if self._transport_phase is _Phase.DESCEND:
+            targets = (payload + np.array([0.0, 0.0, 0.04]), trash + np.array([0.0, 0.0, 0.04]))
+            if (
+                max(
+                    np.linalg.norm(targets[0] - eef0),
+                    np.linalg.norm(targets[1] - eef1),
+                )
+                < self.config.position_tolerance
+            ):
+                self._transport_phase = _Phase.GRASP
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
+
+        if self._transport_phase is _Phase.GRASP:
+            assert self._transport_started_at is not None
+            if t - self._transport_started_at >= self.config.grasp_hold_steps:
+                self._transport_phase = _Phase.LIFT
+            return self._two_arm_action((eef0, eef1), eef0, eef1, GRIPPER_CLOSE)
+
+        if self._transport_phase is _Phase.LIFT:
+            z = max(float(target_bin[2]), float(trash_bin[2])) + 0.18
+            targets = (np.array([payload[0], payload[1], z]), np.array([trash[0], trash[1], z]))
+            if min(eef0[2], eef1[2]) >= z - self.config.position_scale:
+                self._transport_phase = _Phase.TRANSPORT
+            return self._two_arm_action(targets, eef0, eef1, GRIPPER_CLOSE)
+
+        targets = (target_bin + np.array([0.0, 0.0, 0.08]), trash_bin + np.array([0.0, 0.0, 0.08]))
+        if self._transport_phase is _Phase.TRANSPORT:
+            if (
+                max(
+                    np.linalg.norm(targets[0] - eef0),
+                    np.linalg.norm(targets[1] - eef1),
+                )
+                < self.config.position_scale
+            ):
+                self._transport_phase = _Phase.PLACE
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, GRIPPER_CLOSE)
+        assert self._transport_phase is _Phase.PLACE
+        assert self._transport_started_at is not None
+        if t - self._transport_started_at >= self.config.place_hold_steps:
+            return self._hold_action(GRIPPER_OPEN)
+        return self._two_arm_action(targets, eef0, eef1, GRIPPER_OPEN)
+
+    def _two_arm_action(
+        self,
+        targets: tuple[np.ndarray, np.ndarray],
+        eef0: np.ndarray,
+        eef1: np.ndarray,
+        gripper: float,
+    ) -> np.ndarray:
+        action = np.zeros(14, dtype=np.float64)
+        action[0:3] = np.clip((targets[0] - eef0) / self.config.position_scale, -1.0, 1.0)
+        action[6] = gripper
+        action[7:10] = np.clip((targets[1] - eef1) / self.config.position_scale, -1.0, 1.0)
+        action[13] = gripper
+        return action
+
+    def act(self, state: np.ndarray, t: int) -> np.ndarray:
+        if self._two_arm:
+            return self._transport_action(state, t)
+        return super().act(state, t)
 
     object_key = "object"
 
@@ -473,16 +614,8 @@ class ScriptedTransportController(ScriptedController):
         return np.array([self.BIN_XY[0], self.BIN_XY[1], config.placement_z])
 
     def is_success(self, state: np.ndarray) -> bool:
-        """Mirror of env._check_success: object in bin AND lifted."""
-        obj = self.object_pos(state)
-        if obj[2] <= self.config.success_z:
-            return False
-        placement = self._placement_target()
-        assert placement is not None
-        return bool(
-            abs(obj[0] - placement[0]) < self.config.position_scale
-            and abs(obj[1] - placement[1]) < self.config.position_scale
-        )
+        """Leave the two-object success predicate to the simulator."""
+        return False
 
 
 # Backward-compat alias: the original name before the five-task refactor.

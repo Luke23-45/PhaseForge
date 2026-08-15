@@ -41,7 +41,7 @@ source:
   task_name: "Can"
   dataset_type: "ph"
   hdf5_type: "low_dim"
-  expected_env_name: "Can"
+  expected_env_name: "PickPlaceCan"
   dir: "${oc.env:PHASEFORGE_DATA_DIR,data}/raw/robomimic/can"
   manifest_path: null
   auto_download: false

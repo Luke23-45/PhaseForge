@@ -15,7 +15,7 @@ Robosuite v1.5 environment names (matching the published
 robomimic-v0.1/v1.5-track PH low-dim datasets):
 
 * ``Lift``                -> 19-dim state, 7-dim action, horizon 500
-* ``Can``                 -> 19-dim state, 7-dim action, horizon 500
+* ``PickPlaceCan``         -> 19-dim state, 7-dim action, horizon 500
 * ``NutAssemblySquare``   -> 19-dim state, 7-dim action, horizon 500
                              (referred to as "Square" in the protocol)
 * ``ToolHang``            -> 19-dim state, 7-dim action, horizon 500
@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 #: Protocol name -> robosuite env_name. Used by the parity gate.
 PROTOCOL_TO_ENV_NAME: dict[str, str] = {
     "Lift": "Lift",
-    "Can": "Can",
+    # robosuite 1.5.1 registers the benchmark as PickPlaceCan; ``Can`` is
+    # only the short protocol label used by robomimic documentation.
+    "Can": "PickPlaceCan",
     "Square": "NutAssemblySquare",
     "ToolHang": "ToolHang",
     "Transport": "TwoArmTransport",
@@ -210,7 +212,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
     ),
     "Can": TaskSpec(
         protocol_name="Can",
-        robosuite_env_name="Can",
+        robosuite_env_name="PickPlaceCan",
         state_keys=_LIFT_KEYS,
         state_dims=_LIFT_DIMS,
         action_dim=7,
@@ -287,3 +289,93 @@ def protocol_for_env_name(env_name: str) -> str:
             f"Expected one of {sorted(ENV_NAME_TO_PROTOCOL)}."
         )
     return ENV_NAME_TO_PROTOCOL[env_name]
+
+
+def validate_task_schema(
+    protocol_name: str,
+    state_keys: tuple[str, ...] | list[str],
+    state_dims: tuple[int, ...] | list[int],
+    action_dim: int,
+) -> None:
+    """Validate a configured state/action contract against the task registry.
+
+    Full structured-state configs must match the published key order and
+    dimensions exactly. Robot-only negative controls are allowed as a
+    deliberate alternate schema, but still have an explicit, task-specific
+    contract and action dimension. This prevents a config from silently
+    using another task's object state while preserving the negative-control
+    experiment.
+    """
+    spec = TaskSpec.from_protocol(protocol_name)
+    keys = tuple(str(key) for key in state_keys)
+    dims = tuple(int(dim) for dim in state_dims)
+    if len(keys) != len(dims):
+        raise ValueError("state_keys and state_dims must have equal length")
+    if int(action_dim) != spec.action_dim:
+        raise ValueError(
+            f"{protocol_name} action_dim={action_dim} does not match the "
+            f"registered action_dim={spec.action_dim}"
+        )
+    if keys == spec.state_keys and dims == spec.state_dims:
+        return
+
+    robot_only = {
+        "Lift": (
+            (
+                "robot0_joint_pos",
+                "robot0_joint_vel",
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+            ),
+            (7, 7, 3, 4, 2),
+        ),
+        "Can": (
+            (
+                "robot0_joint_pos",
+                "robot0_joint_vel",
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+            ),
+            (7, 7, 3, 4, 2),
+        ),
+        "Square": (
+            (
+                "robot0_joint_pos",
+                "robot0_joint_vel",
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+            ),
+            (7, 7, 3, 4, 2),
+        ),
+        "ToolHang": (
+            (
+                "robot0_joint_pos",
+                "robot0_joint_vel",
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+            ),
+            (7, 7, 3, 4, 2),
+        ),
+        "Transport": (
+            (
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "robot1_eef_pos",
+                "robot1_eef_quat",
+                "robot1_gripper_qpos",
+            ),
+            (3, 4, 2, 3, 4, 2),
+        ),
+    }
+    allowed_keys, allowed_dims = robot_only[protocol_name]
+    if keys != allowed_keys or dims != allowed_dims:
+        raise ValueError(
+            f"{protocol_name} state schema does not match the canonical full "
+            "schema or its registered robot-only negative-control schema: "
+            f"keys={keys!r}, dims={dims!r}"
+        )

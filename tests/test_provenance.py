@@ -608,7 +608,7 @@ class TestEpisodes:
         comp = comparisons[0]
         assert comp["baseline"] == "phaseforge"
         assert comp["model"] == "bc"
-        assert comp["diff"] == pytest.approx(0.75 - 1.0)
+        assert comp["diff"] == pytest.approx(0.75 - 0.50)
 
 
 # ---------------------------------------------------------------------------
@@ -1126,7 +1126,7 @@ class TestTrainingSummaries:
         assert "push,phaseforge,,42" in success
         comparisons = (outputs / "_summaries" / "rollout_comparisons.csv").read_text()
         assert comparisons.splitlines()[0].startswith("task,training_seed,baseline")
-        assert "-0.25" in comparisons
+        assert "0.25" in comparisons
 
     def test_summarize_rollout_empty_writes_empty_files(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"

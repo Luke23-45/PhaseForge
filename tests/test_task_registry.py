@@ -73,7 +73,7 @@ class TestTaskSpec:
         "protocol_name, env_name",
         [
             ("Lift", "Lift"),
-            ("Can", "Can"),
+            ("Can", "PickPlaceCan"),
             ("Square", "NutAssemblySquare"),
             ("ToolHang", "ToolHang"),
             ("Transport", "TwoArmTransport"),
@@ -105,7 +105,7 @@ class TestDevFallbackMetadata:
         "protocol_name, env_name",
         [
             ("Lift", "Lift"),
-            ("Can", "Can"),
+            ("Can", "PickPlaceCan"),
             ("Square", "NutAssemblySquare"),
             ("ToolHang", "ToolHang"),
             ("Transport", "TwoArmTransport"),
