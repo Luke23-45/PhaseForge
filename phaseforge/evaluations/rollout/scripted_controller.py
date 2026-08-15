@@ -103,7 +103,7 @@ class ScriptedControllerConfig:
     position_scale: float = POSITION_SCALE
     orientation_scale: float = ORIENTATION_SCALE
     success_z: float = SUCCESS_Z
-    descend_z_offset: float = OBJECT_HALF_SIZE + 0.02
+    descend_z_offset: float = 0.0
     approach_z_offset: float = 0.12
     lift_z: float = 0.95
     placement_z: float = DEFAULT_PLACEMENT_Z
@@ -111,7 +111,7 @@ class ScriptedControllerConfig:
     place_hold_steps: int = PLACE_HOLD_STEPS
     stall_steps: int = STALL_STEPS
     stall_progress: float = STALL_PROGRESS
-    position_tolerance: float = 0.01
+    position_tolerance: float = 0.02
 
 
 class ScriptedController:
@@ -237,12 +237,16 @@ class ScriptedController:
         config = self.config
         eef = self.eef_pos(state)
         obj = self.object_pos(state)
+        placement = self._placement_target()
+        has_placement = placement is not None
 
         if self.is_success(state):
-            return self._hold_action(GRIPPER_OPEN)
+            return self._hold_action(GRIPPER_CLOSE if not has_placement else GRIPPER_OPEN)
 
         if self._phase is _Phase.STALLED:
-            return self._hold_action(GRIPPER_OPEN)
+            return self._hold_action(
+                GRIPPER_CLOSE if not has_placement and self._approach_done else GRIPPER_OPEN
+            )
 
         if self._phase is _Phase.APPROACH and not self._approach_done:
             target = obj + np.array([0.0, 0.0, config.approach_z_offset])
@@ -270,14 +274,11 @@ class ScriptedController:
                 # latter would chase the eef indefinitely.
                 self._snapshot_placement_target(state)
                 self._phase = _Phase.LIFT
-            else:
-                return self._hold_action(GRIPPER_CLOSE)
-
-        placement = self._placement_target()
-        has_placement = placement is not None
+            target = obj + np.array([0.0, 0.0, config.descend_z_offset])
+            return self._track(target, GRIPPER_CLOSE, eef, t)
 
         if self._phase is _Phase.LIFT:
-            target = np.array([obj[0], obj[1], config.lift_z])
+            target = np.array([eef[0], eef[1], config.lift_z])
             # LIFT is "done" once the eef reaches or exceeds the lift
             # height (within one step of the discrete step size).
             # The xy axis is already aligned with the object by then,
@@ -314,15 +315,16 @@ class ScriptedController:
     # Internals
     # ------------------------------------------------------------------
 
-    def _track(
-        self, target: np.ndarray, gripper: float, eef: np.ndarray, t: int
-    ) -> np.ndarray:
+    def _track(self, target: np.ndarray, gripper: float, eef: np.ndarray, t: int) -> np.ndarray:
         # Run the watchdog only for an active tracking command. Phase
         # transition checks above get first chance to recognize that the
         # target has already been reached.
         self._watchdog(eef, target, t)
         if self._phase is _Phase.STALLED:
-            return self._hold_action(GRIPPER_OPEN)
+            placement = self._placement_target()
+            return self._hold_action(
+                GRIPPER_CLOSE if placement is None and self._approach_done else GRIPPER_OPEN
+            )
         delta = target - eef
         return self._normalized_action(delta, gripper)
 
@@ -380,6 +382,12 @@ class ScriptedController:
         config = self.config
         target = np.asarray(target, dtype=np.float64)
         distance = float(np.linalg.norm(target - eef))
+        if distance <= config.position_scale:
+            self._stall_since = None
+            self._last_target = target.copy()
+            self._last_target_distance = distance
+            return
+
         target_changed = self._last_target is None or not np.allclose(
             target, self._last_target, rtol=0.0, atol=1e-9
         )

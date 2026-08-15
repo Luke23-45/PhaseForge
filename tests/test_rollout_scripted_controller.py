@@ -72,11 +72,11 @@ class TestPhases:
         assert saw_close and saw_lift, f"saw_close={saw_close} saw_lift={saw_lift}"
         assert sim.success
 
-    def test_success_holds_open(self) -> None:
+    def test_success_holds_closed_for_lift(self) -> None:
         ctrl = _controller()
         state = state_from_parts(np.array([0.0, 0.0, 0.95]), np.array([0.0, 0.0, SUCCESS_Z + 0.01]))
         action = ctrl.act(state, t=100)
-        assert action[6] == 1.0
+        assert action[6] == -1.0
 
     def test_stall_watchdog_abandons(self) -> None:
         cfg = ScriptedLiftConfig(stall_steps=3, stall_progress=0.005)
