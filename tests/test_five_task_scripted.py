@@ -112,6 +112,28 @@ def test_controller_constructs_with_real_task_state_spec(task: str) -> None:
     controller_cls(real_spec)
 
 
+@pytest.mark.parametrize(
+    ("task", "absolute_start"),
+    [("Can", 7), ("Square", 7), ("ToolHang", 35)],
+)
+def test_controller_uses_task_specific_absolute_object_position(
+    task: str, absolute_start: int
+) -> None:
+    """Placement-task controllers must not treat relative pose as world xyz."""
+    from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+    from phaseforge.evaluations.envs.task_registry import TaskSpec
+
+    spec = TaskSpec.from_protocol(task)
+    state_spec = StateSpec(keys=spec.state_keys, dims=spec.state_dims)
+    state = np.zeros(spec.state_dim, dtype=np.float32)
+    object_start, _ = state_spec.index_of("object")
+    expected = np.array([0.21, -0.17, 0.93], dtype=np.float32)
+    state[object_start + absolute_start : object_start + absolute_start + 3] = expected
+
+    controller = _CONTROLLERS[task](state_spec)
+    assert np.allclose(controller.object_pos(state), expected)
+
+
 def test_placement_target_distinct_per_task() -> None:
     """The four placement tasks each return a non-None placement target;
     the Lift controller returns None (no placement phase)."""

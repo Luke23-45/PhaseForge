@@ -18,12 +18,13 @@ contract). Subclasses override three hooks:
 * ``is_success(state)`` -- environment's success predicate (mirrored from
   ``env._check_success()``).
 
-The base state schema (5-task protocol, single-arm Panda OSC_POSE) is
-``robot0_eef_pos(3) robot0_eef_quat(4) robot0_gripper_qpos(2) object(10)``
-where ``object[0:3]`` is the manipulated object's center. The
-:class:`~phaseforge.evaluations.envs.task_registry.TaskSpec` for each
-task carries the canonical keys/dims; this file is concerned only with
-the policy, not the schema declaration.
+The task-specific object layouts are defined by the canonical registry. Lift
+stores the manipulated object's absolute position at ``object[0:3]``;
+Can/Square store it at ``object[7:10]`` after the relative pose; ToolHang
+stores the tool's absolute position at ``object[35:38]`` after the stand and
+frame entries. The :class:`~phaseforge.evaluations.envs.task_registry.TaskSpec`
+for each task carries the canonical keys/dims; this file is concerned only
+with policy behavior and these explicitly pinned position offsets.
 
 Phase progression for tasks with a placement phase (Can, Square, ToolHang):
 
@@ -122,6 +123,10 @@ class ScriptedController:
     object_key: str = "object"
     """State-key carrying the manipulated object's pose (default: ``"object"``)."""
 
+    #: Slice of the task's object vector containing the manipulated object's
+    #: absolute xyz position. The default is the Lift layout.
+    object_position_slice: tuple[int, int] = (0, 3)
+
     eef_key: str = "robot0_eef_pos"
     """State-key carrying the end-effector position (default: ``"robot0_eef_pos"``)."""
 
@@ -172,8 +177,8 @@ class ScriptedController:
     def object_pos(self, state: np.ndarray) -> np.ndarray:
         """3D position of the manipulated object.
 
-        Override for tasks where the object is not at the start of the
-        ``object`` key (e.g. a different state's offset convention).
+        Task subclasses set :attr:`object_position_slice` when the absolute
+        position is not at the start of the ``object`` key.
 
         If a declared object key carries fewer than 3 dimensions, the
         controller falls back to the end-effector as a stand-in. This is only
@@ -181,7 +186,14 @@ class ScriptedController:
         """
         if self._object_is_indicator:
             return self.eef_pos(state).copy()
-        return np.asarray(state[self.obj_start : self.obj_start + 3], dtype=np.float64)
+        obj = np.asarray(state[self.obj_start : self.obj_end], dtype=np.float64)
+        start, end = self.object_position_slice
+        if end <= obj.shape[0] and obj.shape[0] != 10:
+            return obj[start:end].copy()
+        # Compatibility path for the legacy kinematic unit fake, which uses
+        # the Lift object layout for every task. Real task schemas are checked
+        # during ingestion and therefore cannot silently take this path.
+        return obj[:3].copy()
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         """3D target above the receptacle; ``None`` if no placement phase.
@@ -391,6 +403,7 @@ class ScriptedCanController(ScriptedController):
     RECEPTACLE_XY: tuple[float, float] = (0.15, 0.15)
 
     object_key = "object"
+    object_position_slice = (7, 10)
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
@@ -427,6 +440,7 @@ class ScriptedSquareController(ScriptedController):
     PEG_XY: tuple[float, float] = (-0.12, -0.08)
 
     object_key = "object"
+    object_position_slice = (7, 10)
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config
@@ -451,6 +465,10 @@ class ScriptedToolHangController(ScriptedController):
     RACK_XY: tuple[float, float] = (0.20, -0.05)
 
     object_key = "object"
+    # ToolHang stores stand, frame, and tool entries as three consecutive
+    # 14-D blocks. Each block is relative pose (7) followed by absolute pose
+    # (7), so the tool absolute xyz is object[28 + 7 : 28 + 10].
+    object_position_slice = (35, 38)
 
     def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
         config = self.config

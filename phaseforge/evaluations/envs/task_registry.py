@@ -15,10 +15,10 @@ Robosuite v1.5 environment names (matching the published
 robomimic-v0.1/v1.5-track PH low-dim datasets):
 
 * ``Lift``                -> 19-dim state, 7-dim action, horizon 500
-* ``PickPlaceCan``         -> 19-dim state, 7-dim action, horizon 500
-* ``NutAssemblySquare``   -> 19-dim state, 7-dim action, horizon 500
+* ``PickPlaceCan``         -> 23-dim state, 7-dim action, horizon 500
+* ``NutAssemblySquare``   -> 23-dim state, 7-dim action, horizon 500
                              (referred to as "Square" in the protocol)
-* ``ToolHang``            -> 19-dim state, 7-dim action, horizon 500
+* ``ToolHang``            -> 53-dim state, 7-dim action, horizon 500
 * ``TwoArmTransport``     -> 59-dim state, 14-dim action, horizon 700
                              (referred to as "Transport" in the protocol)
 
@@ -57,9 +57,9 @@ ENV_NAME_TO_PROTOCOL: dict[str, str] = {v: k for k, v in PROTOCOL_TO_ENV_NAME.it
 #: low-dimensional observation schemas.
 PROTOCOL_STATE_DIM: dict[str, int] = {
     "Lift": 19,
-    "Can": 19,
-    "Square": 19,
-    "ToolHang": 19,
+    "Can": 23,
+    "Square": 23,
+    "ToolHang": 53,
     "Transport": 59,
 }
 
@@ -166,9 +166,9 @@ class TaskSpec:
         return cls  # type: ignore[no-any-return]
 
 
-#: Canonical state_keys / state_dims for each task. The Lift/Can/Square/
-#: ToolHang tasks all use ``robot0_eef_pos(3) robot0_eef_quat(4)
-#: robot0_gripper_qpos(2) object(10)`` summing to 19 dims.
+#: Canonical state_keys / state_dims for each task. Lift uses a 10-D object
+#: observation; Can and Square use 14-D object observations; ToolHang uses
+#: three 14-D object poses plus two success indicators (44-D total).
 #:
 #: Transport publishes both arms' end-effector poses and grippers plus the
 #: 41-dimensional object observation, summing to 59 dimensions.
@@ -185,6 +185,8 @@ _TRANSPORT_DIMS = (3, 4, 2, 3, 4, 2, 41)
 
 _LIFT_KEYS = ("robot0_eef_pos", "robot0_eef_quat", "robot0_gripper_qpos", "object")
 _LIFT_DIMS = (3, 4, 2, 10)
+_CAN_SQUARE_DIMS = (3, 4, 2, 14)
+_TOOL_HANG_DIMS = (3, 4, 2, 44)
 
 _DEFAULT_PANDA_KWARGS: dict[str, Any] = {
     "robots": "Panda",
@@ -214,7 +216,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         protocol_name="Can",
         robosuite_env_name="PickPlaceCan",
         state_keys=_LIFT_KEYS,
-        state_dims=_LIFT_DIMS,
+        state_dims=_CAN_SQUARE_DIMS,
         action_dim=7,
         horizon=500,
         schema_version="robomimic-can-structured-v1",
@@ -227,7 +229,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         protocol_name="Square",
         robosuite_env_name="NutAssemblySquare",
         state_keys=_LIFT_KEYS,
-        state_dims=_LIFT_DIMS,
+        state_dims=_CAN_SQUARE_DIMS,
         action_dim=7,
         horizon=500,
         schema_version="robomimic-square-structured-v1",
@@ -240,7 +242,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         protocol_name="ToolHang",
         robosuite_env_name="ToolHang",
         state_keys=_LIFT_KEYS,
-        state_dims=_LIFT_DIMS,
+        state_dims=_TOOL_HANG_DIMS,
         action_dim=7,
         horizon=500,
         schema_version="robomimic-tool-hang-structured-v1",

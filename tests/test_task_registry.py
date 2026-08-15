@@ -35,9 +35,9 @@ class TestMappings:
     def test_expected_dims_for_each_task(self) -> None:
         assert PROTOCOL_STATE_DIM == {
             "Lift": 19,
-            "Can": 19,
-            "Square": 19,
-            "ToolHang": 19,
+            "Can": 23,
+            "Square": 23,
+            "ToolHang": 53,
             "Transport": 59,
         }
         assert PROTOCOL_ACTION_DIM == {
@@ -141,9 +141,9 @@ class TestDataConfigParity:
         "data_name, expected_dim",
         [
             ("lift", 19),
-            ("can", 19),
-            ("square", 19),
-            ("tool_hang", 19),
+            ("can", 23),
+            ("square", 23),
+            ("tool_hang", 53),
             ("transport", 59),
         ],
     )

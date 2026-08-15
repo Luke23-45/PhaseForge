@@ -20,12 +20,12 @@ state_keys:
   - key: "robot0_gripper_qpos"
     dim: 2
   - key: "object"
-    dim: 10
+    dim: 44
 
 action_key: "actions"
 action_dim: 7
-state_dim: 19
-schema_version: "robomimic-tool-hang-structured-v1"
+state_dim: 53
+schema_version: "robomimic-tool-hang-structured-v2"
 action_contract:
   representation: "robosuite_environment_action"
   range: [-1.0, 1.0]
