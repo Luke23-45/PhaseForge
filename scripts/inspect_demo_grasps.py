@@ -57,8 +57,8 @@ def inspect_hdf5_grasps(hdf5_path: Path) -> dict[str, float]:
             else:
                 continue
 
-            # Find the timestep where gripper action transitions to closed (< -0.5)
-            closed_steps = np.where(actions[:, -1] < -0.5)[0]
+            # robosuite PandaGripper uses +1 for closed and -1 for open.
+            closed_steps = np.where(actions[:, -1] > 0.5)[0]
             if len(closed_steps) == 0:
                 continue
             first_close = closed_steps[0]

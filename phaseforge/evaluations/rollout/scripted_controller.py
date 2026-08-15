@@ -60,9 +60,11 @@ TABLE_HEIGHT: float = 0.8
 SUCCESS_Z: float = TABLE_HEIGHT + 0.04
 OBJECT_HALF_SIZE: float = 0.0215
 
-#: Gripper action convention: -1 closes, +1 opens (dataset convention).
-GRIPPER_OPEN: float = 1.0
-GRIPPER_CLOSE: float = -1.0
+#: robosuite PandaGripper convention: -1 opens, +1 closes.
+#: This is the normalized action passed through the pinned robosuite
+#: controller, not a qpos sign heuristic.
+GRIPPER_OPEN: float = -1.0
+GRIPPER_CLOSE: float = 1.0
 
 #: Steps to hold the gripper closed before lifting.
 GRASP_HOLD_STEPS: int = 25

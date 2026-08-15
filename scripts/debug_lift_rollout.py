@@ -255,7 +255,7 @@ def _trace_case(
         for step in record["steps"]
         if step["sim_metrics"].get("grasp_check") is True
         and step["phase_after"] in {"GRASP", "LIFT"}
-        and step["gripper_action"] < 0.0
+        and step["gripper_action"] > 0.0
     ]
     record["verified_grasp_observed"] = bool(verified_grasp_steps)
     record["first_verified_grasp_step"] = (

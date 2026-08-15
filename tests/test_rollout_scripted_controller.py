@@ -33,7 +33,7 @@ class TestPhases:
         action = ctrl.act(state, t=0)
         # The approach target is above the cube and should require positive z.
         assert _eef_of(action)[2] > 0
-        assert action[6] == 1.0
+        assert action[6] == -1.0
 
     def test_descend_target(self) -> None:
         ctrl = _controller()
@@ -51,7 +51,7 @@ class TestPhases:
         for _ in range(200):
             action = ctrl.act(sim.state, sim.t)
             sim.step(action)
-            if action[6] == -1.0:
+            if action[6] == 1.0:
                 saw_grasp = True
             if sim.success:
                 break
@@ -64,9 +64,9 @@ class TestPhases:
         for _ in range(500):
             action = ctrl.act(sim.state, sim.t)
             sim.step(action)
-            if action[6] == -1.0 and _eef_of(action)[2] > 0:
+            if action[6] == 1.0 and _eef_of(action)[2] > 0:
                 saw_lift = True
-            if action[6] == -1.0:
+            if action[6] == 1.0:
                 saw_close = True
             if sim.success:
                 break
@@ -77,7 +77,7 @@ class TestPhases:
         ctrl = _controller()
         state = state_from_parts(np.array([0.0, 0.0, 0.95]), np.array([0.0, 0.0, SUCCESS_Z + 0.01]))
         action = ctrl.act(state, t=100)
-        assert action[6] == -1.0
+        assert action[6] == 1.0
 
     def test_stall_watchdog_abandons(self) -> None:
         cfg = ScriptedLiftConfig(stall_steps=3, stall_progress=0.005)
@@ -127,5 +127,5 @@ class TestClosedLoop:
         )
         for t in range(1, GRASP_HOLD_STEPS + 2):
             action = ctrl.act(grasp_state, t)
-            assert action[6] == -1.0
+            assert action[6] == 1.0
         assert ctrl.phase_name == "GRASP"

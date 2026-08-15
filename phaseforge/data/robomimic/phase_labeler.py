@@ -7,9 +7,8 @@ Threshold calibration is adaptive: the closed/open gripper levels are derived
 per demonstration from the observed aperture range (5-95 percentiles, with the
 grasp/transport-dominated middle of the demo disambiguating the sign), so any
 robosuite gripper convention labels correctly without per-env tuning — e.g.
-the Panda finger qpos range [-0.04, 0.04] with its antisymmetric fingers
-(open = [+0.0208, -0.0208], closed = [+0.04, -0.04]) or a magnitude
-convention like [0, 0.04]. The aperture feature is the finger excursion
+the Panda finger qpos range [-0.04, 0.04] with its antisymmetric fingers,
+or a magnitude convention like [0, 0.04]. The aperture feature is the finger excursion
 magnitude ``max(|q0|, |q1|)``: the mean of the two finger qpos is ~constant
 for parallel-jaw grippers and cannot separate open from closed. The
 configured absolute thresholds are only fallbacks for degenerate
@@ -83,9 +82,8 @@ class RuleBasedPhaseLabeler:
         - ``lo``/``hi`` are the 5/95 percentiles of the aperture (robust to
           contact spikes at the extremes);
         - the middle-50% median tells which extreme the closed position is
-          on; when closed is the high side (e.g. Panda qpos with closed at
-          ``+0.02``), the signal is mirrored so the hysteresis can treat
-          closed as low;
+          on; if closed is the high side, the signal is mirrored so the
+          hysteresis can treat closed as low;
         - the hysteresis bands sit 30% inside the observed span, keeping
           contact noise out of the levels.
 

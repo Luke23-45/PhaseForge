@@ -104,22 +104,22 @@ class FakeLiftSim:
         return state_from_parts(self.eef, self.cube, self.gripper_qpos)
 
     def step(self, action: np.ndarray) -> None:
-        """Integrate a normalized OSC delta; gripper -1 closes, +1 opens."""
+        """Integrate a normalized OSC delta; gripper +1 closes, -1 opens."""
         pos = np.asarray(action[0:3], dtype=np.float64) * 0.05
         self.eef = np.clip(self.eef + pos, [-0.6, -0.6, 0.76], [0.6, 0.6, 1.25])
-        gripper = float(action[6]) if len(action) > 6 else 1.0
-        # Close (gripper_action = -1) decreases the finger gap (qpos -> 0),
-        # matching the robomimic / robosuite dataset convention.
-        self.gripper_qpos = np.clip(self.gripper_qpos + gripper * 0.02, 0.0, 0.04)
+        gripper = float(action[6]) if len(action) > 6 else -1.0
+        # Close (gripper_action = +1) decreases the finger gap (qpos -> 0),
+        # matching the robosuite PandaGripper convention.
+        self.gripper_qpos = np.clip(self.gripper_qpos - gripper * 0.02, 0.0, 0.04)
         if (
             not self.grasped
-            and gripper <= -0.9
+            and gripper >= 0.9
             and abs(self.eef[0] - self.cube[0]) < 0.04
             and abs(self.eef[1] - self.cube[1]) < 0.04
             and abs(self.eef[2] - (self.cube[2] + 0.04)) < self.grasp_z_window
         ):
             self.grasped = True
-        elif self.grasped and gripper >= 0.5:
+        elif self.grasped and gripper <= -0.5:
             self.grasped = False
         if self.grasped:
             self.cube = self.eef - np.array([0.0, 0.0, 0.04])

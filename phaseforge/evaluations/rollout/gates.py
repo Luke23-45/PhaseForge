@@ -295,21 +295,31 @@ def gate_action_contract(
                 ep_meta=None,
             )
             close_action = np.zeros(adapter.action_dim, dtype=np.float64)
-            close_action[-1] = -1.0
+            close_action[-1] = 1.0
             after_state, _done, _success, _info = adapter.step(close_action)
             # The gripper convention probe requires the
             # ``robot0_gripper_qpos`` key. Every robomimic v1.5 Panda task
             # exposes it, but skip the probe cleanly if a future schema
             # omits it rather than crashing the gate.
             try:
-                start, _stop = adapter.state_spec.index_of("robot0_gripper_qpos")
+                start, stop = adapter.state_spec.index_of("robot0_gripper_qpos")
             except KeyError:
                 start = None
             if start is not None:
-                delta = float(after_state[start + 1] - base_state[start + 1])
+                # Use the symmetric finger excursion rather than one raw
+                # joint coordinate. This works for both the Panda
+                # antisymmetric qpos pair and the unit-test fake's positive
+                # pair; closing must reduce the aperture magnitude.
+                base_aperture = float(
+                    np.max(np.abs(base_state[start:stop]))
+                )
+                after_aperture = float(
+                    np.max(np.abs(after_state[start:stop]))
+                )
+                delta = after_aperture - base_aperture
                 if delta > 1e-4:
                     problems.append(
-                        "gripper close action (-1) moved the finger gap the "
+                        "gripper close action (+1) increased the finger gap "
                         f"wrong way (delta {delta:.6g}) — action convention mismatch"
                     )
         except Exception as exc:  # noqa: BLE001
@@ -321,8 +331,8 @@ def gate_action_contract(
         detail="; ".join(problems)
         if problems
         else (
-            "in-range accepted, NaN/Inf/out-of-range rejected, gripper -1 "
-            "closes (dataset convention)"
+            "in-range accepted, NaN/Inf/out-of-range rejected, gripper +1 "
+            "closes (robosuite PandaGripper convention)"
         ),
     )
 

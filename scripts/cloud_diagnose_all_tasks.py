@@ -84,8 +84,8 @@ def inspect_dataset_demos(hdf5_path: Path) -> dict[str, Any]:
                     break
 
             if eef_pos is not None and len(actions) > 0:
-                # Find first gripper close action (< -0.5)
-                closed_idx = np.where(actions[:, -1] < -0.5)[0]
+                # robosuite PandaGripper uses +1 for closed and -1 for open.
+                closed_idx = np.where(actions[:, -1] > 0.5)[0]
                 if len(closed_idx) > 0:
                     t_c = int(closed_idx[0])
                     g_info: dict[str, Any] = {
