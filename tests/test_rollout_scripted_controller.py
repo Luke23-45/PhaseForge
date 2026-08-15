@@ -473,7 +473,11 @@ class TestClosedLoop:
         ctrl._place_started_at = 0
         ctrl._placement_snapshot = np.array([0.2, 0.3, 0.86])
 
-        action = ctrl.act(state, t=10)
+        # A single false contact is debounced because the simulator can
+        # briefly report loss while the nut settles at the peg. Persistent
+        # loss still triggers the existing recovery path.
+        actions = [ctrl.act(state, t=10 + i) for i in range(5)]
+        action = actions[-1]
 
         assert ctrl.phase_name == "APPROACH"
         assert ctrl._placement_snapshot is None

@@ -145,6 +145,7 @@ class _TransportPhase(Enum):
     LID_CLEAR = auto()
     PAYLOAD_APPROACH = auto()
     PAYLOAD_DESCEND = auto()
+    PAYLOAD_CREEP = auto()
     PAYLOAD_GRASP = auto()
     PAYLOAD_LIFT = auto()
     TRANSPORT = auto()
@@ -729,6 +730,7 @@ class ScriptedSquareController(ScriptedController):
         super().reset()
         self._square_lift_started_at: int | None = None
         self._square_grasp_loss_streak = 0
+        self._square_place_grasp_loss_streak = 0
         self._square_yaw_error = 0.0
 
     @staticmethod
@@ -829,6 +831,7 @@ class ScriptedSquareController(ScriptedController):
         # blip into a real drop.  If the false result persists, recover by
         # reacquiring the current handle instead of following a stale target.
         if self._phase in (_Phase.LIFT, _Phase.TRANSPORT):
+            self._square_place_grasp_loss_streak = 0
             native_grasp = self._native_grasp_status()
             if native_grasp is False:
                 self._square_grasp_loss_streak += 1
@@ -847,9 +850,23 @@ class ScriptedSquareController(ScriptedController):
         # at an unreachable placement target.  If the authoritative geometry
         # says it is already placed, let the base controller open and retract.
         if self._phase is _Phase.PLACE:
+            self._square_grasp_loss_streak = 0
             native_grasp = self._native_grasp_status()
             if native_grasp is False and not self._placement_release_ready(state):
+                self._square_place_grasp_loss_streak += 1
+                if (
+                    self._square_place_grasp_loss_streak
+                    < SQUARE_GRASP_LOSS_CONFIRM_STEPS
+                ):
+                    # Contact can flicker exactly as the nut reaches the peg.
+                    # Keep the placement target and gripper closed while the
+                    # simulator confirms whether the nut was actually lost.
+                    return self._hold_action(GRIPPER_CLOSE)
                 self._reset_square_grasp_recovery()
+            else:
+                self._square_place_grasp_loss_streak = 0
+        else:
+            self._square_place_grasp_loss_streak = 0
 
         phase_before = self._phase
         action = super().act(state, t)
@@ -875,6 +892,7 @@ class ScriptedSquareController(ScriptedController):
         self._stalled_from_phase = None
         self._square_lift_started_at = None
         self._square_grasp_loss_streak = 0
+        self._square_place_grasp_loss_streak = 0
 
     def _placement_release_ready(self, state: np.ndarray) -> bool:
         """Require the nut body to satisfy robosuite's placement geometry.
@@ -1025,6 +1043,30 @@ class ScriptedTransportController(ScriptedController):
     #: the geometry fix does not establish contact on a specific reset.
     GRASP_CONFIRM_STEPS: int = 60
 
+    #: Payload descend altitude above the hammer body center.  ``payload_pos``
+    #: is the hammer's composite body center (mid-handle), and the hammer
+    #: settles in the bin at an unknown orientation (sampler yaw +/-30 deg
+    #: plus toppling after placement), so a fixed small descend offset (like
+    #: the trash cube's 1 cm) cannot guarantee both fingerpads contact the
+    #: hammer's thin (3 cm) handle.  Descend to a safe altitude, then creep
+    #: down step-by-step until a pad contacts the payload (see
+    #: :attr:`PAYLOAD_CREEP_STEP` / :attr:`PAYLOAD_CREEP_FLOOR`).
+    PAYLOAD_DESCEND_Z_OFFSET: float = 0.10
+
+    #: Downward creep step per control step during PAYLOAD_CREEP (4 mm,
+    #: ~2x the OSC per-step resolution at the default 0.05 position scale).
+    PAYLOAD_CREEP_STEP: float = 0.004
+
+    #: Lowest altitude (relative to the hammer body center) the creep is
+    #: allowed to reach before declaring a failed payload grasp.  The hammer
+    #: bottom is ~1.5 cm below the body center when lying flat, so this is
+    #: well past it -- if no pad contact happened by then, the grasp failed.
+    PAYLOAD_CREEP_FLOOR: float = -0.03
+
+    #: Max steps the creep may run before declaring a failed payload grasp
+    #: (bounds a case where the eef is blocked above the payload).
+    PAYLOAD_CREEP_MAX_STEPS: int = 120
+
     object_key = "object"
 
     def __init__(self, state_spec: StateSpec, **kwargs) -> None:
@@ -1094,6 +1136,42 @@ class ScriptedTransportController(ScriptedController):
             return None
         try:
             return bool(checker(gripper=gripper, object_geoms=geoms))
+        except Exception:  # noqa: BLE001 - diagnostic oracle must not crash
+            return None
+
+    def _transport_pad_contact(self, arm_index: int, object_name: str) -> bool | None:
+        """True if any gripper fingerpad of ``arm_index`` contacts the object.
+
+        Unlike :meth:`_native_transport_grasp` (which needs both pads in a
+        closed pinch), this only needs a single pad contact.  Used by the
+        PAYLOAD_CREEP descent to find the hammer's surface regardless of the
+        orientation it settled in.
+        """
+        if self.env is None:
+            return None
+        checker = getattr(self.env, "check_contact", None)
+        robots = getattr(self.env, "robots", None)
+        objects = getattr(getattr(self.env, "transport", None), "objects", None)
+        if not callable(checker) or robots is None or objects is None:
+            return None
+        if arm_index >= len(robots) or object_name not in objects:
+            return None
+        gripper = getattr(robots[arm_index], "gripper", None)
+        important = getattr(gripper, "important_geoms", None)
+        if (
+            important is None
+            or "left_fingerpad" not in important
+            or "right_fingerpad" not in important
+        ):
+            return None
+        geoms = getattr(objects[object_name], "contact_geoms", None)
+        if geoms is None:
+            return None
+        try:
+            return any(
+                bool(checker(pad, geoms))
+                for pad in (important["left_fingerpad"], important["right_fingerpad"])
+            )
         except Exception:  # noqa: BLE001 - diagnostic oracle must not crash
             return None
 
@@ -1195,7 +1273,7 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
         payload_approach = payload + np.array([0.0, 0.0, self.config.approach_z_offset])
-        payload_grasp = payload + np.array([0.0, 0.0, self.config.descend_z_offset])
+        payload_descend = payload + np.array([0.0, 0.0, self.PAYLOAD_DESCEND_Z_OFFSET])
 
         if self._transport_phase is _TransportPhase.PAYLOAD_APPROACH:
             targets = (payload_approach, hold1)
@@ -1205,12 +1283,38 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.PAYLOAD_DESCEND:
-            targets = (payload_grasp, hold1)
+            targets = (payload_descend, hold1)
             self._transport_watchdog(targets, eef0, eef1, t)
             if np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance:
-                self._transport_phase = _TransportPhase.PAYLOAD_GRASP
+                self._transport_phase = _TransportPhase.PAYLOAD_CREEP
                 self._transport_started_at = t
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.PAYLOAD_CREEP:
+            assert self._transport_started_at is not None
+            creep_target = np.array(
+                [
+                    eef0[0],
+                    eef0[1],
+                    max(
+                        eef0[2] - self.PAYLOAD_CREEP_STEP,
+                        payload[2] + self.PAYLOAD_CREEP_FLOOR,
+                    ),
+                ],
+                dtype=np.float64,
+            )
+            if self._transport_pad_contact(0, "payload"):
+                self._transport_phase = _TransportPhase.PAYLOAD_GRASP
+                self._transport_started_at = t
+            elif (
+                eef0[2] <= payload[2] + self.PAYLOAD_CREEP_FLOOR + 1e-6
+                or t - self._transport_started_at >= self.PAYLOAD_CREEP_MAX_STEPS
+            ):
+                self._stalled_from_phase = self._transport_phase.name
+                self._transport_phase = _TransportPhase.STALLED
+            return self._two_arm_action(
+                (creep_target, hold1), eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE)
+            )
 
         if self._transport_phase is _TransportPhase.PAYLOAD_GRASP:
             assert self._transport_started_at is not None

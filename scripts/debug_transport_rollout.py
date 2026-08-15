@@ -132,6 +132,18 @@ def _native_grasps(controller: Any) -> dict[str, Any]:
     return checks
 
 
+def _pad_contacts(controller: Any) -> dict[str, Any]:
+    """Fingerpad contact probes used by the payload creep descent."""
+    probes: dict[str, Any] = {}
+    for arm_index, object_name in ((0, "payload"), (0, "lid"), (1, "trash")):
+        key = f"arm{arm_index}_pad_{object_name}"
+        try:
+            probes[key] = controller._transport_pad_contact(arm_index, object_name)
+        except Exception as exc:  # noqa: BLE001 - diagnostics must continue
+            probes[key] = f"{type(exc).__name__}: {exc}"
+    return probes
+
+
 def _phase_targets(
     controller: Any, state: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray] | None:
@@ -172,11 +184,14 @@ def _phase_targets(
         return controller._lid_clear_target.copy(), eef1.copy()
 
     payload_approach = payload + np.array([0.0, 0.0, config.approach_z_offset])
-    payload_grasp = payload + np.array([0.0, 0.0, config.descend_z_offset])
+    payload_descend = payload + np.array([0.0, 0.0, controller.PAYLOAD_DESCEND_Z_OFFSET])
+    payload_creep_floor = payload + np.array([0.0, 0.0, controller.PAYLOAD_CREEP_FLOOR])
     if phase == "PAYLOAD_APPROACH":
         return payload_approach, eef1.copy()
     if phase == "PAYLOAD_DESCEND":
-        return payload_grasp, eef1.copy()
+        return payload_descend, eef1.copy()
+    if phase == "PAYLOAD_CREEP":
+        return payload_creep_floor, eef1.copy()
     if phase == "PAYLOAD_GRASP":
         return eef0.copy(), eef1.copy()
 
@@ -238,6 +253,7 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
         "trash_eef_offset": controller._trash_eef_offset,
         "transport_started_at": controller._transport_started_at,
         "native_grasps": _native_grasps(controller),
+        "pad_contacts": _pad_contacts(controller),
         "body_positions": body_positions,
         "body_target_distance": body_target_distances,
         "gripper_qpos": _gripper_qpos(env),
@@ -337,6 +353,7 @@ def _trace_case(
                 f"d0={distances.get('arm0', float('nan')):.4f} "
                 f"d1={distances.get('arm1', float('nan')):.4f} "
                 f"g={after['native_grasps']} "
+                f"p={after.get('pad_contacts')} "
                 f"success={bool(success)}"
             )
 
