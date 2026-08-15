@@ -352,15 +352,58 @@ class ScriptedController:
         checker = getattr(self.env, "_check_grasp", None)
         robots = getattr(self.env, "robots", None)
         gripper = getattr(robots[0], "gripper", None) if robots else None
-        object_geoms = getattr(
-            self.env, getattr(self, "grasp_object_attr", ""), None
-        )
+        object_geoms = self._native_grasp_object_geoms()
         if not callable(checker) or gripper is None or object_geoms is None:
             return None
         try:
             return bool(checker(gripper=gripper, object_geoms=object_geoms))
         except Exception:  # noqa: BLE001 - a diagnostic guard must not crash execution
             return None
+
+    def _native_grasp_object_geoms(self) -> Any | None:
+        """Resolve the contact geoms for this task's manipulated object.
+
+        robosuite exposes task objects through different attributes. Lift
+        exposes ``env.cube``; PickPlaceCan stores the active object in the
+        indexed ``env.objects`` list; other single-arm tasks commonly expose
+        ``nut`` or ``tool``. The oracle may use these simulator-native
+        geometries, but learned policies never receive them.
+        """
+        if self.env is None:
+            return None
+
+        candidates: list[Any] = []
+        explicit_attr = getattr(self, "grasp_object_attr", None)
+        if explicit_attr:
+            explicit_object = getattr(self.env, explicit_attr, None)
+            if explicit_object is not None:
+                # Lift's robosuite task exposes ``cube`` in the form already
+                # accepted by ``_check_grasp`` rather than as a model object.
+                for geom_attr in ("contact_geoms", "handle_geoms"):
+                    geoms = getattr(explicit_object, geom_attr, None)
+                    if geoms is not None:
+                        return geoms
+                return explicit_object
+
+        objects = getattr(self.env, "objects", None)
+        object_id = getattr(self.env, "object_id", None)
+        if objects is not None and object_id is not None:
+            try:
+                candidates.append(objects[int(object_id)])
+            except (IndexError, KeyError, TypeError, ValueError):
+                pass
+
+        for attr in ("can", "nut", "tool", "cube"):
+            candidates.append(getattr(self.env, attr, None))
+
+        for obj in candidates:
+            if obj is None:
+                continue
+            for geom_attr in ("contact_geoms", "handle_geoms"):
+                geoms = getattr(obj, geom_attr, None)
+                if geoms is not None:
+                    return geoms
+        return None
 
     def _track(self, target: np.ndarray, gripper: float, eef: np.ndarray, t: int) -> np.ndarray:
         # Run the watchdog only for an active tracking command. Phase

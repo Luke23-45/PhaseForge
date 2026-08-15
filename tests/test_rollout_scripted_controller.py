@@ -8,6 +8,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     GRASP_HOLD_STEPS,
     LIFT_GRASP_Z_OFFSET,
     POSITION_SCALE,
+    ScriptedCanController,
     ScriptedLiftConfig,
     ScriptedLiftController,
 )
@@ -130,3 +131,32 @@ class TestClosedLoop:
             action = ctrl.act(grasp_state, t)
             assert action[6] == 1.0
         assert ctrl.phase_name == "GRASP"
+
+    def test_can_resolves_indexed_robosuite_object_for_grasp_guard(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        can_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 14),
+        )
+
+        class CanObject:
+            contact_geoms = ["can_geom"]
+
+        class IndexedCanEnv:
+            objects = [object(), object(), object(), CanObject()]
+            object_id = 3
+            robots = [type("Robot", (), {"gripper": object()})()]
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                assert object_geoms == ["can_geom"]
+                return False
+
+        ctrl = ScriptedCanController(can_spec, env=IndexedCanEnv())
+        assert ctrl._native_grasp_status() is False

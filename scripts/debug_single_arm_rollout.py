@@ -37,6 +37,7 @@ from phaseforge.evaluations.rollout.runner import (
     resolve_pinned_metadata,
     state_spec_from_config,
 )
+from phaseforge.evaluations.rollout.scripted_controller import ScriptedControllerConfig
 from phaseforge.utils.config import output_base_dir
 
 
@@ -126,8 +127,13 @@ def _trace_case(
     max_steps: int,
     log_every: int,
     include_probe: bool,
+    controller_config: ScriptedControllerConfig | None = None,
 ) -> dict[str, Any]:
-    controller = controller_cls(spec, env=adapter.env)
+    controller = controller_cls(
+        spec,
+        env=adapter.env,
+        config=controller_config,
+    )
     state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
     eef = _state_slice(state, spec, "robot0_eef_pos")
     if eef is None:
@@ -217,10 +223,20 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=500)
     parser.add_argument("--log-every", type=int, default=5)
     parser.add_argument("--no-action-probe", action="store_true")
+    parser.add_argument(
+        "--descend-z-offset",
+        type=float,
+        default=None,
+        help="optional diagnostic-only grasp offset override in metres",
+    )
     parser.add_argument("overrides", nargs="*", help="Hydra overrides")
     args = parser.parse_args()
     if args.cases <= 0 or args.max_steps <= 0 or args.log_every <= 0:
         parser.error("--cases, --max-steps, and --log-every must be positive")
+    if args.descend_z_offset is not None and (
+        not np.isfinite(args.descend_z_offset) or args.descend_z_offset < 0.0
+    ):
+        parser.error("--descend-z-offset must be a finite non-negative number")
 
     overrides = args.overrides or ["data=can", "eval=rollout"]
     with initialize_config_module(version_base="1.3", config_module="phaseforge.config"):
@@ -247,6 +263,11 @@ def main() -> None:
         else:
             selected = bank.cases[: args.cases]
         print(f"Task: {bank.task}; bank: {bank.bank_id}; cases: {[c.index for c in selected]}")
+        controller_config = (
+            None
+            if args.descend_z_offset is None
+            else ScriptedControllerConfig(descend_z_offset=args.descend_z_offset)
+        )
         traces = [
             _trace_case(
                 adapter,
@@ -256,6 +277,7 @@ def main() -> None:
                 max_steps=args.max_steps,
                 log_every=args.log_every,
                 include_probe=not args.no_action_probe,
+                controller_config=controller_config,
             )
             for case in selected
         ]
@@ -269,6 +291,7 @@ def main() -> None:
         "task": bank.task,
         "bank_id": bank.bank_id,
         "config_overrides": overrides,
+        "diagnostic_descend_z_offset": args.descend_z_offset,
         "traces": traces,
     }
     path.write_text(json.dumps(_jsonable(payload), indent=2), encoding="utf-8")
