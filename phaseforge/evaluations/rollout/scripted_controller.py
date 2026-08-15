@@ -14,8 +14,9 @@ contract). Subclasses override three hooks:
 
 * ``grasp_pos(state)`` -- 3D point to approach and grasp (by default the
   manipulated object's state-vector position).
-* ``placement_target(state)`` -- 3D point to release above. ``None`` means
-  the task has no separate placement phase (e.g. Lift only needs to lift).
+* ``placement_target(state)`` -- 3D end-effector point that positions the
+  manipulated object at its receptacle. ``None`` means the task has no
+  separate placement phase (e.g. Lift only needs to lift).
 * ``is_success(state)`` -- environment's success predicate (mirrored from
   ``env._check_success()``).
 
@@ -359,7 +360,13 @@ class ScriptedController:
 
         if self._phase is _Phase.PLACE and placement is not None:
             assert self._place_started_at is not None
-            if t - self._place_started_at >= config.place_hold_steps:
+            target_reached = (
+                np.linalg.norm(placement - eef) <= config.position_tolerance
+            )
+            if (
+                target_reached
+                and t - self._place_started_at >= config.place_hold_steps
+            ):
                 self._phase = _Phase.RETRACT
                 retract_target = np.array(
                     [
@@ -479,8 +486,10 @@ class ScriptedController:
         # target has already been reached. PLACE is deliberately excluded:
         # it is a bounded contact-sensitive settling/release phase, and OSC
         # contact can temporarily stop reducing the eef-to-target distance.
-        # The fixed place_hold_steps limit still forces release and RETRACT;
-        # the simulator's success predicate remains the only success signal.
+        # PLACE remains bounded by the rollout horizon, but release is gated
+        # on actually reaching the pinned end-effector target and then
+        # holding there for place_hold_steps. The simulator's success
+        # predicate remains the only success signal.
         if self._phase is not _Phase.PLACE:
             self._watchdog(eef, target, t)
         if self._phase is _Phase.STALLED:
@@ -698,14 +707,18 @@ class ScriptedSquareController(ScriptedController):
             )
         return action
 
-    def placement_target(self, state: np.ndarray) -> np.ndarray | None:  # noqa: ARG002
+    def placement_target(self, state: np.ndarray) -> np.ndarray | None:
         config = self.config
         if self.env is not None and hasattr(self.env, "peg1_body_id"):
             peg = self._env_body_pos(self.env, int(self.env.peg1_body_id))
             object_z = peg[2] + self.PEG_OBJECT_Z_OFFSET
-            return np.array(
-                [peg[0], peg[1], object_z + config.descend_z_offset]
-            )
+            # placement_target is an end-effector target, while robosuite's
+            # success predicate checks the nut body position. Preserve the
+            # grasp-time eef-to-body offset so the body, rather than the eef,
+            # is brought onto the peg.
+            object_target = np.array([peg[0], peg[1], object_z])
+            eef_to_object = self.eef_pos(state) - self.object_pos(state)
+            return object_target + eef_to_object
         object_z = TABLE_HEIGHT + self.PEG_OBJECT_Z_OFFSET
         return np.array(
             [self.PEG_XY[0], self.PEG_XY[1], object_z + config.descend_z_offset]

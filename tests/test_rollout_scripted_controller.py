@@ -209,10 +209,14 @@ class TestClosedLoop:
                     "data": type(
                         "Data",
                         (),
-                        {"site_xpos": np.array([[0.2, 0.3, 0.4]])},
+                        {
+                            "site_xpos": np.array([[0.2, 0.3, 0.4]]),
+                            "body_xpos": np.array([[0.2, 0.3, 0.85]]),
+                        },
                     )(),
                 },
             )()
+            peg1_body_id = 0
             robots = [type("Robot", (), {"gripper": object()})()]
 
             @staticmethod
@@ -224,3 +228,8 @@ class TestClosedLoop:
         assert ctrl._native_grasp_status() is False
         state = np.zeros(square_spec.dim, dtype=np.float32)
         assert np.allclose(ctrl.grasp_pos(state), [0.2, 0.3, 0.4])
+        state[0:3] = [0.1, 0.2, 0.9]
+        state[9 + 7 : 9 + 10] = [0.3, 0.4, 0.8]
+        assert np.allclose(
+            ctrl.placement_target(state), [0.0, 0.1, 0.96], atol=1e-6
+        )
