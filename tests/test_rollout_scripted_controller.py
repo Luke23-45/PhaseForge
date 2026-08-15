@@ -88,6 +88,7 @@ class TestPhases:
             assert np.all(np.abs(action) <= 1.0)
         action = ctrl.act(state, 10)
         assert np.allclose(action[0:3], 0.0)
+        assert ctrl.stalled_from_phase == "APPROACH"
 
 
 class TestClosedLoop:

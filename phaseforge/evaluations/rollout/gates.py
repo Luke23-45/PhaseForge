@@ -390,7 +390,9 @@ def gate_scripted_controller(
             successes += 1
         else:
             timeouts += 1
-            phase = getattr(controller, "phase_name", "unknown")
+            phase = getattr(controller, "stalled_from_phase", None) or getattr(
+                controller, "phase_name", "unknown"
+            )
             failure_phases[phase] = failure_phases.get(phase, 0) + 1
             failures_detail.append(f"case {case.index}: timed out in phase {phase}")
 

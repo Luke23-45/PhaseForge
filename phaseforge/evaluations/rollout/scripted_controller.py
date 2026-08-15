@@ -170,12 +170,18 @@ class ScriptedController:
         self._stall_since: int | None = None
         self._last_target: np.ndarray | None = None
         self._last_target_distance: float | None = None
+        self._stalled_from_phase: str | None = None
         self._placement_snapshot: np.ndarray | None = None
 
     @property
     def phase_name(self) -> str:
         """Stable diagnostic name for the current controller phase."""
         return self._phase.name
+
+    @property
+    def stalled_from_phase(self) -> str | None:
+        """Phase in which the watchdog declared a stall, if any."""
+        return self._stalled_from_phase
 
     # ------------------------------------------------------------------
     # State parsing
@@ -389,6 +395,7 @@ class ScriptedController:
             if self._stall_since is None:
                 self._stall_since = t
             elif t - self._stall_since >= config.stall_steps:
+                self._stalled_from_phase = self._phase.name
                 self._phase = _Phase.STALLED
         else:
             self._stall_since = None
