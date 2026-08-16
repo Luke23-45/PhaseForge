@@ -1703,8 +1703,17 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d0 = float(np.linalg.norm(arm0_retract - eef0))
-            d1 = float(np.linalg.norm(arm1_hold - eef1))
-            if (d0 <= 0.03 and d1 <= 0.03) or (self._transport_phase is _TransportPhase.STALLED):
+            # d1 is the distance from arm1's eef to the meeting point.
+            # With HANDOVER_OVERSHOOT_Z=0.02 the OSC settles arm1's wrist
+            # ~2 cm above the head top while the gripper fingers extend
+            # ~10 cm down through the head, so arm1's eef is permanently
+            # ~0.10-0.18 m above the live payload position -- the strict
+            # d1<=0.03 check that gates HANDOVER_DESCEND never fires.  Use
+            # an arm0-only convergence criterion here: once arm0 has
+            # reached its retract target the transfer is mechanically
+            # complete (the hammer is on arm1, arm0 is out of the way) and
+            # we can proceed to the lift/swing/transport pipeline.
+            if d0 <= 0.03 or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.HANDOVER_DESCEND
                 self._stall_since = None
                 self._last_target = None
