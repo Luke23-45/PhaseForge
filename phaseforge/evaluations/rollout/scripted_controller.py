@@ -1231,6 +1231,11 @@ class ScriptedTransportController(ScriptedController):
         self._arm1_stall_since: int | None = None
         self._handover_arm1_snapshot: np.ndarray | None = None
         self._handover_meeting_target: np.ndarray | None = None
+        # Native contact can be reported for one physics step while the
+        # opposed grippers are still settling.  Never release arm0 from a
+        # single positive sample: this counter requires uninterrupted native
+        # arm1 ownership during both handover confirmation phases.
+        self._handover_native_stable_steps = 0
 
     @property
     def phase_name(self) -> str:
@@ -1680,16 +1685,21 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held = t - self._transport_started_at
+            native_grasp = self._native_transport_grasp(1, "payload")
+            if native_grasp is True:
+                self._handover_native_stable_steps += 1
+            else:
+                self._handover_native_stable_steps = 0
             if (
                 self._transport_phase is not _TransportPhase.STALLED
                 and held >= self.config.place_hold_steps
             ):
-                native_grasp = self._native_transport_grasp(1, "payload")
-                if native_grasp is True:
+                if self._handover_native_stable_steps >= self.config.place_hold_steps:
                     self._transport_phase = _TransportPhase.TABLE_RELEASE
                     self._transport_started_at = t
                     self._stall_since = None
                     self._last_target = None
+                    self._handover_native_stable_steps = 0
                 elif held >= self.config.place_hold_steps + self.GRASP_CONFIRM_STEPS:
                     self._stalled_from_phase = self._transport_phase.name
                     self._transport_phase = _TransportPhase.STALLED
@@ -1721,16 +1731,21 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held_for = t - self._transport_started_at
+            arm1_has_payload = self._native_transport_grasp(1, "payload")
+            if arm1_has_payload is True:
+                self._handover_native_stable_steps += 1
+            else:
+                self._handover_native_stable_steps = 0
             if (
                 self._transport_phase is not _TransportPhase.STALLED
                 and held_for >= self.config.grasp_hold_steps
             ):
-                arm1_has_payload = self._native_transport_grasp(1, "payload")
-                if arm1_has_payload is True:
+                if self._handover_native_stable_steps >= self.config.grasp_hold_steps:
                     self._transport_phase = _TransportPhase.TABLE_RETRACT
                     self._transport_started_at = t
                     self._stall_since = None
                     self._last_target = None
+                    self._handover_native_stable_steps = 0
                     # The commanded meeting point is an approach target, not
                     # necessarily the EEF pose at contact. Freeze the actual
                     # EEF once native grasp is confirmed so opening arm0 does

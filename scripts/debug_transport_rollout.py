@@ -177,6 +177,15 @@ def _pad_contact_sides(controller: Any) -> dict[str, Any]:
     return details
 
 
+def _geom_names(value: Any) -> list[str]:
+    """Normalize robosuite's string-or-list geom declarations."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
 def _geom_id(model: Any, name: str) -> int | None:
     """Resolve a MuJoCo geom id across mujoco-py and mujoco bindings."""
     try:
@@ -191,6 +200,26 @@ def _geom_id(model: Any, name: str) -> int | None:
         return None if geom_id is None else int(geom_id)
     except Exception:  # noqa: BLE001 - diagnostics must continue
         return None
+
+
+def _geom_id_with_error(model: Any, name: str) -> tuple[int | None, str | None]:
+    """Resolve a geom id and retain the exact failure for diagnostics."""
+    resolver = getattr(model, "geom_name2id", None)
+    if callable(resolver):
+        try:
+            return int(resolver(name)), None
+        except Exception as exc:  # noqa: BLE001 - diagnostics must continue
+            first_error = f"geom_name2id: {type(exc).__name__}: {exc}"
+    else:
+        first_error = "geom_name2id unavailable"
+    try:
+        geom = model.geom(name)
+        geom_id = getattr(geom, "id", None)
+        if geom_id is not None:
+            return int(geom_id), None
+        return None, f"model.geom returned no id for {name!r}"
+    except Exception as exc:  # noqa: BLE001 - diagnostics must continue
+        return None, f"{first_error}; model.geom: {type(exc).__name__}: {exc}"
 
 
 def _geom_name(model: Any, geom_id: int) -> str:
@@ -232,6 +261,18 @@ def _contact_geometry(controller: Any) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - diagnostics must continue
         return {"error": f"{type(exc).__name__}: {exc}"}
 
+    result["simulator"] = {
+        "model_type": type(model).__name__,
+        "data_type": type(data).__name__,
+        "model_ngeom": getattr(model, "ngeom", None),
+        "has_geom_name2id": callable(getattr(model, "geom_name2id", None)),
+        "has_geom": callable(getattr(model, "geom", None)),
+        "has_geom_id2name": callable(getattr(model, "geom_id2name", None)),
+        "has_id2name": callable(getattr(model, "id2name", None)),
+        "has_geom_xpos": hasattr(data, "geom_xpos"),
+        "ncon": int(getattr(data, "ncon", 0)),
+    }
+
     for arm_index, object_name in (
         (0, "lid"),
         (1, "trash"),
@@ -249,45 +290,73 @@ def _contact_geometry(controller: Any) -> dict[str, Any]:
             )
             important = gripper.important_geoms
             pad_names = {
-                side: str(important[group])
+                side: _geom_names(important[group])
                 for side, group in (
                     ("left", "left_fingerpad"),
                     ("right", "right_fingerpad"),
                 )
             }
-            object_names = [str(name) for name in objects[object_name].contact_geoms]
-            pad_ids = {side: _geom_id(model, name) for side, name in pad_names.items()}
-            object_ids = {name: _geom_id(model, name) for name in object_names}
+            object_names = _geom_names(objects[object_name].contact_geoms)
+            pad_ids: dict[str, dict[str, int | None]] = {}
+            object_ids: dict[str, int | None] = {}
+            resolution_errors: dict[str, str] = {}
+            for side, names in pad_names.items():
+                pad_ids[side] = {}
+                for name in names:
+                    geom_id, error = _geom_id_with_error(model, name)
+                    pad_ids[side][name] = geom_id
+                    if error is not None:
+                        resolution_errors[f"pad:{side}:{name}"] = error
+            for name in object_names:
+                geom_id, error = _geom_id_with_error(model, name)
+                object_ids[name] = geom_id
+                if error is not None:
+                    resolution_errors[f"object:{name}"] = error
+
+            def geom_position(geom_id: int | None) -> np.ndarray | None:
+                if geom_id is None:
+                    return None
+                try:
+                    return np.asarray(data.geom_xpos[geom_id], dtype=np.float64).copy()
+                except Exception as exc:  # noqa: BLE001 - diagnostics must continue
+                    resolution_errors[f"position:{geom_id}"] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    return None
+
             pad_positions = {
-                side: (
-                    None
-                    if geom_id is None
-                    else np.asarray(data.geom_xpos[geom_id], dtype=np.float64).copy()
-                )
-                for side, geom_id in pad_ids.items()
+                side: {name: geom_position(geom_id) for name, geom_id in ids.items()}
+                for side, ids in pad_ids.items()
             }
             object_positions = {
-                name: (
-                    None
-                    if geom_id is None
-                    else np.asarray(data.geom_xpos[geom_id], dtype=np.float64).copy()
-                )
-                for name, geom_id in object_ids.items()
+                name: geom_position(geom_id) for name, geom_id in object_ids.items()
             }
+            valid_object_positions = [
+                pos for pos in object_positions.values() if isinstance(pos, np.ndarray)
+            ]
             min_distances: dict[str, float | None] = {}
-            for side, pad_pos in pad_positions.items():
-                valid_object_positions = [
-                    pos for pos in object_positions.values() if isinstance(pos, np.ndarray)
+            for side, side_positions in pad_positions.items():
+                valid_pad_positions = [
+                    pos for pos in side_positions.values() if isinstance(pos, np.ndarray)
                 ]
                 min_distances[side] = (
                     None
-                    if not isinstance(pad_pos, np.ndarray) or not valid_object_positions
+                    if not valid_pad_positions or not valid_object_positions
                     else float(
-                        min(np.linalg.norm(pad_pos - pos) for pos in valid_object_positions)
+                        min(
+                            np.linalg.norm(pad_pos - object_pos)
+                            for pad_pos in valid_pad_positions
+                            for object_pos in valid_object_positions
+                        )
                     )
                 )
 
-            pad_id_set = {geom_id for geom_id in pad_ids.values() if geom_id is not None}
+            pad_id_set = {
+                geom_id
+                for side_ids in pad_ids.values()
+                for geom_id in side_ids.values()
+                if geom_id is not None
+            }
             object_id_set = {geom_id for geom_id in object_ids.values() if geom_id is not None}
             contacts: list[dict[str, Any]] = []
             for contact_index in range(int(getattr(data, "ncon", 0))):
@@ -308,6 +377,9 @@ def _contact_geometry(controller: Any) -> dict[str, Any]:
             result[key] = {
                 "pad_names": pad_names,
                 "object_names": object_names,
+                "pad_ids": pad_ids,
+                "object_ids": object_ids,
+                "resolution_errors": resolution_errors,
                 "pad_positions": pad_positions,
                 "object_positions": object_positions,
                 "min_pad_object_distance": min_distances,
@@ -509,6 +581,9 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
         "payload_eef_offset": controller._payload_eef_offset,
         "trash_eef_offset": controller._trash_eef_offset,
         "transport_started_at": controller._transport_started_at,
+        "handover_native_stable_steps": getattr(
+            controller, "_handover_native_stable_steps", None
+        ),
         "native_grasps": _native_grasps(controller),
         "pad_contacts": _pad_contacts(controller),
         "pad_contact_sides": _pad_contact_sides(controller),
@@ -530,6 +605,9 @@ def _contact_geometry_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         summary[key] = {
             "min_dist": details.get("min_pad_object_distance"),
             "contacts": len(details.get("contacts", [])),
+            "pad_ids": details.get("pad_ids"),
+            "object_ids": details.get("object_ids"),
+            "resolution_errors": details.get("resolution_errors"),
         }
     return summary
 
@@ -632,6 +710,7 @@ def _trace_case(
                 f"g={after['native_grasps']} "
                 f"p={after.get('pad_contacts')} "
                 f"ps={after.get('pad_contact_sides')} "
+                f"stable={after.get('handover_native_stable_steps')} "
                 f"bd={after.get('body_target_distance')} "
                 f"env={after.get('env_success')} "
                 f"success={bool(success)}"
@@ -645,6 +724,8 @@ def _trace_case(
                     f"  detail case={case.index:02d} t={t:03d} "
                     f"eef0={np.round(after['eef0'], 4).tolist()} "
                     f"eef1={np.round(after['eef1'], 4).tolist()} "
+                    f"q0={_jsonable(after.get('eef0_quat'))} "
+                    f"q1={_jsonable(after.get('eef1_quat'))} "
                     f"payload={np.round(after['state_payload'], 4).tolist()} "
                     f"trash={np.round(after['state_trash'], 4).tolist()} "
                     f"targets={_jsonable(after.get('phase_targets'))} "

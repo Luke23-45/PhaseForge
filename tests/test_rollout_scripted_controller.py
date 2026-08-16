@@ -765,7 +765,10 @@ class TestClosedLoop:
         state[object_start : object_start + 3] = [0.10, -0.10, 1.00]
         state[object_start + 3 : object_start + 7] = [0.0, 0.0, 0.0, 1.0]
 
-        ctrl.act(state, t=ctrl.config.grasp_hold_steps)
+        # Native contact must be stable for the complete release hold window;
+        # one positive sample is intentionally insufficient to release arm0.
+        for t in range(ctrl.config.grasp_hold_steps, 2 * ctrl.config.grasp_hold_steps):
+            ctrl.act(state, t=t)
 
         assert ctrl.phase_name == "TABLE_RETRACT"
         assert np.allclose(ctrl._handover_arm1_snapshot, state[9:12])
