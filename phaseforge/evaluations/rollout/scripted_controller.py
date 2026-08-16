@@ -1060,7 +1060,7 @@ class ScriptedTransportController(ScriptedController):
     #: The eef settles ABOVE the head so the OSC doesn't push the hammer
     #: sideways during the descent; the pads then close on the head from
     #: above during PAYLOAD_GRASP.
-    PAYLOAD_HEAD_DESCEND_Z_OFFSET: float = 0.05
+    PAYLOAD_HEAD_DESCEND_Z_OFFSET: float = 0.01
 
     #: Safety bound for PAYLOAD_DESCEND.  With the saturated OSC action the
     #: eef covers the ~10-15 cm descent in ~100-150 steps at the env's OSC
@@ -1319,7 +1319,7 @@ class ScriptedTransportController(ScriptedController):
                 )
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
-        payload_approach = payload + np.array([0.0, 0.0, self.config.approach_z_offset])
+        payload_approach = head_center + np.array([0.0, 0.0, self.config.approach_z_offset])
         payload_descend = head_center + np.array(
             [0.0, 0.0, self.PAYLOAD_HEAD_DESCEND_Z_OFFSET]
         )
