@@ -1105,7 +1105,14 @@ class ScriptedTransportController(ScriptedController):
     HANDOVER_X_CLAMP: tuple[float, float] = (-0.15, +0.15)
     #: Minimum handover z so we never ask either arm to descend below a
     #: safe altitude (the hammer swings on the heavy head if it dips).
-    HANDOVER_Z_MIN: float = 0.95
+    #: Bumped from 0.95 to 1.10 because Panda OSC at z=0.95 + lateral 0.7m
+    #: (the worst-case arm1 reach for a start_bin-anchored payload) cannot
+    #: converge below ~0.13m -- the controller was then stuck because the
+    #: ``d1 <= 0.05`` convergence check never fired and ``arm1_pad_payload``
+    #: never registered.  At z=1.10 arm1 reaches within 0.05-0.08m of the
+    #: meeting point with a single OSC step per 8-step sim period, and
+    #: ``arm1_pad_payload`` registers within the pad-contact tolerance.
+    HANDOVER_Z_MIN: float = 1.10
 
     object_key = "object"
 
@@ -1566,11 +1573,13 @@ class ScriptedTransportController(ScriptedController):
             arm1_pad_payload = self._transport_pad_contact(1, "payload")
             d1 = float(np.linalg.norm(arm1_meet - eef1))
             # Require arm1 has arrived AND its fingerpad has touched the
-            # hammer (single-pad contact is enough confirmation; the strict
+            # hammer.  Single-pad contact is enough confirmation; the strict
             # ``_check_grasp`` requires BOTH pads closed which OSC may not
-            # achieve without the per-pad spring dynamics).
+            # achieve without per-pad spring dynamics.  Threshold relaxed
+            # from 0.05 to 0.10 to match Panda OSC's actual convergence
+            # floor at high-z + long-reach configurations.
             converged = (
-                d1 <= 0.05
+                d1 <= 0.10
                 and arm0_pad_payload is not False
                 and arm1_pad_payload is True
             )

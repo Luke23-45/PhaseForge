@@ -135,7 +135,12 @@ def _native_grasps(controller: Any) -> dict[str, Any]:
 def _pad_contacts(controller: Any) -> dict[str, Any]:
     """Fingerpad contact probes used to confirm the payload descent reached the hammer."""
     probes: dict[str, Any] = {}
-    for arm_index, object_name in ((0, "payload"), (0, "lid"), (1, "trash")):
+    for arm_index, object_name in (
+        (0, "payload"),
+        (0, "lid"),
+        (1, "trash"),
+        (1, "payload"),
+    ):
         key = f"arm{arm_index}_pad_{object_name}"
         try:
             probes[key] = controller._transport_pad_contact(arm_index, object_name)
