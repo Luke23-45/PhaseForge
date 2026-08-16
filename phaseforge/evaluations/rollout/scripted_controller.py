@@ -153,7 +153,7 @@ class _TransportPhase(Enum):
     PAYLOAD_LIFT = auto()
     TRASH_TRANSPORT = auto()
     TRASH_PLACE = auto()
-    # --- Safe Table Handover Phases ---
+    # --- Mid-Air Handover Phases (no shared table in this env) ---
     TABLE_TRANSPORT = auto()
     TABLE_DESCEND = auto()
     TABLE_RELEASE = auto()
@@ -1448,22 +1448,60 @@ class ScriptedTransportController(ScriptedController):
                 return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
+        # --- Mid-Air Handover (opposed two-arm, no shared table) ---
+        # TwoArmTransport uses MultiTableArena with two SEPARATE tables:
+        # table 0 (arm0 side, y in [-0.60, -0.30]) carries the start bin +
+        # payload; table 1 (arm1 side, y in [+0.30, +0.60]) carries the target
+        # bin + trash. There is a 0.6m gap between the tables with NO surface.
+        # Therefore there is no table a "place then pick up" handover can rest
+        # on. The transfer must happen MID-AIR at a point reachable by BOTH
+        # arms -- the shared region is roughly y in [-0.05, +0.05] in the gap.
+        #
+        # Flow: arm0 carries the hammer to the gap point at mid height while
+        # arm1 approaches the same point; arm1 grasps while arm0 still holds;
+        # then arm0 releases. The payload never sits on a table unsupported.
+
+        # Gap midpoint is x=0; y=0 sits between the two tables.
+        # handover_x = eef0[0] keeps the carry aligned with the payload's x.
+        handover_x = float(payload[0])
+        handover_y = 0.0
+        # Pick a mid height both arms can reach (lift_z is high and on the
+        # far side of arm0's reach; use a lower mid height for the meeting).
+        handover_z = 0.95
+
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
-            # Arm0 brings hammer to table center, Arm1 waits out of the way
-            targets = (np.array([0.0, -0.15, lift_z]), np.array([0.0, 0.40, lift_z]))
+            # Arm0 carries the hammer INTO the gap (toward y=0) at mid height.
+            # Arm1 simultaneously steers toward the same meeting point. This
+            # replaces the old "place on a shared table" path that does not
+            # exist in this env (separate tables, 0.6m gap).
+            targets = (
+                np.array([handover_x, handover_y, handover_z]),
+                np.array([handover_x, handover_y, handover_z]),
+            )
             self._transport_watchdog(targets, eef0, eef1, t)
-            if self._both_reached(targets, eef0, eef1, tolerance=0.03) or (self._transport_phase is _TransportPhase.STALLED):
+            # Both arms need to converge on the same gap point.
+            d0 = float(np.linalg.norm(targets[0] - eef0))
+            d1 = float(np.linalg.norm(targets[1] - eef1))
+            converged = d0 <= 0.03 and d1 <= 0.03
+            if converged or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
+                self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         if self._transport_phase is _TransportPhase.TABLE_DESCEND:
-            # Arm0 lowers hammer gently onto the table (Z=0.83 avoids smashing the table)
-            targets = (np.array([0.0, -0.15, 0.83]), np.array([0.0, 0.40, lift_z]))
+            # Hold the meeting pose: both arms at the gap point, arm0 still
+            # holding the hammer, arm1 closing onto it. Arm0 gripper stays
+            # closed; arm1 gripper stays open until HANDOVER_GRASP.
+            targets = (
+                np.array([handover_x, handover_y, handover_z]),
+                np.array([handover_x, handover_y, handover_z]),
+            )
             self._transport_watchdog(targets, eef0, eef1, t)
-            reached = np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance
-            if reached or (self._transport_phase is _TransportPhase.STALLED):
+            assert self._transport_started_at is not None
+            held = t - self._transport_started_at
+            if held >= self.config.place_hold_steps:
                 self._transport_phase = _TransportPhase.TABLE_RELEASE
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1471,67 +1509,91 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         if self._transport_phase is _TransportPhase.TABLE_RELEASE:
+            # Arm1 has had time to seat on the hammer; now lock the grasp
+            # and start the transfer window. Arm0 keeps holding through the
+            # next phase (TABLE_RETRACT = "wait for arm1 confirmation") so
+            # the payload never falls unsupported.
+            targets = (
+                np.array([handover_x, handover_y, handover_z]),
+                np.array([handover_x, handover_y, handover_z]),
+            )
+            self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
-            targets = (np.array([0.0, -0.15, 0.83]), np.array([0.0, 0.40, lift_z]))
-            if t - self._transport_started_at >= self.config.place_hold_steps:
+            if t - self._transport_started_at >= self.config.grasp_hold_steps:
                 self._transport_phase = _TransportPhase.TABLE_RETRACT
+                self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.TABLE_RETRACT:
-            # Arm0 fully retracts so Arm1 can come in cleanly
-            targets = (np.array([0.0, -0.40, lift_z]), np.array([0.0, 0.40, lift_z]))
+            # Arm1 has grasped the hammer (GRIPPER_CLOSE in TABLE_RELEASE). Now
+            # arm0 can safely release and back away. Arm0 keeps its position
+            # briefly so arm1 takes the load, then opens and retracts.
+            targets = (
+                np.array([handover_x, handover_y, handover_z]),
+                np.array([handover_x, handover_y, handover_z]),
+            )
             self._transport_watchdog(targets, eef0, eef1, t)
-            if self._both_reached(targets, eef0, eef1, tolerance=0.03) or (self._transport_phase is _TransportPhase.STALLED):
+            assert self._transport_started_at is not None
+            if t - self._transport_started_at >= self.config.place_hold_steps:
+                self._payload_eef_offset = eef1 - payload
                 self._transport_phase = _TransportPhase.HANDOVER_APPROACH
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.HANDOVER_APPROACH:
-            # Arm1 approaches the hammer lying stably on the table
-            payload_approach = np.array([payload[0], payload[1], lift_z])
-            targets = (np.array([0.0, -0.40, lift_z]), payload_approach)
+            # Arm0 retracts away from the gap; arm1 holds the hammer at the
+            # meeting point and begins carrying it toward table 1 (target bin
+            # side). No more "approach the payload on the table" -- arm1
+            # already has it.
+            arm0_retract = np.array([0.0, -0.40, lift_z])
+            arm1_hold = np.array([handover_x, handover_y, handover_z])
+            targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if np.linalg.norm(targets[1] - eef1) <= 0.03 or (self._transport_phase is _TransportPhase.STALLED):
+            d0 = float(np.linalg.norm(arm0_retract - eef0))
+            d1 = float(np.linalg.norm(arm1_hold - eef1))
+            if (d0 <= 0.03 and d1 <= 0.03) or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.HANDOVER_DESCEND
-                self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.HANDOVER_DESCEND:
-            assert self._transport_started_at is not None
-            # Arm1 descends directly onto the handle just like Arm0 did at the start
-            payload_descend = payload + np.array([0.0, 0.0, 0.01])
-            targets = (np.array([0.0, -0.40, lift_z]), payload_descend)
+            # Transition step: arm1 is settled holding the hammer, arm0 is
+            # out of the way. Nothing to descend (no table). Just confirm and
+            # move to lift for transport to target bin.
+            arm0_retract = np.array([0.0, -0.40, lift_z])
+            arm1_hold = np.array([handover_x, handover_y, handover_z])
+            targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
-
-            steps_in_descend = t - self._transport_started_at
-            reached = np.linalg.norm(targets[1] - eef1) <= self.config.position_tolerance
-            is_stalled = (self._transport_phase is _TransportPhase.STALLED)
-
-            if reached or is_stalled or self._transport_pad_contact(1, "payload") or steps_in_descend >= 80:
+            d1 = float(np.linalg.norm(arm1_hold - eef1))
+            if d1 <= self.config.position_tolerance or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.HANDOVER_GRASP
-                self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.HANDOVER_GRASP:
+            # Already grasped during TABLE_RELEASE; just hold briefly so the
+            # controller confirms arm1 owns the payload before transport.
+            arm0_retract = np.array([0.0, -0.40, lift_z])
+            arm1_hold = np.array([handover_x, handover_y, handover_z])
+            targets = (arm0_retract, arm1_hold)
             assert self._transport_started_at is not None
-            payload_descend = payload + np.array([0.0, 0.0, 0.01])
-            targets = (np.array([0.0, -0.40, lift_z]), payload_descend)
+            self._transport_watchdog(targets, eef0, eef1, t)
             if t - self._transport_started_at >= self.config.grasp_hold_steps:
-                self._payload_eef_offset = eef1 - payload
                 self._transport_phase = _TransportPhase.HANDOVER_LIFT
                 self._stall_since = None
                 self._last_target = None
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.HANDOVER_LIFT:
-            targets = (np.array([0.0, -0.40, lift_z]), np.array([eef1[0], eef1[1], lift_z]))
+            # Arm1 lifts the hammer to transport height. Arm0 stays parked.
+            arm0_retract = np.array([0.0, -0.40, lift_z])
+            arm1_lift = np.array([handover_x, handover_y, lift_z])
+            targets = (arm0_retract, arm1_lift)
             self._transport_watchdog(targets, eef0, eef1, t)
             if eef1[2] >= lift_z - self.config.position_scale:
                 self._transport_phase = _TransportPhase.PAYLOAD_TRANSPORT

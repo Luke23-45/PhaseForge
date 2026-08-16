@@ -220,23 +220,30 @@ def _phase_targets(
     if phase == "TRASH_PLACE":
         return controller._place_targets
 
-    if phase == "TABLE_TRANSPORT":
-        return np.array([0.0, -0.15, lift_z]), np.array([0.0, 0.40, lift_z])
-    if phase in ("TABLE_DESCEND", "TABLE_RELEASE"):
-        return np.array([0.0, -0.15, 0.83]), np.array([0.0, 0.40, lift_z])
-    if phase == "TABLE_RETRACT":
-        return np.array([0.0, -0.40, lift_z]), np.array([0.0, 0.40, lift_z])
+    # Mid-air handover in the 0.6m gap between the two tables (no shared
+    # table surface exists in MultiTableArena). Meeting point is the gap
+    # center (x=payload[0], y=0) at mid height, reachable by both arms.
+    handover_x = float(payload[0])
+    handover_y = 0.0
+    handover_z = 0.95
 
-    if phase == "HANDOVER_APPROACH":
-        return (
-            np.array([0.0, -0.40, lift_z]),
-            np.array([payload[0], payload[1], lift_z]),
+    if phase == "TABLE_TRANSPORT":
+        return np.array([handover_x, handover_y, handover_z]), np.array(
+            [handover_x, handover_y, handover_z]
         )
-    if phase in ("HANDOVER_DESCEND", "HANDOVER_GRASP"):
-        arm1_descend = payload + np.array([0.0, 0.0, 0.01])
-        return np.array([0.0, -0.40, lift_z]), arm1_descend
+    if phase in ("TABLE_DESCEND", "TABLE_RELEASE", "TABLE_RETRACT"):
+        return np.array([handover_x, handover_y, handover_z]), np.array(
+            [handover_x, handover_y, handover_z]
+        )
+
+    if phase in ("HANDOVER_APPROACH", "HANDOVER_DESCEND", "HANDOVER_GRASP"):
+        return np.array([0.0, -0.40, lift_z]), np.array(
+            [handover_x, handover_y, handover_z]
+        )
     if phase == "HANDOVER_LIFT":
-        return np.array([0.0, -0.40, lift_z]), np.array([eef1[0], eef1[1], lift_z])
+        return np.array([0.0, -0.40, lift_z]), np.array(
+            [handover_x, handover_y, lift_z]
+        )
 
     if phase == "PAYLOAD_TRANSPORT":
         payload_target = target_bin.copy()
