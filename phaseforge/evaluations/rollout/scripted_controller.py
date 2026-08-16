@@ -1230,6 +1230,7 @@ class ScriptedTransportController(ScriptedController):
         self._arm1_last_distance: float | None = None
         self._arm1_stall_since: int | None = None
         self._handover_arm1_snapshot: np.ndarray | None = None
+        self._handover_meeting_target: np.ndarray | None = None
 
     @property
     def phase_name(self) -> str:
@@ -1650,6 +1651,11 @@ class ScriptedTransportController(ScriptedController):
                 and arm0_pad_payload is not False
             )
             if self._transport_phase is not _TransportPhase.STALLED and converged:
+                # Freeze the first converged handle target. Recomputing the
+                # nearest handle point from the live EEF while the gripper is
+                # touching the payload lets the target move with contact
+                # jitter and can break an otherwise valid two-pad grasp.
+                self._handover_meeting_target = meeting.copy()
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1665,7 +1671,12 @@ class ScriptedTransportController(ScriptedController):
             # eef0, arm1 holds at the handle-axis meeting point. No relative motion =
             # no tug-of-war.
             arm0_hold = eef0.copy()
-            targets = (arm0_hold, meeting)
+            arm1_hold = (
+                self._handover_meeting_target.copy()
+                if self._handover_meeting_target is not None
+                else meeting
+            )
+            targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held = t - self._transport_started_at
@@ -1673,10 +1684,15 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase is not _TransportPhase.STALLED
                 and held >= self.config.place_hold_steps
             ):
-                self._transport_phase = _TransportPhase.TABLE_RELEASE
-                self._transport_started_at = t
-                self._stall_since = None
-                self._last_target = None
+                native_grasp = self._native_transport_grasp(1, "payload")
+                if native_grasp is True:
+                    self._transport_phase = _TransportPhase.TABLE_RELEASE
+                    self._transport_started_at = t
+                    self._stall_since = None
+                    self._last_target = None
+                elif held >= self.config.place_hold_steps + self.GRASP_CONFIRM_STEPS:
+                    self._stalled_from_phase = self._transport_phase.name
+                    self._transport_phase = _TransportPhase.STALLED
             return self._two_arm_action(
                 targets, eef0, eef1,
                 (GRIPPER_CLOSE, GRIPPER_CLOSE),
@@ -1696,7 +1712,11 @@ class ScriptedTransportController(ScriptedController):
             # toward the frozen target, yanking the hammer out of arm1's
             # fingers.
             arm0_hold = payload[:3].copy()
-            arm1_hold = meeting.copy()
+            arm1_hold = (
+                self._handover_meeting_target.copy()
+                if self._handover_meeting_target is not None
+                else meeting.copy()
+            )
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None

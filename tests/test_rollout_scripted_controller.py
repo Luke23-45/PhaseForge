@@ -770,6 +770,7 @@ class TestClosedLoop:
         assert ctrl.phase_name == "TABLE_RETRACT"
         assert np.allclose(ctrl._handover_arm1_snapshot, state[9:12])
 
+
     def test_transport_watchdog_stalls_when_one_arm_makes_no_progress(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 

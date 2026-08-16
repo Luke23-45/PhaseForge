@@ -276,11 +276,13 @@ def _phase_targets(
         # position error for that arm.
         return eef0.copy(), meeting.copy()
     if phase == "TABLE_DESCEND":
-        return eef0.copy(), meeting.copy()
+        frozen = getattr(controller, "_handover_meeting_target", None)
+        return eef0.copy(), (meeting if frozen is None else frozen.copy())
     if phase == "TABLE_RELEASE":
         # The production controller drives arm0 to the live payload position
         # while arm1 holds the handle-axis meeting point during confirmation.
-        return payload[:3].copy(), meeting.copy()
+        frozen = getattr(controller, "_handover_meeting_target", None)
+        return payload[:3].copy(), (meeting if frozen is None else frozen.copy())
 
     # After TABLE_RELEASE, the controller snapshots the meeting point so arm1 holds steady
     snapshot = getattr(controller, "_handover_arm1_snapshot", meeting)
