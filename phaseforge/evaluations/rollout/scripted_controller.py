@@ -1387,7 +1387,7 @@ class ScriptedTransportController(ScriptedController):
         ) = self._transport_values(state)
         eef0 = self.eef_pos(state)
         eef1 = self._eef1_pos(state)
-        hold1 = eef1.copy()
+        hold1 = getattr(self, "_trash_hold_target", eef1.copy())
 
         if self._lid_clear_target is None:
             self._lid_clear_target = lid_handle + self.LID_CLEAR_OFFSET
@@ -1439,6 +1439,7 @@ class ScriptedTransportController(ScriptedController):
                 trash_ok = trash_grasped is not False or trash_pad is not False
                 if lid_grasped is not False and trash_ok:
                     self._transport_phase = _TransportPhase.LID_LIFT
+                    self._trash_hold_target = eef1.copy()
                     self._stall_since = None
                     self._last_target = None
                 elif (

@@ -41,9 +41,9 @@ LOG = ROOT / "debug_runs_logs.md"
 #   pad2 = ( 0.0035 - q2, 0, 0.0934)   q2 in [-0.04, 0]
 # eef site in right_gripper frame: (0, 0, 0.097)
 
-PAD1_OFFSET_BASE = np.array([-0.0035, 0.0, 0.0934])
-PAD2_OFFSET_BASE = np.array([0.0035, 0.0, 0.0934])
-PAD_SLIDE = np.array([-1.0, 0.0, 0.0])  # pad1 moves -x, pad2 moves +x in rg frame
+PAD1_OFFSET_E = np.array([-0.0035, 0.0, -0.0036])
+PAD2_OFFSET_E = np.array([0.0035, 0.0, -0.0036])
+PAD_SLIDE = np.array([-1.0, 0.0, 0.0])
 
 
 def quat_xyzw_to_mat(q: np.ndarray) -> np.ndarray:
@@ -64,8 +64,8 @@ def quat_xyzw_to_mat(q: np.ndarray) -> np.ndarray:
 
 def pad_world(eef_pos, eef_quat_xyzw, q1=0.0, q2=0.0):
     R = quat_xyzw_to_mat(eef_quat_xyzw)
-    p1 = np.asarray(eef_pos) + R @ (PAD1_OFFSET_BASE + PAD_SLIDE * q1)
-    p2 = np.asarray(eef_pos) + R @ (PAD2_OFFSET_BASE + PAD_SLIDE * (-q2))
+    p1 = np.asarray(eef_pos) + R @ (PAD1_OFFSET_E + PAD_SLIDE * q1)
+    p2 = np.asarray(eef_pos) + R @ (PAD2_OFFSET_E + PAD_SLIDE * (-q2))
     return p1, p2
 
 
