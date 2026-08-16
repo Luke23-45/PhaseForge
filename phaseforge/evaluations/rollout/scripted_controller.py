@@ -1432,18 +1432,30 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.LID_GRASP:
             assert self._transport_started_at is not None
             held_for = t - self._transport_started_at
+            lid_grasped = self._native_transport_grasp(0, "lid")
+            trash_grasped = self._native_transport_grasp(1, "trash")
+            trash_pad = self._transport_pad_contact(1, "trash")
             if held_for >= self.config.grasp_hold_steps:
-                lid_grasped = self._native_transport_grasp(0, "lid")
-                trash_grasped = self._native_transport_grasp(1, "trash")
-                if lid_grasped is not False and trash_grasped is not False:
+                trash_ok = trash_grasped is not False or trash_pad is not False
+                if lid_grasped is not False and trash_ok:
                     self._transport_phase = _TransportPhase.LID_LIFT
                     self._stall_since = None
                     self._last_target = None
                 elif (
-                    lid_grasped is False or trash_grasped is False
+                    lid_grasped is False or (trash_grasped is False and trash_pad is False)
                 ) and held_for >= self.config.grasp_hold_steps + self.GRASP_CONFIRM_STEPS:
                     self._stalled_from_phase = self._transport_phase.name
                     self._transport_phase = _TransportPhase.STALLED
+            # If arm1 has not made trash contact yet, probe deeper.
+            # Each step past grasp_hold_steps lower the arm1 target by 1 mm (capped at 15 mm).
+            probe_active = trash_grasped is False and trash_pad is False
+            if probe_active and held_for >= self.config.grasp_hold_steps:
+                probe_steps = min(held_for - self.config.grasp_hold_steps, 15)
+                probe_target = trash_grasp.copy()
+                probe_target[2] -= probe_steps * 0.001
+                return self._two_arm_action(
+                    (eef0, probe_target), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
+                )
             return self._two_arm_action(
                 (eef0, eef1), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
             )
@@ -1707,15 +1719,29 @@ class ScriptedTransportController(ScriptedController):
             else:
                 self._handover_arm1_grasp_target = None
             arm0_hold = eef0.copy()
-            arm1_hold = (
-                self._handover_arm1_grasp_target.copy()
-                if self._handover_arm1_grasp_target is not None
-                else (
+            if self._handover_arm1_grasp_target is not None:
+                # Contact is established; track payload frame to not lose pads.
+                arm1_hold = self._handover_arm1_grasp_target.copy()
+            elif self._handover_arm1_grasp_offset_local is None:
+                # No contact yet: actively press arm1 toward the payload handle.
+                # Use the projected handle point but pull the Z target DOWN to
+                # payload_z + a tiny overshoot so the fingertips physically
+                # penetrate the handle surface and register contact.
+                base = (
                     self._handover_meeting_target.copy()
                     if self._handover_meeting_target is not None
-                    else meeting
+                    else meeting.copy()
                 )
-            )
+                # Drive wrist to payload_z + OVERSHOOT_Z (fingertips hit handle)
+                base[2] = payload[2] + self.HANDOVER_OVERSHOOT_Z
+                base[2] = max(base[2], self.HANDOVER_Z_MIN)
+                arm1_hold = base
+            else:
+                arm1_hold = (
+                    self._handover_meeting_target.copy()
+                    if self._handover_meeting_target is not None
+                    else meeting.copy()
+                )
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
