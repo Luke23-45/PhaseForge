@@ -1097,6 +1097,12 @@ class ScriptedTransportController(ScriptedController):
     #: within this band in the downloaded 200-demo reset distribution.
     #: +-0.35 spans both tables without binding on any real reset.
     HANDOVER_X_CLAMP: tuple[float, float] = (-0.35, +0.35)
+    #: Reduce normalized OSC position commands during the heavy-hammer
+    #: handover.  The handover target can be several centimeters away while
+    #: the payload is already supported by arm0; full-scale impulses were
+    #: observed to saturate arm1 immediately before native contact and then
+    #: lose the two-pad grasp.
+    HANDOVER_VELOCITY_SCALE: float = 0.5
     #: Minimum handover z so we never ask either arm to descend below a
     #: safe altitude while the payload is in flight.
     HANDOVER_Z_MIN: float = 0.90
@@ -1625,7 +1631,7 @@ class ScriptedTransportController(ScriptedController):
         # heavy hammer.  Halve the per-step velocity scale during these
         # phases so each OSC step carries less momentum.
         meeting = self._payload_meeting_point(payload, payload_quat, eef1)
-        swing_scale = 1.0
+        swing_scale = self.HANDOVER_VELOCITY_SCALE
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
             # Leader-follower, third cut: arm0 holds (zero position command)

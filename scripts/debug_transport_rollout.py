@@ -731,6 +731,18 @@ def _contact_geometry_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _action_saturation(action: np.ndarray) -> dict[str, list[str]]:
+    """Report translational components clipped at the normalized action limit."""
+    labels = {
+        "arm0": (action[:3], ("x", "y", "z")),
+        "arm1": (action[7:10], ("x", "y", "z")),
+    }
+    return {
+        arm: [name for value, name in zip(values, names) if abs(float(value)) >= 0.999999]
+        for arm, (values, names) in labels.items()
+    }
+
+
 def _handover_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Return compact per-step geometry evidence for the active handover."""
     result: dict[str, Any] = {}
@@ -829,8 +841,21 @@ def _trace_case(
         "success": False,
         "termination": "horizon",
     }
+    if record["action_response_probe"]:
+        print(
+            f"ACTION_PROBE case={case.index:02d} "
+            f"{_jsonable(record['action_response_probe'])}"
+        )
+    print(
+        f"CONTROLLER_CONFIG case={case.index:02d} "
+        f"position_scale={controller.config.position_scale} "
+        f"handover_velocity_scale="
+        f"{getattr(controller, 'HANDOVER_VELOCITY_SCALE', None)}"
+    )
     state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
     handover_orientation_baseline: dict[str, np.ndarray | int] | None = None
+    first_native_contact_step: int | None = None
+    first_native_loss_step: int | None = None
 
     for t in range(max_steps):
         phase_before = controller.phase_name
@@ -854,6 +879,38 @@ def _trace_case(
         )
         if orientation_metrics is not None:
             after["handover_orientation"] = orientation_metrics
+        native_arm1_payload = after.get("native_grasps", {}).get("arm1_payload")
+        if (
+            first_native_contact_step is None
+            and native_arm1_payload is True
+        ):
+            first_native_contact_step = t
+            print(
+                f"HANDOVER_EVENT case={case.index:02d} t={t:03d} "
+                f"event=first_native_contact "
+                f"orientation={_jsonable(after.get('handover_orientation'))} "
+                f"saturation={_action_saturation(action)} "
+                f"command={_jsonable(command)} "
+                f"pads={_jsonable(after.get('pad_contact_sides'))} "
+                f"geom={_handover_summary(after)}"
+            )
+        if (
+            first_native_contact_step is not None
+            and first_native_loss_step is None
+            and native_arm1_payload is False
+            and after.get("phase") in {"TABLE_DESCEND", "TABLE_RELEASE"}
+        ):
+            first_native_loss_step = t
+            print(
+                f"HANDOVER_EVENT case={case.index:02d} t={t:03d} "
+                f"event=first_native_loss "
+                f"steps_after_contact={t - first_native_contact_step} "
+                f"orientation={_jsonable(after.get('handover_orientation'))} "
+                f"saturation={_action_saturation(action)} "
+                f"command={_jsonable(command)} "
+                f"pads={_jsonable(after.get('pad_contact_sides'))} "
+                f"geom={_handover_summary(after)}"
+            )
         step = {
             "t": t,
             "phase_before": phase_before,
@@ -925,6 +982,7 @@ def _trace_case(
                 f"eef1_quat={_jsonable(after.get('eef1_quat'))} "
                 f"payload_quat={_jsonable(after.get('state_payload_quat'))} "
                 f"orientation={_jsonable(after.get('handover_orientation'))} "
+                f"saturation={_action_saturation(action)} "
                 f"payload={np.round(after['state_payload'][:3], 5).tolist()} "
                 f"targets={_jsonable(after.get('phase_targets'))} "
                 f"command={_jsonable(command)} "
