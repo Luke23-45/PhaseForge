@@ -1310,15 +1310,11 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.LID_CLEAR
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
-        payload_approach_z = max(
-            float(head_center[2]) + self.config.approach_z_offset, 1.08
-        )
+        payload_approach_z = max(float(payload[2]) + self.config.approach_z_offset, 1.08)
         payload_approach = np.array(
-            [head_center[0], head_center[1], payload_approach_z]
+            [payload[0], payload[1], payload_approach_z], dtype=np.float64
         )
-        payload_descend = head_center + np.array(
-            [0.0, 0.0, self.PAYLOAD_HEAD_DESCEND_Z_OFFSET]
-        )
+        payload_descend = payload + np.array([0.0, 0.0, 0.01], dtype=np.float64)
 
         if self._transport_phase is _TransportPhase.LID_CLEAR:
             targets = (self._lid_clear_target, hold1)
