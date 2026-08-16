@@ -1545,26 +1545,35 @@ class ScriptedTransportController(ScriptedController):
         swing_scale = 0.5
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
-            # Leader-follower, second cut: arm0 issues a ZERO position
-            # command (target = current eef0) so the OSC's impedance control
-            # holds the heavy hammer statically without chasing live-payload
-            # jitter -- the previous "target = meeting (= live payload)"
-            # formulation made arm0 follow the OSC noise floor (~5 mm of
-            # target jitter) which, accumulated over the 200+ steps arm1
-            # needs to traverse the gap, slowly walked the hammer out of
-            # arm0's gripper envelope.  arm1 converges to the LIVE payload
-            # so the hammer itself signals the meeting point regardless of
-            # OSC drift.  Convergence requires BOTH arm1 has arrived AND
-            # arm0 still has fingerpad contact on the payload (the latter is
-            # a cheap per-step abort signal so we don't burn the rest of the
-            # horizon after the hammer has already slipped).
+            # Leader-follower, third cut: arm0 holds (zero position command)
+            # AND arm1's gripper is also commanded CLOSED on the hammer as
+            # it converges.  The previous "GRIPPER_OPEN for arm1" left the
+            # gripper physically closed on the hammer as soon as the
+            # fingers made contact (Panda gripper springs shut against an
+            # obstacle) but produced a tug-of-war during TABLE_TRANSPORT:
+            # arm0 trying to hold eef0 while arm1's OSC pushed laterally
+            # against arm0's pinch, gradually working the hammer out of
+            # arm0's gripper envelope.  Commanding both grippers CLOSED
+            # throughout TABLE_TRANSPORT/DESCEND/RELEASE makes the hammer
+            # statically bilaterally pinched -- no relative motion between
+            # the two grippers, no tug-of-war, no slip.  At TABLE_RETRACT
+            # arm0 finally opens and pulls away while arm1 keeps holding.
             arm0_hold = eef0.copy()
             arm1_meet = meeting
             targets = (arm0_hold, arm1_meet)
             self._transport_watchdog(targets, eef0, eef1, t)
             arm0_pad_payload = self._transport_pad_contact(0, "payload")
+            arm1_pad_payload = self._transport_pad_contact(1, "payload")
             d1 = float(np.linalg.norm(arm1_meet - eef1))
-            converged = d1 <= 0.04 and arm0_pad_payload is not False
+            # Require arm1 has arrived AND its fingerpad has touched the
+            # hammer (single-pad contact is enough confirmation; the strict
+            # ``_check_grasp`` requires BOTH pads closed which OSC may not
+            # achieve without the per-pad spring dynamics).
+            converged = (
+                d1 <= 0.05
+                and arm0_pad_payload is not False
+                and arm1_pad_payload is True
+            )
             if converged or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
                 self._transport_started_at = t
@@ -1572,13 +1581,14 @@ class ScriptedTransportController(ScriptedController):
                 self._last_target = None
             return self._two_arm_action(
                 targets, eef0, eef1,
-                (GRIPPER_CLOSE, GRIPPER_OPEN),
+                (GRIPPER_CLOSE, GRIPPER_CLOSE),
                 velocity_scales=(swing_scale, swing_scale),
             )
 
         if self._transport_phase is _TransportPhase.TABLE_DESCEND:
-            # Hold pose: arm0 stays put (zero-command), arm1 closes onto
-            # the hammer at the meeting point.
+            # Both arms bilaterally pinch the hammer statically; arm0 holds
+            # eef0, arm1 holds at the meeting point.  No relative motion =
+            # no tug-of-war.
             arm0_hold = eef0.copy()
             targets = (arm0_hold, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
@@ -1591,14 +1601,13 @@ class ScriptedTransportController(ScriptedController):
                 self._last_target = None
             return self._two_arm_action(
                 targets, eef0, eef1,
-                (GRIPPER_CLOSE, GRIPPER_OPEN),
+                (GRIPPER_CLOSE, GRIPPER_CLOSE),
                 velocity_scales=(swing_scale, swing_scale),
             )
 
         if self._transport_phase is _TransportPhase.TABLE_RELEASE:
-            # Lock arm1's grasp on the hammer.  arm0 keeps holding
-            # (zero-command) for one more phase so the payload never falls
-            # unsupported.
+            # Confirm arm1's grasp by holding the bilateral pinch for
+            # grasp_hold_steps.  arm0 still closed; arm1 still closed.
             arm0_hold = eef0.copy()
             targets = (arm0_hold, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
@@ -1610,16 +1619,17 @@ class ScriptedTransportController(ScriptedController):
                 self._last_target = None
             return self._two_arm_action(
                 targets, eef0, eef1,
-                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                (GRIPPER_CLOSE, GRIPPER_CLOSE),
                 velocity_scales=(swing_scale, swing_scale),
             )
 
         if self._transport_phase is _TransportPhase.TABLE_RETRACT:
-            # arm1 now owns the hammer (GRIPPER_CLOSE in TABLE_RELEASE);
-            # arm0 can safely release and back away.  arm0 still holds its
-            # current pose briefly while arm1 takes the load.
-            arm0_hold = eef0.copy()
-            targets = (arm0_hold, meeting)
+            # The actual transfer: arm0 OPENS its gripper and pulls away;
+            # arm1 keeps GRIPPER_CLOSE on the hammer.  Capture the eef1 -
+            # payload offset here so subsequent transport phases drive the
+            # hammer body (not the eef) to the target_bin.
+            arm0_retract = np.array([0.0, -0.40, lift_z])
+            targets = (arm0_retract, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             if t - self._transport_started_at >= self.config.place_hold_steps:
