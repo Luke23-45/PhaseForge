@@ -1084,6 +1084,29 @@ class ScriptedTransportController(ScriptedController):
     #: the controller stuck in DESCEND until the horizon expires.
     PAYLOAD_DESCEND_HOLD_STEPS: int = 150
 
+    #: Payload-frame handover: the meeting point is derived from the
+    #: hammer's LIVE position (which is where arm0 currently is, since arm0
+    #: is carrying it during the handover window), not a hard-coded
+    #: coordinate.  This is the "shared payload frame" approach called out
+    #: in the literature as the principled fix for free-space bimanual
+    #: handover: the object itself signals the meeting location, so the
+    #: point is reachable for arm0 by construction (arm0 already is there)
+    #: and is adapted per-reset rather than fighting per-sample reach
+    #: limits (which broke case 00 with the previous fixed (0, 0.20, 0.95)
+    #: meeting point).
+    #:
+    #: The dynamic meeting point is the live payload position pulled a
+    #: fixed offset toward arm1's side (so arm1, not arm0, does most of
+    #: the travel) and clamped into the band reachable by both arms.  Arm0
+    #: only has to move a short lateral distance from its current pose;
+    #: arm1 travels the rest.
+    HANDOVER_BIAS_TOWARD_ARM1: float = 0.30
+    HANDOVER_Y_CLAMP: tuple[float, float] = (-0.10, +0.30)
+    HANDOVER_X_CLAMP: tuple[float, float] = (-0.15, +0.15)
+    #: Minimum handover z so we never ask either arm to descend below a
+    #: safe altitude (the hammer swings on the heavy head if it dips).
+    HANDOVER_Z_MIN: float = 0.95
+
     object_key = "object"
 
     def __init__(self, state_spec: StateSpec, **kwargs) -> None:
@@ -1126,6 +1149,42 @@ class ScriptedTransportController(ScriptedController):
         rot = self._quat_xyzw_to_mat(payload_quat)
         offset = rot @ np.array([0.0, 0.0, self.PAYLOAD_HEAD_OFFSET_Z], dtype=np.float64)
         return payload + offset
+
+    def _payload_meeting_point(self, payload: np.ndarray) -> np.ndarray:
+        """Compute the mid-air handover meeting point from the LIVE payload pose.
+
+        Strategy (payload-frame handover):
+
+        * Anchor on the live payload position -- arm0 is currently carrying
+          the hammer, so this point is reachable for arm0 by construction
+          (no large lateral swing to a hard-coded coordinate).
+        * Pull toward arm1's side by :data:`HANDOVER_BIAS_TOWARD_ARM1`
+          (m) so arm1, not arm0, absorbs most of the cross-gap travel.
+        * Clamp to a band both arms can reach, so the meeting point never
+          leaves the reachable intersection of the two workspaces
+          (fixes the case 00 failure where the previous fixed (0, 0.20,
+          0.95) point sat outside arm1's workspace for some robot-base
+          samples).
+        * Floor z at :data:`HANDOVER_Z_MIN` so the OSC never asks either
+          arm to descend into a swing-inducing low altitude while the
+          heavy hammer is in flight.
+        """
+        meeting_y = float(
+            np.clip(
+                float(payload[1]) + self.HANDOVER_BIAS_TOWARD_ARM1,
+                self.HANDOVER_Y_CLAMP[0],
+                self.HANDOVER_Y_CLAMP[1],
+            )
+        )
+        meeting_x = float(
+            np.clip(
+                float(payload[0]),
+                self.HANDOVER_X_CLAMP[0],
+                self.HANDOVER_X_CLAMP[1],
+            )
+        )
+        meeting_z = max(float(payload[2]), self.HANDOVER_Z_MIN)
+        return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
 
     def reset(self) -> None:
         super().reset()
@@ -1455,37 +1514,24 @@ class ScriptedTransportController(ScriptedController):
         # payload; table 1 (arm1 side, y in [+0.30, +0.60]) carries the target
         # bin + trash. There is a 0.6m gap between the tables with NO surface.
         # Therefore there is no table a "place then pick up" handover can rest
-        # on. The transfer must happen MID-AIR at a point reachable by BOTH
-        # arms -- the shared region is roughly y in [-0.05, +0.05] in the gap.
+        # on. The transfer must happen MID-AIR.
         #
-        # Flow: arm0 carries the hammer to the gap point at mid height while
-        # arm1 approaches the same point; arm1 grasps while arm0 still holds;
-        # then arm0 releases. The payload never sits on a table unsupported.
-
-        # Mid-air meeting point in the gap between the two tables. We bias
-        # the meeting point toward arm1's side (handover_y > 0) so:
-        #  (a) arm1 can comfortably reach it (arm1 reaches y=+0.40 easily;
-        #      previously y=0 sat at the very edge of arm1's workspace and
-        #      failed for some robot base samples), AND
-        #  (b) the post-handover swing to target_bin (y~+0.45) is shorter,
-        #      reducing momentum that can rip the hammer out of arm1's
-        #      gripper during transport.
-        # handover_x=0 centers the meeting x so arm0's carry is short and
-        # predictable from the start bin (x~+0.2 -> 0).
-        handover_x = 0.0
-        handover_y = 0.20
-        # Mid height -- lower than lift_z so both arms can reach comfortably.
-        handover_z = 0.95
+        # The meeting point is computed from the LIVE payload pose (payload-
+        # frame handover; see ``_payload_meeting_point`` for the rationale).
+        # Anchoring on the live payload position makes the meeting point
+        # reachable for arm0 by construction (arm0 is already there, holding
+        # the hammer) and adapts to per-reset variation rather than breaking
+        # on samples where the previous fixed (0, 0.20, 0.95) meeting point
+        # sat outside one arm's reachable workspace.
+        meeting = self._payload_meeting_point(payload)
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
-            # Arm0 carries the hammer INTO the gap (toward y=0) at mid height.
-            # Arm1 simultaneously steers toward the same meeting point. This
-            # replaces the old "place on a shared table" path that does not
-            # exist in this env (separate tables, 0.6m gap).
-            targets = (
-                np.array([handover_x, handover_y, handover_z]),
-                np.array([handover_x, handover_y, handover_z]),
-            )
+            # Arm0 carries the hammer INTO the gap (the payload-frame meeting
+            # point, biased toward arm1) at mid height. Arm1 simultaneously
+            # steers toward the same meeting point. This replaces the old
+            # "place on a shared table" path that does not exist in this env
+            # (separate tables, 0.6m gap).
+            targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             # Both arms need to converge on the same gap point.
             d0 = float(np.linalg.norm(targets[0] - eef0))
@@ -1499,13 +1545,10 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         if self._transport_phase is _TransportPhase.TABLE_DESCEND:
-            # Hold the meeting pose: both arms at the gap point, arm0 still
-            # holding the hammer, arm1 closing onto it. Arm0 gripper stays
-            # closed; arm1 gripper stays open until HANDOVER_GRASP.
-            targets = (
-                np.array([handover_x, handover_y, handover_z]),
-                np.array([handover_x, handover_y, handover_z]),
-            )
+            # Hold the meeting pose: both arms at the meeting point, arm0
+            # still holding the hammer, arm1 closing onto it. Arm0 gripper
+            # stays closed; arm1 gripper stays open until HANDOVER_GRASP.
+            targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held = t - self._transport_started_at
@@ -1521,10 +1564,7 @@ class ScriptedTransportController(ScriptedController):
             # and start the transfer window. Arm0 keeps holding through the
             # next phase (TABLE_RETRACT = "wait for arm1 confirmation") so
             # the payload never falls unsupported.
-            targets = (
-                np.array([handover_x, handover_y, handover_z]),
-                np.array([handover_x, handover_y, handover_z]),
-            )
+            targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             if t - self._transport_started_at >= self.config.grasp_hold_steps:
@@ -1538,10 +1578,7 @@ class ScriptedTransportController(ScriptedController):
             # Arm1 has grasped the hammer (GRIPPER_CLOSE in TABLE_RELEASE). Now
             # arm0 can safely release and back away. Arm0 keeps its position
             # briefly so arm1 takes the load, then opens and retracts.
-            targets = (
-                np.array([handover_x, handover_y, handover_z]),
-                np.array([handover_x, handover_y, handover_z]),
-            )
+            targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             if t - self._transport_started_at >= self.config.place_hold_steps:
@@ -1557,7 +1594,7 @@ class ScriptedTransportController(ScriptedController):
             # side). No more "approach the payload on the table" -- arm1
             # already has it.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_hold = np.array([handover_x, handover_y, handover_z])
+            arm1_hold = meeting.copy()
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d0 = float(np.linalg.norm(arm0_retract - eef0))
@@ -1573,7 +1610,7 @@ class ScriptedTransportController(ScriptedController):
             # out of the way. Nothing to descend (no table). Just confirm and
             # move to lift for transport to target bin.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_hold = np.array([handover_x, handover_y, handover_z])
+            arm1_hold = meeting.copy()
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d1 = float(np.linalg.norm(arm1_hold - eef1))
@@ -1587,7 +1624,7 @@ class ScriptedTransportController(ScriptedController):
             # Already grasped during TABLE_RELEASE; just hold briefly so the
             # controller confirms arm1 owns the payload before transport.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_hold = np.array([handover_x, handover_y, handover_z])
+            arm1_hold = meeting.copy()
             targets = (arm0_retract, arm1_hold)
             assert self._transport_started_at is not None
             self._transport_watchdog(targets, eef0, eef1, t)
@@ -1600,7 +1637,7 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.HANDOVER_LIFT:
             # Arm1 lifts the hammer to transport height. Arm0 stays parked.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_lift = np.array([handover_x, handover_y, lift_z])
+            arm1_lift = np.array([meeting[0], meeting[1], lift_z])
             targets = (arm0_retract, arm1_lift)
             self._transport_watchdog(targets, eef0, eef1, t)
             if eef1[2] >= lift_z - self.config.position_scale:
@@ -1617,7 +1654,7 @@ class ScriptedTransportController(ScriptedController):
             # hammer is less likely to slip out of arm1's gripper.
             arm0_retract = np.array([0.0, -0.40, lift_z])
             arm1_x_aligned = np.array(
-                [float(target_bin[0]), handover_y, lift_z]
+                [float(target_bin[0]), meeting[1], lift_z]
             )
             targets = (arm0_retract, arm1_x_aligned)
             self._transport_watchdog(targets, eef0, eef1, t)
