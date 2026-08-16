@@ -153,6 +153,7 @@ class _TransportPhase(Enum):
     PAYLOAD_LIFT = auto()
     TRASH_TRANSPORT = auto()
     TRASH_PLACE = auto()
+    TRASH_RELEASE = auto()
     # --- Mid-Air Handover Phases (no shared table in this env) ---
     TABLE_TRANSPORT = auto()
     TABLE_DESCEND = auto()
@@ -1053,7 +1054,7 @@ class ScriptedTransportController(ScriptedController):
     #: of the cube rather than hovering above it (the previous Lift-sized
     #: ``descend_z_offset`` of 0.0415 left the cube just below the finger pads
     #: and ``check_grasp`` never registered contact).
-    TRASH_GRASP_Z_OFFSET: float = 0.01
+    TRASH_GRASP_Z_OFFSET: float = 0.005
 
     #: Extra steps the LID_GRASP/PAYLOAD_GRASP hold is given before declaring
     #: a definite native-grasp failure. The native checks run every step
@@ -1141,7 +1142,7 @@ class ScriptedTransportController(ScriptedController):
     #: 0.07 m puts the pads roughly at the head center (with ~0.04 m OSC
     #: stopping margin) so the OSC drives the wrist down until the pads
     #: physically engage the head box and the fingerpad sensor trips.
-    HANDOVER_OVERSHOOT_Z: float = 0.07
+    HANDOVER_OVERSHOOT_Z: float = 0.06
 
     #: How far past the head center to push the meeting point so arm1's
     #: closed gripper fingers actually make contact with the hammer head.
@@ -1578,11 +1579,22 @@ class ScriptedTransportController(ScriptedController):
             is_stalled = (self._transport_phase is _TransportPhase.STALLED)
 
             if (reached or is_stalled) and t - self._transport_started_at >= self.config.place_hold_steps:
-                self._transport_phase = _TransportPhase.TABLE_TRANSPORT
+                self._transport_phase = _TransportPhase.TRASH_RELEASE
+                self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
                 return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.TRASH_RELEASE:
+            targets = self._place_targets
+            self._transport_watchdog(targets, eef0, eef1, t)
+            assert self._transport_started_at is not None
+            if t - self._transport_started_at >= 15:
+                self._transport_phase = _TransportPhase.TABLE_TRANSPORT
+                self._stall_since = None
+                self._last_target = None
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         # --- Mid-Air Handover (opposed two-arm, no shared table) ---
         # TwoArmTransport uses MultiTableArena with two SEPARATE tables:
@@ -1698,12 +1710,19 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
-            if t - self._transport_started_at >= self.config.grasp_hold_steps:
-                self._transport_phase = _TransportPhase.TABLE_RETRACT
-                self._transport_started_at = t
-                self._stall_since = None
-                self._last_target = None
-                self._handover_arm1_snapshot = arm1_hold.copy()
+            held_for = t - self._transport_started_at
+            if held_for >= self.config.grasp_hold_steps:
+                arm1_has_payload = self._native_transport_grasp(1, "payload")
+                arm1_pad = self._transport_pad_contact(1, "payload")
+                if arm1_has_payload is not False or arm1_pad is not False:
+                    self._transport_phase = _TransportPhase.TABLE_RETRACT
+                    self._transport_started_at = t
+                    self._stall_since = None
+                    self._last_target = None
+                    self._handover_arm1_snapshot = arm1_hold.copy()
+                elif held_for >= self.config.grasp_hold_steps + self.GRASP_CONFIRM_STEPS:
+                    self._stalled_from_phase = self._transport_phase.name
+                    self._transport_phase = _TransportPhase.STALLED
             return self._two_arm_action(
                 targets, eef0, eef1,
                 (GRIPPER_CLOSE, GRIPPER_CLOSE),
