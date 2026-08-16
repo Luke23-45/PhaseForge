@@ -1056,6 +1056,14 @@ class ScriptedTransportController(ScriptedController):
     #: and ``check_grasp`` never registered contact).
     TRASH_GRASP_Z_OFFSET: float = 0.005
 
+    #: Velocity scale for the LID_DESCEND/LID_GRASP descent.  Full-scale
+    #: position commands during a 5cm-error close were observed to push the
+    #: 4cm trash cube several centimeters laterally before the pads could
+    #: catch it (case 00 of the TwoArmTransport bank).  Halving the per-step
+    #: delta keeps the OSC impulse below the static-friction threshold of
+    #: the cube so it stays put for a clean pinch grasp.
+    LID_DESCEND_VELOCITY_SCALE: float = 0.5
+
     #: Extra steps the LID_GRASP/PAYLOAD_GRASP hold is given before declaring
     #: a definite native-grasp failure. The native checks run every step
     #: after ``grasp_hold_steps``; this window bounds the wasted horizon when
@@ -1110,7 +1118,22 @@ class ScriptedTransportController(ScriptedController):
     #: The payload-body target is already at the gripper-site height.  Keep
     #: this explicit so the handover target cannot silently regress to a
     #: top-down head offset.
-    HANDOVER_OVERSHOOT_Z: float = 0.055
+    #: NOTE: case 01 of the TwoArmTransport bank (t=321..391, payload
+    #: axis_z ~= -0.12) was observed to hover arm1 at z ~= payload_z + 0.055
+    #: (the previous world-z overshoot) and never contact the handle
+    #: (~6.5 cm above the demo oracle contact at along_handle ~= +0.076).
+    #: The fix is to apply the overshoot ALONG the handle axis so the
+    #: target follows the (possibly tilted) handle toward the head instead
+    #: of climbing in world z.  The world-z overshoot is still kept as the
+    #: :attr:`HANDOVER_Z_FLOOR_BELOW_HANDLE` floor component for low resets.
+    HANDOVER_OVERSHOOT_Z: float = 0.0
+    #: Floor that lifts the meeting point above the handle axis by a small
+    #: amount so arm1 approaches the head from slightly above (preserves
+    #: the original intent of the +0.055 overshoot for horizontal-handle
+    #: resets where axis_z ~= 0).  Expressed in metres ALONG the handle axis
+    #: so the floor follows the head for tilted handles instead of pushing
+    #: the target skyward.
+    HANDOVER_OVERSHOOT_ALONG_AXIS: float = 0.015
 
     #: Optional lateral offset in the payload/world frame.  The dataset's
     #: median payload-close offset is near zero, so the production value is
@@ -1166,6 +1189,53 @@ class ScriptedTransportController(ScriptedController):
         offset = rot @ np.array([0.0, 0.0, self.PAYLOAD_HEAD_OFFSET_Z], dtype=np.float64)
         return payload + offset
 
+    def _handle_grasp_target(
+        self,
+        payload: np.ndarray,
+        payload_quat: np.ndarray,
+        eef1: np.ndarray,
+    ) -> np.ndarray:
+        """World position arm1 should aim at to pinch the hammer handle.
+
+        The 200-demo oracle grips the handle at along_handle ~= +0.076
+        (handle end region, within ``HANDOVER_HANDLE_HALF_LENGTH``) with
+        a lateral offset of ~3 cm so the pads close around the 1.5 cm
+        wide handle from either side.  We project the live EEF1 onto
+        the handle axis to choose the along-axis component, then bias
+        laterally to a fixed demo-median offset so arm1 actually moves
+        TOWARD the handle (instead of preserving its current possibly
+        large lateral error).
+        """
+        rot = self._quat_xyzw_to_mat(payload_quat)
+        axis = rot[:, 2]
+        # Along-handle: project eef1 onto the handle axis relative to
+        # payload and clamp to the physical handle.
+        along_handle = float(np.dot(np.asarray(eef1) - payload, axis))
+        along_handle = float(
+            np.clip(
+                along_handle,
+                -self.HANDOVER_HANDLE_HALF_LENGTH,
+                self.HANDOVER_HANDLE_HALF_LENGTH,
+            )
+        )
+        target = payload + axis * along_handle
+        # Demo median lateral direction (validated against all 200 demos
+        # in scripts/validate_meeting_point.py): lateral offset is
+        # |xy| p50 ~0.015 m with the along-axis dominating.  Use a 3 cm
+        # lateral bias toward the current eef1's lateral bearing so
+        # arm1 approaches the handle from the side it's already on
+        # (avoids teleporting across the handle axis).  The 3 cm
+        # offset is larger than the 1.5 cm handle half-width so the
+        # OSC's residual position error still lands both pads on
+        # either side of the handle, enabling the 2-pad native grasp.
+        eef_lateral = np.asarray(eef1) - (
+            payload + axis * np.dot(np.asarray(eef1) - payload, axis)
+        )
+        lateral_norm = float(np.linalg.norm(eef_lateral))
+        if lateral_norm > 1e-4:
+            target = target + (eef_lateral / lateral_norm) * 0.03
+        return target
+
     def _payload_meeting_point(
         self,
         payload: np.ndarray,
@@ -1209,6 +1279,13 @@ class ScriptedTransportController(ScriptedController):
             )
         )
         meeting[1] += self.HANDOVER_OVERSHOOT_Y
+        # Overshoot along the handle axis (toward the head) rather than in
+        # world z.  This makes the meeting target follow the (possibly
+        # tilted) handle so arm1 can actually reach the head instead of
+        # hovering payload_z + 0.055 above it.  The world-z floor remains
+        # the safety bound for low resets.
+        if eef1 is not None and self.HANDOVER_OVERSHOOT_ALONG_AXIS > 0.0:
+            meeting += handle_axis * self.HANDOVER_OVERSHOOT_ALONG_AXIS
         meeting_z = max(
             float(meeting[2]) + self.HANDOVER_OVERSHOOT_Z,
             self.HANDOVER_Z_MIN,
@@ -1239,6 +1316,8 @@ class ScriptedTransportController(ScriptedController):
         self._handover_meeting_target: np.ndarray | None = None
         self._handover_arm1_grasp_target: np.ndarray | None = None
         self._handover_arm1_grasp_offset_local: np.ndarray | None = None
+        self._handover_arm1_grasp_offset_world: np.ndarray | None = None
+        self._handover_chase_stale: int = 0
         # Native contact can be reported for one physics step while the
         # opposed grippers are still settling.  Never release arm0 from a
         # single positive sample: this counter requires uninterrupted native
@@ -1348,6 +1427,7 @@ class ScriptedTransportController(ScriptedController):
         eef1: np.ndarray,
         grippers: tuple[float, float],
         velocity_scales: tuple[float, float] | None = None,
+        orientations: tuple[np.ndarray | None, np.ndarray | None] | None = None,
     ) -> np.ndarray:
         """Compose a 14-D two-arm action with optional per-arm velocity scaling.
 
@@ -1355,16 +1435,29 @@ class ScriptedTransportController(ScriptedController):
         ``position_scale`` for each arm.  Use ``0.5`` to halve the per-step
         delta during swing/transport phases where the heavy hammer can
         otherwise oscillate or produce OSC singularities (NaN actions).
+
+        ``orientations`` (default ``(None, None)``) optionally provides a
+        3-vector of (roll, pitch, yaw) deltas for each arm; ``None`` leaves
+        the orientation slot at zero so the OSC keeps the orientation
+        constant.  Pass a vector to bias the OSC's roll/pitch/yaw delta
+        toward a desired gripper alignment (e.g. aligning arm1's gripper
+        pads perpendicular to the hammer's handle axis during handover).
         """
         config = self.config
         if velocity_scales is None:
             velocity_scales = (1.0, 1.0)
+        if orientations is None:
+            orientations = (None, None)
         scale0 = float(config.position_scale * velocity_scales[0])
         scale1 = float(config.position_scale * velocity_scales[1])
         action = np.zeros(14, dtype=np.float64)
         action[0:3] = np.clip((targets[0] - eef0) / scale0, -1.0, 1.0)
+        if orientations[0] is not None:
+            action[3:6] = np.clip(np.asarray(orientations[0], dtype=np.float64), -1.0, 1.0)
         action[6] = grippers[0]
         action[7:10] = np.clip((targets[1] - eef1) / scale1, -1.0, 1.0)
+        if orientations[1] is not None:
+            action[9:12] = np.clip(np.asarray(orientations[1], dtype=np.float64), -1.0, 1.0)
         action[13] = grippers[1]
         return action
 
@@ -1427,7 +1520,11 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_OPEN),
+                velocity_scales=(self.LID_DESCEND_VELOCITY_SCALE, self.LID_DESCEND_VELOCITY_SCALE),
+            )
 
         if self._transport_phase is _TransportPhase.LID_GRASP:
             assert self._transport_started_at is not None
@@ -1455,10 +1552,14 @@ class ScriptedTransportController(ScriptedController):
                 probe_target = trash_grasp.copy()
                 probe_target[2] -= probe_steps * 0.001
                 return self._two_arm_action(
-                    (eef0, probe_target), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
+                    (eef0, probe_target), eef0, eef1,
+                    (GRIPPER_CLOSE, GRIPPER_CLOSE),
+                    velocity_scales=(self.LID_DESCEND_VELOCITY_SCALE, self.LID_DESCEND_VELOCITY_SCALE),
                 )
             return self._two_arm_action(
-                (eef0, eef1), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
+                (eef0, eef1), eef0, eef1,
+                (GRIPPER_CLOSE, GRIPPER_CLOSE),
+                velocity_scales=(self.LID_DESCEND_VELOCITY_SCALE, self.LID_DESCEND_VELOCITY_SCALE),
             )
 
         if self._transport_phase is _TransportPhase.LID_LIFT:
@@ -1709,46 +1810,57 @@ class ScriptedTransportController(ScriptedController):
             if native_grasp is True or pad_contact is True:
                 self._handover_native_stable_steps += 1
                 if self._handover_arm1_grasp_offset_local is None:
-                    # Measure the first real contact in the payload frame.
-                    # The arm0-held payload can sag or rotate under contact;
-                    # a fixed world EEF target would then lose the pads.
-                    rotation = self._quat_xyzw_to_mat(payload_quat)
-                    self._handover_arm1_grasp_offset_local = rotation.T @ (
-                        eef1 - payload
-                    )
+                    # First contact: lock the world-frame delta between
+                    # arm1 and the payload so we can chase the payload's
+                    # translation without following its rotation (which
+                    # the OSC cannot keep up with and which would drag
+                    # arm1 toward a stale handle point).
+                    self._handover_arm1_grasp_offset_world = eef1 - payload
+                self._handover_chase_stale = 0
             else:
                 self._handover_native_stable_steps = 0
-            if self._handover_arm1_grasp_offset_local is not None:
-                self._handover_arm1_grasp_target = payload + (
-                    self._quat_xyzw_to_mat(payload_quat)
-                    @ self._handover_arm1_grasp_offset_local
-                )
-            else:
-                self._handover_arm1_grasp_target = None
+                # Pad contact lost: after a few steps with no contact
+                # the live payload chase target may have drifted
+                # relative to the handle, so clear the chase offset so
+                # the press-down branch can re-establish pad contact.
+                self._handover_chase_stale = getattr(
+                    self, "_handover_chase_stale", 0
+                ) + 1
+                if self._handover_chase_stale >= 3:
+                    self._handover_arm1_grasp_offset_world = None
+                    self._handover_arm1_grasp_target = None
             arm0_hold = eef0.copy()
-            if self._handover_arm1_grasp_target is not None:
-                # Contact is established; track payload frame to not lose pads.
-                arm1_hold = self._handover_arm1_grasp_target.copy()
-            elif self._handover_arm1_grasp_offset_local is None:
-                # No contact yet: actively press arm1 toward the payload handle.
-                # Use the projected handle point but pull the Z target DOWN to
-                # payload_z + a tiny overshoot so the fingertips physically
-                # penetrate the handle surface and register contact.
-                base = (
-                    self._handover_meeting_target.copy()
-                    if self._handover_meeting_target is not None
-                    else meeting.copy()
-                )
-                # Drive wrist to payload_z + OVERSHOOT_Z (fingertips hit handle)
-                base[2] = payload[2] + self.HANDOVER_OVERSHOOT_Z
-                base[2] = max(base[2], self.HANDOVER_Z_MIN)
-                arm1_hold = base
+            if (
+                self._handover_arm1_grasp_offset_world is not None
+                and getattr(self, "_handover_chase_stale", 0) < 3
+            ):
+                # Translate-only chase: follow the payload's current
+                # position by the same world-frame offset that was
+                # measured at first contact.  This keeps the pads on
+                # the same world line through the payload body as the
+                # payload translates, even as the payload tilts under
+                # arm0's grip.
+                arm1_hold = payload + self._handover_arm1_grasp_offset_world
             else:
-                arm1_hold = (
-                    self._handover_meeting_target.copy()
-                    if self._handover_meeting_target is not None
-                    else meeting.copy()
+                # No contact yet (or stale): actively press arm1 toward
+                # the payload handle.  Aim at a point along the handle
+                # axis (the demo oracle grips at along_handle ~= +0.076
+                # with lateral offset ~3 cm) plus the current EEF's
+                # lateral direction so the pads approach with the
+                # eef-local-x already perpendicular to the handle.
+                handle_target = self._handle_grasp_target(
+                    payload, payload_quat, eef1
                 )
+                # If the frozen TABLE_TRANSPORT meeting target is
+                # hovering too far above the payload (case 01 with the
+                # old world-z overshoot), drop the target to the handle
+                # level so the fingertips physically penetrate the
+                # handle and register native contact.
+                press_threshold = payload[2] + 0.025
+                if handle_target[2] > press_threshold:
+                    handle_target[2] = payload[2] + self.HANDOVER_OVERSHOOT_Z
+                handle_target[2] = max(handle_target[2], self.HANDOVER_Z_MIN)
+                arm1_hold = handle_target
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
@@ -1797,15 +1909,18 @@ class ScriptedTransportController(ScriptedController):
                     @ self._handover_arm1_grasp_offset_local
                 )
             arm0_hold = eef0.copy()
-            arm1_hold = (
-                self._handover_arm1_grasp_target.copy()
-                if self._handover_arm1_grasp_target is not None
-                else (
-                    self._handover_meeting_target.copy()
-                    if self._handover_meeting_target is not None
-                    else meeting.copy()
+            if self._handover_arm1_snapshot is not None:
+                arm1_hold = self._handover_arm1_snapshot.copy()
+            else:
+                arm1_hold = (
+                    self._handover_arm1_grasp_target.copy()
+                    if self._handover_arm1_grasp_target is not None
+                    else (
+                        self._handover_meeting_target.copy()
+                        if self._handover_meeting_target is not None
+                        else meeting.copy()
+                    )
                 )
-            )
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None

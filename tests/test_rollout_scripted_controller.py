@@ -710,9 +710,15 @@ class TestClosedLoop:
 
         meeting = ctrl._payload_meeting_point(payload, identity_xyzw, eef1)
 
+        # Overshoot is now applied ALONG the handle axis (toward the head)
+        # rather than in world z, so the target sits at the handle end plus
+        # a small along-axis overshoot that follows the (possibly tilted)
+        # handle.  For the identity quat the axis is +z, so the world-z
+        # delta matches the along-axis overshoot.
         assert np.allclose(
             meeting,
-            payload + np.array([0.0, 0.0, ctrl.HANDOVER_HANDLE_HALF_LENGTH]),
+            payload
+            + np.array([0.0, 0.0, ctrl.HANDOVER_HANDLE_HALF_LENGTH + ctrl.HANDOVER_OVERSHOOT_ALONG_AXIS]),
             atol=1e-9,
         )
 
