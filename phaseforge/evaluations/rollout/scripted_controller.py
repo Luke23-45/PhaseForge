@@ -1120,10 +1120,13 @@ class ScriptedTransportController(ScriptedController):
     #: the OSC settles the wrist on the head surface and the fingers
     #: close in the air gap next to the head -- ``arm1_pad_payload`` stays
     #: False and the hammer slips out of arm1's grasp as soon as arm0
-    #: releases.  With this offset the wrist converges ~8 cm above the
-    #: head top, the closed fingers extend down through the head body,
-    #: and the fingerpad sensor registers a real grasp.
-    HANDOVER_OVERSHOOT_Z: float = 0.085
+    #: releases.  With this offset the wrist converges above the head top
+    #: and the closed fingers extend down through the head body, and the
+    #: fingerpad sensor registers a real grasp.  0.02 m (2 cm above the
+    #: head top) is enough to push the closed fingers ~8 cm into the head
+    #: body while keeping the OSC's downward force on the hammer small
+    #: enough that the hammer does not tilt during TABLE_RELEASE.
+    HANDOVER_OVERSHOOT_Z: float = 0.02
 
     #: How far past the head center to push the meeting point so arm1's
     #: closed gripper fingers actually make contact with the hammer head.
@@ -1577,7 +1580,7 @@ class ScriptedTransportController(ScriptedController):
         # heavy hammer.  Halve the per-step velocity scale during these
         # phases so each OSC step carries less momentum.
         meeting = self._payload_meeting_point(payload)
-        swing_scale = 0.5
+        swing_scale = 1.0
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
             # Leader-follower, third cut: arm0 holds (zero position command)
