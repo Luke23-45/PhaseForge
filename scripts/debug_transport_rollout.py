@@ -352,11 +352,15 @@ def _trace_case(
             or controller.phase_name == "STALLED"
         ):
             distances = after["phase_target_distance"] or {}
+            eef0 = after["eef0"]
+            payload = after["state_payload"]
+            xy_err = float(np.linalg.norm(eef0[:2] - payload[:2]))
             print(
                 f"case={case.index:02d} t={t:03d} "
                 f"phase={phase_before}->{controller.phase_name} "
                 f"d0={distances.get('arm0', float('nan')):.4f} "
                 f"d1={distances.get('arm1', float('nan')):.4f} "
+                f"xy_e0_p={xy_err:.4f} "
                 f"g={after['native_grasps']} "
                 f"p={after.get('pad_contacts')} "
                 f"success={bool(success)}"
