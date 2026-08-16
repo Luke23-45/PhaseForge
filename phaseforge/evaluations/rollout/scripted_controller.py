@@ -1261,6 +1261,7 @@ class ScriptedTransportController(ScriptedController):
         self._arm1_last_target: np.ndarray | None = None
         self._arm1_last_distance: float | None = None
         self._arm1_stall_since: int | None = None
+        self._handover_arm1_snapshot: np.ndarray | None = None
 
     @property
     def phase_name(self) -> str:
@@ -1702,6 +1703,7 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
+                self._handover_arm1_snapshot = arm1_hold.copy()
             return self._two_arm_action(
                 targets, eef0, eef1,
                 (GRIPPER_CLOSE, GRIPPER_CLOSE),
@@ -1714,7 +1716,7 @@ class ScriptedTransportController(ScriptedController):
             # payload offset here so subsequent transport phases drive the
             # hammer body (not the eef) to the target_bin.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            targets = (arm0_retract, meeting)
+            targets = (arm0_retract, self._handover_arm1_snapshot)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             if t - self._transport_started_at >= self.config.place_hold_steps:
@@ -1733,7 +1735,7 @@ class ScriptedTransportController(ScriptedController):
             # meeting point and begins carrying it toward table 1 (target
             # bin side).
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_hold = meeting.copy()
+            arm1_hold = self._handover_arm1_snapshot.copy()
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d0 = float(np.linalg.norm(arm0_retract - eef0))
@@ -1762,7 +1764,7 @@ class ScriptedTransportController(ScriptedController):
             # out of the way.  Nothing to descend (no table).  Just confirm
             # and move to lift for transport to target bin.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_hold = meeting.copy()
+            arm1_hold = self._handover_arm1_snapshot.copy()
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d1 = float(np.linalg.norm(arm1_hold - eef1))
@@ -1780,7 +1782,7 @@ class ScriptedTransportController(ScriptedController):
             # Already grasped during TABLE_RELEASE; just hold briefly so the
             # controller confirms arm1 owns the payload before transport.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_hold = meeting.copy()
+            arm1_hold = self._handover_arm1_snapshot.copy()
             targets = (arm0_retract, arm1_hold)
             assert self._transport_started_at is not None
             self._transport_watchdog(targets, eef0, eef1, t)
@@ -1797,7 +1799,7 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.HANDOVER_LIFT:
             # Arm1 lifts the hammer to transport height.  Arm0 stays parked.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_lift = np.array([meeting[0], meeting[1], lift_z])
+            arm1_lift = np.array([self._handover_arm1_snapshot[0], self._handover_arm1_snapshot[1], lift_z])
             targets = (arm0_retract, arm1_lift)
             self._transport_watchdog(targets, eef0, eef1, t)
             if eef1[2] >= lift_z - self.config.position_scale:
@@ -1819,7 +1821,7 @@ class ScriptedTransportController(ScriptedController):
             # gripper.
             arm0_retract = np.array([0.0, -0.40, lift_z])
             arm1_x_aligned = np.array(
-                [float(target_bin[0]), meeting[1], lift_z]
+                [float(target_bin[0]), self._handover_arm1_snapshot[1], lift_z]
             )
             targets = (arm0_retract, arm1_x_aligned)
             self._transport_watchdog(targets, eef0, eef1, t)
