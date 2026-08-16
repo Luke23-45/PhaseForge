@@ -1114,15 +1114,24 @@ class ScriptedTransportController(ScriptedController):
     #: for a real bilateral pinch.
     HANDOVER_Z_MIN: float = 0.90
 
+    #: Extra z-offset above the hammer head so arm1's gripper (default
+    #: Panda orientation: fingers pointing -z) descends THROUGH the head
+    #: when the OSC converges to the meeting point.  Without this offset
+    #: the OSC settles the wrist on the head surface and the fingers
+    #: close in the air gap next to the head -- ``arm1_pad_payload`` stays
+    #: False and the hammer slips out of arm1's grasp as soon as arm0
+    #: releases.  With this offset the wrist converges ~8 cm above the
+    #: head top, the closed fingers extend down through the head body,
+    #: and the fingerpad sensor registers a real grasp.
+    HANDOVER_OVERSHOOT_Z: float = 0.085
+
     #: How far past the head center to push the meeting point so arm1's
     #: closed gripper fingers actually make contact with the hammer head.
-    #: Without overshoot the OSC settles the wrist on the head surface and
-    #: the fingers extend past the head in mid-air (no pad contact, hammer
-    #: slips out of arm1's grasp when arm0 releases).  0.06 m puts the wrist
-    #: past the head center and the fingers wrap around the head from the
-    #: far side; tuned empirically against cases [1, 0] in bank
-    #: ``c6683cf0dbb23876``.
-    HANDOVER_OVERSHOOT_Y: float = 0.06
+    #: Disabled: top-down (HANDOVER_OVERSHOOT_Z) supersedes the lateral
+    #: overshoot for the default Panda orientation (fingers pointing -z);
+    #: the lateral overshoot was useful only when arm1's gripper pointed
+    #: horizontally, which is not the case here.
+    HANDOVER_OVERSHOOT_Y: float = 0.0
 
     object_key = "object"
 
@@ -1176,15 +1185,15 @@ class ScriptedTransportController(ScriptedController):
         is rather than to a hard-coded coordinate that may lie outside
         arm1's reachable workspace for some robot-base samples.
 
-        The hammer head center is at ``payload + [0, 0, head_offset_z]``
-        for a vertical hammer.  We push the meeting point past the head
-        center by :data:`HANDOVER_OVERSHOOT_Y` in the +y direction (toward
-        arm1's base) so the OSC settles arm1's wrist beyond the head and
-        the closed gripper fingers wrap around the head from the far
-        side.  Without the overshoot the OSC keeps the wrist on the head
-        surface and the fingers extend past the head in mid-air, leaving
-        ``arm1_pad_payload`` permanently False and the hammer slipping
-        out of arm1's grasp as soon as arm0 releases.
+        TOP-DOWN GRASP: with the default Panda orientation (fingers
+        pointing -z), arm1's gripper fingers extend downward from the
+        wrist.  We push the meeting point ABOVE the hammer head by
+        :data:`HANDOVER_OVERSHOOT_Z` so the OSC converges arm1's wrist
+        ~8 cm above the head top and the closed fingers descend through
+        the head body.  Without the overshoot the OSC settles the wrist
+        on the head surface and the fingers close in the air gap next to
+        the head -- ``arm1_pad_payload`` stays False and the hammer
+        slips out of arm1's grasp as soon as arm0 releases.
         z is floored at :data:`HANDOVER_Z_MIN` so the arms never descend
         into a swing-inducing low altitude while the heavy hammer is in
         flight.
@@ -1197,7 +1206,10 @@ class ScriptedTransportController(ScriptedController):
             )
         )
         meeting_y = float(payload[1]) + self.HANDOVER_OVERSHOOT_Y
-        meeting_z = max(float(payload[2]) + self.PAYLOAD_HEAD_OFFSET_Z, self.HANDOVER_Z_MIN)
+        meeting_z = max(
+            float(payload[2]) + self.PAYLOAD_HEAD_OFFSET_Z + self.HANDOVER_OVERSHOOT_Z,
+            self.HANDOVER_Z_MIN,
+        )
         return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
 
     def reset(self) -> None:
