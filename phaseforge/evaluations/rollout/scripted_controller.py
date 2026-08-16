@@ -1533,14 +1533,20 @@ class ScriptedTransportController(ScriptedController):
             if held_for >= self.config.grasp_hold_steps:
                 payload_grasped = self._native_transport_grasp(0, "payload")
                 trash_grasped = self._native_transport_grasp(1, "trash")
-                if payload_grasped is not False and trash_grasped is not False:
+                payload_pad = self._transport_pad_contact(0, "payload")
+                trash_pad = self._transport_pad_contact(1, "trash")
+                
+                payload_ok = payload_grasped is not False or payload_pad is not False
+                trash_ok = trash_grasped is not False or trash_pad is not False
+                
+                if payload_ok and trash_ok:
                     self._payload_eef_offset = eef0 - payload
                     self._trash_eef_offset = eef1 - trash
                     self._transport_phase = _TransportPhase.PAYLOAD_LIFT
                     self._stall_since = None
                     self._last_target = None
                 elif (
-                    payload_grasped is False or trash_grasped is False
+                    not payload_ok or not trash_ok
                 ) and held_for >= self.config.grasp_hold_steps + self.GRASP_CONFIRM_STEPS:
                     self._stalled_from_phase = self._transport_phase.name
                     self._transport_phase = _TransportPhase.STALLED
