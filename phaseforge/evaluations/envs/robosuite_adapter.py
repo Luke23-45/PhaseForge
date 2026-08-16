@@ -105,6 +105,7 @@ class RobosuiteStateAdapter:
         action_dim: int = 7,
         action_low: float = -1.0,
         action_high: float = 1.0,
+        horizon: int | None = None,
         seed: int | None = None,
     ) -> None:
         self.meta = meta
@@ -112,6 +113,13 @@ class RobosuiteStateAdapter:
         self.action_dim = int(action_dim)
         self.action_low = float(action_low)
         self.action_high = float(action_high)
+        # The v1.5.1 transport dataset does not serialize ``horizon`` in its
+        # env_args, although the evaluation protocol declares a 700-step
+        # Transport horizon.  The runner supplies the task-aware fallback;
+        # explicit metadata remains authoritative when it is present.
+        self._horizon = int(meta.horizon if horizon is None else horizon)
+        if self._horizon <= 0:
+            raise ValueError(f"horizon must be positive, got {self._horizon}")
         # Keep the protocol seed as adapter metadata, but do not forward it
         # to robosuite.make().  In robosuite 1.5.1 the base MujocoEnv accepts
         # ``seed`` while task classes such as Lift do not expose or forward
@@ -300,7 +308,7 @@ class RobosuiteStateAdapter:
 
     @property
     def horizon(self) -> int:
-        return self.meta.horizon
+        return self._horizon
 
     def close(self) -> None:
         try:

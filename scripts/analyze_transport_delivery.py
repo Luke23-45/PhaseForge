@@ -14,7 +14,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 DATASET = r"data\raw\robomimic\transport\low_dim_v15.hdf5"
-PAYLOAD_HEAD_OFFSET_Z = 0.115
+PAYLOAD_HEAD_OFFSET_Z = 0.117767
 
 
 def quat_to_rot(q_xyzw):

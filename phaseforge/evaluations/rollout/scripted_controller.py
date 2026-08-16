@@ -1068,12 +1068,11 @@ class ScriptedTransportController(ScriptedController):
     #: ``head_halfsize in [0.015, 0.018]``; we use ``handle_radius`` as a
     #: World-space offset from the hammer body (payload) center to the
     #: hammer head box center along the hammer's local +z (handle axis).
-    #: The actual head geom sits at local (0, 0, 0.0775) in the composite
-    #: body frame (verified from ``HammerObject.geom_locations``); the old
-    #: 0.115 corresponded to the handle length and placed the meeting
-    #: point 0.037 m PAST the real head center, aiming the OSC at empty
-    #: air beyond the head and never registering ``arm1_pad_payload``.
-    PAYLOAD_HEAD_OFFSET_Z: float = 0.0775
+    #: The exact v1.5.1 model XML embedded in the downloaded Transport HDF5
+    #: places the payload-head geom center at local z=0.117767.  Using the
+    #: old 0.0775 value puts arm1's meeting point about 4 cm off the actual
+    #: head center, so the native payload grasp check never fires.
+    PAYLOAD_HEAD_OFFSET_Z: float = 0.117767
 
     #: Z offset above the hammer head center for the PAYLOAD_DESCEND target.
     #: The eef settles ABOVE the head so the OSC doesn't push the hammer
@@ -1209,7 +1208,7 @@ class ScriptedTransportController(ScriptedController):
         offset horizontally by ``PAYLOAD_HEAD_OFFSET_Z`` with zero world-z
         delta), so the meeting point must be the live HEAD CENTER
         (``_head_center`` rotates the local +z head offset by the payload
-        quat), NOT ``payload + [0, 0, 0.115]`` which assumes the head is
+        quat), NOT ``payload + [0, 0, 0.117767]`` which assumes the head is
         directly above the body in world-z.  The previous world-z form put
         the meeting point ~0.127 m above the actual head, arm1's fingers
         closed in the air gap next to the head, and the hammer slipped out
@@ -1396,7 +1395,14 @@ class ScriptedTransportController(ScriptedController):
                 (GRIPPER_OPEN, GRIPPER_OPEN),
             )
 
-        payload, payload_quat, trash, lid_handle, target_bin, trash_bin = self._transport_values(state)
+        (
+            payload,
+            payload_quat,
+            trash,
+            lid_handle,
+            target_bin,
+            trash_bin,
+        ) = self._transport_values(state)
         eef0 = self.eef_pos(state)
         eef1 = self._eef1_pos(state)
         hold1 = eef1.copy()
@@ -1419,7 +1425,10 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.LID_APPROACH:
             targets = (lid_approach, trash_high)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if self._both_reached(targets, eef0, eef1) or (self._transport_phase is _TransportPhase.STALLED):
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and self._both_reached(targets, eef0, eef1)
+            ):
                 self._transport_phase = _TransportPhase.LID_DESCEND
                 self._stall_since = None
                 self._last_target = None
@@ -1428,7 +1437,10 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.LID_DESCEND:
             targets = (lid_grasp, trash_grasp)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if self._both_reached(targets, eef0, eef1) or (self._transport_phase is _TransportPhase.STALLED):
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and self._both_reached(targets, eef0, eef1)
+            ):
                 self._transport_phase = _TransportPhase.LID_GRASP
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1458,7 +1470,10 @@ class ScriptedTransportController(ScriptedController):
             lid_lift = np.array([eef0[0], eef0[1], max(eef0[2], 1.08)])
             targets = (lid_lift, hold1)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if eef0[2] >= 1.08 - self.config.position_scale:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and eef0[2] >= 1.08 - self.config.position_scale
+            ):
                 self._transport_phase = _TransportPhase.LID_CLEAR
                 self._stall_since = None
                 self._last_target = None
@@ -1467,7 +1482,10 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.LID_CLEAR:
             targets = (self._lid_clear_target, hold1)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance or (self._transport_phase is _TransportPhase.STALLED):
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance
+            ):
                 if getattr(self, "_lid_drop_started_at", None) is None:
                     self._lid_drop_started_at = t
                 if t - self._lid_drop_started_at >= 15:
@@ -1488,7 +1506,10 @@ class ScriptedTransportController(ScriptedController):
             targets = (payload_approach, hold1)
             self._transport_watchdog(targets, eef0, eef1, t)
             # Generous tolerance to absorb gravity sag on the heavy hammer
-            if self._both_reached(targets, eef0, eef1, tolerance=0.03) or (self._transport_phase is _TransportPhase.STALLED):
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and self._both_reached(targets, eef0, eef1, tolerance=0.03)
+            ):
                 self._transport_phase = _TransportPhase.PAYLOAD_DESCEND
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1501,11 +1522,8 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             steps_in_descend = t - self._transport_started_at
             reached = np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance
-            is_stalled = (self._transport_phase is _TransportPhase.STALLED)
-
-            if (
+            if self._transport_phase is not _TransportPhase.STALLED and (
                 reached
-                or is_stalled
                 or self._transport_pad_contact(0, "payload")
                 or steps_in_descend >= self.PAYLOAD_DESCEND_HOLD_STEPS
             ):
@@ -1543,7 +1561,10 @@ class ScriptedTransportController(ScriptedController):
                 np.array([eef1[0], eef1[1], max(eef1[2], lift_z)]),
             )
             self._transport_watchdog(targets, eef0, eef1, t)
-            if min(eef0[2], eef1[2]) >= lift_z - self.config.position_scale:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and min(eef0[2], eef1[2]) >= lift_z - self.config.position_scale
+            ):
                 trash_target = trash_bin.copy()
                 trash_target[2] += self.BIN_OBJECT_Z_OFFSET
                 self._place_targets = (
@@ -1564,7 +1585,10 @@ class ScriptedTransportController(ScriptedController):
             )
             self._transport_watchdog(targets, eef0, eef1, t)
             # Generous tolerance so payload gravity sag doesn't stall the pipeline
-            if self._both_reached(targets, eef0, eef1, tolerance=0.03) or (self._transport_phase is _TransportPhase.STALLED):
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and self._both_reached(targets, eef0, eef1, tolerance=0.03)
+            ):
                 self._transport_phase = _TransportPhase.TRASH_PLACE
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1576,9 +1600,11 @@ class ScriptedTransportController(ScriptedController):
             targets = self._place_targets
             self._transport_watchdog(targets, eef0, eef1, t)
             reached = self._both_reached(targets, eef0, eef1, tolerance=0.03)
-            is_stalled = (self._transport_phase is _TransportPhase.STALLED)
-
-            if (reached or is_stalled) and t - self._transport_started_at >= self.config.place_hold_steps:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and reached
+                and t - self._transport_started_at >= self.config.place_hold_steps
+            ):
                 self._transport_phase = _TransportPhase.TRASH_RELEASE
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1590,7 +1616,10 @@ class ScriptedTransportController(ScriptedController):
             targets = self._place_targets
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
-            if t - self._transport_started_at >= 15:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and t - self._transport_started_at >= 15
+            ):
                 self._transport_phase = _TransportPhase.TABLE_TRANSPORT
                 self._stall_since = None
                 self._last_target = None
@@ -1641,7 +1670,6 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_hold, arm1_meet)
             self._transport_watchdog(targets, eef0, eef1, t)
             arm0_pad_payload = self._transport_pad_contact(0, "payload")
-            arm1_pad_payload = self._transport_pad_contact(1, "payload")
             d1 = float(np.linalg.norm(arm1_meet - eef1))
             # Require arm1 has converged to the head-center meeting point AND
             # arm0's bilateral pinch is still active (the hammer has not
@@ -1657,7 +1685,7 @@ class ScriptedTransportController(ScriptedController):
                 d1 <= 0.12
                 and arm0_pad_payload is not False
             )
-            if converged or (self._transport_phase is _TransportPhase.STALLED):
+            if self._transport_phase is not _TransportPhase.STALLED and converged:
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1677,7 +1705,10 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held = t - self._transport_started_at
-            if held >= self.config.place_hold_steps:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and held >= self.config.place_hold_steps
+            ):
                 self._transport_phase = _TransportPhase.TABLE_RELEASE
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1711,7 +1742,10 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held_for = t - self._transport_started_at
-            if held_for >= self.config.grasp_hold_steps:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and held_for >= self.config.grasp_hold_steps
+            ):
                 arm1_has_payload = self._native_transport_grasp(1, "payload")
                 arm1_pad = self._transport_pad_contact(1, "payload")
                 if arm1_has_payload is not False or arm1_pad is not False:
@@ -1768,7 +1802,7 @@ class ScriptedTransportController(ScriptedController):
             # reached its retract target the transfer is mechanically
             # complete (the hammer is on arm1, arm0 is out of the way) and
             # we can proceed to the lift/swing/transport pipeline.
-            if d0 <= 0.03 or (self._transport_phase is _TransportPhase.STALLED):
+            if self._transport_phase is not _TransportPhase.STALLED and d0 <= 0.03:
                 self._transport_phase = _TransportPhase.HANDOVER_DESCEND
                 self._stall_since = None
                 self._last_target = None
@@ -1787,7 +1821,10 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d1 = float(np.linalg.norm(arm1_hold - eef1))
-            if d1 <= self.config.position_tolerance or (self._transport_phase is _TransportPhase.STALLED):
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and d1 <= self.config.position_tolerance
+            ):
                 self._transport_phase = _TransportPhase.HANDOVER_GRASP
                 self._stall_since = None
                 self._last_target = None
@@ -1805,7 +1842,10 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_retract, arm1_hold)
             assert self._transport_started_at is not None
             self._transport_watchdog(targets, eef0, eef1, t)
-            if t - self._transport_started_at >= self.config.grasp_hold_steps:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and t - self._transport_started_at >= self.config.grasp_hold_steps
+            ):
                 self._transport_phase = _TransportPhase.HANDOVER_LIFT
                 self._stall_since = None
                 self._last_target = None
@@ -1818,10 +1858,15 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.HANDOVER_LIFT:
             # Arm1 lifts the hammer to transport height.  Arm0 stays parked.
             arm0_retract = np.array([0.0, -0.40, lift_z])
-            arm1_lift = np.array([self._handover_arm1_snapshot[0], self._handover_arm1_snapshot[1], lift_z])
+            arm1_lift = np.array(
+                [self._handover_arm1_snapshot[0], self._handover_arm1_snapshot[1], lift_z]
+            )
             targets = (arm0_retract, arm1_lift)
             self._transport_watchdog(targets, eef0, eef1, t)
-            if eef1[2] >= lift_z - self.config.position_scale:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and eef1[2] >= lift_z - self.config.position_scale
+            ):
                 self._transport_phase = _TransportPhase.HANDOVER_SWING
                 self._stall_since = None
                 self._last_target = None
@@ -1845,7 +1890,7 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_retract, arm1_x_aligned)
             self._transport_watchdog(targets, eef0, eef1, t)
             d1 = float(np.linalg.norm(arm1_x_aligned - eef1))
-            if d1 <= 0.03 or (self._transport_phase is _TransportPhase.STALLED):
+            if self._transport_phase is not _TransportPhase.STALLED and d1 <= 0.03:
                 self._transport_phase = _TransportPhase.PAYLOAD_TRANSPORT
                 self._stall_since = None
                 self._last_target = None
@@ -1866,9 +1911,8 @@ class ScriptedTransportController(ScriptedController):
             )
             self._transport_watchdog(targets, eef0, eef1, t)
             # Generous tolerance to absorb gravity sag while carrying the hammer
-            if (
+            if self._transport_phase is not _TransportPhase.STALLED and (
                 np.linalg.norm(targets[1] - eef1) <= 0.03
-                or (self._transport_phase is _TransportPhase.STALLED)
             ):
                 self._transport_phase = _TransportPhase.PAYLOAD_PLACE
                 self._transport_started_at = t
@@ -1886,9 +1930,11 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
 
             reached = self._both_reached(targets, eef0, eef1, tolerance=0.03)
-            is_stalled = (self._transport_phase is _TransportPhase.STALLED)
-
-            if (reached or is_stalled) and t - self._transport_started_at >= self.config.place_hold_steps:
+            if (
+                self._transport_phase is not _TransportPhase.STALLED
+                and reached
+                and t - self._transport_started_at >= self.config.place_hold_steps
+            ):
                 self._transport_phase = _TransportPhase.PAYLOAD_RETRACT
                 self._stall_since = None
                 self._last_target = None
@@ -1905,9 +1951,7 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
 
             reached = self._both_reached(targets, eef0, eef1, tolerance=0.03)
-            is_stalled = (self._transport_phase is _TransportPhase.STALLED)
-
-            if reached or is_stalled:
+            if self._transport_phase is not _TransportPhase.STALLED and reached:
                 self._transport_phase = _TransportPhase.DONE
                 self._stall_since = None
                 self._last_target = None
@@ -1940,6 +1984,10 @@ class ScriptedTransportController(ScriptedController):
         ``_stalled_from_phase`` so the diagnostic JSON can attribute the
         stall).
         """
+        if self._transport_phase is _TransportPhase.STALLED:
+            # Keep the first failure attribution stable if a diagnostic or a
+            # caller probes the watchdog again after the episode has stalled.
+            return
         config = self.config
         # Update the base class's combined state too so the single-arm
         # watchdog reads a consistent picture if it ever falls through.
@@ -1958,7 +2006,13 @@ class ScriptedTransportController(ScriptedController):
             self._last_target = combined_target
             self._last_target_distance = combined_distance
 
-        for arm_idx, (target, eef, last_target_attr, last_distance_attr, stall_since_attr) in enumerate(
+        for arm_idx, (
+            target,
+            eef,
+            last_target_attr,
+            last_distance_attr,
+            stall_since_attr,
+        ) in enumerate(
             (
                 (targets[0], eef0, "_arm0_last_target", "_arm0_last_distance", "_arm0_stall_since"),
                 (targets[1], eef1, "_arm1_last_target", "_arm1_last_distance", "_arm1_stall_since"),

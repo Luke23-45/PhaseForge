@@ -565,15 +565,25 @@ def _adapter_from_config(
     cfg: DictConfig, meta: PinnedEnvMetadata, *, seed: int | None = None
 ) -> RobosuiteStateAdapter:
     from phaseforge.evaluations.envs.robosuite_adapter import RobosuiteStateAdapter
+    from phaseforge.evaluations.envs.task_registry import TaskSpec
 
     spec = state_spec_from_config(cfg)
     action_contract = cfg.data.action_contract
+    task_name = str(cfg.data.source.get("task_name") or meta.env_name)
+    # The v1.5.1 PH Transport metadata omits ``horizon``.  In that case use
+    # the protocol registry's task-specific default (700 for Transport), not
+    # PinnedEnvMetadata's generic legacy fallback of 500.  An explicitly
+    # serialized horizon still wins.
+    horizon = meta.horizon
+    if "horizon" not in meta.env_kwargs:
+        horizon = TaskSpec.from_protocol(task_name).horizon
     return RobosuiteStateAdapter(
         meta,
         spec,
         action_dim=int(cfg.data.action_dim),
         action_low=float(action_contract.range[0]),
         action_high=float(action_contract.range[1]),
+        horizon=horizon,
         seed=seed,
     )
 

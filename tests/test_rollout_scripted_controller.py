@@ -20,6 +20,7 @@ from phaseforge.evaluations.rollout.scripted_controller import (
     ScriptedToolHangController,
     ScriptedTransportController,
     _Phase,
+    _TransportPhase,
 )
 from tests.rollout_helpers import (
     SUCCESS_Z,
@@ -653,3 +654,68 @@ class TestClosedLoop:
         assert action[6] == GRIPPER_OPEN
         assert action[13] == GRIPPER_OPEN
         assert ctrl.phase_name == "LID_APPROACH"
+
+    def test_transport_meeting_point_uses_payload_frame_head_offset(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        transport_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "robot1_eef_pos",
+                "robot1_eef_quat",
+                "robot1_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 3, 4, 2, 41),
+        )
+        ctrl = ScriptedTransportController(transport_spec)
+        payload = np.array([0.20, -0.10, 1.00])
+        # A +90 degree rotation around world-Y maps the payload's local +z
+        # head axis into world +x; this catches accidental world-Z offsets.
+        quarter_turn_xyzw = np.array(
+            [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)]
+        )
+
+        meeting = ctrl._payload_meeting_point(payload, quarter_turn_xyzw)
+
+        assert np.allclose(
+            meeting,
+            [
+                0.20 + ctrl.PAYLOAD_HEAD_OFFSET_Z,
+                -0.10,
+                1.00 + ctrl.HANDOVER_OVERSHOOT_Z,
+            ],
+            atol=1e-9,
+        )
+
+    def test_transport_watchdog_stalls_when_one_arm_makes_no_progress(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        transport_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "robot1_eef_pos",
+                "robot1_eef_quat",
+                "robot1_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 3, 4, 2, 41),
+        )
+        ctrl = ScriptedTransportController(
+            transport_spec,
+            config=ScriptedControllerConfig(stall_steps=2, stall_progress=0.005),
+        )
+        ctrl._transport_phase = _TransportPhase.TABLE_TRANSPORT
+        eef0 = np.array([0.0, 0.0, 1.0])
+        eef1 = np.array([0.0, 0.0, 1.0])
+        targets = (np.array([0.40, 0.0, 1.0]), eef1.copy())
+
+        for t in range(6):
+            ctrl._transport_watchdog(targets, eef0, eef1, t)
+
+        assert ctrl.phase_name == "STALLED"
+        assert ctrl.stalled_from_phase == "TABLE_TRANSPORT_arm0"

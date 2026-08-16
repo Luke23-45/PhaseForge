@@ -15,7 +15,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 DATASET = r"data\raw\robomimic\transport\low_dim_v15.hdf5"
-PAYLOAD_HEAD_OFFSET_Z = 0.115
+PAYLOAD_HEAD_OFFSET_Z = 0.117767
 PANDA_REACH = 0.85
 BASE0 = np.array([0.0, -0.25, 0.0])
 BASE1 = np.array([0.0, +0.25, 0.0])
@@ -45,10 +45,10 @@ def report():
             quat = obj[3:7]
             R = quat_to_rot(quat)
             head_center = payload + R.apply([0.0, 0.0, PAYLOAD_HEAD_OFFSET_Z])
-            # controller meeting point (exact logic):
-            meeting_x = float(np.clip(payload[0], -0.15, 0.15))
-            meeting_y = float(payload[1])  # NO clamp
-            meeting_z = max(payload[2] + PAYLOAD_HEAD_OFFSET_Z + 0.02, 0.90)
+            # Match ScriptedTransportController._payload_meeting_point().
+            meeting_x = float(np.clip(head_center[0], -0.35, 0.35))
+            meeting_y = float(head_center[1])
+            meeting_z = max(head_center[2] + 0.06, 0.90)
             meeting = np.array([meeting_x, meeting_y, meeting_z])
             d1 = np.linalg.norm(meeting - eef1)
             # head center vs meeting (wrist) offset:
@@ -118,14 +118,14 @@ def report():
     pz = arr["payload"][:, 2]
     print(f"  meeting.z - payload.z: min={(meet[:,2]-pz).min():+.4f} p50={np.median(meet[:,2]-pz):+.4f} max={(meet[:,2]-pz).max():+.4f}")
 
-    print("\n--- X clamp distortion (payload.x outside +/-0.15) ---")
-    px = arr["payload"][:, 0]
+    print("\n--- X clamp distortion (head_center.x outside +/-0.35) ---")
+    px = arr["head_center"][:, 0]
     mx = meet[:, 0]
-    clamp_hit = np.abs(px) > 0.15
-    print(f"  n payloads with |x|>0.15: {clamp_hit.sum()} / {len(px)}")
+    clamp_hit = np.abs(px) > 0.35
+    print(f"  n head centers with |x|>0.35: {clamp_hit.sum()} / {len(px)}")
     if clamp_hit.any():
-        print(f"  payload.x max={px.max():+.4f} min={px.min():+.4f}")
-        print(f"  meeting.x stays in [-0.15,0.15]; x distortion up to {np.abs(px - mx).max():.4f}")
+        print(f"  head_center.x max={px.max():+.4f} min={px.min():+.4f}")
+        print(f"  meeting.x stays in [-0.35,0.35]; x distortion up to {np.abs(px - mx).max():.4f}")
 
     # wrist-to-head horizontal offset (the "did arm1 aim at the head" metric)
     print("\n--- wrist-to-head horizontal offset (x,y only) ---")

@@ -34,7 +34,7 @@ def analyze_case(idx: int):
     print(f"  Trash pos: {tr}")
     print(f"  EEF1 pos:  {eef}")
     print(f"  Offset (eef - trash): {eef - tr}")
-    print(f"  Controller TRASH_GRASP_Z_OFFSET = 0.05")
+    print(f"  Controller TRASH_GRASP_Z_OFFSET = 0.005")
 
 if __name__ == "__main__":
     analyze_case(0)

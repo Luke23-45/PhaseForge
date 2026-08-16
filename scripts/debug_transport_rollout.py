@@ -224,6 +224,10 @@ def _phase_targets(
         )
     if phase == "TRASH_PLACE":
         return controller._place_targets
+    if phase == "TRASH_RELEASE":
+        # Release keeps both arms at the stored placement targets for the
+        # same 15-step hold used by _transport_action().
+        return controller._place_targets
 
     # Mid-air handover in the 0.6m gap between the two tables (no shared
     # table surface exists in MultiTableArena). Meeting point is computed
@@ -235,9 +239,18 @@ def _phase_targets(
     meeting = controller._payload_meeting_point(payload, payload_quat)
 
     if phase == "TABLE_TRANSPORT":
-        return meeting, meeting.copy()
-    if phase in ("TABLE_DESCEND", "TABLE_RELEASE"):
-        return meeting, meeting.copy()
+        # Keep this identical to _transport_action(): arm0 holds its live
+        # end-effector position while arm1 converges on the meeting point.
+        # Reporting the meeting point for arm0 here made the diagnostic show
+        # a false ~9 cm arm0 error even when the controller commanded zero
+        # position error for that arm.
+        return eef0.copy(), meeting.copy()
+    if phase == "TABLE_DESCEND":
+        return eef0.copy(), meeting.copy()
+    if phase == "TABLE_RELEASE":
+        # The production controller drives arm0 to the live payload position
+        # while arm1 holds the meeting point during the grasp confirmation.
+        return payload[:3].copy(), meeting.copy()
 
     # After TABLE_RELEASE, the controller snapshots the meeting point so arm1 holds steady
     snapshot = getattr(controller, "_handover_arm1_snapshot", meeting)
@@ -502,7 +515,8 @@ def main() -> None:
 
         print(
             f"Task: {bank.task}; bank: {bank.bank_id}; "
-            f"cases: {[case.index for case in selected]}; horizon: {adapter.horizon}"
+            f"cases: {[case.index for case in selected]}; "
+            f"adapter_horizon: {adapter.horizon}; trace_max_steps: {max_steps}"
         )
         for case in selected:
             traces.append(
