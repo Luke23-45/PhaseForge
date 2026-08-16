@@ -1065,10 +1065,14 @@ class ScriptedTransportController(ScriptedController):
     #: body center: ``handle_length/2 + head_halfsize`` for the TwoArmTransport
     #: HammerObject (``handle_length=0.20``, ``handle_radius=0.015`` so
     #: ``head_halfsize in [0.015, 0.018]``; we use ``handle_radius`` as a
-    #: conservative approximation).  This puts the grasp target on the head
-    #: (a chunky 3.6x1.8x1.8 cm box) instead of the thin 3 cm handle, which
-    #: makes the grasp robust to OSC xy drift of a few cm.
-    PAYLOAD_HEAD_OFFSET_Z: float = 0.115
+    #: World-space offset from the hammer body (payload) center to the
+    #: hammer head box center along the hammer's local +z (handle axis).
+    #: The actual head geom sits at local (0, 0, 0.0775) in the composite
+    #: body frame (verified from ``HammerObject.geom_locations``); the old
+    #: 0.115 corresponded to the handle length and placed the meeting
+    #: point 0.037 m PAST the real head center, aiming the OSC at empty
+    #: air beyond the head and never registering ``arm1_pad_payload``.
+    PAYLOAD_HEAD_OFFSET_Z: float = 0.0775
 
     #: Z offset above the hammer head center for the PAYLOAD_DESCEND target.
     #: The eef settles ABOVE the head so the OSC doesn't push the hammer
@@ -1123,19 +1127,21 @@ class ScriptedTransportController(ScriptedController):
     #: for a real bilateral pinch.
     HANDOVER_Z_MIN: float = 0.90
 
-    #: Extra z-offset above the hammer head so arm1's gripper (default
-    #: Panda orientation: fingers pointing -z) descends THROUGH the head
-    #: when the OSC converges to the meeting point.  Without this offset
-    #: the OSC settles the wrist on the head surface and the fingers
-    #: close in the air gap next to the head -- ``arm1_pad_payload`` stays
-    #: False and the hammer slips out of arm1's grasp as soon as arm0
-    #: releases.  With this offset the wrist converges above the head top
-    #: and the closed fingers extend down through the head body, and the
-    #: fingerpad sensor registers a real grasp.  0.02 m (2 cm above the
-    #: head top) is enough to push the closed fingers ~8 cm into the head
-    #: body while keeping the OSC's downward force on the hammer small
-    #: enough that the hammer does not tilt during TABLE_RELEASE.
-    HANDOVER_OVERSHOOT_Z: float = 0.02
+    #: Extra z-offset above the hammer head so arm1's fingerpads make
+    #: contact with the head box when the OSC converges to the meeting
+    #: point.  Geometry (from the Panda gripper MJCF):
+    #:   - ``gripper0_eef`` body sits at z = +0.097 in the gripper base
+    #:   - fingerpad geoms sit at z = +0.0374 in the gripper base
+    #:   - so each pad is at eef-z = -0.060 (i.e. 0.060 m below the eef
+    #:     along the gripper's approach axis)
+    #: With the default Panda mount (gripper pointing -z), the pads end
+    #: up 0.060 m below the wrist in the world frame.  The previous
+    #: overshoot of 0.02 put the pads at head_z - 0.040 (well below the
+    #: 4 cm-tall head box) so ``arm1_pad_payload`` never fired.
+    #: 0.07 m puts the pads roughly at the head center (with ~0.04 m OSC
+    #: stopping margin) so the OSC drives the wrist down until the pads
+    #: physically engage the head box and the fingerpad sensor trips.
+    HANDOVER_OVERSHOOT_Z: float = 0.07
 
     #: How far past the head center to push the meeting point so arm1's
     #: closed gripper fingers actually make contact with the hammer head.
