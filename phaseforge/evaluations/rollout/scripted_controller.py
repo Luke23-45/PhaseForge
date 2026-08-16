@@ -1121,6 +1121,7 @@ class ScriptedTransportController(ScriptedController):
         self._payload_eef_offset: np.ndarray | None = None
         self._trash_eef_offset: np.ndarray | None = None
         self._place_targets: tuple[np.ndarray, np.ndarray] | None = None
+        self._lid_drop_started_at: int | None = None
 
     @property
     def phase_name(self) -> str:
@@ -1309,20 +1310,28 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.LID_CLEAR
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
+        payload_approach_z = max(
+            float(head_center[2]) + self.config.approach_z_offset, 1.08
+        )
+        payload_approach = np.array(
+            [head_center[0], head_center[1], payload_approach_z]
+        )
+        payload_descend = head_center + np.array(
+            [0.0, 0.0, self.PAYLOAD_HEAD_DESCEND_Z_OFFSET]
+        )
+
         if self._transport_phase is _TransportPhase.LID_CLEAR:
             targets = (self._lid_clear_target, hold1)
             self._transport_watchdog(targets, eef0, eef1, t)
             if np.linalg.norm(targets[0] - eef0) <= self.config.position_tolerance:
-                self._transport_phase = _TransportPhase.PAYLOAD_APPROACH
+                if self._lid_drop_started_at is None:
+                    self._lid_drop_started_at = t
+                if t - self._lid_drop_started_at >= 15:
+                    self._transport_phase = _TransportPhase.PAYLOAD_APPROACH
                 return self._two_arm_action(
                     targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE)
                 )
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
-
-        payload_approach = head_center + np.array([0.0, 0.0, self.config.approach_z_offset])
-        payload_descend = head_center + np.array(
-            [0.0, 0.0, self.PAYLOAD_HEAD_DESCEND_Z_OFFSET]
-        )
 
         if self._transport_phase is _TransportPhase.PAYLOAD_APPROACH:
             targets = (payload_approach, hold1)
