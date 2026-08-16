@@ -1110,7 +1110,7 @@ class ScriptedTransportController(ScriptedController):
     #: The payload-body target is already at the gripper-site height.  Keep
     #: this explicit so the handover target cannot silently regress to a
     #: top-down head offset.
-    HANDOVER_OVERSHOOT_Z: float = 0.0
+    HANDOVER_OVERSHOOT_Z: float = 0.055
 
     #: Optional lateral offset in the payload/world frame.  The dataset's
     #: median payload-close offset is near zero, so the production value is
@@ -1686,7 +1686,8 @@ class ScriptedTransportController(ScriptedController):
             # eef0, arm1 holds at the handle-axis meeting point. No relative motion =
             # no tug-of-war.
             native_grasp = self._native_transport_grasp(1, "payload")
-            if native_grasp is True:
+            pad_contact = self._transport_pad_contact(1, "payload")
+            if native_grasp is True or pad_contact is True:
                 self._handover_native_stable_steps += 1
                 if self._handover_arm1_grasp_offset_local is None:
                     # Measure the first real contact in the payload frame.
@@ -1752,7 +1753,8 @@ class ScriptedTransportController(ScriptedController):
             # exactly while arm1 is settling and can pull the payload out of
             # arm1's pads.
             arm1_has_payload = self._native_transport_grasp(1, "payload")
-            if arm1_has_payload is True:
+            pad_contact = self._transport_pad_contact(1, "payload")
+            if arm1_has_payload is True or pad_contact is True:
                 self._handover_native_stable_steps += 1
             else:
                 self._handover_native_stable_steps = 0
