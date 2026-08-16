@@ -236,18 +236,25 @@ def _phase_targets(
 
     if phase == "TABLE_TRANSPORT":
         return meeting, meeting.copy()
-    if phase in ("TABLE_DESCEND", "TABLE_RELEASE", "TABLE_RETRACT"):
+    if phase in ("TABLE_DESCEND", "TABLE_RELEASE"):
         return meeting, meeting.copy()
 
+    # After TABLE_RELEASE, the controller snapshots the meeting point so arm1 holds steady
+    snapshot = getattr(controller, "_handover_arm1_snapshot", meeting)
+    if snapshot is None:
+        snapshot = meeting
+
+    if phase == "TABLE_RETRACT":
+        return np.array([0.0, -0.40, lift_z]), snapshot.copy()
     if phase in ("HANDOVER_APPROACH", "HANDOVER_DESCEND", "HANDOVER_GRASP"):
-        return np.array([0.0, -0.40, lift_z]), meeting.copy()
+        return np.array([0.0, -0.40, lift_z]), snapshot.copy()
     if phase == "HANDOVER_LIFT":
         return np.array([0.0, -0.40, lift_z]), np.array(
-            [meeting[0], meeting[1], lift_z]
+            [snapshot[0], snapshot[1], lift_z]
         )
     if phase == "HANDOVER_SWING":
         return np.array([0.0, -0.40, lift_z]), np.array(
-            [float(target_bin[0]), meeting[1], lift_z]
+            [float(target_bin[0]), snapshot[1], lift_z]
         )
 
     if phase == "PAYLOAD_TRANSPORT":
