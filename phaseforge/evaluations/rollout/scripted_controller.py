@@ -1086,12 +1086,11 @@ class ScriptedTransportController(ScriptedController):
     #: the controller stuck in DESCEND until the horizon expires.
     PAYLOAD_DESCEND_HOLD_STEPS: int = 150
 
-    #: Payload-frame handover: the meeting point is the LIVE payload body
-    #: center, which is where the 200 demonstrations place arm1's EEF during
-    #: the payload-gripper close event.  The exact embedded gripper XML also
-    #: places the fingerpad centers within a few millimetres of the EEF site;
-    #: aiming 6 cm above the head therefore leaves both pads clear of the
-    #: payload even though the wrist distance appears small.
+    #: Payload-frame handover: the meeting point is the nearest point on the
+    #: LIVE payload handle centerline to arm1's current EEF. The exact
+    #: embedded dataset has the Panda EEF offset along the handle by as much
+    #: as about 9 cm at the close event; aiming at the composite body center
+    #: is therefore not a valid universal contact target.
     HANDOVER_BIAS_TOWARD_ARM1: float = 0.30
     HANDOVER_Y_CLAMP: tuple[float, float] = (-0.10, +0.30)
     #: X clamp widened to the full table span.  The payload body remains
@@ -1111,6 +1110,12 @@ class ScriptedTransportController(ScriptedController):
     #: median payload-close offset is near zero, so the production value is
     #: intentionally zero until a contact-confirmed trace justifies more.
     HANDOVER_OVERSHOOT_Y: float = 0.0
+
+    #: Half-length of the collision handle in the exact v1.5.1 Transport
+    #: model. The embedded XML uses a box with local z half-size 0.10 m.
+    #: Keep the target just inside the endpoints so the grasp target remains
+    #: on the handle rather than at the head/handle boundary.
+    HANDOVER_HANDLE_HALF_LENGTH: float = 0.09
 
     object_key = "object"
 
@@ -1155,7 +1160,12 @@ class ScriptedTransportController(ScriptedController):
         offset = rot @ np.array([0.0, 0.0, self.PAYLOAD_HEAD_OFFSET_Z], dtype=np.float64)
         return payload + offset
 
-    def _payload_meeting_point(self, payload: np.ndarray, payload_quat: np.ndarray) -> np.ndarray:
+    def _payload_meeting_point(
+        self,
+        payload: np.ndarray,
+        payload_quat: np.ndarray,
+        eef1: np.ndarray | None = None,
+    ) -> np.ndarray:
         """Compute the live handover meeting point from the payload pose.
 
         Leader-follower strategy: the meeting point follows the hammer's
@@ -1164,25 +1174,41 @@ class ScriptedTransportController(ScriptedController):
         is rather than to a hard-coded coordinate that may lie outside
         arm1's reachable workspace for some robot-base samples.
 
-        The target is the live payload body center plus the configured
-        world-frame offsets.  This matches the demonstrated payload-close
-        geometry: after transforming the 200 close poses into the payload
-        frame, 98% are within 4 cm laterally and 10 cm along the handle.
+        If arm1's live EEF is available, project it onto the payload's local
+        handle axis and clamp that projection to the physical handle. This
+        is the deterministic geometric equivalent of approaching the nearest
+        graspable handle point; it does not search offsets or use a demo id.
         The z floor remains as a safety bound for low resets.
         """
-        meeting_x = float(
+        meeting = np.asarray(payload, dtype=np.float64).copy()
+        if eef1 is not None:
+            handle_axis = self._quat_xyzw_to_mat(payload_quat)[:, 2]
+            along_handle = float(
+                np.dot(np.asarray(eef1, dtype=np.float64) - meeting, handle_axis)
+            )
+            along_handle = float(
+                np.clip(
+                    along_handle,
+                    -self.HANDOVER_HANDLE_HALF_LENGTH,
+                    self.HANDOVER_HANDLE_HALF_LENGTH,
+                )
+            )
+            meeting += handle_axis * along_handle
+
+        meeting[0] = float(
             np.clip(
-                float(payload[0]),
+                meeting[0],
                 self.HANDOVER_X_CLAMP[0],
                 self.HANDOVER_X_CLAMP[1],
             )
         )
-        meeting_y = float(payload[1]) + self.HANDOVER_OVERSHOOT_Y
+        meeting[1] += self.HANDOVER_OVERSHOOT_Y
         meeting_z = max(
-            float(payload[2]) + self.HANDOVER_OVERSHOOT_Z,
+            float(meeting[2]) + self.HANDOVER_OVERSHOOT_Z,
             self.HANDOVER_Z_MIN,
         )
-        return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
+        meeting[2] = meeting_z
+        return meeting
 
     def reset(self) -> None:
         super().reset()
@@ -1590,7 +1616,7 @@ class ScriptedTransportController(ScriptedController):
         # or produce NaN actions when commanding high-delta moves with the
         # heavy hammer.  Halve the per-step velocity scale during these
         # phases so each OSC step carries less momentum.
-        meeting = self._payload_meeting_point(payload, payload_quat)
+        meeting = self._payload_meeting_point(payload, payload_quat, eef1)
         swing_scale = 1.0
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
@@ -1613,7 +1639,7 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             arm0_pad_payload = self._transport_pad_contact(0, "payload")
             d1 = float(np.linalg.norm(arm1_meet - eef1))
-            # Require arm1 has converged to the payload-body meeting point AND
+            # Require arm1 has converged to the handle-axis meeting point AND
             # arm0's bilateral pinch is still active (the hammer has not
             # slipped out of arm0's gripper).  We deliberately do NOT require
             # ``arm1_pad_payload is True`` here -- the OSC's impedance keeps
@@ -1636,7 +1662,7 @@ class ScriptedTransportController(ScriptedController):
 
         if self._transport_phase is _TransportPhase.TABLE_DESCEND:
             # Both arms bilaterally pinch the hammer statically; arm0 holds
-            # eef0, arm1 holds at the meeting point.  No relative motion =
+            # eef0, arm1 holds at the handle-axis meeting point. No relative motion =
             # no tug-of-war.
             arm0_hold = eef0.copy()
             targets = (arm0_hold, meeting)
@@ -1680,13 +1706,16 @@ class ScriptedTransportController(ScriptedController):
                 and held_for >= self.config.grasp_hold_steps
             ):
                 arm1_has_payload = self._native_transport_grasp(1, "payload")
-                arm1_pad = self._transport_pad_contact(1, "payload")
-                if arm1_has_payload is not False or arm1_pad is not False:
+                if arm1_has_payload is True:
                     self._transport_phase = _TransportPhase.TABLE_RETRACT
                     self._transport_started_at = t
                     self._stall_since = None
                     self._last_target = None
-                    self._handover_arm1_snapshot = arm1_hold.copy()
+                    # The commanded meeting point is an approach target, not
+                    # necessarily the EEF pose at contact. Freeze the actual
+                    # EEF once native grasp is confirmed so opening arm0 does
+                    # not pull arm1 toward a stale target.
+                    self._handover_arm1_snapshot = eef1.copy()
                 elif held_for >= self.config.grasp_hold_steps + self.GRASP_CONFIRM_STEPS:
                     self._stalled_from_phase = self._transport_phase.name
                     self._transport_phase = _TransportPhase.STALLED

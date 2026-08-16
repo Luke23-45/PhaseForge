@@ -655,7 +655,7 @@ class TestClosedLoop:
         assert action[13] == GRIPPER_OPEN
         assert ctrl.phase_name == "LID_APPROACH"
 
-    def test_transport_meeting_point_uses_payload_body_center(self) -> None:
+    def test_transport_meeting_point_defaults_to_payload_body_center(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 
         transport_spec = StateSpec(
@@ -672,8 +672,8 @@ class TestClosedLoop:
         )
         ctrl = ScriptedTransportController(transport_spec)
         payload = np.array([0.20, -0.10, 1.00])
-        # The handover target is the payload body center.  Its quaternion must
-        # not move the target to the separate head geom.
+        # Without a live EEF, the target falls back to the payload body center.
+        # Its quaternion must not move the target to the separate head geom.
         quarter_turn_xyzw = np.array([0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)])
 
         meeting = ctrl._payload_meeting_point(payload, quarter_turn_xyzw)
@@ -687,6 +687,88 @@ class TestClosedLoop:
             ],
             atol=1e-9,
         )
+
+    def test_transport_meeting_point_selects_nearest_handle_point(self) -> None:
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        transport_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "robot1_eef_pos",
+                "robot1_eef_quat",
+                "robot1_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 3, 4, 2, 41),
+        )
+        ctrl = ScriptedTransportController(transport_spec)
+        payload = np.array([0.20, -0.10, 1.00])
+        identity_xyzw = np.array([0.0, 0.0, 0.0, 1.0])
+        eef1 = payload + np.array([0.0, 0.0, 0.20])
+
+        meeting = ctrl._payload_meeting_point(payload, identity_xyzw, eef1)
+
+        assert np.allclose(
+            meeting,
+            payload + np.array([0.0, 0.0, ctrl.HANDOVER_HANDLE_HALF_LENGTH]),
+            atol=1e-9,
+        )
+
+    def test_transport_snapshots_actual_eef_after_native_handover(self) -> None:
+        from types import SimpleNamespace
+
+        from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
+
+        transport_spec = StateSpec(
+            keys=(
+                "robot0_eef_pos",
+                "robot0_eef_quat",
+                "robot0_gripper_qpos",
+                "robot1_eef_pos",
+                "robot1_eef_quat",
+                "robot1_gripper_qpos",
+                "object",
+            ),
+            dims=(3, 4, 2, 3, 4, 2, 41),
+        )
+
+        class HandoverEnv:
+            robots = [
+                SimpleNamespace(gripper=object()),
+                SimpleNamespace(gripper=object()),
+            ]
+            transport = SimpleNamespace(
+                objects={"payload": SimpleNamespace(contact_geoms=["payload_geom"])}
+            )
+
+            @staticmethod
+            def _check_grasp(*, gripper, object_geoms) -> bool:  # noqa: ARG004
+                return True
+
+        ctrl = ScriptedTransportController(transport_spec, env=HandoverEnv())
+        ctrl.reset()
+        ctrl._transport_phase = _TransportPhase.TABLE_RELEASE
+        ctrl._transport_started_at = 0
+        ctrl._place_targets = (
+            np.array([0.0, -0.25, 1.0]),
+            np.array([0.12, -0.12, 1.04]),
+        )
+
+        state = np.zeros(transport_spec.dim, dtype=np.float64)
+        state[0:3] = [0.0, -0.25, 1.0]
+        state[3:7] = [0.0, 0.0, 0.0, 1.0]
+        state[9:12] = [0.12, -0.12, 1.04]
+        state[12:16] = [0.0, 0.0, 0.0, 1.0]
+        object_start, _ = transport_spec.index_of("object")
+        state[object_start : object_start + 3] = [0.10, -0.10, 1.00]
+        state[object_start + 3 : object_start + 7] = [0.0, 0.0, 0.0, 1.0]
+
+        ctrl.act(state, t=ctrl.config.grasp_hold_steps)
+
+        assert ctrl.phase_name == "TABLE_RETRACT"
+        assert np.allclose(ctrl._handover_arm1_snapshot, state[9:12])
 
     def test_transport_watchdog_stalls_when_one_arm_makes_no_progress(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec

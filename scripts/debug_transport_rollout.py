@@ -264,9 +264,9 @@ def _phase_targets(
 
     # Mid-air handover in the 0.6m gap between the two tables (no shared
     # table surface exists in MultiTableArena). The meeting point mirrors
-    # the controller's live payload-body target and therefore remains in
+    # the controller's live handle-axis target and therefore remains in
     # the same frame as the demonstrated arm1 payload grasp.
-    meeting = controller._payload_meeting_point(payload, payload_quat)
+    meeting = controller._payload_meeting_point(payload, payload_quat, eef1)
 
     if phase == "TABLE_TRANSPORT":
         # Keep this identical to _transport_action(): arm0 holds its live
@@ -279,7 +279,7 @@ def _phase_targets(
         return eef0.copy(), meeting.copy()
     if phase == "TABLE_RELEASE":
         # The production controller drives arm0 to the live payload position
-        # while arm1 holds the meeting point during the grasp confirmation.
+        # while arm1 holds the handle-axis meeting point during confirmation.
         return payload[:3].copy(), meeting.copy()
 
     # After TABLE_RELEASE, the controller snapshots the meeting point so arm1 holds steady
