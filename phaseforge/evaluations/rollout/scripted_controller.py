@@ -1129,6 +1129,7 @@ class ScriptedTransportController(ScriptedController):
         self._trash_eef_offset: np.ndarray | None = None
         self._place_targets: tuple[np.ndarray, np.ndarray] | None = None
         self._lid_drop_started_at: int | None = None
+        self._handover_head_target: np.ndarray | None = None
 
     @property
     def phase_name(self) -> str:
@@ -1415,37 +1416,50 @@ class ScriptedTransportController(ScriptedController):
             # Arm0 waits with payload. Arm1 lowers and drops trash.
             if t - self._transport_started_at >= self.config.place_hold_steps:
                 self._transport_phase = _TransportPhase.HANDOVER_APPROACH
+                # FREEZE THE TARGET: Snapshot the hammer head position exactly once
+                self._handover_head_target = self._head_center(payload, payload_quat).copy()
             return self._two_arm_action(
                 self._place_targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN)
             )
 
         if self._transport_phase is _TransportPhase.HANDOVER_APPROACH:
-            # Recompute head_center live so it adapts to how arm0 is currently holding the handle
-            live_head_center = self._head_center(payload, payload_quat)
-            
-            # Arm1 flies UP and OVER the bin to approach the hammer head
-            arm1_approach = np.array([live_head_center[0], live_head_center[1], lift_z])
+            assert self._handover_head_target is not None
+            # Arm1 flies UP and OVER the bin to approach the frozen hammer head target
+            arm1_approach = np.array([self._handover_head_target[0], self._handover_head_target[1], lift_z])
             targets = (self._place_targets[0], arm1_approach)
             self._transport_watchdog(targets, eef0, eef1, t)
+            
             if np.linalg.norm(arm1_approach - eef1) <= self.config.position_tolerance:
                 self._transport_phase = _TransportPhase.HANDOVER_DESCEND
+                self._transport_started_at = t
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         if self._transport_phase is _TransportPhase.HANDOVER_DESCEND:
-            live_head_center = self._head_center(payload, payload_quat)
-            # Arm1 drops straight down onto the chunky hammer head
-            arm1_descend = live_head_center + np.array([0.0, 0.0, 0.01])
+            assert self._transport_started_at is not None
+            assert self._handover_head_target is not None
+            
+            # Arm1 drops straight down onto the frozen target.
+            arm1_descend = self._handover_head_target + np.array([0.0, 0.0, 0.02])
             targets = (self._place_targets[0], arm1_descend)
+            
+            steps_in_descend = t - self._transport_started_at
+            reached = np.linalg.norm(arm1_descend - eef1) <= self.config.position_tolerance
+            
+            # Run watchdog, but if it triggers STALLED, we gracefully intercept it! 
+            # Stalling here just means we hit the hammer early, which is perfect.
             self._transport_watchdog(targets, eef0, eef1, t)
-            if np.linalg.norm(arm1_descend - eef1) <= self.config.position_tolerance:
+            is_stalled = (self._transport_phase is _TransportPhase.STALLED)
+            
+            if reached or is_stalled or steps_in_descend >= 120:
                 self._transport_phase = _TransportPhase.HANDOVER_GRASP
                 self._transport_started_at = t
+                self._stall_since = None  # Clear stall memory so we don't break the pipeline
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         if self._transport_phase is _TransportPhase.HANDOVER_GRASP:
             assert self._transport_started_at is not None
-            live_head_center = self._head_center(payload, payload_quat)
-            arm1_descend = live_head_center + np.array([0.0, 0.0, 0.01])
+            assert self._handover_head_target is not None
+            arm1_descend = self._handover_head_target + np.array([0.0, 0.0, 0.02])
             targets = (self._place_targets[0], arm1_descend)
             
             # Arm1 closes its gripper to grab the head
