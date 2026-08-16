@@ -544,6 +544,108 @@ def _phase_targets(
     return None
 
 
+def _quat_xyzw_to_mat(value: Any) -> np.ndarray | None:
+    """Convert a normalized-or-unnormalized robosuite ``xyzw`` quaternion.
+
+    The state schema exposes robosuite quaternions in ``(x, y, z, w)`` order.
+    The explicit normalization makes this diagnostic safe if a simulator
+    snapshot contains a small floating-point norm error.
+    """
+    try:
+        quat = np.asarray(value, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError):
+        return None
+    if quat.size != 4 or not np.all(np.isfinite(quat)):
+        return None
+    norm = float(np.linalg.norm(quat))
+    if norm <= 1e-12:
+        return None
+    x, y, z, w = quat / norm
+    return np.array(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+            [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+            [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _rotation_angle_deg(rotation: np.ndarray) -> float:
+    """Return the principal angle of a 3D rotation matrix in degrees."""
+    cosine = (float(np.trace(rotation)) - 1.0) / 2.0
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+
+
+def _orientation_delta_deg(before: Any, after: Any) -> float | None:
+    """Return a safe world-frame EEF orientation impulse magnitude."""
+    before_rotation = _quat_xyzw_to_mat(before)
+    after_rotation = _quat_xyzw_to_mat(after)
+    if before_rotation is None or after_rotation is None:
+        return None
+    return _rotation_angle_deg(before_rotation.T @ after_rotation)
+
+
+def _handover_orientation_diagnostics(
+    snapshot: dict[str, Any],
+    baseline: dict[str, np.ndarray | int] | None,
+    step_index: int,
+) -> tuple[dict[str, np.ndarray | int] | None, dict[str, Any] | None]:
+    """Measure arm-1 orientation and grasp offset in the payload frame.
+
+    ``R_payload.T @ R_eef1`` is the arm-1 orientation expressed in the
+    payload frame.  The baseline is captured at the first native arm-1
+    payload grasp during the handover, then every later sample is compared
+    with that baseline.  This distinguishes a moving payload target from a
+    changing relative pose; it is diagnostic only and does not affect the
+    controller action.
+    """
+    if snapshot.get("phase") not in {"TABLE_DESCEND", "TABLE_RELEASE"}:
+        return baseline, None
+
+    payload_rotation = _quat_xyzw_to_mat(snapshot.get("state_payload_quat"))
+    eef_rotation = _quat_xyzw_to_mat(snapshot.get("eef1_quat"))
+    payload = snapshot.get("state_payload")
+    eef1 = snapshot.get("eef1")
+    try:
+        payload_position = np.asarray(payload, dtype=np.float64).reshape(-1)
+        eef1_position = np.asarray(eef1, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError):
+        return baseline, {"error": "invalid position snapshot"}
+    if (
+        payload_rotation is None
+        or eef_rotation is None
+        or payload_position.size != 3
+        or eef1_position.size != 3
+    ):
+        return baseline, {"error": "invalid quaternion or position snapshot"}
+
+    relative_rotation = payload_rotation.T @ eef_rotation
+    payload_frame_offset = payload_rotation.T @ (eef1_position - payload_position)
+    native_arm1 = snapshot.get("native_grasps", {}).get("arm1_payload")
+    if baseline is None and native_arm1 is True:
+        baseline = {
+            "step": int(step_index),
+            "relative_rotation": relative_rotation.copy(),
+            "payload_frame_offset": payload_frame_offset.copy(),
+        }
+
+    result: dict[str, Any] = {
+        "baseline_step": None if baseline is None else baseline["step"],
+        "payload_frame_eef_offset": payload_frame_offset,
+        "payload_frame_offset_error_m": None,
+        "relative_orientation_change_deg": None,
+    }
+    if baseline is not None:
+        result["payload_frame_offset_error_m"] = float(
+            np.linalg.norm(payload_frame_offset - baseline["payload_frame_offset"])
+        )
+        result["relative_orientation_change_deg"] = _rotation_angle_deg(
+            baseline["relative_rotation"].T @ relative_rotation
+        )
+    return baseline, result
+
+
 def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
     """Capture all geometry and controller state at one timestep."""
     eef0 = controller.eef_pos(state)
@@ -646,29 +748,62 @@ def _handover_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def _probe_action_response(adapter: Any, case: Any, spec: Any) -> list[dict[str, Any]]:
-    """Measure xyz action response independently for both Transport arms."""
+    """Measure position and orientation action response for both arms.
+
+    The probe resets before every impulse, so the reported response is not
+    contaminated by the preceding impulse.  Orientation response is reported
+    as the principal angle between the pre/post EEF rotations, while the raw
+    quaternions remain available for checking sign and axis conventions.
+    """
     result: list[dict[str, Any]] = []
     for arm_offset, arm_name in ((0, "arm0"), (7, "arm1")):
-        for axis, axis_name in enumerate(("x", "y", "z")):
-            state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
-            before0 = _slice(state, spec, "robot0_eef_pos")
-            before1 = _slice(state, spec, "robot1_eef_pos")
-            action = np.zeros(adapter.action_dim, dtype=np.float64)
-            action[arm_offset + axis] = 0.25
-            action[arm_offset + 6] = -1.0
-            after, _done, success, _info = adapter.step(action)
-            after0 = _slice(after, spec, "robot0_eef_pos")
-            after1 = _slice(after, spec, "robot1_eef_pos")
-            result.append(
-                {
-                    "arm": arm_name,
-                    "axis": axis_name,
-                    "action": action,
-                    "eef0_delta": None if before0 is None or after0 is None else after0 - before0,
-                    "eef1_delta": None if before1 is None or after1 is None else after1 - before1,
-                    "success_after_step": bool(success),
-                }
-            )
+        for kind, axis_offset, axis_names in (
+            ("position", 0, ("x", "y", "z")),
+            ("orientation", 3, ("roll", "pitch", "yaw")),
+        ):
+            for axis, axis_name in enumerate(axis_names):
+                state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
+                before0 = _slice(state, spec, "robot0_eef_pos")
+                before1 = _slice(state, spec, "robot1_eef_pos")
+                before0_quat = _slice(state, spec, "robot0_eef_quat")
+                before1_quat = _slice(state, spec, "robot1_eef_quat")
+                action = np.zeros(adapter.action_dim, dtype=np.float64)
+                action[arm_offset + axis_offset + axis] = 0.25
+                action[arm_offset + 6] = -1.0
+                after, _done, success, _info = adapter.step(action)
+                after0 = _slice(after, spec, "robot0_eef_pos")
+                after1 = _slice(after, spec, "robot1_eef_pos")
+                after0_quat = _slice(after, spec, "robot0_eef_quat")
+                after1_quat = _slice(after, spec, "robot1_eef_quat")
+                result.append(
+                    {
+                        "arm": arm_name,
+                        "kind": kind,
+                        "axis": axis_name,
+                        "action": action,
+                        "eef0_delta": (
+                            None
+                            if before0 is None or after0 is None
+                            else after0 - before0
+                        ),
+                        "eef1_delta": (
+                            None
+                            if before1 is None or after1 is None
+                            else after1 - before1
+                        ),
+                        "eef0_quat_before": before0_quat,
+                        "eef0_quat_after": after0_quat,
+                        "eef1_quat_before": before1_quat,
+                        "eef1_quat_after": after1_quat,
+                        "eef0_orientation_delta_deg": _orientation_delta_deg(
+                            before0_quat, after0_quat
+                        ),
+                        "eef1_orientation_delta_deg": _orientation_delta_deg(
+                            before1_quat, after1_quat
+                        ),
+                        "success_after_step": bool(success),
+                    }
+                )
     return result
 
 
@@ -695,6 +830,7 @@ def _trace_case(
         "termination": "horizon",
     }
     state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
+    handover_orientation_baseline: dict[str, np.ndarray | int] | None = None
 
     for t in range(max_steps):
         phase_before = controller.phase_name
@@ -711,6 +847,13 @@ def _trace_case(
         phase_after_action = controller.phase_name
         next_state, _done, success, info = adapter.step(action)
         after = _snapshot(controller, next_state, adapter.env)
+        handover_orientation_baseline, orientation_metrics = (
+            _handover_orientation_diagnostics(
+                after, handover_orientation_baseline, t
+            )
+        )
+        if orientation_metrics is not None:
+            after["handover_orientation"] = orientation_metrics
         step = {
             "t": t,
             "phase_before": phase_before,
@@ -781,6 +924,7 @@ def _trace_case(
                 f"eef1={np.round(after['eef1'], 5).tolist()} "
                 f"eef1_quat={_jsonable(after.get('eef1_quat'))} "
                 f"payload_quat={_jsonable(after.get('state_payload_quat'))} "
+                f"orientation={_jsonable(after.get('handover_orientation'))} "
                 f"payload={np.round(after['state_payload'][:3], 5).tolist()} "
                 f"targets={_jsonable(after.get('phase_targets'))} "
                 f"command={_jsonable(command)} "
