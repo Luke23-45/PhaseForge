@@ -23,7 +23,7 @@ env:
   # Collection environment per robomimic v0.4's v1.5 track. The gate
   # compares the installed version against the dataset's env_version first.
   robosuite_requirement: "==1.5.1"
-  mujoco_requirement: "==3.2.7"
+  mujoco_requirement: ">=3.2.7"
 
 bank:
   # Frozen reset bank: {num_cases} cases seeded from a fresh simulator,
