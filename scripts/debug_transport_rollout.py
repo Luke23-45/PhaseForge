@@ -612,6 +612,22 @@ def _contact_geometry_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _handover_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return compact per-step geometry evidence for the active handover."""
+    result: dict[str, Any] = {}
+    geometry = snapshot.get("contact_geometry", {})
+    for key in ("arm0_payload", "arm1_payload"):
+        details = geometry.get(key)
+        if not isinstance(details, dict):
+            result[key] = details
+            continue
+        result[key] = {
+            "min_dist": details.get("min_pad_object_distance"),
+            "contacts": details.get("contacts", []),
+        }
+    return result
+
+
 def _probe_action_response(adapter: Any, case: Any, spec: Any) -> list[dict[str, Any]]:
     """Measure xyz action response independently for both Transport arms."""
     result: list[dict[str, Any]] = []
@@ -731,6 +747,25 @@ def _trace_case(
                     f"targets={_jsonable(after.get('phase_targets'))} "
                     f"geom={_contact_geometry_summary(after)}"
                 )
+
+        if phase_before in {"TABLE_DESCEND", "TABLE_RELEASE"} or controller.phase_name in {
+            "TABLE_DESCEND",
+            "TABLE_RELEASE",
+        }:
+            print(
+                f"HANDOVER case={case.index:02d} t={t:03d} "
+                f"phase={phase_before}->{controller.phase_name} "
+                f"stable={after.get('handover_native_stable_steps')} "
+                f"native={after.get('native_grasps')} "
+                f"pads={after.get('pad_contact_sides')} "
+                f"eef0={np.round(after['eef0'], 5).tolist()} "
+                f"eef1={np.round(after['eef1'], 5).tolist()} "
+                f"payload={np.round(after['state_payload'][:3], 5).tolist()} "
+                f"targets={_jsonable(after.get('phase_targets'))} "
+                f"command={_jsonable(command)} "
+                f"body={_jsonable(after.get('body_positions', {}).get('payload'))} "
+                f"geom={_handover_summary(after)}"
+            )
 
         state = next_state
         if success:

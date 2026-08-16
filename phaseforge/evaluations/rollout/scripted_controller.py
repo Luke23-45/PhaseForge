@@ -1715,13 +1715,14 @@ class ScriptedTransportController(ScriptedController):
             # head-offset target kept arm1's pads away from the payload even
             # though d1 was small; the body-center target is intended to
             # produce a real native grasp here.
-            # IMPORTANT: drive both arms to the LIVE payload position (not
-            # eef0.copy()) so the OSCs don't fight each other as the hammer
-            # jostles -- if arm0's target is frozen at its old eef while the
-            # payload drifts by 1-2 cm the OSC pulls arm0's gripper back
-            # toward the frozen target, yanking the hammer out of arm1's
-            # fingers.
-            arm0_hold = payload[:3].copy()
+            # Keep arm0 at its current EEF pose while arm1's grasp is
+            # confirmed.  The EEF is intentionally offset from the payload
+            # body center by the gripper/payload contact geometry (the trace
+            # shows about 1 cm here).  Commanding the payload body center
+            # during release therefore introduces an artificial correction
+            # exactly while arm1 is settling and can pull the payload out of
+            # arm1's pads.
+            arm0_hold = eef0.copy()
             arm1_hold = (
                 self._handover_meeting_target.copy()
                 if self._handover_meeting_target is not None
