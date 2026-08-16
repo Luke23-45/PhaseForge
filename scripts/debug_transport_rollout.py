@@ -184,7 +184,15 @@ def _phase_targets(
         return controller._lid_clear_target.copy(), eef1.copy()
 
     payload_approach = payload + np.array([0.0, 0.0, config.approach_z_offset])
-    payload_descend = payload + np.array([0.0, 0.0, controller.PAYLOAD_DESCEND_Z_OFFSET])
+    state_obj = state[controller.obj_start : controller.obj_end]
+    payload_quat = state_obj[3:7]
+    head_offset = controller._quat_xyzw_to_mat(payload_quat) @ np.array(
+        [0.0, 0.0, controller.PAYLOAD_HEAD_OFFSET_Z], dtype=np.float64
+    )
+    head_center = payload + head_offset
+    payload_descend = head_center + np.array(
+        [0.0, 0.0, controller.PAYLOAD_HEAD_DESCEND_Z_OFFSET]
+    )
     if phase == "PAYLOAD_APPROACH":
         return payload_approach, eef1.copy()
     if phase == "PAYLOAD_DESCEND":

@@ -1047,23 +1047,27 @@ class ScriptedTransportController(ScriptedController):
     #: the geometry fix does not establish contact on a specific reset.
     GRASP_CONFIRM_STEPS: int = 60
 
-    #: Payload descend target relative to the hammer body center.  The target
-    #: is set BELOW the body center so the OSC action saturates at -1 from
-    #: the end of PAYLOAD_APPROACH (~10 cm above), driving the eef into the
-    #: hammer at max speed.  When the eef contacts the hammer, the pads
-    #: physically touch (even with the gripper still open) and the OSC
-    #: keeps pushing -- the gripper then closes during PAYLOAD_GRASP and
-    #: ``_check_grasp`` succeeds because both pads are already in contact.
-    #: -0.02 is safely above the bin floor (~1-2 cm below body center) so
-    #: the eef cannot plunge through the floor if contact never happens.
-    PAYLOAD_DESCEND_Z_OFFSET: float = -0.02
+    #: Local-frame z offset of the hammer head center from the composite
+    #: body center: ``handle_length/2 + head_halfsize`` for the TwoArmTransport
+    #: HammerObject (``handle_length=0.20``, ``handle_radius=0.015`` so
+    #: ``head_halfsize in [0.015, 0.018]``; we use ``handle_radius`` as a
+    #: conservative approximation).  This puts the grasp target on the head
+    #: (a chunky 3.6x1.8x1.8 cm box) instead of the thin 3 cm handle, which
+    #: makes the grasp robust to OSC xy drift of a few cm.
+    PAYLOAD_HEAD_OFFSET_Z: float = 0.115
+
+    #: Z offset above the hammer head center for the PAYLOAD_DESCEND target.
+    #: The eef settles ABOVE the head so the OSC doesn't push the hammer
+    #: sideways during the descent; the pads then close on the head from
+    #: above during PAYLOAD_GRASP.
+    PAYLOAD_HEAD_DESCEND_Z_OFFSET: float = 0.05
 
     #: Safety bound for PAYLOAD_DESCEND.  With the saturated OSC action the
-    #: eef covers the ~13 cm descent in ~130 steps at the env's OSC speed;
-    #: 150 is a generous upper bound that still fires before the 700-step
-    #: horizon is consumed.  Without this bound, an unreachable target
-    #: (e.g., the eef xy drifts off the hammer) would leave the controller
-    #: stuck in DESCEND until the horizon expires.
+    #: eef covers the ~10-15 cm descent in ~100-150 steps at the env's OSC
+    #: speed; 150 is a generous upper bound that still fires before the
+    #: 700-step horizon is consumed.  Without this bound, an unreachable
+    #: target (e.g., the eef xy drifts too far off the head) would leave
+    #: the controller stuck in DESCEND until the horizon expires.
     PAYLOAD_DESCEND_HOLD_STEPS: int = 150
 
     object_key = "object"
@@ -1078,6 +1082,36 @@ class ScriptedTransportController(ScriptedController):
                 "object state; refusing a single-object approximation."
             )
         self.eef1_start, self.eef1_end = state_spec.index_of("robot1_eef_pos")
+
+    @staticmethod
+    def _quat_xyzw_to_mat(q: np.ndarray) -> np.ndarray:
+        """Convert a robosuite (x, y, z, w) quaternion to a 3x3 rotation matrix.
+
+        Mirrors the convention used by ``robosuite.utils.transform_utils.mat2quat``
+        (which the transport env uses to expose ``payload_quat`` in the state).
+        """
+        x, y, z, w = float(q[0]), float(q[1]), float(q[2]), float(q[3])
+        return np.array(
+            [
+                [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+                [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+                [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+            ],
+            dtype=np.float64,
+        )
+
+    def _head_center(self, payload: np.ndarray, payload_quat: np.ndarray) -> np.ndarray:
+        """World position of the hammer head center.
+
+        ``payload_pos`` is the hammer's composite body center (mid-handle).
+        The head sits at local ``(0, 0, handle_length/2 + head_halfsize)``
+        on the hammer's local +z axis (the handle axis).  We rotate that
+        local offset by the body orientation to get the head center in the
+        world frame.
+        """
+        rot = self._quat_xyzw_to_mat(payload_quat)
+        offset = rot @ np.array([0.0, 0.0, self.PAYLOAD_HEAD_OFFSET_Z], dtype=np.float64)
+        return payload + offset
 
     def reset(self) -> None:
         super().reset()
@@ -1212,9 +1246,13 @@ class ScriptedTransportController(ScriptedController):
             )
 
         payload, trash, lid_handle, target_bin, trash_bin = self._transport_values(state)
+        payload_quat = np.asarray(
+            state[self.obj_start + 3 : self.obj_start + 7], dtype=np.float64
+        )
         eef0 = self.eef_pos(state)
         eef1 = self._eef1_pos(state)
         hold1 = eef1.copy()
+        head_center = self._head_center(payload, payload_quat)
 
         if self._lid_clear_target is None:
             self._lid_clear_target = lid_handle + self.LID_CLEAR_OFFSET
@@ -1282,7 +1320,9 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
         payload_approach = payload + np.array([0.0, 0.0, self.config.approach_z_offset])
-        payload_descend = payload + np.array([0.0, 0.0, self.PAYLOAD_DESCEND_Z_OFFSET])
+        payload_descend = head_center + np.array(
+            [0.0, 0.0, self.PAYLOAD_HEAD_DESCEND_Z_OFFSET]
+        )
 
         if self._transport_phase is _TransportPhase.PAYLOAD_APPROACH:
             targets = (payload_approach, hold1)
