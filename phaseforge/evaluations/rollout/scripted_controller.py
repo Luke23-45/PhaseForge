@@ -1151,31 +1151,21 @@ class ScriptedTransportController(ScriptedController):
         return payload + offset
 
     def _payload_meeting_point(self, payload: np.ndarray) -> np.ndarray:
-        """Compute the mid-air handover meeting point from the LIVE payload pose.
+        """Compute the live handover meeting point from the payload pose.
 
-        Strategy (payload-frame handover):
+        Leader-follower strategy: the meeting point follows the hammer's
+        LIVE pose so arm0 trivially reaches it (arm0 already holds the
+        hammer there), and arm1 converges to wherever the hammer actually
+        is rather than to a hard-coded coordinate that may lie outside
+        arm1's reachable workspace for some robot-base samples.
 
-        * Anchor on the live payload position -- arm0 is currently carrying
-          the hammer, so this point is reachable for arm0 by construction
-          (no large lateral swing to a hard-coded coordinate).
-        * Pull toward arm1's side by :data:`HANDOVER_BIAS_TOWARD_ARM1`
-          (m) so arm1, not arm0, absorbs most of the cross-gap travel.
-        * Clamp to a band both arms can reach, so the meeting point never
-          leaves the reachable intersection of the two workspaces
-          (fixes the case 00 failure where the previous fixed (0, 0.20,
-          0.95) point sat outside arm1's workspace for some robot-base
-          samples).
-        * Floor z at :data:`HANDOVER_Z_MIN` so the OSC never asks either
-          arm to descend into a swing-inducing low altitude while the
-          heavy hammer is in flight.
+        The hammer handle is a thin rod on the +z local axis; arm1 grasps
+        a point slightly above the body center on the handle so the OSC
+        doesn't push the hammer sideways during the meeting contact.
+        z is floored at :data:`HANDOVER_Z_MIN` so the arms never descend
+        into a swing-inducing low altitude while the heavy hammer is in
+        flight.
         """
-        meeting_y = float(
-            np.clip(
-                float(payload[1]) + self.HANDOVER_BIAS_TOWARD_ARM1,
-                self.HANDOVER_Y_CLAMP[0],
-                self.HANDOVER_Y_CLAMP[1],
-            )
-        )
         meeting_x = float(
             np.clip(
                 float(payload[0]),
@@ -1183,7 +1173,8 @@ class ScriptedTransportController(ScriptedController):
                 self.HANDOVER_X_CLAMP[1],
             )
         )
-        meeting_z = max(float(payload[2]), self.HANDOVER_Z_MIN)
+        meeting_y = float(payload[1])
+        meeting_z = max(float(payload[2]) + self.PAYLOAD_HEAD_OFFSET_Z, self.HANDOVER_Z_MIN)
         return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
 
     def reset(self) -> None:
@@ -1195,6 +1186,16 @@ class ScriptedTransportController(ScriptedController):
         self._trash_eef_offset: np.ndarray | None = None
         self._place_targets: tuple[np.ndarray, np.ndarray] | None = None
         self._lid_drop_started_at: int | None = None
+        # Per-arm watchdog state so a stuck arm is not masked by the other
+        # arm's progress (the previous ``max(d0, d1)`` watchdog hid the case
+        # 01 TABLE_TRANSPORT stall where arm0 was stuck at d0~0.39 while
+        # arm1 had converged).
+        self._arm0_last_target: np.ndarray | None = None
+        self._arm0_last_distance: float | None = None
+        self._arm0_stall_since: int | None = None
+        self._arm1_last_target: np.ndarray | None = None
+        self._arm1_last_distance: float | None = None
+        self._arm1_stall_since: int | None = None
 
     @property
     def phase_name(self) -> str:
@@ -1298,15 +1299,24 @@ class ScriptedTransportController(ScriptedController):
         eef0: np.ndarray,
         eef1: np.ndarray,
         grippers: tuple[float, float],
+        velocity_scales: tuple[float, float] | None = None,
     ) -> np.ndarray:
+        """Compose a 14-D two-arm action with optional per-arm velocity scaling.
+
+        ``velocity_scales`` (default ``(1.0, 1.0)``) multiplies the effective
+        ``position_scale`` for each arm.  Use ``0.5`` to halve the per-step
+        delta during swing/transport phases where the heavy hammer can
+        otherwise oscillate or produce OSC singularities (NaN actions).
+        """
+        config = self.config
+        if velocity_scales is None:
+            velocity_scales = (1.0, 1.0)
+        scale0 = float(config.position_scale * velocity_scales[0])
+        scale1 = float(config.position_scale * velocity_scales[1])
         action = np.zeros(14, dtype=np.float64)
-        action[0:3] = np.clip(
-            (targets[0] - eef0) / self.config.position_scale, -1.0, 1.0
-        )
+        action[0:3] = np.clip((targets[0] - eef0) / scale0, -1.0, 1.0)
         action[6] = grippers[0]
-        action[7:10] = np.clip(
-            (targets[1] - eef1) / self.config.position_scale, -1.0, 1.0
-        )
+        action[7:10] = np.clip((targets[1] - eef1) / scale1, -1.0, 1.0)
         action[13] = grippers[1]
         return action
 
@@ -1516,38 +1526,51 @@ class ScriptedTransportController(ScriptedController):
         # Therefore there is no table a "place then pick up" handover can rest
         # on. The transfer must happen MID-AIR.
         #
-        # The meeting point is computed from the LIVE payload pose (payload-
-        # frame handover; see ``_payload_meeting_point`` for the rationale).
-        # Anchoring on the live payload position makes the meeting point
-        # reachable for arm0 by construction (arm0 is already there, holding
-        # the hammer) and adapts to per-reset variation rather than breaking
-        # on samples where the previous fixed (0, 0.20, 0.95) meeting point
-        # sat outside one arm's reachable workspace.
+        # LEADER-FOLLOWER handover (the principled approach from the bimanual
+        # handover literature): the meeting point follows the hammer's LIVE
+        # pose via ``_payload_meeting_point``.  arm0 trivially reaches it
+        # (arm0 already holds the hammer there), arm1 converges to wherever
+        # the hammer actually is.  This eliminates the previous failure
+        # modes where a hard-coded/clamped meeting point forced arm0 to
+        # reach a point outside its high-z workspace, and where the bias
+        # + clamp combination moved the meeting point farther from arm0's
+        # current position (not closer).
+        #
+        # Velocity scaling: arm1's lateral travel can be large (up to 0.70 m
+        # if the payload is on arm0's far side), and the OSC can oscillate
+        # or produce NaN actions when commanding high-delta moves with the
+        # heavy hammer.  Halve the per-step velocity scale during these
+        # phases so each OSC step carries less momentum.
         meeting = self._payload_meeting_point(payload)
+        swing_scale = 0.5
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
-            # Arm0 carries the hammer INTO the gap (the payload-frame meeting
-            # point, biased toward arm1) at mid height. Arm1 simultaneously
-            # steers toward the same meeting point. This replaces the old
-            # "place on a shared table" path that does not exist in this env
-            # (separate tables, 0.6m gap).
+            # Leader-follower: arm0 holds the hammer where it is (meeting ==
+            # live payload position); arm1 travels to the meeting point.
+            # arm0's target IS arm0's current pose, so arm0 essentially does
+            # nothing -- the hammer itself signals the handover location.
             targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
-            # Both arms need to converge on the same gap point.
-            d0 = float(np.linalg.norm(targets[0] - eef0))
+            # arm1 needs to converge on the meeting point; arm0 is already
+            # there (no movement required).  Generous tolerance to absorb
+            # OSC settling noise around the heavy payload.
             d1 = float(np.linalg.norm(targets[1] - eef1))
-            converged = d0 <= 0.03 and d1 <= 0.03
+            converged = d1 <= 0.04
             if converged or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
                 self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_CLOSE, GRIPPER_OPEN),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.TABLE_DESCEND:
-            # Hold the meeting pose: both arms at the meeting point, arm0
-            # still holding the hammer, arm1 closing onto it. Arm0 gripper
-            # stays closed; arm1 gripper stays open until HANDOVER_GRASP.
+            # Hold the meeting pose: arm0 still holding the hammer, arm1
+            # closing onto it.  Arm0 gripper stays closed; arm1 gripper
+            # stays open until HANDOVER_GRASP.
             targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
@@ -1557,11 +1580,15 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_CLOSE, GRIPPER_OPEN),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.TABLE_RELEASE:
             # Arm1 has had time to seat on the hammer; now lock the grasp
-            # and start the transfer window. Arm0 keeps holding through the
+            # and start the transfer window.  Arm0 keeps holding through the
             # next phase (TABLE_RETRACT = "wait for arm1 confirmation") so
             # the payload never falls unsupported.
             targets = (meeting, meeting)
@@ -1572,12 +1599,17 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_started_at = t
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.TABLE_RETRACT:
-            # Arm1 has grasped the hammer (GRIPPER_CLOSE in TABLE_RELEASE). Now
-            # arm0 can safely release and back away. Arm0 keeps its position
-            # briefly so arm1 takes the load, then opens and retracts.
+            # Arm1 has grasped the hammer (GRIPPER_CLOSE in TABLE_RELEASE).
+            # Now arm0 can safely release and back away.  Arm0 keeps its
+            # position briefly so arm1 takes the load, then opens and
+            # retracts.
             targets = (meeting, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
@@ -1586,13 +1618,16 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.HANDOVER_APPROACH
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.HANDOVER_APPROACH:
             # Arm0 retracts away from the gap; arm1 holds the hammer at the
-            # meeting point and begins carrying it toward table 1 (target bin
-            # side). No more "approach the payload on the table" -- arm1
-            # already has it.
+            # meeting point and begins carrying it toward table 1 (target
+            # bin side).
             arm0_retract = np.array([0.0, -0.40, lift_z])
             arm1_hold = meeting.copy()
             targets = (arm0_retract, arm1_hold)
@@ -1603,12 +1638,16 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.HANDOVER_DESCEND
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.HANDOVER_DESCEND:
             # Transition step: arm1 is settled holding the hammer, arm0 is
-            # out of the way. Nothing to descend (no table). Just confirm and
-            # move to lift for transport to target bin.
+            # out of the way.  Nothing to descend (no table).  Just confirm
+            # and move to lift for transport to target bin.
             arm0_retract = np.array([0.0, -0.40, lift_z])
             arm1_hold = meeting.copy()
             targets = (arm0_retract, arm1_hold)
@@ -1618,7 +1657,11 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.HANDOVER_GRASP
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.HANDOVER_GRASP:
             # Already grasped during TABLE_RELEASE; just hold briefly so the
@@ -1632,10 +1675,14 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.HANDOVER_LIFT
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.HANDOVER_LIFT:
-            # Arm1 lifts the hammer to transport height. Arm0 stays parked.
+            # Arm1 lifts the hammer to transport height.  Arm0 stays parked.
             arm0_retract = np.array([0.0, -0.40, lift_z])
             arm1_lift = np.array([meeting[0], meeting[1], lift_z])
             targets = (arm0_retract, arm1_lift)
@@ -1644,14 +1691,19 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.HANDOVER_SWING
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.HANDOVER_SWING:
-            # Intermediate waypoint: arm1 moves laterally in X (only) to align
-            # above the target_bin. Doing the x-motion first (no y change)
-            # means each leg of the swing carries less momentum than a single
-            # diagonal jump from the handover point to the target_bin -- the
-            # hammer is less likely to slip out of arm1's gripper.
+            # Intermediate waypoint: arm1 moves laterally in X (only) to
+            # align above the target_bin.  Doing the x-motion first (no y
+            # change) means each leg of the swing carries less momentum
+            # than a single diagonal jump from the handover point to the
+            # target_bin -- the hammer is less likely to slip out of arm1's
+            # gripper.
             arm0_retract = np.array([0.0, -0.40, lift_z])
             arm1_x_aligned = np.array(
                 [float(target_bin[0]), meeting[1], lift_z]
@@ -1663,7 +1715,11 @@ class ScriptedTransportController(ScriptedController):
                 self._transport_phase = _TransportPhase.PAYLOAD_TRANSPORT
                 self._stall_since = None
                 self._last_target = None
-            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+            return self._two_arm_action(
+                targets, eef0, eef1,
+                (GRIPPER_OPEN, GRIPPER_CLOSE),
+                velocity_scales=(swing_scale, swing_scale),
+            )
 
         if self._transport_phase is _TransportPhase.PAYLOAD_TRANSPORT:
             payload_target = target_bin.copy()
@@ -1734,48 +1790,77 @@ class ScriptedTransportController(ScriptedController):
         eef1: np.ndarray,
         t: int,
     ) -> None:
-        """Two-arm variant of the base stall watchdog.
+        """Two-arm stall watchdog tracking each arm independently.
 
-        Mirrors :meth:`ScriptedController._watchdog` but tracks the worst-case
-        distance across both end-effectors and writes the ``STALLED`` state
-        to the two-arm phase machine. Reuses the base reset fields
-        (``_last_target``, ``_last_target_distance``, ``_stall_since``,
-        ``_stalled_from_phase``) so :meth:`ScriptedController.reset` already
-        clears them between episodes.
+        The previous ``max(d0, d1)`` formulation masked per-arm stalls: when
+        one arm had converged and the other was stuck, the converged arm's
+        small distance won the ``max`` and OSC noise around the stuck arm
+        intermittently produced positive progress that reset the stall
+        counter indefinitely.  In case 01 the controller was stuck in
+        ``TABLE_TRANSPORT`` for 400+ steps with arm0 at d0~0.39 because of
+        this masking.
+
+        Now each arm is tracked with its own ``_last_target`` /
+        ``_last_distance`` / ``_stall_since``.  If either arm stalls, the
+        episode transitions to ``STALLED`` (the arm is named in
+        ``_stalled_from_phase`` so the diagnostic JSON can attribute the
+        stall).
         """
         config = self.config
-        target = np.concatenate(
+        # Update the base class's combined state too so the single-arm
+        # watchdog reads a consistent picture if it ever falls through.
+        combined_target = np.concatenate(
             [np.asarray(t0, dtype=np.float64).ravel() for t0 in targets]
         )
-        distance = float(
-            max(
-                np.linalg.norm(targets[0] - eef0),
-                np.linalg.norm(targets[1] - eef1),
-            )
+        combined_distance = max(
+            float(np.linalg.norm(targets[0] - eef0)),
+            float(np.linalg.norm(targets[1] - eef1)),
         )
-        if distance <= config.position_scale:
+        if combined_distance <= config.position_scale:
             self._stall_since = None
-            self._last_target = target
-            self._last_target_distance = distance
-            return
-        target_changed = self._last_target is None or not np.allclose(
-            target, self._last_target, rtol=0.0, atol=1e-9
-        )
-        if target_changed or self._last_target_distance is None:
-            self._last_target = target
-            self._last_target_distance = distance
-            self._stall_since = t
-            return
-        progress = self._last_target_distance - distance
-        self._last_target_distance = distance
-        if progress < config.stall_progress:
-            if self._stall_since is None:
-                self._stall_since = t
-            elif t - self._stall_since >= config.stall_steps:
-                self._stalled_from_phase = self._transport_phase.name
-                self._transport_phase = _TransportPhase.STALLED
+            self._last_target = combined_target
+            self._last_target_distance = combined_distance
         else:
-            self._stall_since = None
+            self._last_target = combined_target
+            self._last_target_distance = combined_distance
+
+        for arm_idx, (target, eef, last_target_attr, last_distance_attr, stall_since_attr) in enumerate(
+            (
+                (targets[0], eef0, "_arm0_last_target", "_arm0_last_distance", "_arm0_stall_since"),
+                (targets[1], eef1, "_arm1_last_target", "_arm1_last_distance", "_arm1_stall_since"),
+            )
+        ):
+            target = np.asarray(target, dtype=np.float64)
+            distance = float(np.linalg.norm(target - eef))
+            last_target = getattr(self, last_target_attr)
+            last_distance = getattr(self, last_distance_attr)
+            stall_since = getattr(self, stall_since_attr)
+            if distance <= config.position_scale:
+                setattr(self, last_target_attr, target.copy())
+                setattr(self, last_distance_attr, distance)
+                setattr(self, stall_since_attr, None)
+                continue
+            target_changed = last_target is None or not np.allclose(
+                target, last_target, rtol=0.0, atol=1e-9
+            )
+            if target_changed or last_distance is None:
+                setattr(self, last_target_attr, target.copy())
+                setattr(self, last_distance_attr, distance)
+                setattr(self, stall_since_attr, t)
+                continue
+            progress = last_distance - distance
+            setattr(self, last_distance_attr, distance)
+            if progress < config.stall_progress:
+                if stall_since is None:
+                    setattr(self, stall_since_attr, t)
+                elif t - stall_since >= config.stall_steps:
+                    self._stalled_from_phase = (
+                        f"{self._transport_phase.name}_arm{arm_idx}"
+                    )
+                    self._transport_phase = _TransportPhase.STALLED
+                    return
+            else:
+                setattr(self, stall_since_attr, None)
 
     def act(self, state: np.ndarray, t: int) -> np.ndarray:
         if self._two_arm:
