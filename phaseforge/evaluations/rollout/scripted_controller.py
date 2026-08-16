@@ -151,8 +151,15 @@ class _TransportPhase(Enum):
     PAYLOAD_DESCEND = auto()
     PAYLOAD_GRASP = auto()
     PAYLOAD_LIFT = auto()
-    TRANSPORT = auto()
-    PLACE = auto()
+    # --- MISSING HANDOVER PHASES ---
+    TRASH_TRANSPORT = auto()
+    TRASH_PLACE = auto()
+    HANDOVER_APPROACH = auto()
+    HANDOVER_DESCEND = auto()
+    HANDOVER_GRASP = auto()
+    HANDOVER_RELEASE = auto()
+    PAYLOAD_TRANSPORT = auto()
+    PAYLOAD_PLACE = auto()
     DONE = auto()
     STALLED = auto()
 
@@ -1373,8 +1380,6 @@ class ScriptedTransportController(ScriptedController):
                 (eef0, eef1), eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
             )
 
-        assert self._payload_eef_offset is not None
-        assert self._trash_eef_offset is not None
         lift_z = max(float(target_bin[2]), float(trash_bin[2])) + 0.20
         if self._transport_phase is _TransportPhase.PAYLOAD_LIFT:
             targets = (
@@ -1383,42 +1388,110 @@ class ScriptedTransportController(ScriptedController):
             )
             self._transport_watchdog(targets, eef0, eef1, t)
             if min(eef0[2], eef1[2]) >= lift_z - self.config.position_scale:
-                payload_target = target_bin.copy()
-                payload_target[2] += self.BIN_OBJECT_Z_OFFSET
                 trash_target = trash_bin.copy()
                 trash_target[2] += self.BIN_OBJECT_Z_OFFSET
                 self._place_targets = (
-                    payload_target + self._payload_eef_offset,
-                    trash_target + self._trash_eef_offset,
+                    np.array([0.0, -0.15, lift_z], dtype=np.float64),  # Arm0 Handover hover location (Middle of table)
+                    trash_target + self._trash_eef_offset,             # Arm1 goes to trash bin
                 )
-                self._transport_phase = _TransportPhase.TRANSPORT
+                self._transport_phase = _TransportPhase.TRASH_TRANSPORT
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
         assert self._place_targets is not None
-        if self._transport_phase is _TransportPhase.TRANSPORT:
+        
+        if self._transport_phase is _TransportPhase.TRASH_TRANSPORT:
             targets = (
-                np.array([self._place_targets[0][0], self._place_targets[0][1], lift_z]),
+                self._place_targets[0],
                 np.array([self._place_targets[1][0], self._place_targets[1][1], lift_z]),
             )
             self._transport_watchdog(targets, eef0, eef1, t)
             if self._both_reached(targets, eef0, eef1):
-                self._transport_phase = _TransportPhase.PLACE
+                self._transport_phase = _TransportPhase.TRASH_PLACE
                 self._transport_started_at = t
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
-        if self._transport_phase is _TransportPhase.PLACE:
+        if self._transport_phase is _TransportPhase.TRASH_PLACE:
             assert self._transport_started_at is not None
+            # Arm0 waits with payload. Arm1 lowers and drops trash.
+            if t - self._transport_started_at >= self.config.place_hold_steps:
+                self._transport_phase = _TransportPhase.HANDOVER_APPROACH
+            return self._two_arm_action(
+                self._place_targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN)
+            )
+
+        if self._transport_phase is _TransportPhase.HANDOVER_APPROACH:
+            # Recompute head_center live so it adapts to how arm0 is currently holding the handle
+            live_head_center = self._head_center(payload, payload_quat)
+            
+            # Arm1 flies UP and OVER the bin to approach the hammer head
+            arm1_approach = np.array([live_head_center[0], live_head_center[1], lift_z])
+            targets = (self._place_targets[0], arm1_approach)
+            self._transport_watchdog(targets, eef0, eef1, t)
+            if np.linalg.norm(arm1_approach - eef1) <= self.config.position_tolerance:
+                self._transport_phase = _TransportPhase.HANDOVER_DESCEND
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
+
+        if self._transport_phase is _TransportPhase.HANDOVER_DESCEND:
+            live_head_center = self._head_center(payload, payload_quat)
+            # Arm1 drops straight down onto the chunky hammer head
+            arm1_descend = live_head_center + np.array([0.0, 0.0, 0.01])
+            targets = (self._place_targets[0], arm1_descend)
+            self._transport_watchdog(targets, eef0, eef1, t)
+            if np.linalg.norm(arm1_descend - eef1) <= self.config.position_tolerance:
+                self._transport_phase = _TransportPhase.HANDOVER_GRASP
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
+
+        if self._transport_phase is _TransportPhase.HANDOVER_GRASP:
+            assert self._transport_started_at is not None
+            live_head_center = self._head_center(payload, payload_quat)
+            arm1_descend = live_head_center + np.array([0.0, 0.0, 0.01])
+            targets = (self._place_targets[0], arm1_descend)
+            
+            # Arm1 closes its gripper to grab the head
+            if t - self._transport_started_at >= self.config.grasp_hold_steps:
+                self._transport_phase = _TransportPhase.HANDOVER_RELEASE
+                self._transport_started_at = t
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.HANDOVER_RELEASE:
+            assert self._transport_started_at is not None
+            # Arm0 opens, dropping the handle. Arm1 is now holding the payload!
+            targets = (self._place_targets[0], eef1)
+            if t - self._transport_started_at >= self.config.place_hold_steps:
+                # Calculate the new offset for arm1 now that it controls the payload
+                self._payload_eef_offset = eef1 - payload
+                self._transport_phase = _TransportPhase.PAYLOAD_TRANSPORT
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.PAYLOAD_TRANSPORT:
+            payload_target = target_bin.copy()
+            payload_target[2] += self.BIN_OBJECT_Z_OFFSET
+            arm1_transport = payload_target + self._payload_eef_offset
+            arm1_high = np.array([arm1_transport[0], arm1_transport[1], lift_z])
+            
+            # Arm0 retracts out of the way to its own side
+            arm0_retract = np.array([0.0, -0.3, lift_z])
+            targets = (arm0_retract, arm1_high)
+            
+            self._transport_watchdog(targets, eef0, eef1, t)
+            if self._both_reached(targets, eef0, eef1):
+                self._transport_phase = _TransportPhase.PAYLOAD_PLACE
+                self._transport_started_at = t
+                self._place_targets = (arm0_retract, arm1_transport)
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.PAYLOAD_PLACE:
+            assert self._transport_started_at is not None
+            targets = self._place_targets
+            self._transport_watchdog(targets, eef0, eef1, t)
             if (
-                self._both_reached(self._place_targets, eef0, eef1)
+                self._both_reached(targets, eef0, eef1)
                 and t - self._transport_started_at >= self.config.place_hold_steps
             ):
                 self._transport_phase = _TransportPhase.DONE
-                return self._two_arm_action(
-                    self._place_targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN)
-                )
-            return self._two_arm_action(
-                self._place_targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE)
-            )
+                return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN))
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
 
         return self._two_arm_action(
             (eef0, eef1), eef0, eef1, (GRIPPER_OPEN, GRIPPER_OPEN)

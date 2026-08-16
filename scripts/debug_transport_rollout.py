@@ -204,14 +204,48 @@ def _phase_targets(
             np.array([eef1[0], eef1[1], max(eef1[2], lift_z)]),
         )
 
-    if phase == "TRANSPORT":
+    if phase == "TRASH_TRANSPORT":
         if controller._place_targets is None:
             return None
         return (
-            np.array([controller._place_targets[0][0], controller._place_targets[0][1], lift_z]),
-            np.array([controller._place_targets[1][0], controller._place_targets[1][1], lift_z]),
+            controller._place_targets[0],
+            np.array(
+                [
+                    controller._place_targets[1][0],
+                    controller._place_targets[1][1],
+                    lift_z,
+                ]
+            ),
         )
-    if phase == "PLACE":
+    if phase == "TRASH_PLACE":
+        return controller._place_targets
+
+    state_obj = state[controller.obj_start : controller.obj_end]
+    payload_quat = state_obj[3:7]
+    live_head_center = controller._head_center(payload, payload_quat)
+    if phase == "HANDOVER_APPROACH":
+        if controller._place_targets is None:
+            return None
+        arm1_approach = np.array(
+            [live_head_center[0], live_head_center[1], lift_z]
+        )
+        return controller._place_targets[0], arm1_approach
+    if phase in ("HANDOVER_DESCEND", "HANDOVER_GRASP"):
+        if controller._place_targets is None:
+            return None
+        arm1_descend = live_head_center + np.array([0.0, 0.0, 0.01])
+        return controller._place_targets[0], arm1_descend
+    if phase == "HANDOVER_RELEASE":
+        return controller._place_targets[0], eef1.copy()
+
+    if phase == "PAYLOAD_TRANSPORT":
+        payload_target = target_bin.copy()
+        payload_target[2] += controller.BIN_OBJECT_Z_OFFSET
+        arm1_transport = payload_target + controller._payload_eef_offset
+        arm1_high = np.array([arm1_transport[0], arm1_transport[1], lift_z])
+        arm0_retract = np.array([0.0, -0.3, lift_z])
+        return arm0_retract, arm1_high
+    if phase == "PAYLOAD_PLACE":
         return controller._place_targets
     return None
 
