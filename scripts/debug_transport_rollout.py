@@ -220,32 +220,30 @@ def _phase_targets(
     if phase == "TRASH_PLACE":
         return controller._place_targets
 
+    if phase == "TABLE_TRANSPORT":
+        return np.array([0.0, -0.15, lift_z]), np.array([0.0, 0.40, lift_z])
+    if phase in ("TABLE_DESCEND", "TABLE_RELEASE"):
+        return np.array([0.0, -0.15, 0.83]), np.array([0.0, 0.40, lift_z])
+    if phase == "TABLE_RETRACT":
+        return np.array([0.0, -0.40, lift_z]), np.array([0.0, 0.40, lift_z])
+
     if phase == "HANDOVER_APPROACH":
-        if controller._handover_handle_target is None:
-            return None
-        target1_approach = np.array(
-            [
-                controller._handover_handle_target[0],
-                controller._handover_handle_target[1],
-                lift_z,
-            ]
+        return (
+            np.array([0.0, -0.40, lift_z]),
+            np.array([payload[0], payload[1], lift_z]),
         )
-        return controller._place_targets[0], target1_approach
     if phase in ("HANDOVER_DESCEND", "HANDOVER_GRASP"):
-        if controller._handover_handle_target is None:
-            return None
-        arm1_descend = controller._handover_handle_target + np.array([0.0, 0.0, 0.01])
-        return controller._place_targets[0], arm1_descend
-    if phase == "HANDOVER_RELEASE":
-        return controller._place_targets[0], eef1.copy()
+        arm1_descend = payload + np.array([0.0, 0.0, 0.01])
+        return np.array([0.0, -0.40, lift_z]), arm1_descend
+    if phase == "HANDOVER_LIFT":
+        return np.array([0.0, -0.40, lift_z]), np.array([eef1[0], eef1[1], lift_z])
 
     if phase == "PAYLOAD_TRANSPORT":
         payload_target = target_bin.copy()
         payload_target[2] += controller.BIN_OBJECT_Z_OFFSET
         arm1_transport = payload_target + controller._payload_eef_offset
-        travel_z = max(lift_z, float(arm1_transport[2])) + 0.15
-        arm1_high = np.array([arm1_transport[0], arm1_transport[1], travel_z])
-        arm0_retract = np.array([0.0, -0.3, travel_z])
+        arm1_high = np.array([arm1_transport[0], arm1_transport[1], lift_z])
+        arm0_retract = np.array([0.0, -0.4, lift_z])
         return arm0_retract, arm1_high
     if phase == "PAYLOAD_PLACE":
         return controller._place_targets
