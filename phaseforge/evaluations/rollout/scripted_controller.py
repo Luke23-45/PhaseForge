@@ -1114,6 +1114,16 @@ class ScriptedTransportController(ScriptedController):
     #: for a real bilateral pinch.
     HANDOVER_Z_MIN: float = 0.90
 
+    #: How far past the head center to push the meeting point so arm1's
+    #: closed gripper fingers actually make contact with the hammer head.
+    #: Without overshoot the OSC settles the wrist on the head surface and
+    #: the fingers extend past the head in mid-air (no pad contact, hammer
+    #: slips out of arm1's grasp when arm0 releases).  0.06 m puts the wrist
+    #: past the head center and the fingers wrap around the head from the
+    #: far side; tuned empirically against cases [1, 0] in bank
+    #: ``c6683cf0dbb23876``.
+    HANDOVER_OVERSHOOT_Y: float = 0.06
+
     object_key = "object"
 
     def __init__(self, state_spec: StateSpec, **kwargs) -> None:
@@ -1166,9 +1176,15 @@ class ScriptedTransportController(ScriptedController):
         is rather than to a hard-coded coordinate that may lie outside
         arm1's reachable workspace for some robot-base samples.
 
-        The hammer handle is a thin rod on the +z local axis; arm1 grasps
-        a point slightly above the body center on the handle so the OSC
-        doesn't push the hammer sideways during the meeting contact.
+        The hammer head center is at ``payload + [0, 0, head_offset_z]``
+        for a vertical hammer.  We push the meeting point past the head
+        center by :data:`HANDOVER_OVERSHOOT_Y` in the +y direction (toward
+        arm1's base) so the OSC settles arm1's wrist beyond the head and
+        the closed gripper fingers wrap around the head from the far
+        side.  Without the overshoot the OSC keeps the wrist on the head
+        surface and the fingers extend past the head in mid-air, leaving
+        ``arm1_pad_payload`` permanently False and the hammer slipping
+        out of arm1's grasp as soon as arm0 releases.
         z is floored at :data:`HANDOVER_Z_MIN` so the arms never descend
         into a swing-inducing low altitude while the heavy hammer is in
         flight.
@@ -1180,7 +1196,7 @@ class ScriptedTransportController(ScriptedController):
                 self.HANDOVER_X_CLAMP[1],
             )
         )
-        meeting_y = float(payload[1])
+        meeting_y = float(payload[1]) + self.HANDOVER_OVERSHOOT_Y
         meeting_z = max(float(payload[2]) + self.PAYLOAD_HEAD_OFFSET_Z, self.HANDOVER_Z_MIN)
         return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
 
@@ -1620,11 +1636,19 @@ class ScriptedTransportController(ScriptedController):
         if self._transport_phase is _TransportPhase.TABLE_RELEASE:
             # Confirm arm1's grasp by holding the bilateral pinch for
             # grasp_hold_steps.  arm0 still closed; arm1 still closed.
+            # We now REQUIRE ``arm1_pad_payload is True`` before
+            # advancing to TABLE_RETRACT -- otherwise arm0 opens, the
+            # hammer has no firm grasp on arm1's side, and it falls.
             arm0_hold = eef0.copy()
             targets = (arm0_hold, meeting)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
-            if t - self._transport_started_at >= self.config.grasp_hold_steps:
+            arm1_pad_payload = self._transport_pad_contact(1, "payload")
+            grasp_confirmed = (
+                arm1_pad_payload is True
+                and t - self._transport_started_at >= self.config.grasp_hold_steps
+            )
+            if grasp_confirmed:
                 self._transport_phase = _TransportPhase.TABLE_RETRACT
                 self._transport_started_at = t
                 self._stall_since = None
