@@ -117,6 +117,36 @@ def _gripper_qpos(env: Any) -> dict[str, Any]:
     return result
 
 
+def _controller_metadata(env: Any) -> dict[str, Any]:
+    """Report each installed arm controller's action contract."""
+    result: dict[str, Any] = {}
+    try:
+        for robot_index, robot in enumerate(getattr(env, "robots", ())):
+            controllers = getattr(robot, "part_controllers", {})
+            if not isinstance(controllers, dict):
+                continue
+            for arm_name, controller in controllers.items():
+                key = f"robot{robot_index}.{arm_name}"
+                result[key] = {
+                    "class": type(controller).__name__,
+                    "input_type": _jsonable(getattr(controller, "input_type", None)),
+                    "input_ref_frame": _jsonable(
+                        getattr(controller, "input_ref_frame", None)
+                    ),
+                    "control_delta": _jsonable(
+                        getattr(controller, "control_delta", None)
+                    ),
+                    "output_min": _jsonable(getattr(controller, "output_min", None)),
+                    "output_max": _jsonable(getattr(controller, "output_max", None)),
+                    "orientation_scale": _jsonable(
+                        getattr(controller, "orientation_scale", None)
+                    ),
+                }
+    except Exception as exc:  # noqa: BLE001 - diagnostics must continue
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
 def _native_grasps(controller: Any) -> dict[str, Any]:
     """Call the same privileged grasp checks used by the Transport oracle."""
     checks: dict[str, Any] = {}
@@ -834,6 +864,7 @@ def _trace_case(
     record: dict[str, Any] = {
         "case_index": int(case.index),
         "max_steps": max_steps,
+        "controller_metadata": _controller_metadata(adapter.env),
         "action_response_probe": (
             _probe_action_response(adapter, case, spec) if include_probe else []
         ),
@@ -851,6 +882,10 @@ def _trace_case(
         f"position_scale={controller.config.position_scale} "
         f"handover_velocity_scale="
         f"{getattr(controller, 'HANDOVER_VELOCITY_SCALE', None)}"
+    )
+    print(
+        f"CONTROLLER_METADATA case={case.index:02d} "
+        f"{_jsonable(record['controller_metadata'])}"
     )
     state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
     handover_orientation_baseline: dict[str, np.ndarray | int] | None = None
