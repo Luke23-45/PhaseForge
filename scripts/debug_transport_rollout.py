@@ -223,8 +223,8 @@ def _phase_targets(
     # Mid-air handover in the 0.6m gap between the two tables (no shared
     # table surface exists in MultiTableArena). Meeting point is the gap
     # center (x=payload[0], y=0) at mid height, reachable by both arms.
-    handover_x = float(payload[0])
-    handover_y = 0.0
+    handover_x = 0.0
+    handover_y = 0.20
     handover_z = 0.95
 
     if phase == "TABLE_TRANSPORT":
@@ -243,6 +243,10 @@ def _phase_targets(
     if phase == "HANDOVER_LIFT":
         return np.array([0.0, -0.40, lift_z]), np.array(
             [handover_x, handover_y, lift_z]
+        )
+    if phase == "HANDOVER_SWING":
+        return np.array([0.0, -0.40, lift_z]), np.array(
+            [float(target_bin[0]), handover_y, lift_z]
         )
 
     if phase == "PAYLOAD_TRANSPORT":

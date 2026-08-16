@@ -162,6 +162,7 @@ class _TransportPhase(Enum):
     HANDOVER_DESCEND = auto()
     HANDOVER_GRASP = auto()
     HANDOVER_LIFT = auto()
+    HANDOVER_SWING = auto()  # arm1 lateral x-align waypoint before final transport
     # ----------------------------------
     PAYLOAD_TRANSPORT = auto()
     PAYLOAD_PLACE = auto()
@@ -1461,12 +1462,19 @@ class ScriptedTransportController(ScriptedController):
         # arm1 approaches the same point; arm1 grasps while arm0 still holds;
         # then arm0 releases. The payload never sits on a table unsupported.
 
-        # Gap midpoint is x=0; y=0 sits between the two tables.
-        # handover_x = eef0[0] keeps the carry aligned with the payload's x.
-        handover_x = float(payload[0])
-        handover_y = 0.0
-        # Pick a mid height both arms can reach (lift_z is high and on the
-        # far side of arm0's reach; use a lower mid height for the meeting).
+        # Mid-air meeting point in the gap between the two tables. We bias
+        # the meeting point toward arm1's side (handover_y > 0) so:
+        #  (a) arm1 can comfortably reach it (arm1 reaches y=+0.40 easily;
+        #      previously y=0 sat at the very edge of arm1's workspace and
+        #      failed for some robot base samples), AND
+        #  (b) the post-handover swing to target_bin (y~+0.45) is shorter,
+        #      reducing momentum that can rip the hammer out of arm1's
+        #      gripper during transport.
+        # handover_x=0 centers the meeting x so arm0's carry is short and
+        # predictable from the start bin (x~+0.2 -> 0).
+        handover_x = 0.0
+        handover_y = 0.20
+        # Mid height -- lower than lift_z so both arms can reach comfortably.
         handover_z = 0.95
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
@@ -1596,6 +1604,25 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_retract, arm1_lift)
             self._transport_watchdog(targets, eef0, eef1, t)
             if eef1[2] >= lift_z - self.config.position_scale:
+                self._transport_phase = _TransportPhase.HANDOVER_SWING
+                self._stall_since = None
+                self._last_target = None
+            return self._two_arm_action(targets, eef0, eef1, (GRIPPER_OPEN, GRIPPER_CLOSE))
+
+        if self._transport_phase is _TransportPhase.HANDOVER_SWING:
+            # Intermediate waypoint: arm1 moves laterally in X (only) to align
+            # above the target_bin. Doing the x-motion first (no y change)
+            # means each leg of the swing carries less momentum than a single
+            # diagonal jump from the handover point to the target_bin -- the
+            # hammer is less likely to slip out of arm1's gripper.
+            arm0_retract = np.array([0.0, -0.40, lift_z])
+            arm1_x_aligned = np.array(
+                [float(target_bin[0]), handover_y, lift_z]
+            )
+            targets = (arm0_retract, arm1_x_aligned)
+            self._transport_watchdog(targets, eef0, eef1, t)
+            d1 = float(np.linalg.norm(arm1_x_aligned - eef1))
+            if d1 <= 0.03 or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.PAYLOAD_TRANSPORT
                 self._stall_since = None
                 self._last_target = None
