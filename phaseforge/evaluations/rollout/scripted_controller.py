@@ -1232,6 +1232,7 @@ class ScriptedTransportController(ScriptedController):
         self._handover_arm1_snapshot: np.ndarray | None = None
         self._handover_meeting_target: np.ndarray | None = None
         self._handover_arm1_grasp_target: np.ndarray | None = None
+        self._handover_arm1_grasp_offset_local: np.ndarray | None = None
         # Native contact can be reported for one physics step while the
         # opposed grippers are still settling.  Never release arm0 from a
         # single positive sample: this counter requires uninterrupted native
@@ -1663,6 +1664,7 @@ class ScriptedTransportController(ScriptedController):
                 # jitter and can break an otherwise valid two-pad grasp.
                 self._handover_meeting_target = meeting.copy()
                 self._handover_arm1_grasp_target = None
+                self._handover_arm1_grasp_offset_local = None
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1680,14 +1682,22 @@ class ScriptedTransportController(ScriptedController):
             native_grasp = self._native_transport_grasp(1, "payload")
             if native_grasp is True:
                 self._handover_native_stable_steps += 1
-                if self._handover_native_stable_steps == 1:
-                    # The first native contact is the measured grasp pose.
-                    # Continue driving toward the old meeting point after
-                    # contact can pull the pads back off the payload; freeze
-                    # the actual EEF pose and confirm ownership in place.
-                    self._handover_arm1_grasp_target = eef1.copy()
+                if self._handover_arm1_grasp_offset_local is None:
+                    # Measure the first real contact in the payload frame.
+                    # The arm0-held payload can sag or rotate under contact;
+                    # a fixed world EEF target would then lose the pads.
+                    rotation = self._quat_xyzw_to_mat(payload_quat)
+                    self._handover_arm1_grasp_offset_local = rotation.T @ (
+                        eef1 - payload
+                    )
             else:
                 self._handover_native_stable_steps = 0
+            if self._handover_arm1_grasp_offset_local is not None:
+                self._handover_arm1_grasp_target = payload + (
+                    self._quat_xyzw_to_mat(payload_quat)
+                    @ self._handover_arm1_grasp_offset_local
+                )
+            else:
                 self._handover_arm1_grasp_target = None
             arm0_hold = eef0.copy()
             arm1_hold = (
@@ -1735,6 +1745,16 @@ class ScriptedTransportController(ScriptedController):
             # during release therefore introduces an artificial correction
             # exactly while arm1 is settling and can pull the payload out of
             # arm1's pads.
+            arm1_has_payload = self._native_transport_grasp(1, "payload")
+            if arm1_has_payload is True:
+                self._handover_native_stable_steps += 1
+            else:
+                self._handover_native_stable_steps = 0
+            if self._handover_arm1_grasp_offset_local is not None:
+                self._handover_arm1_grasp_target = payload + (
+                    self._quat_xyzw_to_mat(payload_quat)
+                    @ self._handover_arm1_grasp_offset_local
+                )
             arm0_hold = eef0.copy()
             arm1_hold = (
                 self._handover_arm1_grasp_target.copy()
@@ -1749,11 +1769,6 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held_for = t - self._transport_started_at
-            arm1_has_payload = self._native_transport_grasp(1, "payload")
-            if arm1_has_payload is True:
-                self._handover_native_stable_steps += 1
-            else:
-                self._handover_native_stable_steps = 0
             if (
                 self._transport_phase is not _TransportPhase.STALLED
                 and held_for >= self.config.grasp_hold_steps

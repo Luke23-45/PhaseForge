@@ -597,6 +597,9 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
         "handover_arm1_grasp_target": getattr(
             controller, "_handover_arm1_grasp_target", None
         ),
+        "handover_arm1_grasp_offset_local": getattr(
+            controller, "_handover_arm1_grasp_offset_local", None
+        ),
         "native_grasps": _native_grasps(controller),
         "pad_contacts": _pad_contacts(controller),
         "pad_contact_sides": _pad_contact_sides(controller),
