@@ -1105,14 +1105,14 @@ class ScriptedTransportController(ScriptedController):
     HANDOVER_X_CLAMP: tuple[float, float] = (-0.15, +0.15)
     #: Minimum handover z so we never ask either arm to descend below a
     #: safe altitude (the hammer swings on the heavy head if it dips).
-    #: Bumped from 0.95 to 1.10 because Panda OSC at z=0.95 + lateral 0.7m
-    #: (the worst-case arm1 reach for a start_bin-anchored payload) cannot
-    #: converge below ~0.13m -- the controller was then stuck because the
-    #: ``d1 <= 0.05`` convergence check never fired and ``arm1_pad_payload``
-    #: never registered.  At z=1.10 arm1 reaches within 0.05-0.08m of the
-    #: meeting point with a single OSC step per 8-step sim period, and
-    #: ``arm1_pad_payload`` registers within the pad-contact tolerance.
-    HANDOVER_Z_MIN: float = 1.10
+    #: Lowered back to 0.90 from 1.10 because the OSC at z=1.10 puts the
+    #: meeting point 0.18 m ABOVE the hammer head, leaving arm1's gripper
+    #: fingers in mid-air and ``arm1_pad_payload`` permanently False.  At
+    #: z=0.90 the OSC's target sits at the hammer head center (z ~ 0.915
+    #: for a payload resting on the start bin), so the OSC pushes arm1's
+    #: wrist INTO the head surface and the fingers wrap around the head
+    #: for a real bilateral pinch.
+    HANDOVER_Z_MIN: float = 0.90
 
     object_key = "object"
 
@@ -1572,16 +1572,19 @@ class ScriptedTransportController(ScriptedController):
             arm0_pad_payload = self._transport_pad_contact(0, "payload")
             arm1_pad_payload = self._transport_pad_contact(1, "payload")
             d1 = float(np.linalg.norm(arm1_meet - eef1))
-            # Require arm1 has arrived AND its fingerpad has touched the
-            # hammer.  Single-pad contact is enough confirmation; the strict
-            # ``_check_grasp`` requires BOTH pads closed which OSC may not
-            # achieve without per-pad spring dynamics.  Threshold relaxed
-            # from 0.05 to 0.10 to match Panda OSC's actual convergence
-            # floor at high-z + long-reach configurations.
+            # Require arm1 has converged to the head-center meeting point AND
+            # arm0's bilateral pinch is still active (the hammer has not
+            # slipped out of arm0's gripper).  We deliberately do NOT require
+            # ``arm1_pad_payload is True`` here -- the OSC's impedance keeps
+            # the wrist pinned against the hammer head surface but the
+            # fingerpad geoms only register contact once the fingers are
+            # driven INTO the head, which the next phase (TABLE_DESCEND)
+            # accomplishes via its head-center target.  Threshold raised
+            # from 0.10 to 0.12 to absorb OSC noise at the head surface
+            # where the impedance pushes back hardest.
             converged = (
-                d1 <= 0.10
+                d1 <= 0.12
                 and arm0_pad_payload is not False
-                and arm1_pad_payload is True
             )
             if converged or (self._transport_phase is _TransportPhase.STALLED):
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
