@@ -151,7 +151,7 @@ class _TransportPhase(Enum):
     PAYLOAD_DESCEND = auto()
     PAYLOAD_GRASP = auto()
     PAYLOAD_LIFT = auto()
-    # --- MISSING HANDOVER PHASES ---
+    # --- Corrected Handover Phases ---
     TRASH_TRANSPORT = auto()
     TRASH_PLACE = auto()
     HANDOVER_APPROACH = auto()
@@ -1129,7 +1129,7 @@ class ScriptedTransportController(ScriptedController):
         self._trash_eef_offset: np.ndarray | None = None
         self._place_targets: tuple[np.ndarray, np.ndarray] | None = None
         self._lid_drop_started_at: int | None = None
-        self._handover_head_target: np.ndarray | None = None
+        self._handover_handle_target: np.ndarray | None = None
 
     @property
     def phase_name(self) -> str:
@@ -1340,7 +1340,7 @@ class ScriptedTransportController(ScriptedController):
                 )
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
-        # Safe clearance above the wall
+        # Safe clearance above the wall to grab the handle
         payload_approach_z = max(float(payload[2]) + self.config.approach_z_offset, 1.08)
         payload_approach = np.array([payload[0], payload[1], payload_approach_z], dtype=np.float64)
         payload_descend = payload + np.array([0.0, 0.0, 0.01], dtype=np.float64)
@@ -1407,8 +1407,8 @@ class ScriptedTransportController(ScriptedController):
                 trash_target = trash_bin.copy()
                 trash_target[2] += self.BIN_OBJECT_Z_OFFSET
                 self._place_targets = (
-                    np.array([0.0, -0.15, lift_z], dtype=np.float64),  # Arm0 Handover hover location
-                    trash_target + self._trash_eef_offset,             # Arm1 goes to trash bin
+                    np.array([0.0, 0.0, lift_z], dtype=np.float64),  # Arm0 Handover hover (Center of workspace)
+                    trash_target + self._trash_eef_offset,           # Arm1 goes to trash bin
                 )
                 self._transport_phase = _TransportPhase.TRASH_TRANSPORT
                 self._stall_since = None
@@ -1441,8 +1441,6 @@ class ScriptedTransportController(ScriptedController):
             
             if (reached or is_stalled) and t - self._transport_started_at >= self.config.place_hold_steps:
                 self._transport_phase = _TransportPhase.HANDOVER_APPROACH
-                # Freeze hammer head target instantly so we don't chase the pendulum swing!
-                self._handover_head_target = self._head_center(payload, payload_quat).copy()
                 self._stall_since = None
                 self._last_target = None
                 return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
@@ -1450,27 +1448,30 @@ class ScriptedTransportController(ScriptedController):
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_CLOSE))
 
         if self._transport_phase is _TransportPhase.HANDOVER_APPROACH:
-            assert self._handover_head_target is not None
-            head = self._handover_head_target
-            # Arm1 flies safely 15cm ABOVE the hammer head target to avoid horizontal sliding collision
-            approach_z = max(lift_z, float(head[2])) + 0.15
-            arm1_approach = np.array([head[0], head[1], approach_z], dtype=np.float64)
+            # Mathematical offset: arm0 holds center of handle.
+            # We offset arm1 by -7cm along the handle's Z-axis to grab the perfectly clear bottom.
+            rot = self._quat_xyzw_to_mat(payload_quat)
+            handle_offset = rot @ np.array([0.0, 0.0, -0.07], dtype=np.float64)
+            grasp_pt = payload + handle_offset
+            
+            arm1_approach = np.array([grasp_pt[0], grasp_pt[1], lift_z], dtype=np.float64)
             targets = (self._place_targets[0], arm1_approach)
             self._transport_watchdog(targets, eef0, eef1, t)
             
             if np.linalg.norm(arm1_approach - eef1) <= self.config.position_tolerance:
                 self._transport_phase = _TransportPhase.HANDOVER_DESCEND
                 self._transport_started_at = t
+                self._handover_handle_target = grasp_pt.copy()  # Freeze it
                 self._stall_since = None
                 self._last_target = None
             return self._two_arm_action(targets, eef0, eef1, (GRIPPER_CLOSE, GRIPPER_OPEN))
 
         if self._transport_phase is _TransportPhase.HANDOVER_DESCEND:
             assert self._transport_started_at is not None
-            assert self._handover_head_target is not None
+            assert self._handover_handle_target is not None
             
-            # Arm1 drops straight vertically down to pinch the frozen hammer head.
-            arm1_descend = self._handover_head_target.copy()
+            # Arm1 drops straight vertically down to pinch the frozen handle target
+            arm1_descend = self._handover_handle_target + np.array([0.0, 0.0, 0.01])
             targets = (self._place_targets[0], arm1_descend)
             self._transport_watchdog(targets, eef0, eef1, t)
             
@@ -1478,7 +1479,6 @@ class ScriptedTransportController(ScriptedController):
             reached = np.linalg.norm(arm1_descend - eef1) <= self.config.position_tolerance
             is_stalled = (self._transport_phase is _TransportPhase.STALLED)
             
-            # A stall here means Arm1 made physical contact with the hammer head! Advance immediately!
             if reached or is_stalled or steps_in_descend >= 80:
                 self._transport_phase = _TransportPhase.HANDOVER_GRASP
                 self._transport_started_at = t
@@ -1488,8 +1488,9 @@ class ScriptedTransportController(ScriptedController):
 
         if self._transport_phase is _TransportPhase.HANDOVER_GRASP:
             assert self._transport_started_at is not None
-            assert self._handover_head_target is not None
-            targets = (self._place_targets[0], self._handover_head_target)
+            assert self._handover_handle_target is not None
+            arm1_descend = self._handover_handle_target + np.array([0.0, 0.0, 0.01])
+            targets = (self._place_targets[0], arm1_descend)
             
             if t - self._transport_started_at >= self.config.grasp_hold_steps:
                 self._transport_phase = _TransportPhase.HANDOVER_RELEASE
