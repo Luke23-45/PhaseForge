@@ -637,7 +637,6 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
         mujoco_requirement=str(cfg.eval.env.get("mujoco_requirement", "==3.2.7")),
     )
     spec = state_spec_from_config(cfg)
-    adapter = _adapter_from_config(cfg, meta)
     try:
         if bank is None:
             from phaseforge.evaluations.rollout.runner import load_or_generate_bank
@@ -657,47 +656,75 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
             scripted_config = ScriptedControllerConfig(
                 descend_z_offset=scripted_offset
             )
+        def run_with_fresh_adapter(gate_fn):
+            """Run one gate on an isolated simulator instance.
+
+            robosuite keeps mutable controller, gripper, contact, and task
+            bookkeeping state outside the flattened MuJoCo state restored by
+            ``reset_to``. Reusing one adapter lets diagnostic gates influence
+            the scripted-controller result. Each gate must therefore receive
+            a fresh adapter while sharing the same pinned metadata and reset
+            bank.
+            """
+            isolated_adapter = _adapter_from_config(cfg, meta)
+            try:
+                return gate_fn(isolated_adapter)
+            finally:
+                isolated_adapter.close()
+
         results = [
-            gate_env_schema(
-                adapter,
-                bank,
-                expected_state_dim=int(cfg.data.state_dim),
-                expected_action_dim=int(cfg.data.action_dim),
+            run_with_fresh_adapter(
+                lambda adapter: gate_env_schema(
+                    adapter,
+                    bank,
+                    expected_state_dim=int(cfg.data.state_dim),
+                    expected_action_dim=int(cfg.data.action_dim),
+                )
             ),
-            gate_demo_replay(
-                adapter,
-                _resolve_raw_hdf5(cfg),
-                num_demos=int(gates.get("replay_demos", 1)),
-                tolerance=float(gates.get("replay_tolerance", 1e-3)),
+            run_with_fresh_adapter(
+                lambda adapter: gate_demo_replay(
+                    adapter,
+                    _resolve_raw_hdf5(cfg),
+                    num_demos=int(gates.get("replay_demos", 1)),
+                    tolerance=float(gates.get("replay_tolerance", 1e-3)),
+                )
             ),
-            gate_action_contract(
-                adapter,
-                tolerance=float(cfg.eval.episodes.get("action_tolerance", 1e-4)),
+            run_with_fresh_adapter(
+                lambda adapter: gate_action_contract(
+                    adapter,
+                    tolerance=float(cfg.eval.episodes.get("action_tolerance", 1e-4)),
+                )
             ),
-            gate_scripted_controller(
-                adapter,
-                bank,
-                spec,
-                threshold=float(gates.get("scripted_threshold", 1.0)),
-                controller_config=scripted_config,
+            run_with_fresh_adapter(
+                lambda adapter: gate_scripted_controller(
+                    adapter,
+                    bank,
+                    spec,
+                    threshold=float(gates.get("scripted_threshold", 1.0)),
+                    controller_config=scripted_config,
+                )
             ),
-            gate_random_noop_sanity(
-                adapter,
-                bank,
-                num_cases=int(gates.get("random_sanity_episodes", 20)),
-                horizon=int(gates.get("random_sanity_horizon", 200)),
-                max_success_rate=float(gates.get("random_sanity_success_max", 0.05)),
+            run_with_fresh_adapter(
+                lambda adapter: gate_random_noop_sanity(
+                    adapter,
+                    bank,
+                    num_cases=int(gates.get("random_sanity_episodes", 20)),
+                    horizon=int(gates.get("random_sanity_horizon", 200)),
+                    max_success_rate=float(gates.get("random_sanity_success_max", 0.05)),
+                )
             ),
-            gate_checkpoint_smoke(
-                cfg,
-                adapter,
-                bank,
-                num_episodes=int(gates.get("smoke_episodes", 10)),
+            run_with_fresh_adapter(
+                lambda adapter: gate_checkpoint_smoke(
+                    cfg,
+                    adapter,
+                    bank,
+                    num_episodes=int(gates.get("smoke_episodes", 10)),
+                )
             ),
         ]
         return results
     finally:
-        adapter.close()
+        pass
 
 
 def _resolve_raw_hdf5(cfg) -> Path:
