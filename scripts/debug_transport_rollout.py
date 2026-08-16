@@ -492,12 +492,22 @@ def _phase_targets(
         return eef0.copy(), meeting.copy()
     if phase == "TABLE_DESCEND":
         frozen = getattr(controller, "_handover_meeting_target", None)
-        return eef0.copy(), (meeting if frozen is None else frozen.copy())
+        grasp_target = getattr(controller, "_handover_arm1_grasp_target", None)
+        return eef0.copy(), (
+            grasp_target.copy()
+            if grasp_target is not None
+            else (meeting if frozen is None else frozen.copy())
+        )
     if phase == "TABLE_RELEASE":
-        # The production controller drives arm0 to the live payload position
-        # while arm1 holds the handle-axis meeting point during confirmation.
+        # The production controller holds arm0 at its current EEF pose while
+        # arm1 holds the first measured native-contact pose.
         frozen = getattr(controller, "_handover_meeting_target", None)
-        return payload[:3].copy(), (meeting if frozen is None else frozen.copy())
+        grasp_target = getattr(controller, "_handover_arm1_grasp_target", None)
+        return eef0.copy(), (
+            grasp_target.copy()
+            if grasp_target is not None
+            else (meeting if frozen is None else frozen.copy())
+        )
 
     # After TABLE_RELEASE, the controller snapshots the meeting point so arm1 holds steady
     snapshot = getattr(controller, "_handover_arm1_snapshot", meeting)
@@ -583,6 +593,9 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
         "transport_started_at": controller._transport_started_at,
         "handover_native_stable_steps": getattr(
             controller, "_handover_native_stable_steps", None
+        ),
+        "handover_arm1_grasp_target": getattr(
+            controller, "_handover_arm1_grasp_target", None
         ),
         "native_grasps": _native_grasps(controller),
         "pad_contacts": _pad_contacts(controller),

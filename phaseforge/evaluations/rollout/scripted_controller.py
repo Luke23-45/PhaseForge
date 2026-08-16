@@ -1231,6 +1231,7 @@ class ScriptedTransportController(ScriptedController):
         self._arm1_stall_since: int | None = None
         self._handover_arm1_snapshot: np.ndarray | None = None
         self._handover_meeting_target: np.ndarray | None = None
+        self._handover_arm1_grasp_target: np.ndarray | None = None
         # Native contact can be reported for one physics step while the
         # opposed grippers are still settling.  Never release arm0 from a
         # single positive sample: this counter requires uninterrupted native
@@ -1661,6 +1662,7 @@ class ScriptedTransportController(ScriptedController):
                 # touching the payload lets the target move with contact
                 # jitter and can break an otherwise valid two-pad grasp.
                 self._handover_meeting_target = meeting.copy()
+                self._handover_arm1_grasp_target = None
                 self._transport_phase = _TransportPhase.TABLE_DESCEND
                 self._transport_started_at = t
                 self._stall_since = None
@@ -1675,21 +1677,32 @@ class ScriptedTransportController(ScriptedController):
             # Both arms bilaterally pinch the hammer statically; arm0 holds
             # eef0, arm1 holds at the handle-axis meeting point. No relative motion =
             # no tug-of-war.
+            native_grasp = self._native_transport_grasp(1, "payload")
+            if native_grasp is True:
+                self._handover_native_stable_steps += 1
+                if self._handover_native_stable_steps == 1:
+                    # The first native contact is the measured grasp pose.
+                    # Continue driving toward the old meeting point after
+                    # contact can pull the pads back off the payload; freeze
+                    # the actual EEF pose and confirm ownership in place.
+                    self._handover_arm1_grasp_target = eef1.copy()
+            else:
+                self._handover_native_stable_steps = 0
+                self._handover_arm1_grasp_target = None
             arm0_hold = eef0.copy()
             arm1_hold = (
-                self._handover_meeting_target.copy()
-                if self._handover_meeting_target is not None
-                else meeting
+                self._handover_arm1_grasp_target.copy()
+                if self._handover_arm1_grasp_target is not None
+                else (
+                    self._handover_meeting_target.copy()
+                    if self._handover_meeting_target is not None
+                    else meeting
+                )
             )
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             held = t - self._transport_started_at
-            native_grasp = self._native_transport_grasp(1, "payload")
-            if native_grasp is True:
-                self._handover_native_stable_steps += 1
-            else:
-                self._handover_native_stable_steps = 0
             if (
                 self._transport_phase is not _TransportPhase.STALLED
                 and held >= self.config.place_hold_steps
@@ -1724,9 +1737,13 @@ class ScriptedTransportController(ScriptedController):
             # arm1's pads.
             arm0_hold = eef0.copy()
             arm1_hold = (
-                self._handover_meeting_target.copy()
-                if self._handover_meeting_target is not None
-                else meeting.copy()
+                self._handover_arm1_grasp_target.copy()
+                if self._handover_arm1_grasp_target is not None
+                else (
+                    self._handover_meeting_target.copy()
+                    if self._handover_meeting_target is not None
+                    else meeting.copy()
+                )
             )
             targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
