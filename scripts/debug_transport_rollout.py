@@ -581,6 +581,7 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
         "eef0_quat": _slice(state, controller.state_spec, "robot0_eef_quat"),
         "eef1_quat": _slice(state, controller.state_spec, "robot1_eef_quat"),
         "state_payload": payload,
+        "state_payload_quat": payload_quat,
         "state_trash": trash,
         "state_lid_handle": lid_handle,
         "state_target_bin": target_bin,
@@ -701,8 +702,10 @@ def _trace_case(
         action = np.asarray(controller.act(state, t), dtype=np.float64)
         command = {
             "arm0_xyz": action[:3].copy(),
+            "arm0_orientation": action[3:6].copy(),
             "arm0_gripper": float(action[6]),
             "arm1_xyz": action[7:10].copy(),
+            "arm1_orientation": action[10:13].copy(),
             "arm1_gripper": float(action[13]),
         }
         phase_after_action = controller.phase_name
@@ -776,6 +779,8 @@ def _trace_case(
                 f"pads={after.get('pad_contact_sides')} "
                 f"eef0={np.round(after['eef0'], 5).tolist()} "
                 f"eef1={np.round(after['eef1'], 5).tolist()} "
+                f"eef1_quat={_jsonable(after.get('eef1_quat'))} "
+                f"payload_quat={_jsonable(after.get('state_payload_quat'))} "
                 f"payload={np.round(after['state_payload'][:3], 5).tolist()} "
                 f"targets={_jsonable(after.get('phase_targets'))} "
                 f"command={_jsonable(command)} "
