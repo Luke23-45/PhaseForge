@@ -153,7 +153,7 @@ def _phase_targets(
     controller: Any, state: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Reconstruct the controller's two-arm target for the current phase."""
-    payload, trash, lid_handle, target_bin, trash_bin = controller._transport_values(state)
+    payload, payload_quat, trash, lid_handle, target_bin, trash_bin = controller._transport_values(state)
     eef0 = controller.eef_pos(state)
     eef1 = controller._eef1_pos(state)
     config = controller.config
@@ -232,7 +232,7 @@ def _phase_targets(
     # payload makes the meeting point reachable for arm0 by construction
     # and adapts per-reset rather than failing on samples where a hard-
     # coded point sits outside either arm's workspace.
-    meeting = controller._payload_meeting_point(payload)
+    meeting = controller._payload_meeting_point(payload, payload_quat)
 
     if phase == "TABLE_TRANSPORT":
         return meeting, meeting.copy()
@@ -271,7 +271,7 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
     """Capture all geometry and controller state at one timestep."""
     eef0 = controller.eef_pos(state)
     eef1 = controller._eef1_pos(state)
-    payload, trash, lid_handle, target_bin, trash_bin = controller._transport_values(state)
+    payload, payload_quat, trash, lid_handle, target_bin, trash_bin = controller._transport_values(state)
     targets = _phase_targets(controller, state)
     distances = None
     if targets is not None:

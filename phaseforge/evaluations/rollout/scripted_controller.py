@@ -1102,7 +1102,16 @@ class ScriptedTransportController(ScriptedController):
     #: arm1 travels the rest.
     HANDOVER_BIAS_TOWARD_ARM1: float = 0.30
     HANDOVER_Y_CLAMP: tuple[float, float] = (-0.10, +0.30)
-    HANDOVER_X_CLAMP: tuple[float, float] = (-0.15, +0.15)
+    #: X clamp widened to the full table span.  The dataset's 200 transport
+    #: demos show the hammer head center lives in x in [0.139, 0.261] while
+    #: the start/target bins sit at x ~ +-0.2; the old +-0.15 clamp pushed
+    #: the meeting point ~1.5 cm off the live head center (the wrist then
+    #: converged 1.5 cm to the side of the head).  The clamp only guarded a
+    #: reachability band that no longer applies since the leader-follower
+    #: meeting point tracks the live head and the dataset validates arm1
+    #: reaches the head center in every demo (max 0.46 m from its base).
+    #: +-0.35 spans both tables without binding on any real reset.
+    HANDOVER_X_CLAMP: tuple[float, float] = (-0.35, +0.35)
     #: Minimum handover z so we never ask either arm to descend below a
     #: safe altitude (the hammer swings on the heavy head if it dips).
     #: Lowered back to 0.90 from 1.10 because the OSC at z=1.10 puts the
@@ -1179,7 +1188,7 @@ class ScriptedTransportController(ScriptedController):
         offset = rot @ np.array([0.0, 0.0, self.PAYLOAD_HEAD_OFFSET_Z], dtype=np.float64)
         return payload + offset
 
-    def _payload_meeting_point(self, payload: np.ndarray) -> np.ndarray:
+    def _payload_meeting_point(self, payload: np.ndarray, payload_quat: np.ndarray) -> np.ndarray:
         """Compute the live handover meeting point from the payload pose.
 
         Leader-follower strategy: the meeting point follows the hammer's
@@ -1188,11 +1197,22 @@ class ScriptedTransportController(ScriptedController):
         is rather than to a hard-coded coordinate that may lie outside
         arm1's reachable workspace for some robot-base samples.
 
+        HEAD-CENTER TARGET (dataset-validated): the hammer lies FLAT on
+        the start table (the frozen dataset's 200 demos all show the head
+        offset horizontally by ``PAYLOAD_HEAD_OFFSET_Z`` with zero world-z
+        delta), so the meeting point must be the live HEAD CENTER
+        (``_head_center`` rotates the local +z head offset by the payload
+        quat), NOT ``payload + [0, 0, 0.115]`` which assumes the head is
+        directly above the body in world-z.  The previous world-z form put
+        the meeting point ~0.127 m above the actual head, arm1's fingers
+        closed in the air gap next to the head, and the hammer slipped out
+        of arm1's grasp as soon as arm0 released.
+
         TOP-DOWN GRASP: with the default Panda orientation (fingers
         pointing -z), arm1's gripper fingers extend downward from the
         wrist.  We push the meeting point ABOVE the hammer head by
         :data:`HANDOVER_OVERSHOOT_Z` so the OSC converges arm1's wrist
-        ~8 cm above the head top and the closed fingers descend through
+        just above the head top and the closed fingers descend through
         the head body.  Without the overshoot the OSC settles the wrist
         on the head surface and the fingers close in the air gap next to
         the head -- ``arm1_pad_payload`` stays False and the hammer
@@ -1201,16 +1221,17 @@ class ScriptedTransportController(ScriptedController):
         into a swing-inducing low altitude while the heavy hammer is in
         flight.
         """
+        head_center = self._head_center(payload, payload_quat)
         meeting_x = float(
             np.clip(
-                float(payload[0]),
+                float(head_center[0]),
                 self.HANDOVER_X_CLAMP[0],
                 self.HANDOVER_X_CLAMP[1],
             )
         )
-        meeting_y = float(payload[1]) + self.HANDOVER_OVERSHOOT_Y
+        meeting_y = float(head_center[1]) + self.HANDOVER_OVERSHOOT_Y
         meeting_z = max(
-            float(payload[2]) + self.PAYLOAD_HEAD_OFFSET_Z + self.HANDOVER_OVERSHOOT_Z,
+            float(head_center[2]) + self.HANDOVER_OVERSHOOT_Z,
             self.HANDOVER_Z_MIN,
         )
         return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
@@ -1244,9 +1265,9 @@ class ScriptedTransportController(ScriptedController):
 
     def _transport_values(
         self, state: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         obj = np.asarray(state[self.obj_start : self.obj_end], dtype=np.float64)
-        return obj[0:3], obj[7:10], obj[14:17], obj[21:24], obj[24:27]
+        return obj[0:3], obj[3:7], obj[7:10], obj[14:17], obj[21:24], obj[24:27]
 
     def _eef1_pos(self, state: np.ndarray) -> np.ndarray:
         return np.asarray(state[self.eef1_start : self.eef1_end], dtype=np.float64)
@@ -1367,7 +1388,7 @@ class ScriptedTransportController(ScriptedController):
                 (GRIPPER_OPEN, GRIPPER_OPEN),
             )
 
-        payload, trash, lid_handle, target_bin, trash_bin = self._transport_values(state)
+        payload, payload_quat, trash, lid_handle, target_bin, trash_bin = self._transport_values(state)
         eef0 = self.eef_pos(state)
         eef1 = self._eef1_pos(state)
         hold1 = eef1.copy()
@@ -1579,7 +1600,7 @@ class ScriptedTransportController(ScriptedController):
         # or produce NaN actions when commanding high-delta moves with the
         # heavy hammer.  Halve the per-step velocity scale during these
         # phases so each OSC step carries less momentum.
-        meeting = self._payload_meeting_point(payload)
+        meeting = self._payload_meeting_point(payload, payload_quat)
         swing_scale = 1.0
 
         if self._transport_phase is _TransportPhase.TABLE_TRANSPORT:
@@ -1659,8 +1680,15 @@ class ScriptedTransportController(ScriptedController):
             # point with d1 ~ 0.001 throughout this phase, so we trust the
             # bilateral friction pinch (both grippers closed on the hammer
             # body) rather than the unreliable pad-contact predicate.
-            arm0_hold = eef0.copy()
-            targets = (arm0_hold, meeting)
+            # IMPORTANT: drive both arms to the LIVE payload position (not
+            # eef0.copy()) so the OSCs don't fight each other as the hammer
+            # jostles -- if arm0's target is frozen at its old eef while the
+            # payload drifts by 1-2 cm the OSC pulls arm0's gripper back
+            # toward the frozen target, yanking the hammer out of arm1's
+            # fingers.
+            arm0_hold = payload[:3].copy()
+            arm1_hold = meeting.copy()
+            targets = (arm0_hold, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             assert self._transport_started_at is not None
             if t - self._transport_started_at >= self.config.grasp_hold_steps:
