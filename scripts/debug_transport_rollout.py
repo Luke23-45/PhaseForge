@@ -149,11 +149,44 @@ def _pad_contacts(controller: Any) -> dict[str, Any]:
     return probes
 
 
+def _pad_contact_sides(controller: Any) -> dict[str, Any]:
+    """Report each fingerpad separately for the two unresolved grasp probes."""
+    details: dict[str, Any] = {}
+    for arm_index, object_name in ((1, "trash"), (1, "payload")):
+        key = f"arm{arm_index}_pad_{object_name}_sides"
+        try:
+            env = controller.env
+            checker = getattr(env, "check_contact")
+            robot = env.robots[arm_index]
+            objects = env.transport.objects
+            mapping = robot.gripper
+            gripper = mapping.get(robot.arms[0]) if isinstance(mapping, dict) else mapping
+            important = gripper.important_geoms
+            object_geoms = getattr(objects[object_name], "contact_geoms")
+            details[key] = {
+                side: bool(checker(important[geom], object_geoms))
+                for side, geom in (
+                    ("left", "left_fingerpad"),
+                    ("right", "right_fingerpad"),
+                )
+            }
+        except Exception as exc:  # noqa: BLE001 - diagnostics must continue
+            details[key] = f"{type(exc).__name__}: {exc}"
+    return details
+
+
 def _phase_targets(
     controller: Any, state: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Reconstruct the controller's two-arm target for the current phase."""
-    payload, payload_quat, trash, lid_handle, target_bin, trash_bin = controller._transport_values(state)
+    (
+        payload,
+        payload_quat,
+        trash,
+        lid_handle,
+        target_bin,
+        trash_bin,
+    ) = controller._transport_values(state)
     eef0 = controller.eef_pos(state)
     eef1 = controller._eef1_pos(state)
     config = controller.config
@@ -230,12 +263,9 @@ def _phase_targets(
         return controller._place_targets
 
     # Mid-air handover in the 0.6m gap between the two tables (no shared
-    # table surface exists in MultiTableArena). Meeting point is computed
-    # from the LIVE payload pose (payload-frame handover; mirrors the
-    # controller's ``_payload_meeting_point``). Anchoring on the live
-    # payload makes the meeting point reachable for arm0 by construction
-    # and adapts per-reset rather than failing on samples where a hard-
-    # coded point sits outside either arm's workspace.
+    # table surface exists in MultiTableArena). The meeting point mirrors
+    # the controller's live payload-body target and therefore remains in
+    # the same frame as the demonstrated arm1 payload grasp.
     meeting = controller._payload_meeting_point(payload, payload_quat)
 
     if phase == "TABLE_TRANSPORT":
@@ -291,7 +321,14 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
     """Capture all geometry and controller state at one timestep."""
     eef0 = controller.eef_pos(state)
     eef1 = controller._eef1_pos(state)
-    payload, payload_quat, trash, lid_handle, target_bin, trash_bin = controller._transport_values(state)
+    (
+        payload,
+        payload_quat,
+        trash,
+        lid_handle,
+        target_bin,
+        trash_bin,
+    ) = controller._transport_values(state)
     targets = _phase_targets(controller, state)
     distances = None
     if targets is not None:
@@ -327,6 +364,7 @@ def _snapshot(controller: Any, state: np.ndarray, env: Any) -> dict[str, Any]:
         "transport_started_at": controller._transport_started_at,
         "native_grasps": _native_grasps(controller),
         "pad_contacts": _pad_contacts(controller),
+        "pad_contact_sides": _pad_contact_sides(controller),
         "body_positions": body_positions,
         "body_target_distance": body_target_distances,
         "gripper_qpos": _gripper_qpos(env),
@@ -431,6 +469,7 @@ def _trace_case(
                 f"xy_e0_p={xy_err:.4f} "
                 f"g={after['native_grasps']} "
                 f"p={after.get('pad_contacts')} "
+                f"ps={after.get('pad_contact_sides')} "
                 f"success={bool(success)}"
             )
 

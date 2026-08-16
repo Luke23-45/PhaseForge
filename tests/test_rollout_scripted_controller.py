@@ -655,7 +655,7 @@ class TestClosedLoop:
         assert action[13] == GRIPPER_OPEN
         assert ctrl.phase_name == "LID_APPROACH"
 
-    def test_transport_meeting_point_uses_payload_frame_head_offset(self) -> None:
+    def test_transport_meeting_point_uses_payload_body_center(self) -> None:
         from phaseforge.evaluations.envs.robosuite_adapter import StateSpec
 
         transport_spec = StateSpec(
@@ -672,18 +672,16 @@ class TestClosedLoop:
         )
         ctrl = ScriptedTransportController(transport_spec)
         payload = np.array([0.20, -0.10, 1.00])
-        # A +90 degree rotation around world-Y maps the payload's local +z
-        # head axis into world +x; this catches accidental world-Z offsets.
-        quarter_turn_xyzw = np.array(
-            [0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)]
-        )
+        # The handover target is the payload body center.  Its quaternion must
+        # not move the target to the separate head geom.
+        quarter_turn_xyzw = np.array([0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)])
 
         meeting = ctrl._payload_meeting_point(payload, quarter_turn_xyzw)
 
         assert np.allclose(
             meeting,
             [
-                0.20 + ctrl.PAYLOAD_HEAD_OFFSET_Z,
+                0.20,
                 -0.10,
                 1.00 + ctrl.HANDOVER_OVERSHOOT_Z,
             ],

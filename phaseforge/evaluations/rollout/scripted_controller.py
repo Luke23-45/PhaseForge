@@ -1068,16 +1068,14 @@ class ScriptedTransportController(ScriptedController):
     #: ``head_halfsize in [0.015, 0.018]``; we use ``handle_radius`` as a
     #: World-space offset from the hammer body (payload) center to the
     #: hammer head box center along the hammer's local +z (handle axis).
-    #: The exact v1.5.1 model XML embedded in the downloaded Transport HDF5
-    #: places the payload-head geom center at local z=0.117767.  Using the
-    #: old 0.0775 value puts arm1's meeting point about 4 cm off the actual
-    #: head center, so the native payload grasp check never fires.
+    #: Diagnostic-only geometry: the exact v1.5.1 model XML embedded in the
+    #: downloaded Transport HDF5 places the payload-head geom center at local
+    #: z=0.117767.  The production handover intentionally targets the
+    #: payload body/handle center, not this separate head geom.
     PAYLOAD_HEAD_OFFSET_Z: float = 0.117767
 
-    #: Z offset above the hammer head center for the PAYLOAD_DESCEND target.
-    #: The eef settles ABOVE the head so the OSC doesn't push the hammer
-    #: sideways during the descent; the pads then close on the head from
-    #: above during PAYLOAD_GRASP.
+    #: Small z offset above the payload body for PAYLOAD_DESCEND, allowing
+    #: the EEF to settle without driving the payload into the table.
     PAYLOAD_HEAD_DESCEND_Z_OFFSET: float = 0.01
 
     #: Safety bound for PAYLOAD_DESCEND.  With the saturated OSC action the
@@ -1088,67 +1086,30 @@ class ScriptedTransportController(ScriptedController):
     #: the controller stuck in DESCEND until the horizon expires.
     PAYLOAD_DESCEND_HOLD_STEPS: int = 150
 
-    #: Payload-frame handover: the meeting point is derived from the
-    #: hammer's LIVE position (which is where arm0 currently is, since arm0
-    #: is carrying it during the handover window), not a hard-coded
-    #: coordinate.  This is the "shared payload frame" approach called out
-    #: in the literature as the principled fix for free-space bimanual
-    #: handover: the object itself signals the meeting location, so the
-    #: point is reachable for arm0 by construction (arm0 already is there)
-    #: and is adapted per-reset rather than fighting per-sample reach
-    #: limits (which broke case 00 with the previous fixed (0, 0.20, 0.95)
-    #: meeting point).
-    #:
-    #: The dynamic meeting point is the live payload position pulled a
-    #: fixed offset toward arm1's side (so arm1, not arm0, does most of
-    #: the travel) and clamped into the band reachable by both arms.  Arm0
-    #: only has to move a short lateral distance from its current pose;
-    #: arm1 travels the rest.
+    #: Payload-frame handover: the meeting point is the LIVE payload body
+    #: center, which is where the 200 demonstrations place arm1's EEF during
+    #: the payload-gripper close event.  The exact embedded gripper XML also
+    #: places the fingerpad centers within a few millimetres of the EEF site;
+    #: aiming 6 cm above the head therefore leaves both pads clear of the
+    #: payload even though the wrist distance appears small.
     HANDOVER_BIAS_TOWARD_ARM1: float = 0.30
     HANDOVER_Y_CLAMP: tuple[float, float] = (-0.10, +0.30)
-    #: X clamp widened to the full table span.  The dataset's 200 transport
-    #: demos show the hammer head center lives in x in [0.139, 0.261] while
-    #: the start/target bins sit at x ~ +-0.2; the old +-0.15 clamp pushed
-    #: the meeting point ~1.5 cm off the live head center (the wrist then
-    #: converged 1.5 cm to the side of the head).  The clamp only guarded a
-    #: reachability band that no longer applies since the leader-follower
-    #: meeting point tracks the live head and the dataset validates arm1
-    #: reaches the head center in every demo (max 0.46 m from its base).
+    #: X clamp widened to the full table span.  The payload body remains
+    #: within this band in the downloaded 200-demo reset distribution.
     #: +-0.35 spans both tables without binding on any real reset.
     HANDOVER_X_CLAMP: tuple[float, float] = (-0.35, +0.35)
     #: Minimum handover z so we never ask either arm to descend below a
-    #: safe altitude (the hammer swings on the heavy head if it dips).
-    #: Lowered back to 0.90 from 1.10 because the OSC at z=1.10 puts the
-    #: meeting point 0.18 m ABOVE the hammer head, leaving arm1's gripper
-    #: fingers in mid-air and ``arm1_pad_payload`` permanently False.  At
-    #: z=0.90 the OSC's target sits at the hammer head center (z ~ 0.915
-    #: for a payload resting on the start bin), so the OSC pushes arm1's
-    #: wrist INTO the head surface and the fingers wrap around the head
-    #: for a real bilateral pinch.
+    #: safe altitude while the payload is in flight.
     HANDOVER_Z_MIN: float = 0.90
 
-    #: Extra z-offset above the hammer head so arm1's fingerpads make
-    #: contact with the head box when the OSC converges to the meeting
-    #: point.  Geometry (from the Panda gripper MJCF):
-    #:   - ``gripper0_eef`` body sits at z = +0.097 in the gripper base
-    #:   - fingerpad geoms sit at z = +0.0374 in the gripper base
-    #:   - so each pad is at eef-z = -0.060 (i.e. 0.060 m below the eef
-    #:     along the gripper's approach axis)
-    #: With the default Panda mount (gripper pointing -z), the pads end
-    #: up 0.060 m below the wrist in the world frame.  The previous
-    #: overshoot of 0.02 put the pads at head_z - 0.040 (well below the
-    #: 4 cm-tall head box) so ``arm1_pad_payload`` never fired.
-    #: 0.07 m puts the pads roughly at the head center (with ~0.04 m OSC
-    #: stopping margin) so the OSC drives the wrist down until the pads
-    #: physically engage the head box and the fingerpad sensor trips.
-    HANDOVER_OVERSHOOT_Z: float = 0.06
+    #: The payload-body target is already at the gripper-site height.  Keep
+    #: this explicit so the handover target cannot silently regress to a
+    #: top-down head offset.
+    HANDOVER_OVERSHOOT_Z: float = 0.0
 
-    #: How far past the head center to push the meeting point so arm1's
-    #: closed gripper fingers actually make contact with the hammer head.
-    #: Disabled: top-down (HANDOVER_OVERSHOOT_Z) supersedes the lateral
-    #: overshoot for the default Panda orientation (fingers pointing -z);
-    #: the lateral overshoot was useful only when arm1's gripper pointed
-    #: horizontally, which is not the case here.
+    #: Optional lateral offset in the payload/world frame.  The dataset's
+    #: median payload-close offset is near zero, so the production value is
+    #: intentionally zero until a contact-confirmed trace justifies more.
     HANDOVER_OVERSHOOT_Y: float = 0.0
 
     object_key = "object"
@@ -1203,41 +1164,22 @@ class ScriptedTransportController(ScriptedController):
         is rather than to a hard-coded coordinate that may lie outside
         arm1's reachable workspace for some robot-base samples.
 
-        HEAD-CENTER TARGET (dataset-validated): the hammer lies FLAT on
-        the start table (the frozen dataset's 200 demos all show the head
-        offset horizontally by ``PAYLOAD_HEAD_OFFSET_Z`` with zero world-z
-        delta), so the meeting point must be the live HEAD CENTER
-        (``_head_center`` rotates the local +z head offset by the payload
-        quat), NOT ``payload + [0, 0, 0.117767]`` which assumes the head is
-        directly above the body in world-z.  The previous world-z form put
-        the meeting point ~0.127 m above the actual head, arm1's fingers
-        closed in the air gap next to the head, and the hammer slipped out
-        of arm1's grasp as soon as arm0 released.
-
-        TOP-DOWN GRASP: with the default Panda orientation (fingers
-        pointing -z), arm1's gripper fingers extend downward from the
-        wrist.  We push the meeting point ABOVE the hammer head by
-        :data:`HANDOVER_OVERSHOOT_Z` so the OSC converges arm1's wrist
-        just above the head top and the closed fingers descend through
-        the head body.  Without the overshoot the OSC settles the wrist
-        on the head surface and the fingers close in the air gap next to
-        the head -- ``arm1_pad_payload`` stays False and the hammer
-        slips out of arm1's grasp as soon as arm0 releases.
-        z is floored at :data:`HANDOVER_Z_MIN` so the arms never descend
-        into a swing-inducing low altitude while the heavy hammer is in
-        flight.
+        The target is the live payload body center plus the configured
+        world-frame offsets.  This matches the demonstrated payload-close
+        geometry: after transforming the 200 close poses into the payload
+        frame, 98% are within 4 cm laterally and 10 cm along the handle.
+        The z floor remains as a safety bound for low resets.
         """
-        head_center = self._head_center(payload, payload_quat)
         meeting_x = float(
             np.clip(
-                float(head_center[0]),
+                float(payload[0]),
                 self.HANDOVER_X_CLAMP[0],
                 self.HANDOVER_X_CLAMP[1],
             )
         )
-        meeting_y = float(head_center[1]) + self.HANDOVER_OVERSHOOT_Y
+        meeting_y = float(payload[1]) + self.HANDOVER_OVERSHOOT_Y
         meeting_z = max(
-            float(head_center[2]) + self.HANDOVER_OVERSHOOT_Z,
+            float(payload[2]) + self.HANDOVER_OVERSHOOT_Z,
             self.HANDOVER_Z_MIN,
         )
         return np.array([meeting_x, meeting_y, meeting_z], dtype=np.float64)
@@ -1671,16 +1613,12 @@ class ScriptedTransportController(ScriptedController):
             self._transport_watchdog(targets, eef0, eef1, t)
             arm0_pad_payload = self._transport_pad_contact(0, "payload")
             d1 = float(np.linalg.norm(arm1_meet - eef1))
-            # Require arm1 has converged to the head-center meeting point AND
+            # Require arm1 has converged to the payload-body meeting point AND
             # arm0's bilateral pinch is still active (the hammer has not
             # slipped out of arm0's gripper).  We deliberately do NOT require
             # ``arm1_pad_payload is True`` here -- the OSC's impedance keeps
-            # the wrist pinned against the hammer head surface but the
-            # fingerpad geoms only register contact once the fingers are
-            # driven INTO the head, which the next phase (TABLE_DESCEND)
-            # accomplishes via its head-center target.  Threshold raised
-            # from 0.10 to 0.12 to absorb OSC noise at the head surface
-            # where the impedance pushes back hardest.
+            # the wrist pinned against the payload body.  Threshold raised
+            # from 0.10 to 0.12 to absorb OSC noise during convergence.
             converged = (
                 d1 <= 0.12
                 and arm0_pad_payload is not False
@@ -1720,16 +1658,11 @@ class ScriptedTransportController(ScriptedController):
             )
 
         if self._transport_phase is _TransportPhase.TABLE_RELEASE:
-            # Hold the bilateral pinch for grasp_hold_steps then transition
-            # to TABLE_RETRACT.  ``arm1_pad_payload`` empirically stays
-            # False throughout because the OSC's impedance pins arm1's
-            # wrist outside the head surface and the closed gripper fingers
-            # close in the air gap next to the head -- MuJoCo's fingerpad
-            # sensor only fires when the fingers are physically penetrating
-            # the head geoms.  The hammer remains stable at the meeting
-            # point with d1 ~ 0.001 throughout this phase, so we trust the
-            # bilateral friction pinch (both grippers closed on the hammer
-            # body) rather than the unreliable pad-contact predicate.
+            # Hold the bilateral pinch for grasp_hold_steps then confirm
+            # native ownership before releasing arm0.  The previous
+            # head-offset target kept arm1's pads away from the payload even
+            # though d1 was small; the body-center target is intended to
+            # produce a real native grasp here.
             # IMPORTANT: drive both arms to the LIVE payload position (not
             # eef0.copy()) so the OSCs don't fight each other as the hammer
             # jostles -- if arm0's target is frozen at its old eef while the
@@ -1792,13 +1725,7 @@ class ScriptedTransportController(ScriptedController):
             targets = (arm0_retract, arm1_hold)
             self._transport_watchdog(targets, eef0, eef1, t)
             d0 = float(np.linalg.norm(arm0_retract - eef0))
-            # d1 is the distance from arm1's eef to the meeting point.
-            # With HANDOVER_OVERSHOOT_Z=0.02 the OSC settles arm1's wrist
-            # ~2 cm above the head top while the gripper fingers extend
-            # ~10 cm down through the head, so arm1's eef is permanently
-            # ~0.10-0.18 m above the live payload position -- the strict
-            # d1<=0.03 check that gates HANDOVER_DESCEND never fires.  Use
-            # an arm0-only convergence criterion here: once arm0 has
+            # Use an arm0-only convergence criterion here: once arm0 has
             # reached its retract target the transfer is mechanically
             # complete (the hammer is on arm1, arm0 is out of the way) and
             # we can proceed to the lift/swing/transport pipeline.

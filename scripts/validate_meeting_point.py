@@ -1,13 +1,4 @@
-"""Validate the payload-frame meeting point against all 200 demos.
-
-The hammer head is offset along the payload's local axis, so the meeting
-point must be derived from the live payload quaternion rather than from a
-fixed world-Z offset.  This script computes the same head-center geometry as
-the controller and checks arm1's reach.
-
-It also verifies the ground-truth: arm1's wrist is ~5cm above the head
-center when it grasps, with the fingers descending through the head.
-"""
+"""Validate the payload-body handover target against all Transport demos."""
 
 from __future__ import annotations
 
@@ -16,88 +7,76 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 DATASET = r"data\raw\robomimic\transport\low_dim_v15.hdf5"
-PAYLOAD_HEAD_OFFSET_Z = 0.117767
 BASE1 = np.array([0.0, +0.25, 0.0])
 PANDA_REACH = 0.85
-# Controller's vertical handover overshoot above the head center.
-HANDOVER_OVERSHOOT_Z = 0.06
-# finger length below wrist
-FINGER_LEN = 0.10
+HANDOVER_Z_MIN = 0.90
 
 
-def quat_to_rot(q_xyzw):
-    return Rotation.from_quat(np.array([q_xyzw[0], q_xyzw[1], q_xyzw[2], q_xyzw[3]]))
-
-
-def head_center_world(payload, quat):
-    return payload + quat_to_rot(quat).apply([0, 0, PAYLOAD_HEAD_OFFSET_Z])
+def payload_close_index(actions: np.ndarray, payload: np.ndarray) -> int:
+    """Find arm1's payload close transition after the payload is lifted."""
+    transitions = np.where((actions[1:, 13] == 1) & (actions[:-1, 13] != 1))[0] + 1
+    lifted = [
+        int(t)
+        for t in transitions
+        if t > 0 and np.max(payload[max(0, t - 10) : t, 2]) > payload[0, 2] + 0.03
+    ]
+    if lifted:
+        return lifted[0]
+    if len(transitions) >= 2:
+        return int(transitions[1])
+    raise ValueError("demo has no identifiable arm1 payload close transition")
 
 
 def report() -> None:
-    rows = []
-    with h5py.File(DATASET, "r") as f:
-        demos = sorted(f["data"].keys(), key=lambda k: int(k.split("_")[1]))
+    rows: list[dict[str, np.ndarray | float | int | str]] = []
+    with h5py.File(DATASET, "r") as h5:
+        demos = sorted(h5["data"].keys(), key=lambda name: int(name.split("_")[1]))
         for name in demos:
-            demo = f["data"][name]
-            obj = demo["obs"]["object"][:]
-            eef1 = demo["obs"]["robot1_eef_pos"][:]
-            n = obj.shape[0]
-            payload = obj[:, 0:3]
-            pquat = obj[:, 3:7]
-            head = np.stack(
-                [head_center_world(p, q) for p, q in zip(payload, pquat)]
+            demo = h5["data"][name]
+            actions = np.asarray(demo["actions"][:], dtype=np.float64)
+            objects = np.asarray(demo["obs"]["object"][:], dtype=np.float64)
+            eef1 = np.asarray(demo["obs"]["robot1_eef_pos"][:], dtype=np.float64)
+            payload = objects[:, :3]
+            index = payload_close_index(actions, payload)
+            sample = min(index + 5, len(payload) - 1)
+            target = payload[sample].copy()
+            target[2] = max(target[2], HANDOVER_Z_MIN)
+            offset_world = eef1[sample] - payload[sample]
+            offset_payload = Rotation.from_quat(objects[sample, 3:7]).inv().apply(
+                offset_world
             )
-            # Same meeting-point construction used by the controller.
-            corrected = head.copy()
-            corrected[:, 0] = np.clip(corrected[:, 0], -0.35, 0.35)
-            corrected[:, 2] = np.maximum(corrected[:, 2] + HANDOVER_OVERSHOOT_Z, 0.90)
-
-            # find the handover: the closest approach of arm1 to the head
-            d1h = np.linalg.norm(eef1 - head, axis=1)
-            if d1h.size:
-                j = int(np.argmin(d1h))
-                reach_at = np.linalg.norm(corrected[j, :2] - BASE1[:2])
-                wrist_z = eef1[j, 2]
-                head_z = head[j, 2]
-                wrist_above = wrist_z - head_z
-            else:
-                j = n - 1
-                wrist_above = None
-
             rows.append(
-                dict(
-                    demo=name,
-                    handover_steps=0,
-                    reach_at=reach_at,
-                    wrist_above=wrist_above,
-                    head_z=head[j, 2],
-                    payload_z=payload[j, 2],
-                )
+                {
+                    "demo": name,
+                    "close_index": index,
+                    "reach": float(np.linalg.norm(target[:2] - BASE1[:2])),
+                    "offset_world": offset_world,
+                    "offset_payload": offset_payload,
+                }
             )
 
-    hs = np.array([r["handover_steps"] for r in rows])
-    print(f"n = {len(rows)}")
-
-    contact = rows  # all demos use closest-approach now
-    reach = np.array([r["reach_at"] for r in contact])
-    wa = np.array([r["wrist_above"] for r in contact])
-    hz = np.array([r["head_z"] for r in contact])
-    if reach.size:
-        print(f"\narm1 reach to corrected meeting (horizontal, from base y=+0.25):")
-        print(f"  min={reach.min():.3f} p50={np.median(reach):.3f} max={reach.max():.3f}")
-        print(f"  all within {PANDA_REACH}? {(reach <= PANDA_REACH).all()}")
-    if wa.size:
-        print(f"\nwrist z - head z at handover start (dataset observation):")
-        print(f"  min={wa.min():+.3f} p50={np.median(wa):+.3f} max={wa.max():+.3f}")
-
-    print(f"\nhead z at handover start: min={hz.min():.3f} p50={np.median(hz):.3f} max={hz.max():.3f}")
-
-    # finger envelope check: wrist z - finger_len vs head top
-    print(f"\nfinger tip reaches (wrist_z - {FINGER_LEN}):")
-    if wa.size:
-        # wrist above = wa; wrist z = head z + wa; tip z = head z + wa - finger_len
-        tip = hz + wa - FINGER_LEN
-        print(f"  tip z - head center z: min={(tip-hz).min():+.3f} p50={np.median(tip-hz):+.3f} max={(tip-hz).max():+.3f}")
+    reaches = np.asarray([row["reach"] for row in rows], dtype=np.float64)
+    offsets = np.asarray([row["offset_payload"] for row in rows], dtype=np.float64)
+    lateral = np.linalg.norm(offsets[:, :2], axis=1)
+    print(f"n demos = {len(rows)}")
+    print(
+        "arm1 reach to payload-body target: "
+        f"min={reaches.min():.3f} p50={np.median(reaches):.3f} "
+        f"max={reaches.max():.3f}; all <= {PANDA_REACH}: "
+        f"{bool(np.all(reaches <= PANDA_REACH))}"
+    )
+    for axis, values in zip(("x", "y", "z"), offsets.T):
+        print(
+            f"payload-frame EEF offset {axis}: "
+            f"p05={np.quantile(values, .05):+.4f} "
+            f"p50={np.median(values):+.4f} "
+            f"p95={np.quantile(values, .95):+.4f}"
+        )
+    print(f"lateral offset <= 0.04 m: {int(np.sum(lateral <= 0.04))}/{len(rows)}")
+    print(
+        "handle-axis offset <= 0.10 m: "
+        f"{int(np.sum(np.abs(offsets[:, 2]) <= 0.10))}/{len(rows)}"
+    )
 
 
 if __name__ == "__main__":
