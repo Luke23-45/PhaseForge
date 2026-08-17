@@ -17,6 +17,7 @@ from phaseforge.evaluations.rollout.runner import (
     RolloutEvaluator,
     RolloutRunInvalid,
     require_rollout_eval_schema,
+    resolve_pinned_metadata,
     resolve_robosuite_requirement,
     run_rollout_evaluation,
 )
@@ -46,6 +47,53 @@ def test_legacy_eval_robosuite_pin_is_fallback() -> None:
         }
     )
     assert resolve_robosuite_requirement(cfg) == "==1.5.1"
+
+
+class TestResolvePinnedMetadata:
+    """Fail-closed env metadata recovery.
+
+    Regression: when neither the processed cache nor the raw HDF5 exists
+    on the machine, ``resolve_pinned_metadata`` silently fell back to
+    documented dev metadata — a real rollout could then run against the
+    wrong task's environment and produce plausible-looking but invalid
+    results. The fallback must be a hard error unless the caller opts in
+    explicitly (``eval.env.allow_dev_fallback=true``, local gates only).
+    """
+
+    def _cfg(self, task: str = "Lift", allow_fallback: bool = False):
+        from omegaconf import DictConfig
+
+        return DictConfig(
+            {
+                "data": {
+                    "source": {"dir": "/nonexistent/raw", "task_name": task},
+                },
+                "eval": {"env": {"allow_dev_fallback": allow_fallback}},
+            }
+        )
+
+    def test_no_cache_no_raw_raises_without_opt_in(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr(
+            "phaseforge.data.paths.processed_cache_root",
+            lambda: tmp_path / "no_such_cache",
+        )
+
+        cfg = self._cfg(task="Can")
+        with pytest.raises(RuntimeError, match="Can"):
+            resolve_pinned_metadata(cfg)
+
+    def test_opt_in_dev_fallback_still_works(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr(
+            "phaseforge.data.paths.processed_cache_root",
+            lambda: tmp_path / "no_such_cache",
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.envs.env_metadata.dev_fallback_metadata",
+            lambda task: {"task": task, "dev": True},
+        )
+
+        meta = resolve_pinned_metadata(self._cfg(task="Lift", allow_fallback=True))
+        assert meta == {"task": "Lift", "dev": True}
 
 
 class TestRequireRolloutEvalSchema:

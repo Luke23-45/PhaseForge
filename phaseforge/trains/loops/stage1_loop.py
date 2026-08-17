@@ -46,6 +46,23 @@ class Stage1Trainer(BaseTrainer):
 
         lambda_phase = self.train_cfg.lambda_phase
 
+        # Optional inverse-frequency class weights for the phase CE
+        # (train.phase_class_weight="balanced", injected by cli.py as
+        # train.phase_weights). None preserves the protocol's plain CE.
+        phase_weights: torch.Tensor | None = None
+        pw = self.train_cfg.get("phase_weights")
+        if out.phase_logits is not None and pw:
+            num_classes = out.phase_logits.size(-1)
+            if len(pw) != num_classes:
+                raise ValueError(
+                    f"train.phase_weights has {len(pw)} entries but the phase "
+                    f"head predicts {num_classes} classes. "
+                    "Phase count mismatch — refusing to train with wrong weights."
+                )
+            phase_weights = torch.tensor(
+                list(pw), dtype=torch.float32, device=self.device
+            )
+
         # Action Loss (MSE)
         if mask is not None:
             # Masked MSE for variable length
@@ -70,9 +87,13 @@ class Stage1Trainer(BaseTrainer):
                 targets_valid = targets_flat[mask_flat]
 
                 if len(targets_valid) > 0:
-                    phase_loss = F.cross_entropy(logits_valid, targets_valid)
+                    phase_loss = F.cross_entropy(
+                        logits_valid, targets_valid, weight=phase_weights
+                    )
             else:
-                phase_loss = F.cross_entropy(logits, target_phase)
+                phase_loss = F.cross_entropy(
+                    logits, target_phase, weight=phase_weights
+                )
 
         # Total Loss
         total_loss = action_loss + lambda_phase * phase_loss

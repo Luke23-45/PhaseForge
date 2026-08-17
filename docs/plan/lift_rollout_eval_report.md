@@ -173,12 +173,23 @@ across seeds. It is a diagnostic reference only, not a deployable method, and it
 - **Checkpoint-rule deviation (root cause; FIXED 2026-08-18):** stage-1 configs monitored `val/loss_total`
   while the plan declares `best val/loss_action`; combined with exploding `loss_phase` (val/loss_phase
   ≈ 0.79 → 2.59, worse than random 6-way CE ln 6 ≈ 1.79), stage-1 best checkpoints were selected very
-  early (epoch 2 for seed 42) with a poorly-trained encoder/action head, handicapping the PhaseForge
+  early (epoch 1–2 across seeds) with a poorly-trained encoder/action head, handicapping the PhaseForge
   and Phase-Pretrain warm-starts. The monitor is now `val/loss_action` (matching the predeclared rule
-  and `stage2.yaml`). Local CPU validation (seed 42): stage-1 best epoch moved 2 → 41 with
-  val/loss_action 0.0264 (better than BC 0.0277); stage-2 NMI 0.463 (vs 0.393) at similar action loss.
-  **The rollouts in this report were produced before this fix and must be re-run on GPU before the
-  fixed pipeline is judged.**
+  and `stage2.yaml`). **This also explains the per-seed rollout spread** (PhaseForge 0.56/0.72/0.42):
+  stage-1 best-checkpoint quality varied per seed (action loss 0.0451/0.0404/0.0659 at epochs 2/2/1),
+  and stage-2 freezes that encoder and bootstraps the router from its centroids, so the variance
+  propagated into warm-start quality (0.0411/0.0372/0.0513) and final routing NMI (0.393/0.377/0.324).
+  Control proof: `plain_encoder_phase_bootstrap` consumes BC's *consistently good* stage-1
+  (0.0277/0.0270/0.0261) and has the smallest spread (0.04), while both methods consuming PhaseForge
+  stage-1 have the largest (0.30/0.32); eval noise is negligible (duplicate eval batches per seed
+  agree to ≤0.02), and the data split is identical across training seeds (split.seed=42 fixed).
+  **3-seed local CPU validation with the fix (`outputs_local_train/`, git `3cd510f`):**
+  stage-1 best epoch moved to 41/36/25 with action loss **0.0264/0.0240/0.0261** (spread 0.0024 vs
+  0.0255 buggy); stage-2 warm-start action loss tightened to **0.0301/0.0279/0.0308** (spread 0.0029
+  vs 0.0141 buggy, on par with plain-encoder bootstrap 0.003); stage-2 NMI held at
+  **0.449/0.457/0.436** (spread 0.021 vs 0.069 buggy), 0% collapse in all seeds, final action loss
+  0.0286/0.0259/0.0276. **The rollouts in this report were produced before this fix and must be
+  re-run on GPU before the fixed pipeline is judged.**
 - **Missing cells:**
   - Teacher-Forced Routing (method 8, H4): failed pre-flight on the pre-patch runner
     (`d127980`, 2026-08-17 17:57, `outputs/part3/outputs/_runner/state.json`). Runnable now under

@@ -432,6 +432,12 @@ def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
     ``env_args`` -> documented dev fallback (only when the data source is
     genuinely absent locally; the evaluation machine always hits the
     cache path because training ingests the same dataset).
+
+    The dev fallback is a *hard fail* for real runs: silently rolling out
+    against the wrong task's environment (e.g. Lift metadata for a Can
+    run whose cache is missing on the machine) would produce plausible-
+    looking but invalid results. Callers that genuinely want the fallback
+    (local self-tests / gates) must opt in via ``eval.env.allow_dev_fallback``.
     """
     from phaseforge.data.ingestion.cache_manager import CacheManager
     from phaseforge.data.paths import processed_cache_root
@@ -456,12 +462,25 @@ def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
         logger.info("Pinned env metadata recovered from raw HDF5 %s", hdf5_files[0])
         return meta
 
+    allow_dev = bool(cfg.eval.env.get("allow_dev_fallback", False))
+    if not allow_dev:
+        task_name = str(cfg.data.source.get("task_name") or "Lift")
+        raise RuntimeError(
+            f"No processed cache (hash {hash_val}) and no raw HDF5 found for "
+            f"task {task_name!r} — the pinned environment metadata cannot be "
+            "recovered, so a rollout would silently run against the wrong "
+            "environment. Copy the dataset/cache to this machine (or re-ingest "
+            "the raw HDF5) and re-run, or set eval.env.allow_dev_fallback=true "
+            "ONLY for local self-tests/gates."
+        )
+
     from phaseforge.evaluations.envs.env_metadata import dev_fallback_metadata
 
     logger.warning(
         "No processed cache or raw HDF5 found — using the documented dev "
-        "fallback env metadata. This is only acceptable for local "
-        "self-tests/gates; a real rollout requires the dataset."
+        "fallback env metadata (allow_dev_fallback=true). This is only "
+        "acceptable for local self-tests/gates; a real rollout requires the "
+        "dataset."
     )
     task_name = str(cfg.data.source.get("task_name") or "Lift")
     return dev_fallback_metadata(task_name)

@@ -110,6 +110,40 @@ def test_prefixed_monitor_matches_stage2_val_metrics(tmp_path: Path) -> None:
     assert (tmp_path / "checkpoint_best.pt").exists()
 
 
+def test_nonfinite_monitor_never_admitted_as_best(tmp_path: Path) -> None:
+    # A NaN/Inf monitor at epoch 1 must not pin a garbage "best" checkpoint:
+    # float-NaN comparisons are False in both directions, so without the
+    # guard the NaN would sit at the top-k head forever and be exported to
+    # the eval path via checkpoint_best.pt.
+    cb = CheckpointCallback(
+        output_dir=tmp_path,
+        every_n_epochs=100,
+        monitor="loss_total",
+        mode="min",
+        save_top_k=1,
+    )
+    trainer = _make_trainer()
+
+    trainer.current_epoch = 1
+    cb.on_epoch_end(trainer, {"loss_total": float("nan")})
+    assert cb.best_ckpt_path is None
+    assert not (tmp_path / "checkpoint_best.pt").exists()
+
+    # The next finite score becomes best instead of being locked out.
+    trainer.current_epoch = 2
+    cb.on_epoch_end(trainer, {"loss_total": 0.7})
+    assert cb.best_score == pytest.approx(0.7)
+    assert (tmp_path / "checkpoint_best.pt").exists()
+    assert cb.best_ckpt_path is not None
+
+    # A later Inf/NaN still never replaces the finite best.
+    trainer.current_epoch = 3
+    cb.on_epoch_end(trainer, {"loss_total": float("inf")})
+    trainer.current_epoch = 4
+    cb.on_epoch_end(trainer, {"loss_total": float("nan")})
+    assert cb.best_score == pytest.approx(0.7)
+
+
 def test_resume_restores_rng_epoch_step_and_callback_state(tmp_path: Path) -> None:
     # Trainer A: simulate a run at epoch 2, step 5, with early-stopping
     # state already accumulated, and save a checkpoint through the callback.

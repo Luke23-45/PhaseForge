@@ -117,6 +117,7 @@ def _find_run(
     *,
     seed: int,
     tag: str | None,
+    expected_commit: str | None = None,
 ) -> Path:
     if not search_dir.is_dir():
         raise CheckpointError(f"No {kind} runs found under {search_dir} for seed {seed}.")
@@ -127,6 +128,8 @@ def _find_run(
         if meta.get("seed") != seed:
             continue
         if not _tag_matches(meta.get("tag"), tag):
+            continue
+        if expected_commit and meta.get("git_commit") != expected_commit:
             continue
         return run
     raise CheckpointError(
@@ -143,6 +146,7 @@ def resolve_run_dir(
     *,
     seed: int,
     tag: str | None = None,
+    expected_commit: str | None = None,
 ) -> Path:
     """Return the newest *completed* run directory for ``model/stage`` matching
     seed+tag.
@@ -158,6 +162,10 @@ def resolve_run_dir(
     runner's "latest successful wins" policy the newest completed run is the
     intended artifact.
 
+    When ``expected_commit`` is given, only runs whose ``run_meta.json``
+    ``git_commit`` matches it are eligible — stale pre-fix checkpoints from
+    an earlier git revision are never selected for a re-run.
+
     Raises:
         CheckpointError: No matching run directory exists.
     """
@@ -168,6 +176,7 @@ def resolve_run_dir(
         f"{model_name} stage{stage}",
         seed=seed,
         tag=tag,
+        expected_commit=expected_commit,
     )
 
 
@@ -178,12 +187,15 @@ def resolve_checkpoint_path(
     *,
     seed: int,
     state: RunnerState | None = None,
+    expected_commit: str | None = None,
 ) -> Path:
     """Resolve the absolute ``checkpoint_best.pt`` for a completed stage.
 
     Prefers the exact artifact recorded in the runner state; falls back to a
     strict seed+tag scan (so manually launched runs work too). The returned
-    path is the one the evaluation step loads.
+    path is the one the evaluation step loads. With ``expected_commit``, both
+    the registry lookup and the scan are gated to runs produced at that git
+    revision.
     """
     rel = state.get_ckpt(method.phase_key, seed, stage) if state is not None else None
     if rel:
@@ -191,7 +203,12 @@ def resolve_checkpoint_path(
         if candidate.is_file():
             return candidate
     run_dir = resolve_run_dir(
-        outputs_base, method.model_name, stage, seed=seed, tag=method.output_tag
+        outputs_base,
+        method.model_name,
+        stage,
+        seed=seed,
+        tag=method.output_tag,
+        expected_commit=expected_commit,
     )
     ckpt = run_dir / _REQUIRED_CKPT_REL
     if not ckpt.is_file():
@@ -209,6 +226,7 @@ def resolve_stage_ckpt(
     *,
     seed: int,
     tag: str | None = None,
+    expected_commit: str | None = None,
 ) -> Path:
     """Resolve the absolute ``checkpoint_best.pt`` of a provider run.
 
@@ -219,9 +237,17 @@ def resolve_stage_ckpt(
     whose ``tag=None`` means "no constraint" and can therefore pick a tagged
     sibling variant that shares the provider's output tree (e.g.
     ``bc_robot_only`` next to ``bc``), crashing the stage-2 load with a
-    dimension mismatch.
+    dimension mismatch. With ``expected_commit``, only provider checkpoints
+    produced at that git revision are eligible.
     """
-    run_dir = resolve_run_dir(outputs_base, model_name, stage, seed=seed, tag=tag)
+    run_dir = resolve_run_dir(
+        outputs_base,
+        model_name,
+        stage,
+        seed=seed,
+        tag=tag,
+        expected_commit=expected_commit,
+    )
     ckpt = run_dir / _REQUIRED_CKPT_REL
     if not ckpt.is_file():
         raise CheckpointError(
@@ -238,10 +264,18 @@ def checkpoint_exists(
     *,
     seed: int,
     tag: str | None = None,
+    expected_commit: str | None = None,
 ) -> bool:
     """Return whether a ``checkpoint_best.pt`` exists for the exact seed+tag."""
     try:
-        run_dir = resolve_run_dir(outputs_base, model_name, stage, seed=seed, tag=tag)
+        run_dir = resolve_run_dir(
+            outputs_base,
+            model_name,
+            stage,
+            seed=seed,
+            tag=tag,
+            expected_commit=expected_commit,
+        )
     except CheckpointError:
         return False
     return (run_dir / _REQUIRED_CKPT_REL).is_file()
@@ -266,6 +300,7 @@ def resolve_eval_run_dir(
     *,
     seed: int,
     tag: str | None = None,
+    expected_commit: str | None = None,
 ) -> Path:
     """Return the newest evaluation run directory matching seed+tag.
 
@@ -279,4 +314,5 @@ def resolve_eval_run_dir(
         f"evaluation for {model_name}",
         seed=seed,
         tag=tag,
+        expected_commit=expected_commit,
     )

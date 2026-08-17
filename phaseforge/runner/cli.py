@@ -65,6 +65,7 @@ from phaseforge.runner.resolver import (
     resolve_stage_ckpt,
     stage_checkpoint_relative,
 )
+from phaseforge.utils.config import git_info
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: Default protocol manifest. The full five-task evaluation lives in
@@ -200,7 +201,9 @@ def _build_plan(protocol: Protocol, args: argparse.Namespace) -> list[Step]:
     )
 
 
-def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
+def _require_stage2_prereq(
+    step: Step, outputs_base: Path, expected_commit: str | None = None
+) -> Path | None:
     """Resolve the exact Stage 1 checkpoint a stage-2 step bootstraps from.
 
     Returns ``None`` for steps that load nothing (a stage-1 step, or a
@@ -210,7 +213,9 @@ def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
     (:func:`phaseforge.utils.config.find_latest_checkpoint`), whose
     ``tag=None`` means "no constraint" and can select a newer *tagged* sibling
     variant that shares the provider's output tree (e.g. ``bc_robot_only``
-    next to ``bc``), crashing the load with a dimension mismatch.
+    next to ``bc``), crashing the load with a dimension mismatch. With
+    ``expected_commit``, only provider checkpoints from that git revision are
+    eligible.
     """
     req = step.required_checkpoint()
     if req is None:
@@ -228,6 +233,7 @@ def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
             # A Stage 2 dependency consumes either this method's own tagged
             # Stage 1 cell or the task's default provider cell.
             tag=source_tag,
+            expected_commit=expected_commit,
         )
     except CheckpointError as exc:
         raise CheckpointError(
@@ -267,6 +273,7 @@ def _run_dependency_step(
     state: RunnerState,
     args: argparse.Namespace,
     toolhang_python: Path | None,
+    expected_commit: str | None = None,
 ) -> None:
     """Execute one auto-injected Stage 1 dependency step and record it."""
     print(f"\n[runner] auto-injecting missing dependency: {step.label}", flush=True)
@@ -290,6 +297,7 @@ def _run_dependency_step(
         step.stage,
         seed=step.seed,
         tag=step.method.output_tag,
+        expected_commit=expected_commit,
     )
     ckpt_rel = stage_checkpoint_relative(
         outputs_base, run_dir, step.method.model_name, step.stage
@@ -310,6 +318,7 @@ def _resolve_stage2_with_auto_dependency(
     state: RunnerState,
     args: argparse.Namespace,
     toolhang_python: Path | None,
+    expected_commit: str | None = None,
 ) -> Path | None:
     """Resolve a stage-2 prerequisite, auto-training a missing provider first.
 
@@ -321,55 +330,84 @@ def _resolve_stage2_with_auto_dependency(
     fail loudly. Returns ``None`` for steps that load no prerequisite.
     """
     try:
-        return _require_stage2_prereq(step, outputs_base)
+        return _require_stage2_prereq(step, outputs_base, expected_commit)
     except CheckpointError:
         provider = _auto_dependency_provider(step, protocol, args)
         if provider is None:
             raise
         dep = Step(kind="train", method=provider, seed=step.seed, stage=1, dependency=True)
-        _run_dependency_step(dep, protocol, outputs_base, state, args, toolhang_python)
-        return _require_stage2_prereq(step, outputs_base)
+        _run_dependency_step(
+            dep, protocol, outputs_base, state, args, toolhang_python, expected_commit
+        )
+        return _require_stage2_prereq(step, outputs_base, expected_commit)
 
 
-def _eval_target(step: Step, outputs_base: Path, state: RunnerState) -> Path:
+def _eval_target(
+    step: Step, outputs_base: Path, state: RunnerState, expected_commit: str | None = None
+) -> Path:
     return resolve_checkpoint_path(
         outputs_base,
         step.method,
         step.method.final_stage,
         seed=step.seed,
         state=state,
+        expected_commit=expected_commit,
     )
 
 
-def _should_skip_eval(step: Step, outputs_base: Path, state: RunnerState, force: bool) -> bool:
+def _should_skip_eval(
+    step: Step,
+    outputs_base: Path,
+    state: RunnerState,
+    force: bool,
+    expected_commit: str | None = None,
+) -> bool:
     if force:
         return False
     entry = state.get(step.method.phase_key, step.seed, "eval")
     if entry is None or entry.get("status") != "completed":
         return False
+    if not state.is_complete(step.method.phase_key, step.seed, "eval"):
+        return False
     try:
-        target = _eval_target(step, outputs_base, state)
+        target = _eval_target(step, outputs_base, state, expected_commit)
     except CheckpointError:
         return False
     return entry.get("ckpt") == target.relative_to(outputs_base).as_posix()
 
 
 def _print_plan(
-    plan: list[Step], outputs_base: Path, state: RunnerState, args: argparse.Namespace
+    plan: list[Step],
+    outputs_base: Path,
+    state: RunnerState,
+    args: argparse.Namespace,
+    expected_commit: str | None = None,
 ) -> None:
     print(f"\n[runner] plan ({len(plan)} steps, outputs base: {outputs_base})")
     for index, step in enumerate(plan, start=1):
         tag = " [dependency]" if step.dependency else ""
-        status = "done" if _step_done(step, outputs_base, state, args.force) else "pending"
+        status = (
+            "done"
+            if _step_done(step, outputs_base, state, args.force, expected_commit)
+            else "pending"
+        )
         print(f"  {index:>3}. {step.label:<48} {status}{tag}")
 
 
-def _step_done(step: Step, outputs_base: Path, state: RunnerState, force: bool) -> bool:
+def _step_done(
+    step: Step,
+    outputs_base: Path,
+    state: RunnerState,
+    force: bool,
+    expected_commit: str | None = None,
+) -> bool:
     if force:
         return False
     if step.kind == "train":
         return state.is_complete(step.method.phase_key, step.seed, step.registry_phase)
-    return _should_skip_eval(step, outputs_base, state, force=False)
+    return _should_skip_eval(
+        step, outputs_base, state, force=False, expected_commit=expected_commit
+    )
 
 
 def _print_methods(protocol: Protocol) -> None:
@@ -406,6 +444,19 @@ def _print_summary(protocol: Protocol, state: RunnerState, counts: dict[str, int
         print(f"  {method.name:<32} {'  '.join(cells)}")
 
 
+def _current_commit() -> str | None:
+    """Return the current git commit, or ``None`` when unavailable.
+
+    Used as the commit gate for the state registry and checkpoint
+    resolution: a sweep at revision X must not reuse artifacts recorded or
+    produced at revision Y (e.g. pre-fix checkpoints) — that silently
+    corrupts the sweep. When git is unavailable (no repo), gating is
+    disabled and resolution falls back to "newest completed" behaviour.
+    """
+    commit = git_info().get("commit") or ""
+    return commit.strip() or None
+
+
 def run(args: argparse.Namespace) -> int:
     outputs_base = _outputs_base(args)
     try:
@@ -418,8 +469,19 @@ def run(args: argparse.Namespace) -> int:
         _print_methods(protocol)
         return 0
 
+    commit = _current_commit()
+    if commit is None:
+        print(
+            "[runner] WARNING: git unavailable — commit gating disabled; stale "
+            "pre-fix checkpoints will NOT be filtered. Verify the tree is clean "
+            "at the intended revision before trusting results.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"[runner] commit gate: {commit}")
+
     try:
-        state = RunnerState(RunnerState.default_path(outputs_base))
+        state = RunnerState(RunnerState.default_path(outputs_base), expected_commit=commit)
     except RegistryError as exc:
         print(f"[runner] ERROR: {exc}", file=sys.stderr)
         return 2
@@ -434,7 +496,7 @@ def run(args: argparse.Namespace) -> int:
         print("[runner] No steps match the current selection.", file=sys.stderr)
         return 0
 
-    _print_plan(plan, outputs_base, state, args)
+    _print_plan(plan, outputs_base, state, args, commit)
 
     toolhang_python: Path | None = None
     has_toolhang = any(step.method.task == "ToolHang" for step in plan)
@@ -452,22 +514,22 @@ def run(args: argparse.Namespace) -> int:
     for index, step in enumerate(plan, start=1):
         prefix = f"[{index}/{total}]"
         try:
-            if _step_done(step, outputs_base, state, args.force):
+            if _step_done(step, outputs_base, state, args.force, commit):
                 print(f"{prefix} skip {step.label} (already completed)")
                 counts["skip"] += 1
                 continue
 
             if args.dry_run:
-                _print_dry_run(step, protocol, outputs_base, state, args)
+                _print_dry_run(step, protocol, outputs_base, state, args, commit)
                 counts["run"] += 1
                 continue
 
             ckpt_abs: Path | None = None
             if step.kind == "eval":
-                ckpt_abs = _eval_target(step, outputs_base, state)
+                ckpt_abs = _eval_target(step, outputs_base, state, commit)
             else:
                 ckpt_abs = _resolve_stage2_with_auto_dependency(
-                    step, protocol, outputs_base, state, args, toolhang_python
+                    step, protocol, outputs_base, state, args, toolhang_python, commit
                 )
 
             run_step(
@@ -488,6 +550,7 @@ def run(args: argparse.Namespace) -> int:
                     step.method.model_name,
                     seed=step.seed,
                     tag=step.method.output_tag,
+                    expected_commit=commit,
                 )
                 state.mark(
                     step.method.phase_key,
@@ -505,6 +568,7 @@ def run(args: argparse.Namespace) -> int:
                     step.stage,
                     seed=step.seed,
                     tag=step.method.output_tag,
+                    expected_commit=commit,
                 )
                 ckpt_rel = stage_checkpoint_relative(
                     outputs_base, run_dir, step.method.model_name, step.stage
@@ -536,13 +600,14 @@ def _print_dry_run(
     outputs_base: Path,
     state: RunnerState,
     args: argparse.Namespace,
+    expected_commit: str | None = None,
 ) -> None:
     try:
         ckpt_abs: Path | None = None
         if step.kind == "eval":
-            ckpt_abs = _eval_target(step, outputs_base, state)
+            ckpt_abs = _eval_target(step, outputs_base, state, expected_commit)
         else:
-            ckpt_abs = _require_stage2_prereq(step, outputs_base)
+            ckpt_abs = _require_stage2_prereq(step, outputs_base, expected_commit)
         cmd = step_command(
             step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=protocol.defaults
         )

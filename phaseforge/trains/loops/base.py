@@ -159,8 +159,12 @@ class BaseTrainer(ABC):
 
         Restores model weights, optimizer/scheduler state, epoch, global
         step, RNG state (torch/numpy/random/cuda) and callback state so an
-        interrupted run can resume from exactly where it stopped. Applied in
-        :meth:`fit` (after any optimizer re-instantiation by subclasses).
+        interrupted run can continue from where it stopped (model state is
+        exact; per-epoch DataLoader shuffle *order* is re-seeded from
+        ``project.seed`` and may differ from an uninterrupted run — see
+        :class:`~phaseforge.trains.callbacks.checkpointing.CheckpointCallback`).
+        Applied in :meth:`fit` (after any optimizer re-instantiation by
+        subclasses).
 
         Args:
             checkpoint_path: Path to a checkpoint saved by the

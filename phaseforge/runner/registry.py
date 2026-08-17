@@ -31,10 +31,22 @@ class RegistryError(RuntimeError):
 
 
 class RunnerState:
-    """Thin JSON store for sweep step status, with atomic writes."""
+    """Thin JSON store for sweep step status, with atomic writes.
 
-    def __init__(self, path: str | Path) -> None:
+    ``expected_commit`` (when non-empty) gates every completion query: a
+    step recorded by an *earlier* git commit is treated as not complete, so
+    a sweep re-run after a code change re-executes stale cells instead of
+    silently consuming pre-fix checkpoints. Entries written before commit
+    tracking existed (no ``git_commit`` field) are stale under gating too.
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        expected_commit: str | None = None,
+    ) -> None:
         self.path = Path(path)
+        self._expected_commit = (expected_commit or "").strip() or None
         self._runs: dict[str, dict[str, dict[str, dict[str, Any]]]] = self._load()
 
     @classmethod
@@ -62,11 +74,27 @@ class RunnerState:
         entry = self._runs.get(method, {}).get(str(seed), {}).get(phase)
         return dict(entry) if isinstance(entry, dict) else None
 
+    def _entry_current(self, entry: dict[str, Any] | None) -> bool:
+        """Return whether the entry was produced by the expected git commit.
+
+        Under no gating (``expected_commit`` unset) every entry is current.
+        Under gating, an entry with a missing or different ``git_commit`` is
+        stale — the sweep must re-run it rather than reuse pre-fix artifacts.
+        """
+        if self._expected_commit is None:
+            return True
+        return entry is not None and entry.get("git_commit") == self._expected_commit
+
     def is_complete(self, method: str, seed: int, phase: str) -> bool:
         entry = self.get(method, seed, phase)
-        return entry is not None and entry.get("status") == "completed"
+        return (
+            entry is not None
+            and entry.get("status") == "completed"
+            and self._entry_current(entry)
+        )
 
     def mark(self, method: str, seed: int, phase: str, **fields: Any) -> None:
+        fields["git_commit"] = self._expected_commit or ""
         self._set(method, seed, phase, status="completed", **fields)
 
     def mark_failed(self, method: str, seed: int, phase: str, error: str) -> None:
@@ -74,7 +102,11 @@ class RunnerState:
 
     def get_ckpt(self, method: str, seed: int, stage: int) -> str | None:
         entry = self.get(method, seed, f"stage{stage}")
-        if entry and entry.get("status") == "completed":
+        if (
+            entry
+            and entry.get("status") == "completed"
+            and self._entry_current(entry)
+        ):
             ckpt = entry.get("ckpt")
             return ckpt if isinstance(ckpt, str) else None
         return None

@@ -715,6 +715,22 @@ class DataPipelineStateMachine:
         )
         return {"train": train_idx, "val": val_idx}
 
+    def phase_counts(self, split: str = "train") -> dict[int, int]:
+        """Per-class phase step counts over one split (for class weighting).
+
+        Counts each labelled step (trajectory timestep) in the requested
+        split, keyed by phase index. Only meaningful after ``run()`` has
+        reached READY (``self._trajectories``/``self._splits`` populated).
+        """
+        if split not in self._splits:
+            raise PipelineError(f"Unknown split {split!r}; expected one of {sorted(self._splits)}")
+        counts: dict[int, int] = defaultdict(int)
+        for idx in self._splits[split]:
+            phase = np.asarray(self._trajectories[idx]["phase"])
+            for p, n in zip(*np.unique(phase, return_counts=True)):
+                counts[int(p)] += int(n)
+        return counts
+
     # ------------------------------------------------------------------
     # DataLoader construction
     # ------------------------------------------------------------------

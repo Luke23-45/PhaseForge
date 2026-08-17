@@ -508,6 +508,45 @@ def test_registry_corrupt_state_is_loud(tmp_path: Path) -> None:
         RunnerState(path)
 
 
+def test_registry_commit_gate_skips_stale_entries(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    state_old = RunnerState(path, expected_commit="aaaa1111")
+    state_old.mark("phaseforge", 42, "stage1", run_dir="phaseforge/stage1/x", ckpt="p/s1/c.pt")
+
+    # A later revision must not reuse the pre-fix artifact.
+    state_new = RunnerState(path, expected_commit="bbbb2222")
+    assert not state_new.is_complete("phaseforge", 42, "stage1")
+    assert state_new.get_ckpt("phaseforge", 42, 1) is None
+
+    # The revision that produced it still sees it.
+    state_same = RunnerState(path, expected_commit="aaaa1111")
+    assert state_same.is_complete("phaseforge", 42, "stage1")
+    assert state_same.get_ckpt("phaseforge", 42, 1) == "p/s1/c.pt"
+
+
+def test_registry_commit_gate_stale_without_commit_field(tmp_path: Path) -> None:
+    # Entries recorded before commit tracking existed (empty git_commit) must
+    # be stale under gating.
+    path = tmp_path / "state.json"
+    state_ungated = RunnerState(path)  # no expected_commit
+    state_ungated.mark("bc", 42, "stage1", run_dir="bc/stage1/x", ckpt="p/bc/c.pt")
+
+    state_gated = RunnerState(path, expected_commit="cccc3333")
+    assert not state_gated.is_complete("bc", 42, "stage1")
+    assert state_gated.get_ckpt("bc", 42, 1) is None
+
+
+def test_registry_commit_gate_disabled_when_git_unavailable(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    state_gated = RunnerState(path, expected_commit="dddd4444")
+    state_gated.mark("bc", 42, "stage1", run_dir="bc/stage1/x", ckpt="p/bc/c.pt")
+
+    # No gating (git unavailable locally) → entries are current regardless.
+    state_ungated = RunnerState(path)
+    assert state_ungated.is_complete("bc", 42, "stage1")
+    assert state_ungated.get_ckpt("bc", 42, 1) == "p/bc/c.pt"
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
@@ -522,6 +561,7 @@ def _make_run(
     tag=None,
     completed: bool = True,
     seed_dir: bool = True,
+    commit: str | None = None,
 ) -> None:
     run_dir = base / model / f"stage{stage}"
     if seed_dir:
@@ -533,6 +573,8 @@ def _make_run(
     meta = {"seed": seed}
     if tag is not None:
         meta["tag"] = tag
+    if commit is not None:
+        meta["git_commit"] = commit
     (run_dir / "run_meta.json").write_text(json.dumps(meta), encoding="utf-8")
     if completed:
         # Real runs get the sibling lifecycle marker written by RunWriter
@@ -569,6 +611,41 @@ def test_resolve_run_dir_ignores_crashed_runs(tmp_path: Path) -> None:
 def test_checkpoint_exists_false_for_crashed_run(tmp_path: Path) -> None:
     _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42, completed=False)
     assert not checkpoint_exists(tmp_path, "bc", 1, seed=42)
+
+
+def test_resolve_run_dir_filters_by_commit(tmp_path: Path) -> None:
+    # A stale pre-fix run (older git commit) must never be selected when the
+    # sweep runs at a newer revision, even if it is the newest completed run.
+    _make_run(
+        tmp_path,
+        "phaseforge",
+        1,
+        "2026-08-03_10-00-00_stale0001",
+        seed=42,
+        commit="aaaa1111",
+    )
+    _make_run(
+        tmp_path,
+        "phaseforge",
+        1,
+        "2026-08-02_10-00-00_fixed0001",
+        seed=42,
+        commit="bbbb2222",
+    )
+
+    # The stale run is newest but must be skipped at the fixed revision.
+    assert (
+        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42, expected_commit="bbbb2222").name
+        == "2026-08-02_10-00-00_fixed0001"
+    )
+    # Only stale runs at the expected revision → nothing matches.
+    with pytest.raises(CheckpointError, match="No completed"):
+        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42, expected_commit="cccc3333")
+    # No gating → newest completed wins (backwards compatible).
+    assert (
+        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42).name
+        == "2026-08-03_10-00-00_stale0001"
+    )
 
 
 def test_resolve_run_dir_missing_stage(tmp_path: Path) -> None:
@@ -789,6 +866,7 @@ def test_cli_auto_injects_missing_dependency(tmp_path: Path, monkeypatch, capsys
             f"2026-08-17_10-00-00_{len(calls):04d}",
             seed=step.seed,
             tag=step.method.output_tag,
+            commit=runner_cli._current_commit(),
         )
 
     monkeypatch.setattr(runner_cli, "run_step", _fake)
@@ -913,7 +991,9 @@ def test_cli_dry_run_prints_commands_without_executing(tmp_path: Path, capsys) -
 def test_cli_dry_run_with_state_complete_skips(tmp_path: Path, capsys) -> None:
     protocol_path = _write_protocol(tmp_path, _valid_doc())
     outputs = tmp_path / "outputs"
-    state = RunnerState(runner_cli.RunnerState.default_path(outputs))
+    state = RunnerState(
+        runner_cli.RunnerState.default_path(outputs), expected_commit=runner_cli._current_commit()
+    )
     state.mark("bc", 42, "stage1", run_dir="bc/stage1/x", ckpt="bc/stage1/x/c.pt")
     args = runner_cli.parse_args(
         [

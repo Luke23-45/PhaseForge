@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import random
 import shutil
 from pathlib import Path
@@ -37,7 +38,14 @@ class CheckpointCallback(Callback):
 
     Checkpoints also record optimizer/scheduler state, RNG state
     (torch/numpy/random/cuda) and callback state so
-    :meth:`BaseTrainer.resume` can restore an interrupted run exactly.
+    :meth:`BaseTrainer.resume` can restore an interrupted run: the model,
+    optimizer, scheduler, global step and epoch are restored exactly. Note:
+    the DataLoader shuffle generator is seeded from ``project.seed`` at
+    pipeline build time and is *not* captured in the checkpoint, so after a
+    resume the per-epoch batch *order* may differ from an uninterrupted run
+    (the data content and splits are identical). Resume is intended for
+    manual continuation of an interrupted run, not for bit-exact
+    reproducibility.
     """
 
     def __init__(
@@ -79,6 +87,19 @@ class CheckpointCallback(Callback):
 
     def _update_topk(self, trainer: BaseTrainer, epoch: int, score: float) -> None:
         """Insert the epoch into the top-k collection and prune evicted files."""
+        # Never admit a non-finite score: when the top-k collection is not
+        # yet full, an early NaN monitor value would otherwise be pinned as
+        # "best" (float-NaN comparisons are False in both directions, so a
+        # NaN at the head can never be replaced), silently exporting a
+        # garbage best checkpoint to the eval path.
+        if not math.isfinite(score):
+            logger.warning(
+                "Skipping checkpoint at epoch %d: monitor %s is non-finite (%s)",
+                epoch,
+                self.monitor,
+                score,
+            )
+            return
         # Skip snapshotting when the collection is full and this score cannot
         # enter it.
         if len(self._topk) >= self.save_top_k:

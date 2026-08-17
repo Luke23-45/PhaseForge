@@ -459,6 +459,63 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
     if train_loader is None:
         raise RuntimeError("No training data found. Check split ratios and cache.")
 
+    # 3b. Optional balanced phase class weighting (Stage 1 only).
+    # Lift's phase labels are severely imbalanced (phases 1/5 ≈ 1.2%/0.6% of
+    # steps). Plain CE lets the phase head overfit the majority phases
+    # (val/loss_phase 2.59 > ln(6) ≈ 1.79 random baseline, report §5.3),
+    # which then drags stage-2 routing for phase_pretrain_random_router and
+    # teacher_forced. Inverse-frequency weights computed from the TRAINING
+    # split keep the head from memorising the majority class. Opt-in via
+    # train.phase_class_weight="balanced"; "none" preserves the protocol.
+    phase_weights: list[float] | None = None
+    if (
+        int(cfg.train.get("stage", 1)) == 1
+        and str(cfg.train.get("phase_class_weight", "none")) == "balanced"
+    ):
+        counts = pipeline.phase_counts("train")
+        if not counts:
+            raise RuntimeError(
+                "train.phase_class_weight='balanced' requested but the training "
+                "split contains no phase-labelled steps."
+            )
+        total = sum(counts.values())
+        n_classes = len(counts)
+        if any(counts[c] == 0 for c in range(n_classes)):
+            raise RuntimeError(
+                "train.phase_class_weight='balanced' requested but some phase "
+                f"classes have zero training steps: {counts}"
+            )
+        phase_weights = [total / (n_classes * counts[c]) for c in range(n_classes)]
+        cfg.train.phase_weights = phase_weights
+        logger.info(
+            "Balanced phase class weighting (from training split): "
+            "counts=%s weights=%s",
+            counts,
+            [round(w, 4) for w in phase_weights],
+        )
+        try:
+            from phaseforge.data.ingestion.cache_manager import CacheManager
+
+            meta_dir = output_dir / "metadata"
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            (meta_dir / "phase_weights.json").write_text(
+                json.dumps(
+                    {
+                        "counts": counts,
+                        "weights": phase_weights,
+                        "data_config_hash": CacheManager.compute_hash(cfg.data),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.warning(
+                "Could not write metadata/phase_weights.json — weighting still active.",
+                exc_info=True,
+            )
+
     # 4. Model
     logger.info("Initializing Model...")
     model = build_model(cfg)
