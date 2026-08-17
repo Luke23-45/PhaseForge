@@ -345,6 +345,109 @@ def test_eval_command_targets_final_checkpoint(tmp_path: Path) -> None:
     assert cmd[0] == "phaseforge-eval"
     assert f"train.stage1_ckpt_path={ckpt}" in cmd
     assert "project.seed=42" in cmd
+    # Regression: the eval step must select the rollout config group, not
+    # only override eval.mode. Without this, the subprocess composes the
+    # default (metrics) eval group and crashes on the missing 'bank' key
+    # inside load_or_generate_bank (Hydra ConfigAttributeError).
+    assert "eval=rollout" in cmd
+    assert "eval.mode=rollout" in cmd
+
+
+def _offline_eval_step(seed: int) -> Step:
+    """Build an eval step whose method evaluates with the offline metric."""
+    from phaseforge.runner.protocol import Method
+
+    method = Method(
+        index=1,
+        name="bc",
+        role="baseline",
+        model="baselines/bc",
+        data="common",
+        stages=(1,),
+        stage2_source=None,
+        evaluate=True,
+        evaluate_mode="offline",
+    )
+    return Step(kind="eval", method=method, seed=seed)
+
+
+def test_eval_command_offline_selects_metrics_group(tmp_path: Path) -> None:
+    ckpt = tmp_path / "outputs" / "bc" / "stage1" / "ckpt" / "checkpoint_best.pt"
+    cmd = eval_command(
+        _offline_eval_step(seed=42),
+        ckpt_path=ckpt,
+        outputs_base=tmp_path / "outputs",
+        defaults=(),
+    )
+    # Offline mode -> metrics group, which has the offline schema but no
+    # bank/env/episodes (load_or_generate_bank / gates are never called).
+    assert "eval=metrics" in cmd
+    assert "eval.mode=offline" in cmd
+    assert "eval=rollout" not in cmd
+
+
+def test_eval_command_unknown_mode_raises_keyerror(tmp_path: Path) -> None:
+    """Defense: the mode->group map stays total so future mode additions
+    fail loudly at command build rather than silently at runtime."""
+    from phaseforge.runner.protocol import Method
+
+    method = Method(
+        index=1,
+        name="bc",
+        role="baseline",
+        model="baselines/bc",
+        data="common",
+        stages=(1,),
+        stage2_source=None,
+        evaluate=True,
+        evaluate_mode="bogus_mode",
+    )
+    step = Step(kind="eval", method=method, seed=42)
+    with pytest.raises(KeyError):
+        eval_command(
+            step,
+            ckpt_path=tmp_path / "ckpt.pt",
+            outputs_base=tmp_path / "outputs",
+            defaults=(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Hydra composition contract for the eval config group
+# ---------------------------------------------------------------------------
+
+
+def test_eval_mode_override_alone_leaves_metrics_schema() -> None:
+    """Regression: the buggy runner argv shape (``eval.mode=rollout``
+    without the ``eval=rollout`` group selector) composes the default
+    ``metrics`` group, which has no ``bank``/``env``/``episodes``
+    sections. This test pins the composition contract that motivates
+    Layer 1: the runner MUST emit ``eval=<group>``."""
+    from hydra import compose, initialize
+
+    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+        cfg = compose(config_name="main", overrides=["eval.mode=rollout"])
+    # The default eval group is metrics (offline), so these rollout-only
+    # sections are absent. This is exactly the state the buggy runner
+    # used to land the subprocess in.
+    assert "bank" not in cfg.eval
+    assert "episodes" not in cfg.eval
+    # cfg.eval.env is also absent on the metrics schema.
+    assert "env" not in cfg.eval
+
+
+def test_eval_group_selector_loads_rollout_schema() -> None:
+    """Regression: the fixed runner argv (``eval=rollout``) composes the
+    rollout config group, which carries the full schema
+    ``load_or_generate_bank`` requires."""
+    from hydra import compose, initialize
+
+    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+        cfg = compose(config_name="main", overrides=["eval=rollout"])
+    assert "bank" in cfg.eval
+    assert "env" in cfg.eval
+    assert "episodes" in cfg.eval
+    assert cfg.eval.mode == "rollout"
 
 
 def test_toolhang_python_auto_detects_dedicated_environment(tmp_path: Path) -> None:

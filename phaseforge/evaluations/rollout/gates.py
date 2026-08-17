@@ -724,10 +724,12 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
     """
     from phaseforge.evaluations.rollout.runner import (
         _adapter_from_config,
+        require_rollout_eval_schema,
         resolve_pinned_metadata,
         resolve_robosuite_requirement,
     )
 
+    require_rollout_eval_schema(cfg)
     meta = resolve_pinned_metadata(cfg)
     # The expected env_name is derived from the dataset's pinned metadata
     # by default; an explicit override in cfg.eval.env wins. This makes the

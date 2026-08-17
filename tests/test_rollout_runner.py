@@ -9,14 +9,16 @@ import pytest
 import torch
 
 from phaseforge.data.common.normalizer import FrozenNormalizer
-from phaseforge.evaluations.envs.errors import InfrastructureError
+from phaseforge.evaluations.envs.errors import EnvParityError, InfrastructureError
 from phaseforge.evaluations.rollout.runner import (
     FAILURE_POLICY_EXCEPTION,
     FAILURE_POLICY_INVALID_ACTION,
     FAILURE_TIMEOUT,
     RolloutEvaluator,
     RolloutRunInvalid,
+    require_rollout_eval_schema,
     resolve_robosuite_requirement,
+    run_rollout_evaluation,
 )
 from phaseforge.outputs_writer.episodes import read_episode_records
 from tests.rollout_helpers import FakeAdapter, make_bank
@@ -44,6 +46,95 @@ def test_legacy_eval_robosuite_pin_is_fallback() -> None:
         }
     )
     assert resolve_robosuite_requirement(cfg) == "==1.5.1"
+
+
+class TestRequireRolloutEvalSchema:
+    """Defensive guard at the rollout entry points.
+
+    Regression: ``eval.mode=rollout`` alone leaves the default
+    (``metrics``) config group in place, and the metrics schema has no
+    ``bank``/``env``/``episodes`` sections. Without this guard the
+    rollout path raises an obscure ``ConfigAttributeError`` deep in
+    ``load_or_generate_bank``. The guard turns it into a single
+    actionable ``EnvParityError`` before any expensive work runs.
+    """
+
+    def test_missing_sections_raises_actionable_error(self) -> None:
+        from omegaconf import DictConfig
+
+        # Only ``mode`` is set, just like the buggy runner argv.
+        cfg = DictConfig({"eval": {"mode": "rollout"}})
+        with pytest.raises(EnvParityError) as excinfo:
+            require_rollout_eval_schema(cfg)
+        message = str(excinfo.value)
+        assert "eval=rollout" in message
+        assert "bank" in message
+        assert "env" in message
+        assert "episodes" in message
+
+    def test_missing_eval_group_raises_actionable_error(self) -> None:
+        from omegaconf import DictConfig
+
+        cfg = DictConfig({})
+        with pytest.raises(EnvParityError, match="cfg.eval is missing entirely"):
+            require_rollout_eval_schema(cfg)
+
+    def test_partial_sections_lists_only_missing(self) -> None:
+        from omegaconf import DictConfig
+
+        cfg = DictConfig({"eval": {"bank": {}, "mode": "rollout"}})
+        with pytest.raises(EnvParityError) as excinfo:
+            require_rollout_eval_schema(cfg)
+        message = str(excinfo.value)
+        assert "env" in message
+        assert "episodes" in message
+        assert "bank" not in message.split("is missing section(s):", 1)[1]
+
+    def test_full_rollout_schema_passes(self) -> None:
+        from omegaconf import DictConfig
+
+        cfg = DictConfig(
+            {
+                "eval": {
+                    "mode": "rollout",
+                    "bank": {"seed": 2026, "num_cases": 50},
+                    "env": {"mujoco_requirement": ">=3.2.7"},
+                    "episodes": {"action_tolerance": 1e-4},
+                    "gates": {},
+                }
+            }
+        )
+        # Must not raise.
+        require_rollout_eval_schema(cfg)
+
+    def test_run_rollout_evaluation_raises_actionable_before_simulator(
+        self, tmp_path
+    ) -> None:
+        """End-to-end: the guard fires inside ``run_rollout_evaluation``
+        before any robosuite / simulator work."""
+        from omegaconf import DictConfig
+
+        cfg = DictConfig({"eval": {"mode": "rollout"}})
+        dummy_model = torch.nn.Module()
+        with pytest.raises(EnvParityError, match="eval=rollout"):
+            run_rollout_evaluation(
+                cfg,
+                dummy_model,
+                output_dir=tmp_path,
+                run_id="test-run",
+            )
+
+    def test_run_all_gates_raises_actionable_before_simulator(self) -> None:
+        """Same guard, wired into the gates entry point. The gates CLI
+        composes ``main.yaml`` with ``eval=rollout`` per docs; this test
+        pins that the gates path also fails loudly without it."""
+        from omegaconf import DictConfig
+
+        from phaseforge.evaluations.rollout.gates import run_all_gates
+
+        cfg = DictConfig({"eval": {"mode": "rollout"}})
+        with pytest.raises(EnvParityError, match="eval=rollout"):
+            run_all_gates(cfg)
 
 
 class _ZeroModel(torch.nn.Module):

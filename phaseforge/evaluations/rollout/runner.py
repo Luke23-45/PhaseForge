@@ -480,6 +480,50 @@ def resolve_robosuite_requirement(cfg: DictConfig) -> str:
     return str(cfg.eval.env.get("robosuite_requirement", "==1.5.1"))
 
 
+# Sections the rollout evaluator requires from the ``eval=rollout``
+# config group. ``metrics.yaml`` does not define any of them; a Hydra
+# composition that leaves the default group in place (e.g. only setting
+# ``eval.mode=rollout`` without the ``eval=rollout`` group selector)
+# triggers the schema guard below rather than the obscure
+# ``ConfigAttributeError`` deep in ``load_or_generate_bank``.
+_ROLLOUT_EVAL_SECTIONS = ("bank", "env", "episodes")
+
+
+def require_rollout_eval_schema(cfg: DictConfig) -> None:
+    """Fail fast with an actionable message when the rollout schema is missing.
+
+    ``cfg.eval.mode=rollout`` alone is not enough — Hydra composes the
+    ``eval`` group from the default (``metrics``) config unless the
+    group selector ``eval=rollout`` is also passed, and the metrics
+    schema has no ``bank``/``env``/``episodes`` sections. This guard
+    turns that ``ConfigAttributeError`` into a single actionable error
+    at the public entry points (``run_rollout_evaluation``,
+    ``run_all_gates``) before any expensive work runs.
+    """
+    eval_cfg = cfg.get("eval") if hasattr(cfg, "get") else cfg.eval
+    if eval_cfg is None:
+        raise EnvParityError(
+            "Rollout evaluation requires the eval=rollout config group, "
+            "but cfg.eval is missing entirely. Pass 'eval=rollout' on the "
+            "command line (the phaseforge-sweep runner does this "
+            "automatically) — 'eval.mode=rollout' alone leaves the "
+            "default metrics group in place."
+        )
+    missing = [
+        section
+        for section in _ROLLOUT_EVAL_SECTIONS
+        if section not in eval_cfg
+    ]
+    if missing:
+        raise EnvParityError(
+            "Rollout evaluation requires the eval=rollout config group, "
+            f"but cfg.eval is missing section(s): {', '.join(missing)}. "
+            "Pass 'eval=rollout' on the command line (the phaseforge-sweep "
+            "runner does this automatically) — 'eval.mode=rollout' alone "
+            "leaves the default metrics group in place."
+        )
+
+
 def load_or_generate_bank(cfg: DictConfig, meta: PinnedEnvMetadata) -> ResetBank:
     """Load the frozen bank for the pinned env; generate if configured.
 
@@ -615,6 +659,7 @@ def run_rollout_evaluation(
     (fail closed) -> frozen reset bank -> normalized rollout over all bank
     cases -> strict-metric episode rows -> per-run summary.
     """
+    require_rollout_eval_schema(cfg)
     from phaseforge.data.common.normalizer import FrozenNormalizer
     from phaseforge.data.ingestion.cache_manager import CacheManager
     from phaseforge.data.paths import processed_cache_root
@@ -663,6 +708,7 @@ __all__ = [
     "run_rollout_evaluation",
     "resolve_pinned_metadata",
     "resolve_robosuite_requirement",
+    "require_rollout_eval_schema",
     "load_or_generate_bank",
     "state_spec_from_config",
 ]

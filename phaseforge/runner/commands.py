@@ -11,6 +11,18 @@ from pathlib import Path
 
 from phaseforge.runner.protocol import Method, Step
 
+# Evaluate-mode name -> Hydra eval-config-group selector. The eval group
+# defines the schema the CLI's evaluator reads (``rollout.yaml`` vs
+# ``metrics.yaml``). A key-level ``eval.mode=...`` override alone leaves
+# the default (``metrics``) group in place, and the rollout path then
+# crashes on missing ``bank``/``env``/``episodes`` sections — the bug
+# this map prevents. Updated atomically with the valid modes in
+# ``protocol._VALID_EVAL_MODES``.
+_EVAL_GROUP_BY_MODE: dict[str, str] = {
+    "rollout": "rollout",
+    "offline": "metrics",
+}
+
 
 def _effective_tag(method: Method) -> str | None:
     """Compose the effective output tag.
@@ -76,14 +88,29 @@ def eval_command(
     evaluation mode comes from the method's ``evaluate_mode`` (rollout by
     default), so the runner never evaluates the state-only protocol with
     the offline metric.
+
+    Two overrides carry the mode:
+
+    - ``eval=<group>`` selects the Hydra config group whose schema the
+      evaluator reads. ``rollout.yaml`` defines ``bank``/``env``/
+      ``episodes``/``gates``; ``metrics.yaml`` does not. Switching only
+      ``eval.mode`` leaves the default ``metrics`` group in place and the
+      rollout path raises ``ConfigAttributeError`` on the first missing
+      key.
+    - ``eval.mode=<mode>`` is an explicit assertion kept for redundancy
+      and documentation. It is consistent with the group by construction
+      (the map's keys equal the modes) and survives if the group's own
+      ``mode`` field is ever renamed.
     """
     method = step.method
+    eval_group = _EVAL_GROUP_BY_MODE[method.evaluate_mode]
     cmd = [
         "phaseforge-eval",
         f"models={method.model}",
         f"project.seed={step.seed}",
         f"project.output_dir={outputs_base}",
         f"train.stage1_ckpt_path={ckpt_path}",
+        f"eval={eval_group}",
         f"eval.mode={method.evaluate_mode}",
     ]
     if method.data != "common":

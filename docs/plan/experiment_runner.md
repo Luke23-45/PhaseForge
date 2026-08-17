@@ -110,8 +110,20 @@ evaluator.
 - Train argv: `phaseforge-train models=<model> train=stageN project.seed=<s>
   project.output_dir=<abs> project.log_level=<INFO|WARNING> [data=<variant>]
   [project.tag=<tag>] [train.stage1_ckpt_path=<abs provider ckpt>] <defaults...>`
-- Eval argv: `phaseforge-eval ... train.stage1_ckpt_path=<abs ckpt>`
-  with the same `models`/`seed`/`output_dir`/`tag`/`log_level` plumbing.
+- Eval argv: `phaseforge-eval ... train.stage1_ckpt_path=<abs ckpt>
+  eval=<rollout|metrics> eval.mode=<rollout|offline>` with the same
+  `models`/`seed`/`output_dir`/`tag`/`log_level` plumbing.
+
+  The `eval=<group>` selector is **required**: the eval group defines
+  the schema the CLI's evaluator reads (rollout.yaml carries
+  `bank`/`env`/`episodes`/`gates`; metrics.yaml does not). Setting
+  `eval.mode=rollout` alone leaves the default `metrics` group in
+  place and crashes on the first missing key. The runner maps
+  `method.evaluate_mode` -> the group selector atomically; the
+  `eval.mode=...` override is kept as an explicit assertion. The
+  rollout entry points (`run_rollout_evaluation`, `run_all_gates`)
+  additionally fail fast with an actionable `EnvParityError` if a
+  hand-invoked caller ever lands in this state.
 
 `project.output_dir` is always the **absolute** outputs base, so the runner is
 location-independent. `data` is passed only when it differs from the protocol
