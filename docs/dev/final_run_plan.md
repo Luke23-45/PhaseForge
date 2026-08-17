@@ -9,6 +9,8 @@ uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge
 uv run python scripts/summarize_eval.py  --outputs outputs --baseline phaseforge   # 9. eval tables
 
 
+#### main method baselines --methods 1,4,5,6,7,2 --continue-on-error.
+
 You are right. I mixed up the checkpoint-free environment gates with learned-policy evaluation.
 
 Correct order:

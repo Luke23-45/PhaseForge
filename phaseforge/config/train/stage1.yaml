@@ -24,14 +24,14 @@ scheduler:
 
 checkpoint:
   every_n_epochs: 10
-  monitor: "val/loss_total"
+  monitor: "val/loss_action"
   mode: "min"             # Save when val loss decreases
   save_top_k: 1
 
 early_stopping:
   enabled: false          # Locked protocol (A4/C5): full-length 100-epoch runs;
                           # ad-hoc runs must opt IN via train.early_stopping.enabled=true
-  monitor: "val/loss_total"
+  monitor: "val/loss_action"
   mode: "min"
   patience: 10
   min_delta: 0.001
