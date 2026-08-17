@@ -424,7 +424,9 @@ def build_plan(
     provider is not itself selected, the provider's Stage 1 (train only,
     marked ``dependency``) is prepended so a partial selection still runs to
     completion. Stage filtering disables dependency injection (the scope was
-    explicitly narrowed; a missing prerequisite then fails pre-flight).
+    explicitly narrowed; a missing prerequisite then fails pre-flight). The
+    CLI additionally auto-injects a missing provider at runtime for unscoped
+    sweeps, so a partial selection completes even without ``--with-dependencies``.
     """
     if eval_only and stage is not None:
         raise ProtocolError("--stage and --eval-only are mutually exclusive.")

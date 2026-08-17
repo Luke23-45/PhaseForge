@@ -648,6 +648,227 @@ def test_stage2_prereq_none_for_plain_stage1(tmp_path: Path) -> None:
     assert runner_cli._require_stage2_prereq(step, tmp_path) is None
 
 
+def test_auto_dependency_provider_eligibility() -> None:
+    protocol = _protocol()
+    args_plain = runner_cli.parse_args(["--methods", "bc", "--seeds", "42"])
+    args_stage = runner_cli.parse_args(["--methods", "bc", "--seeds", "42", "--stage", "2"])
+    args_eval = runner_cli.parse_args(["--methods", "bc", "--seeds", "42", "--eval-only"])
+
+    # A stage-2 consumer with an external provider is eligible.
+    warmstart = _step("warmstart_moe", 42, "stage2")
+    provider = runner_cli._auto_dependency_provider(warmstart, protocol, args_plain)
+    assert provider is not None and provider.name == "bc"
+
+    # teacher_forced needs the phaseforge Stage 1 cell.
+    teacher = _step("teacher_forced", 42, "stage2")
+    assert runner_cli._auto_dependency_provider(teacher, protocol, args_plain).name == "phaseforge"
+
+    # Non-consumers are never eligible.
+    assert (
+        runner_cli._auto_dependency_provider(_step("bc", 42, "stage1"), protocol, args_plain)
+        is None
+    )
+    assert (
+        runner_cli._auto_dependency_provider(
+            _step("warmstart_moe", 42, "eval"), protocol, args_plain
+        )
+        is None
+    )
+
+    # Explicit scoping disables injection (a narrowed sweep fails pre-flight).
+    assert runner_cli._auto_dependency_provider(warmstart, protocol, args_stage) is None
+    assert runner_cli._auto_dependency_provider(warmstart, protocol, args_eval) is None
+
+
+def test_resolve_stage2_auto_injects_provider(tmp_path: Path, monkeypatch) -> None:
+    """A missing Stage 1 provider is auto-trained before the consumer runs."""
+    protocol = _protocol()
+    step = _step("warmstart_moe", 42, "stage2")
+    outputs = tmp_path / "outputs"
+    state = RunnerState(runner_cli.RunnerState.default_path(outputs))
+    args = runner_cli.parse_args(
+        ["--methods", "warmstart_moe", "--seeds", "42", "--outputs", str(outputs)]
+    )
+    ran: list[str] = []
+
+    def _fake_run_step(
+        step_, *, ckpt_path, outputs_base, defaults, cwd, log_level="WARNING", toolhang_python=None
+    ):
+        ran.append(step_.label)
+        assert step_.kind == "train" and step_.stage == 1 and step_.dependency
+        assert step_.method.name == "bc"
+        _make_run(outputs_base, "bc", 1, "2026-08-17_10-00-00_dep0001", seed=42)
+
+    monkeypatch.setattr(runner_cli, "run_step", _fake_run_step)
+
+    ckpt = runner_cli._resolve_stage2_with_auto_dependency(
+        step, protocol, outputs, state, args, None
+    )
+
+    assert ran == ["bc seed=42 stage1"]
+    assert ckpt.is_file() and "bc" in str(ckpt)
+    entry = state.get("bc", 42, "stage1")
+    assert entry is not None and entry["status"] == "completed"
+    assert (outputs / "bc" / "stage1" / "seed42").is_dir()
+
+
+def test_resolve_stage2_scoped_run_still_fails_preflight(tmp_path: Path, monkeypatch) -> None:
+    """--stage/--eval-only keep the strict pre-flight check (no auto-training)."""
+    protocol = _protocol()
+    step = _step("warmstart_moe", 42, "stage2")
+    outputs = tmp_path / "outputs"
+    state = RunnerState(runner_cli.RunnerState.default_path(outputs))
+    args = runner_cli.parse_args(
+        ["--methods", "warmstart_moe", "--seeds", "42", "--stage", "2", "--outputs", str(outputs)]
+    )
+    called = False
+
+    def _fake_run_step(*args, **kwargs) -> None:  # pragma: no cover - must not run
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(runner_cli, "run_step", _fake_run_step)
+    with pytest.raises(CheckpointError, match="needs a bc stage 1 checkpoint"):
+        runner_cli._resolve_stage2_with_auto_dependency(step, protocol, outputs, state, args, None)
+    assert not called
+
+
+def test_cli_auto_injects_missing_dependency(tmp_path: Path, monkeypatch, capsys) -> None:
+    """A partial sweep auto-trains the missing provider and completes."""
+    protocol_path = _write_protocol(
+        tmp_path,
+        {
+            "name": "mini",
+            "task": "Mini",
+            "seeds": [42],
+            "defaults": ["train.early_stopping.enabled=false"],
+            "methods": [
+                {
+                    "index": 1,
+                    "name": "phaseforge",
+                    "role": "proposed",
+                    "model": "phaseforge",
+                    "data": "common",
+                    "stages": [1, 2],
+                    "stage2_source": "self",
+                    "evaluate": True,
+                },
+                {
+                    "index": 2,
+                    "name": "bc",
+                    "role": "floor",
+                    "model": "baselines/bc",
+                    "data": "common",
+                    "stages": [1],
+                    "evaluate": True,
+                },
+                {
+                    "index": 5,
+                    "name": "warmstart_moe",
+                    "role": "moe",
+                    "model": "baselines/warmstart_moe",
+                    "data": "common",
+                    "stages": [2],
+                    "stage2_source": "bc",
+                    "evaluate": True,
+                },
+            ],
+        },
+    )
+    outputs = tmp_path / "outputs"
+    calls: list[tuple[str, int, bool]] = []
+
+    def _fake(
+        step, *, ckpt_path, outputs_base, defaults, cwd, log_level="WARNING", toolhang_python=None
+    ):
+        calls.append((step.method.name, step.stage, step.dependency))
+        _make_run(
+            outputs_base,
+            step.method.model_name,
+            step.stage,
+            f"2026-08-17_10-00-00_{len(calls):04d}",
+            seed=step.seed,
+            tag=step.method.output_tag,
+        )
+
+    monkeypatch.setattr(runner_cli, "run_step", _fake)
+    args = runner_cli.parse_args(
+        [
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(outputs),
+            "--methods",
+            "warmstart_moe",
+            "--seeds",
+            "42",
+            "--skip-eval",
+        ]
+    )
+    assert runner_cli.run(args) == 0
+    assert calls == [("bc", 1, True), ("warmstart_moe", 2, False)]
+
+
+def test_cli_dry_run_previews_auto_injection(tmp_path: Path, capsys) -> None:
+    """Dry-run shows the provider it would auto-train instead of failing."""
+    protocol_path = _write_protocol(
+        tmp_path,
+        {
+            "name": "mini",
+            "task": "Mini",
+            "seeds": [42],
+            "defaults": ["train.early_stopping.enabled=false"],
+            "methods": [
+                {
+                    "index": 1,
+                    "name": "phaseforge",
+                    "role": "proposed",
+                    "model": "phaseforge",
+                    "data": "common",
+                    "stages": [1, 2],
+                    "stage2_source": "self",
+                    "evaluate": True,
+                },
+                {
+                    "index": 2,
+                    "name": "bc",
+                    "role": "floor",
+                    "model": "baselines/bc",
+                    "data": "common",
+                    "stages": [1],
+                    "evaluate": True,
+                },
+                {
+                    "index": 5,
+                    "name": "warmstart_moe",
+                    "role": "moe",
+                    "model": "baselines/warmstart_moe",
+                    "data": "common",
+                    "stages": [2],
+                    "stage2_source": "bc",
+                    "evaluate": True,
+                },
+            ],
+        },
+    )
+    args = runner_cli.parse_args(
+        [
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(tmp_path / "outputs"),
+            "--methods",
+            "warmstart_moe",
+            "--seeds",
+            "42",
+            "--dry-run",
+        ]
+    )
+    assert runner_cli.run(args) == 0
+    out = capsys.readouterr().out
+    assert "AUTO-INJECT dependency: bc seed=42 stage1" in out
+
+
 # ---------------------------------------------------------------------------
 # CLI orchestration
 # ---------------------------------------------------------------------------

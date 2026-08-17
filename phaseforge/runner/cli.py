@@ -8,6 +8,14 @@ the protocol's Stage 1 source dependencies. A resumable state registry
 artifact each stage produced, so evaluation never targets a stale or
 seed-mixed checkpoint and an interrupted sweep resumes in place.
 
+When a selected stage-2 method's Stage 1 provider (``bc``/``phaseforge``) is
+not selected and its checkpoint is missing from the output tree, the runner
+auto-trains the provider's Stage 1 as a dependency step before running the
+consumer, so a partial ``--methods`` selection no longer fails pre-flight on
+a missing provider. Explicitly scoped runs (``--stage``/``--eval-only``)
+keep the strict pre-flight check: a missing prerequisite then fails loudly
+instead of silently training.
+
 Examples::
 
     phaseforge-sweep                                    # full five-task matrix x seeds
@@ -41,6 +49,7 @@ from phaseforge.runner.executor import (
     step_command,
 )
 from phaseforge.runner.protocol import (
+    Method,
     Protocol,
     ProtocolError,
     Step,
@@ -116,8 +125,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--with-dependencies",
         action="store_true",
-        help="Auto-run the required Stage 1 pretraining of a shared provider "
-        "when a selected method needs it and the provider is not selected.",
+        help="Include the required Stage 1 pretraining of a shared provider in "
+        "the printed plan. The runtime auto-injects it for unscoped sweeps "
+        "regardless, so this flag mainly controls plan visibility.",
     )
     parser.add_argument(
         "--force",
@@ -225,6 +235,100 @@ def _require_stage2_prereq(step: Step, outputs_base: Path) -> Path | None:
             f"seed {step.seed} under {outputs_base}. Run {model} stage 1 first, "
             "or re-run with --with-dependencies."
         ) from exc
+
+
+def _auto_dependency_provider(
+    step: Step, protocol: Protocol, args: argparse.Namespace
+) -> Method | None:
+    """Return the Stage 1 provider the runner should auto-train, or ``None``.
+
+    Mirrors the plan-level dependency policy: providers are the default
+    ``bc``/``phaseforge`` cells of the consumer's task, and explicit scoping
+    (``--stage``, ``--eval-only``) disables injection so a deliberately
+    narrowed sweep still fails pre-flight.
+    """
+    if args.eval_only or args.stage is not None:
+        return None
+    if step.kind != "train" or step.stage != 2:
+        return None
+    req = step.required_checkpoint()
+    if req is None:
+        return None
+    model, stage = req
+    if stage != 1 or model not in ("bc", "phaseforge"):
+        return None
+    return protocol.method_by_name(model, task=step.method.task)
+
+
+def _run_dependency_step(
+    step: Step,
+    protocol: Protocol,
+    outputs_base: Path,
+    state: RunnerState,
+    args: argparse.Namespace,
+    toolhang_python: Path | None,
+) -> None:
+    """Execute one auto-injected Stage 1 dependency step and record it."""
+    print(f"\n[runner] auto-injecting missing dependency: {step.label}", flush=True)
+    try:
+        run_step(
+            step,
+            ckpt_path=None,
+            outputs_base=outputs_base,
+            defaults=protocol.defaults,
+            cwd=PROJECT_ROOT,
+            log_level="INFO" if args.verbose else "WARNING",
+            toolhang_python=toolhang_python,
+        )
+    except CommandError as exc:
+        raise CheckpointError(f"Auto-injected dependency {step.label} failed: {exc}") from exc
+    if step.stage is None:  # pragma: no cover - guard for type checkers
+        raise CheckpointError(f"Dependency step {step.label} has no stage.")
+    run_dir = resolve_run_dir(
+        outputs_base,
+        step.method.model_name,
+        step.stage,
+        seed=step.seed,
+        tag=step.method.output_tag,
+    )
+    ckpt_rel = stage_checkpoint_relative(
+        outputs_base, run_dir, step.method.model_name, step.stage
+    )
+    state.mark(
+        step.method.phase_key,
+        step.seed,
+        step.registry_phase,
+        run_dir=run_dir.relative_to(outputs_base).as_posix(),
+        ckpt=ckpt_rel,
+    )
+
+
+def _resolve_stage2_with_auto_dependency(
+    step: Step,
+    protocol: Protocol,
+    outputs_base: Path,
+    state: RunnerState,
+    args: argparse.Namespace,
+    toolhang_python: Path | None,
+) -> Path | None:
+    """Resolve a stage-2 prerequisite, auto-training a missing provider first.
+
+    In an unscoped sweep, a stage-2 step whose Stage 1 provider checkpoint is
+    absent from the output tree no longer fails pre-flight: the runner trains
+    the provider's Stage 1 (a dependency step) and then resolves the consumer
+    exactly as before. A provider that already exists is never retrained, and
+    providers of explicitly scoped runs (``--stage``/``--eval-only``) still
+    fail loudly. Returns ``None`` for steps that load no prerequisite.
+    """
+    try:
+        return _require_stage2_prereq(step, outputs_base)
+    except CheckpointError:
+        provider = _auto_dependency_provider(step, protocol, args)
+        if provider is None:
+            raise
+        dep = Step(kind="train", method=provider, seed=step.seed, stage=1, dependency=True)
+        _run_dependency_step(dep, protocol, outputs_base, state, args, toolhang_python)
+        return _require_stage2_prereq(step, outputs_base)
 
 
 def _eval_target(step: Step, outputs_base: Path, state: RunnerState) -> Path:
@@ -354,7 +458,7 @@ def run(args: argparse.Namespace) -> int:
                 continue
 
             if args.dry_run:
-                _print_dry_run(step, outputs_base, state, protocol.defaults)
+                _print_dry_run(step, protocol, outputs_base, state, args)
                 counts["run"] += 1
                 continue
 
@@ -362,7 +466,9 @@ def run(args: argparse.Namespace) -> int:
             if step.kind == "eval":
                 ckpt_abs = _eval_target(step, outputs_base, state)
             else:
-                ckpt_abs = _require_stage2_prereq(step, outputs_base)
+                ckpt_abs = _resolve_stage2_with_auto_dependency(
+                    step, protocol, outputs_base, state, args, toolhang_python
+                )
 
             run_step(
                 step,
@@ -425,7 +531,11 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _print_dry_run(
-    step: Step, outputs_base: Path, state: RunnerState, defaults: tuple[str, ...]
+    step: Step,
+    protocol: Protocol,
+    outputs_base: Path,
+    state: RunnerState,
+    args: argparse.Namespace,
 ) -> None:
     try:
         ckpt_abs: Path | None = None
@@ -433,10 +543,21 @@ def _print_dry_run(
             ckpt_abs = _eval_target(step, outputs_base, state)
         else:
             ckpt_abs = _require_stage2_prereq(step, outputs_base)
-        cmd = step_command(step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=defaults)
+        cmd = step_command(
+            step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=protocol.defaults
+        )
         print(f"  [dry-run] WOULD RUN  {step.label}")
         print(f"    $ {' '.join(cmd)}")
     except CheckpointError as exc:
+        provider = _auto_dependency_provider(step, protocol, args)
+        if provider is not None:
+            dep = Step(kind="train", method=provider, seed=step.seed, stage=1, dependency=True)
+            cmd = step_command(
+                dep, ckpt_path=None, outputs_base=outputs_base, defaults=protocol.defaults
+            )
+            print(f"  [dry-run] AUTO-INJECT dependency: {dep.label}")
+            print(f"    $ {' '.join(cmd)}")
+            return
         print(f"  [dry-run] BLOCKED  {step.label} — prerequisite missing: {exc}")
 
 
