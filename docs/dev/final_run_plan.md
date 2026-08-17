@@ -1,11 +1,12 @@
-uv sync --extra dev                                     # 1. install
-# 2. provision dataset at $PHASEFORGE_DATA_DIR/raw/robomimic/lift/  (fail-closed, no auto-download)
-uv run python -m phaseforge.runner --list               # 3. sanity: 9 methods + seeds [42,43,44]
-uv run python -m phaseforge.runner --dry-run            # 4. pre-flight: 57-step plan, read-only
-uv run python -m phaseforge.runner --continue-on-error  # 5. THE full sweep (all methods x seeds 42,43,44)
-uv run python -m phaseforge.runner --dry-run            # 6. verify: every step "done"
-uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge   # 7. train tables
-uv run python scripts/summarize_eval.py  --outputs outputs --baseline phaseforge   # 8. eval tables
+uv sync --extra rollout                             # 1. common env: robosuite 1.5.1
+# 2. create .venv-toolhang separately with robosuite 1.5.0 (see below)
+# 3. provision all five datasets under $PHASEFORGE_DATA_DIR/raw/robomimic/
+uv run python -m phaseforge.runner --list           # 4. sanity: five-task matrix + seeds
+uv run python -m phaseforge.runner --dry-run        # 5. pre-flight: 315-step plan, read-only
+uv run python -m phaseforge.runner --continue-on-error  # 6. full five-task sweep
+uv run python -m phaseforge.runner --dry-run        # 7. verify: every step "done"
+uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge   # 8. train tables
+uv run python scripts/summarize_eval.py  --outputs outputs --baseline phaseforge   # 9. eval tables
 
 
 You are right. I mixed up the checkpoint-free environment gates with learned-policy evaluation.
@@ -20,7 +21,7 @@ Correct order:
 uv run phaseforge-gates data=lift eval=rollout
 uv run phaseforge-gates data=can eval=rollout
 uv run phaseforge-gates data=square eval=rollout
-uv run phaseforge-gates data=tool_hang eval=rollout
+.venv-toolhang/bin/phaseforge-gates data=tool_hang eval=rollout
 uv run phaseforge-gates data=transport eval=rollout
 ```
 
@@ -98,7 +99,7 @@ on first use; a later cache hit only re-verifies.
 uv run python -m phaseforge.runner --list
 ```
 
-Expect 9 methods and `seeds: [42, 43, 44]`.
+Expect the five-task manifest and `seeds: [42, 43, 44]`.
 
 ---
 
@@ -108,8 +109,9 @@ Expect 9 methods and `seeds: [42, 43, 44]`.
 uv run python -m phaseforge.runner --dry-run
 ```
 
-Expect `plan (57 steps, ...)`: all 9 methods x 3 seeds, training stages in
-dependency order, then each method's offline evaluation. Per-step lines:
+Expect `plan (315 steps, ...)`: all five tasks, methods, and 3 seeds, with
+training stages in dependency order, then each method's configured
+evaluation. Per-step lines:
 stage-1 and eval of a finished method print `WOULD RUN`; a stage-2 step whose
 provider Stage 1 does not exist yet prints `BLOCKED ... prerequisite missing`
 — expected on a fresh tree, and exactly what the sweep needs to build first.
@@ -124,7 +126,9 @@ uv run python -m phaseforge.runner --continue-on-error
 
 Notes:
 - **No `--seeds`/`--methods` flags.** The manifest drives seeds `[42, 43, 44]`
-  and all 9 methods — seeds are config-driven, not typed by hand.
+  and the complete five-task method matrix.
+- Tool Hang steps are automatically routed to `.venv-toolhang` and preflighted
+  for robosuite `1.5.0`; the other four tasks use the current environment.
 - `--continue-on-error` records a failed step in the registry and keeps going;
   re-run the failed cell afterwards (section 5).
 - **Resumable**: a completed step is skipped on re-run (state registry +

@@ -10,7 +10,7 @@ seed-mixed checkpoint and an interrupted sweep resumes in place.
 
 Examples::
 
-    phaseforge-sweep                                    # full matrix (all 9 methods x seeds)
+    phaseforge-sweep                                    # full five-task matrix x seeds
     phaseforge-sweep --methods 1,5,9                    # by method index
     phaseforge-sweep --methods bc,warmstart_moe         # by method name
     phaseforge-sweep --methods teacher_forced --with-dependencies
@@ -21,6 +21,10 @@ Examples::
     phaseforge-sweep --list                             # show the method matrix
 
 ``python -m phaseforge.runner --help`` is equivalent.
+
+The five-task manifest contains task-specific entries for Lift, Can, Square,
+Tool Hang, and Transport. Tool Hang subprocesses are routed to the dedicated
+robosuite 1.5.0 interpreter; the other tasks use the current environment.
 """
 
 from __future__ import annotations
@@ -29,7 +33,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from phaseforge.runner.executor import CommandError, run_step, step_command
+from phaseforge.runner.executor import (
+    CommandError,
+    preflight_toolhang_python,
+    resolve_toolhang_python,
+    run_step,
+    step_command,
+)
 from phaseforge.runner.protocol import (
     Protocol,
     ProtocolError,
@@ -138,6 +148,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Forward project.log_level=INFO to the runs (default WARNING).",
+    )
+    parser.add_argument(
+        "--toolhang-python",
+        default=None,
+        help="Python interpreter for Tool Hang steps (also PHASEFORGE_TOOLHANG_PYTHON). "
+        "Defaults to .venv-toolhang/bin/python or .venv-toolhang/Scripts/python.exe.",
     )
     return parser.parse_args(argv)
 
@@ -316,6 +332,17 @@ def run(args: argparse.Namespace) -> int:
 
     _print_plan(plan, outputs_base, state, args)
 
+    toolhang_python: Path | None = None
+    has_toolhang = any(step.method.task == "ToolHang" for step in plan)
+    if has_toolhang and not args.dry_run:
+        try:
+            toolhang_python = resolve_toolhang_python(PROJECT_ROOT, args.toolhang_python)
+            preflight_toolhang_python(toolhang_python)
+            print(f"[runner] Tool Hang interpreter: {toolhang_python}")
+        except CommandError as exc:
+            print(f"[runner] ERROR: {exc}", file=sys.stderr)
+            return 2
+
     counts = {"run": 0, "skip": 0, "failed": 0}
     total = len(plan)
     for index, step in enumerate(plan, start=1):
@@ -344,6 +371,7 @@ def run(args: argparse.Namespace) -> int:
                 defaults=protocol.defaults,
                 cwd=PROJECT_ROOT,
                 log_level="INFO" if args.verbose else "WARNING",
+                toolhang_python=toolhang_python,
             )
 
             if step.kind == "eval":

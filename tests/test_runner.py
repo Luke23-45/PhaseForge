@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from phaseforge.runner import cli as runner_cli
+from phaseforge.runner import executor as runner_executor
 from phaseforge.runner.commands import eval_command, train_command
 from phaseforge.runner.executor import CommandError
 from phaseforge.runner.protocol import (
@@ -344,6 +345,29 @@ def test_eval_command_targets_final_checkpoint(tmp_path: Path) -> None:
     assert cmd[0] == "phaseforge-eval"
     assert f"train.stage1_ckpt_path={ckpt}" in cmd
     assert "project.seed=42" in cmd
+
+
+def test_toolhang_python_auto_detects_dedicated_environment(tmp_path: Path) -> None:
+    interpreter = tmp_path / ".venv-toolhang" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text("", encoding="utf-8")
+    assert runner_executor.resolve_toolhang_python(tmp_path) == interpreter.resolve()
+
+
+def test_toolhang_python_missing_environment_fails_before_sweep(tmp_path: Path) -> None:
+    with pytest.raises(CommandError, match="dedicated robosuite 1.5.0"):
+        runner_executor.resolve_toolhang_python(tmp_path)
+
+
+def test_toolhang_preflight_rejects_wrong_robosuite(monkeypatch, tmp_path: Path) -> None:
+    class _Result:
+        returncode = 0
+        stdout = "1.5.1\n3.2.7\n"
+        stderr = ""
+
+    monkeypatch.setattr(runner_executor.subprocess, "run", lambda *args, **kwargs: _Result())
+    with pytest.raises(CommandError, match="robosuite 1.5.1"):
+        runner_executor.preflight_toolhang_python(tmp_path / "python")
 
 
 # ---------------------------------------------------------------------------

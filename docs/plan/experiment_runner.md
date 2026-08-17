@@ -6,9 +6,10 @@
 [final_evaluation_plan.md](final_evaluation_plan.md),
 [research_definition.md](research_definition.md)
 
-The runner executes the frozen pilot matrix from a single JSON protocol
-manifest: for every selected method and seed it runs each training stage in
-order and then the offline evaluation of that method's final-stage checkpoint,
+The runner executes the frozen experiment matrix from a single JSON protocol
+manifest: for every selected method, task, and seed it runs each training
+stage in order and then the configured evaluation of that method's
+final-stage checkpoint,
 honouring the protocol's Stage 1 source dependencies. It is the only entry
 point for training: the legacy `scripts/run_multi_seed_train.py` was removed
 because it did not cover the `bc_robot_only` cell and did not run
@@ -16,9 +17,11 @@ evaluations.
 
 ---
 
-## 1. The protocol manifest (`experiments/lift_pilot.json`)
+## 1. The protocol manifest (`experiments/five_task.json`)
 
-The manifest is the single source of truth for *what* to run. It is frozen:
+The five-task manifest is the single source of truth for the final paper
+matrix. The older Lift pilot remains available for debugging. The manifest
+is frozen:
 changing the method matrix is a deliberate, reviewed edit to this file, not a
 code change.
 
@@ -96,8 +99,13 @@ Every step knows its *required checkpoint*:
 ## 3. Commands
 
 Each step is executed as a subprocess against the installed console entry
-points (`shutil.which("phaseforge-train" | "phaseforge-eval")`; a missing
-entry point is a loud error, never a silent skip).
+points. A missing entry point is a loud error, never a silent skip. Tool Hang
+steps are routed to the interpreter supplied by `--toolhang-python`, the
+`PHASEFORGE_TOOLHANG_PYTHON` environment variable, or the conventional
+`.venv-toolhang` location. The runner preflights robosuite `1.5.0` and
+MuJoCo `>=3.2.7` before starting any step. Lift, Can, Square, and Transport
+use the current environment and their rollout parity pins are checked by the
+evaluator.
 
 - Train argv: `phaseforge-train models=<model> train=stageN project.seed=<s>
   project.output_dir=<abs> project.log_level=<INFO|WARNING> [data=<variant>]
