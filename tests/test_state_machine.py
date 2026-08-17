@@ -154,3 +154,113 @@ def test_provision_source_requires_hf_config(tmp_path) -> None:
     fsm.data_cfg.source.pop("huggingface")
     with pytest.raises(PipelineError, match="requires data.source.huggingface"):
         fsm._provision_source()
+
+
+class TestTrainSamplerGenerator:
+    """The train DataLoader must use an explicit CPU ``torch.Generator`` seeded
+    from ``cfg.project.seed`` so the per-epoch sample order is reproducible
+    from the project seed alone — without depending on the global torch RNG
+    state at the time the DataLoader is built."""
+
+    def _make_fsm(self, project_seed: int) -> DataPipelineStateMachine:
+        data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+        cfg = DictConfig(
+            {
+                "models": {"name": "bc", "_target_": "phaseforge.models.baselines.bc.BehaviorCloningModel"},
+                "data": data_cfg,
+                "project": {"seed": project_seed},
+            }
+        )
+        return DataPipelineStateMachine(cfg)
+
+    def test_returns_cpu_generator_seeded_from_project_seed(self) -> None:
+        import torch
+
+        fsm = self._make_fsm(project_seed=42)
+        gen = fsm._train_sampler_generator()
+        assert isinstance(gen, torch.Generator)
+        # CPU placement is required because DataLoader workers cannot share
+        # CUDA generators across the multiprocessing boundary.
+        assert gen.device.type == "cpu"
+        # The initial seed matches the project seed exactly so the sample
+        # order is reproducible from the project seed alone.
+        assert int(gen.initial_seed()) == 42
+
+    def test_cached_generator_returned_on_second_call(self) -> None:
+        fsm = self._make_fsm(project_seed=7)
+        first = fsm._train_sampler_generator()
+        second = fsm._train_sampler_generator()
+        # Identity check: caching avoids regenerating and re-seeding, which
+        # matters for resume correctness — a fresh generator would consume
+        # additional entropy and break determinism.
+        assert first is second
+
+    def test_different_project_seeds_produce_different_generators(self) -> None:
+        fsm_42 = self._make_fsm(project_seed=42)
+        fsm_99 = self._make_fsm(project_seed=99)
+        assert int(fsm_42._train_sampler_generator().initial_seed()) == 42
+        assert int(fsm_99._train_sampler_generator().initial_seed()) == 99
+
+    def test_non_integer_project_seed_rejected(self) -> None:
+        fsm = self._make_fsm(project_seed=42)
+        fsm.cfg.project.seed = "not-an-int"  # type: ignore[assignment]
+        with pytest.raises(PipelineError, match="must be an integer"):
+            fsm._train_sampler_generator()
+
+
+class TestSplitSeedIndependence:
+    """The train/val split is intentionally seeded from ``data.split.seed``
+    and **not** from ``cfg.project.seed``. Two FSMs sharing the same data
+    config but different project seeds must produce identical train/val
+    partitions so seed sweeps compare like-for-like."""
+
+    @staticmethod
+    def _make_fsm(project_seed: int) -> DataPipelineStateMachine:
+        data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+        cfg = DictConfig(
+            {
+                "models": {"name": "bc", "_target_": "phaseforge.models.baselines.bc.BehaviorCloningModel"},
+                "data": data_cfg,
+                "project": {"seed": project_seed},
+            }
+        )
+        return DataPipelineStateMachine(cfg)
+
+    @staticmethod
+    def _inject_trajectories(fsm: DataPipelineStateMachine) -> None:
+        """Populate ``_trajectories`` with 30 single-task demos so
+        ``_build_task_level_splits`` can run without the full ingest
+        pipeline. Each demo is minimal — only ``task_id`` is required by
+        the splitter."""
+        fsm._trajectories = [{"task_id": 0} for _ in range(30)]
+
+    def test_split_identical_across_project_seeds(self) -> None:
+        fsm_42 = self._make_fsm(project_seed=42)
+        fsm_99 = self._make_fsm(project_seed=99)
+        self._inject_trajectories(fsm_42)
+        self._inject_trajectories(fsm_99)
+        splits_42 = fsm_42._build_task_level_splits()
+        splits_99 = fsm_99._build_task_level_splits()
+        # Identical train/val partition: a model-seed change does not move
+        # the data boundary, so the val curves remain comparable across
+        # the seed sweep.
+        assert splits_42["train"] == splits_99["train"]
+        assert splits_42["val"] == splits_99["val"]
+
+    def test_split_seed_isolated_from_global_numpy_rng(self) -> None:
+        """``np.random.default_rng(split_seed)`` is independent of the global
+        numpy RNG, so polluting ``np.random`` state before the split must
+        not change the partition."""
+        fsm_a = self._make_fsm(project_seed=42)
+        fsm_b = self._make_fsm(project_seed=42)
+        self._inject_trajectories(fsm_a)
+        self._inject_trajectories(fsm_b)
+        # Pollute the global numpy state on one of them.
+        np.random.seed(12345)
+        _ = np.random.rand(1024)
+        splits_b = fsm_b._build_task_level_splits()
+        # The other FSM has a clean global state.
+        splits_a = fsm_a._build_task_level_splits()
+        assert splits_a["train"] == splits_b["train"]
+        assert splits_a["val"] == splits_b["val"]
+

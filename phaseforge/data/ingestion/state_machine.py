@@ -595,6 +595,18 @@ class DataPipelineStateMachine:
         empty.
 
         Reads ``data.split`` ({strategy, val_ratio, seed}) with safe defaults.
+
+        Seed policy (intentional, documented for the paper): the split RNG
+        is seeded from ``data.split.seed`` and **not** from
+        ``cfg.project.seed``. A model-seed change must not re-shuffle the
+        train/val boundary — otherwise every cell of an ablation seed sweep
+        would see a different validation set, breaking direct comparison
+        of val curves across cells and introducing a hidden coupling
+        between the seed we report and the data we hold out. Across the
+        protocol seeds [42, 43, 44] every cell therefore sees the *same*
+        train/val trajectories; only the model initialisation and the
+        per-epoch DataLoader shuffle (driven by
+        :meth:`_train_sampler_generator`) differ.
         """
         split_cfg = self.data_cfg.get("split", {})
         strategy = str(split_cfg.get("strategy", "task"))
@@ -707,6 +719,38 @@ class DataPipelineStateMachine:
     # DataLoader construction
     # ------------------------------------------------------------------
 
+    def _train_sampler_generator(self) -> torch.Generator:
+        """Return a CPU ``torch.Generator`` for the train DataLoader sampler.
+
+        The train DataLoader's shuffle uses an explicit generator seeded
+        from ``cfg.project.seed`` so the per-epoch sample order is fully
+        reproducible from the project seed alone. ``torch.Generator`` is
+        placed on CPU because DataLoader worker processes cannot share a
+        CUDA generator across the multiprocessing boundary.
+
+        The generator is cached on the instance so a second call (e.g.
+        after a cache miss + rerun) returns the same object and consumes
+        no additional entropy — important for resume correctness.
+
+        Returns:
+            A ``torch.Generator`` on ``cpu`` seeded with the project seed.
+        """
+        cached = getattr(self, "_train_generator", None)
+        if cached is not None:
+            return cached
+        project_seed = self.cfg.get("project", {}).get("seed", 0)
+        try:
+            seed_value = int(project_seed)
+        except (TypeError, ValueError) as exc:
+            raise PipelineError(
+                f"cfg.project.seed must be an integer for DataLoader reproducibility, "
+                f"got {project_seed!r}."
+            ) from exc
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(seed_value)
+        self._train_generator = generator
+        return generator
+
     def _build_dataloaders(self) -> dict[str, DataLoader | None]:
         data_cfg = self.data_cfg
         result: dict[str, DataLoader | None] = {}
@@ -761,6 +805,7 @@ class DataPipelineStateMachine:
                 num_workers=num_workers,
                 collate_fn=PhaseAwareCollator(),
                 drop_last=is_train,
+                generator=self._train_sampler_generator() if is_train else None,
                 **loader_options,
             )
             result[split_name] = loader

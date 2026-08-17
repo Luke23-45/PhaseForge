@@ -262,6 +262,38 @@ An official low-dimensional Diffusion Policy reproduction may be added after the
 
 For the central PhaseForge comparison, hold constant:
 
+### Reproducibility and seeding policy
+
+Three orthogonal seed sources are used in a single training run, and they
+must not be conflated:
+
+1. **`data.split.seed`** (default `42`) — seeds the **train/val split**
+   via `np.random.default_rng`. It is intentionally **independent of
+   the training seed** below: a model-seed change must not re-shuffle
+   the train/val boundary, which would otherwise invalidate prior val
+   curves and create a hidden coupling between the seed we report and
+   the data we hold out. Across the protocol seeds `[42, 43, 44]`
+   every cell sees the *same* train/val trajectories.
+2. **`project.seed`** (`42`, `43`, or `44`) — the **training seed**.
+   Passed to `set_seed(...)` at the very top of `train()` so every
+   RNG (Python `random`, `numpy`, `torch` CPU+CUDA) starts from the
+   same state. It also seeds `cudnn.deterministic=True` and
+   `cudnn.benchmark=False`. The train DataLoader uses an explicit CPU
+   `torch.Generator` derived from this seed so the per-epoch sample
+   order is reproducible from the project seed alone — it does not
+   rely on the global torch RNG state at DataLoader construction
+   time.
+3. **`project.seed` again** — seeds model initialisation (handled by
+   the same `set_seed` call). The reset bank for evaluation has its
+   own dedicated seed (`10000`–`10049` per task), independent of all
+   training seeds.
+
+This three-source decomposition is enforced in code (the
+`_train_sampler_generator` method builds the DataLoader generator from
+`project.seed` and the `_build_task_level_splits` method reads
+`data.split.seed` only) and verified by regression tests
+(`tests/test_state_machine.py::TestTrainSamplerGenerator`,
+`::TestSplitSeedIndependence`).
 - parameter budget, as closely as practical;
 - history length;
 - encoder width and depth;
