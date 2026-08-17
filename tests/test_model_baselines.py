@@ -23,6 +23,7 @@ from phaseforge.models.baselines.plain_encoder_phase_bootstrap import (
 )
 from phaseforge.models.baselines.scratch_moe import ScratchMoEModel
 from phaseforge.models.baselines.teacher_forced import TeacherForcedMoEModel
+from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
@@ -517,3 +518,60 @@ def test_router_normalize_input_produces_cosine_logits() -> None:
     # Unit-norm latents x unit-norm centroid weights => true cosine logits.
     expected = torch.nn.functional.normalize(x, dim=-1) @ centroids.T
     assert torch.allclose(out.gate_logits, expected, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Action contract: tanh-squashed outputs must stay in (-1, 1)
+# ---------------------------------------------------------------------------
+
+
+def test_action_head_output_is_bounded_to_unit_interval() -> None:
+    """The final tanh must bound ActionHead predictions to (-1, 1) even for
+    large raw activations (the robomimic-standard action contract)."""
+    head = ActionHead(input_dim=32, output_dim=7, hidden_dim=64)
+    # Large magnitude latent forces raw mean_head outputs well outside
+    # [-1, 1]; without the tanh this test would fail.
+    latent = torch.full((8, 32), 5.0)
+    action = head(latent)
+    assert action.shape == (8, 7)
+    assert torch.isfinite(action).all()
+    assert float(action.detach().min()) > -1.0
+    assert float(action.detach().max()) < 1.0
+
+
+def test_expert_output_is_bounded_to_unit_interval() -> None:
+    """MoE experts must also honour the [-1, 1] action contract."""
+    expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
+    latent = torch.full((8, 32), 5.0)
+    action = expert(latent)
+    assert action.shape == (8, 7)
+    assert torch.isfinite(action).all()
+    assert float(action.detach().min()) > -1.0
+    assert float(action.detach().max()) < 1.0
+
+
+def test_get_action_is_bounded_in_both_stages() -> None:
+    """get_action() must produce in-contract actions in Stage 1 (ActionHead)
+    and Stage 2 (MoE experts) so rollout evaluation never trips the strict
+    validate_action contract."""
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    model.eval()
+    state = torch.full((1, 151), 5.0)
+
+    with torch.inference_mode():
+        stage1_action = model.get_action(state)
+        assert float(stage1_action.min()) > -1.0
+        assert float(stage1_action.max()) < 1.0
+
+        model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+        assert model.stage == 2
+        stage2_action = model.get_action(state)
+        assert float(stage2_action.min()) > -1.0
+        assert float(stage2_action.max()) < 1.0

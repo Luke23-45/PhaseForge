@@ -1,4 +1,10 @@
-"""ActionHead: maps latent → action prediction."""
+"""ActionHead: maps latent → action prediction.
+
+The final output is squashed with ``tanh`` so predicted actions lie in
+``(-1, 1)`` — the standard robomimic pattern for the ``[-1, 1]`` action
+contract ("actions are assumed to lie in [-1, 1], and most networks will
+have a final tanh activation to help ensure this range").
+"""
 
 from __future__ import annotations
 
@@ -15,6 +21,9 @@ class ActionHead(nn.Module):
         output_dim: Action dimension.
         head_type:  ``"deterministic"`` or ``"gaussian"``.
         hidden_dim: Width of the intermediate hidden layer.
+
+    Outputs:
+        ``tanh(mean_head(trunk(x)))`` — bounded to ``(-1, 1)``.
     """
 
     def __init__(
@@ -64,13 +73,15 @@ class ActionHead(nn.Module):
                 Use :meth:`sample` for stochastic output.
         """
         h = self.trunk(latent)
-        return self.mean_head(h)
+        return torch.tanh(self.mean_head(h))
 
     def sample(self, latent: Tensor) -> tuple[Tensor, Tensor]:
         """Sample from the Gaussian distribution (gaussian head only).
 
         Returns:
-            (sampled_action, log_prob) — both (B, output_dim)
+            (sampled_action, log_prob) — both (B, output_dim).
+            The sampled action is tanh-squashed to ``(-1, 1)``, consistent
+            with the deterministic head's output range.
         """
         if self.log_std_head is None:
             raise RuntimeError("sample() called on a deterministic ActionHead.")
@@ -81,4 +92,8 @@ class ActionHead(nn.Module):
         eps = torch.randn_like(mean)
         action = mean + eps * std
         log_prob = -0.5 * ((action - mean) / std) ** 2 - log_std - 0.9189  # -0.5*log(2π)
+        # Squash to (-1, 1) and apply the tanh change-of-variables to the
+        # log-probability (same correction as robomimic's TanhWrappedDistribution).
+        action = torch.tanh(action)
+        log_prob = log_prob - torch.log(1.0 - action**2 + 1e-6)
         return action, log_prob

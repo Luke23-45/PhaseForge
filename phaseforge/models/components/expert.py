@@ -81,10 +81,12 @@ class ExpertMLP(nn.Module):
             latent: Tensor of shape (..., input_dim)
 
         Returns:
-            action_pred: Tensor of shape (..., output_dim)
+            action_pred: Tensor of shape (..., output_dim), tanh-squashed
+                to ``(-1, 1)`` so MoE outputs honour the action contract
+                (matches the ActionHead's output range).
         """
         h = self.hidden(latent)
-        return self.output_proj(h)
+        return torch.tanh(self.output_proj(h))
 
 
 def warm_start_experts_from_action_head(
@@ -95,13 +97,13 @@ def warm_start_experts_from_action_head(
     """Copy the Stage 1 ActionHead into every expert — exactly and strictly.
 
     The ActionHead is a single-hidden-layer policy (``trunk`` =
-    ``Linear -> GELU``, ``mean_head`` = output projection). The ExpertMLP
-    must therefore be configured with a matching single-hidden-layer
-    structure (``hidden_dims=[hidden_dim]`` with ``hidden_dim`` ==
-    ``action_head.hidden_dim``). Any expert parameter left unfilled is a
-    hard error: a partial warm start (e.g. a randomly initialized second
-    expert hidden layer) is not a functional warm start and would invalidate
-    the Stage 1 -> Stage 2 initialization claim.
+    ``Linear -> GELU``, ``mean_head`` = output projection, final ``tanh``
+    squash). The ExpertMLP must therefore be configured with a matching
+    single-hidden-layer structure (``hidden_dims=[hidden_dim]`` with
+    ``hidden_dim`` == ``action_head.hidden_dim``). Any expert parameter
+    left unfilled is a hard error: a partial warm start (e.g. a randomly
+    initialized second expert hidden layer) is not a functional warm start
+    and would invalidate the Stage 1 -> Stage 2 initialization claim.
 
     A small independent Gaussian jitter is added to every copied parameter
     so the experts are not bit-identical after bootstrapping. Identical
