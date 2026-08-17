@@ -164,9 +164,10 @@ class TestTrainSamplerGenerator:
 
     def _make_fsm(self, project_seed: int) -> DataPipelineStateMachine:
         data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+        bc_target = "phaseforge.models.baselines.bc.BehaviorCloningModel"
         cfg = DictConfig(
             {
-                "models": {"name": "bc", "_target_": "phaseforge.models.baselines.bc.BehaviorCloningModel"},
+                "models": {"name": "bc", "_target_": bc_target},
                 "data": data_cfg,
                 "project": {"seed": project_seed},
             }
@@ -217,9 +218,10 @@ class TestSplitSeedIndependence:
     @staticmethod
     def _make_fsm(project_seed: int) -> DataPipelineStateMachine:
         data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+        bc_target = "phaseforge.models.baselines.bc.BehaviorCloningModel"
         cfg = DictConfig(
             {
-                "models": {"name": "bc", "_target_": "phaseforge.models.baselines.bc.BehaviorCloningModel"},
+                "models": {"name": "bc", "_target_": bc_target},
                 "data": data_cfg,
                 "project": {"seed": project_seed},
             }
