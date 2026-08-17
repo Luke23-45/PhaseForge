@@ -38,6 +38,13 @@ source:
   dataset_type: "ph"
   hdf5_type: "low_dim"
   expected_env_name: "ToolHang"
+  # The ToolHang PH low-dim HDF5 was collected with robosuite 1.5.0.
+  # The parity gate validates the installed robosuite version against
+  # this pin; running this task in the 1.5.1 environment used for the
+  # other four tasks will hard-fail with a clear error. Use a separate
+  # `.venv-toolhang` created without the rollout extra, then install
+  # `robosuite==1.5.0` and `mujoco==3.2.7` explicitly.
+  robosuite_requirement: "==1.5.0"
   dir: "${oc.env:PHASEFORGE_DATA_DIR,data}/raw/robomimic/tool_hang"
   manifest_path: null
   auto_download: false

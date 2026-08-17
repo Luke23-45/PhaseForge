@@ -50,6 +50,11 @@ source:
   dataset_type: "ph"
   hdf5_type: "low_dim"
   expected_env_name: "Lift"
+  # The Lift PH low-dim HDF5 was collected with robosuite 1.5.1.
+  # Declared explicitly so operators see the pin at config time; the
+  # parity gate still cross-checks against the dataset's recorded
+  # env_version. ToolHang uses 1.5.0 — see data/tool_hang.yaml.
+  robosuite_requirement: "==1.5.1"
   # Override PHASEFORGE_DATA_DIR or data.source.dir on each machine. Raw data
   # must remain outside the repository and must not be downloaded by training.
   dir: "${oc.env:PHASEFORGE_DATA_DIR,data}/raw/robomimic/lift"

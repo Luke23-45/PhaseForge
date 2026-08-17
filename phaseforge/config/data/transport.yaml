@@ -46,6 +46,8 @@ source:
   dataset_type: "ph"
   hdf5_type: "low_dim"
   expected_env_name: "TwoArmTransport"
+  # The Transport PH low-dim HDF5 was collected with robosuite 1.5.1.
+  robosuite_requirement: "==1.5.1"
   dir: "${oc.env:PHASEFORGE_DATA_DIR,data}/raw/robomimic/transport"
   manifest_path: null
   auto_download: false

@@ -1,7 +1,7 @@
 # PhaseForge — Lift Pilot: Offline Diagnostic Results
 
 **Report to supervisor** — date 2026-08-14
-**Status:** offline single-step diagnostic pilot only; simulator/rollout evaluation is not yet implemented (see §7). This document is an **offline pilot / technical report**; it does not claim task-success improvement.
+**Status at the time of the pilot:** offline single-step diagnostic pilot only; simulator/rollout evaluation was not yet implemented (see §7). The simulator rollout adapter and the task-independent gates (parity + state restore + action contract + native success-predicate probe) have since been implemented in the repository, but this document is an **offline pilot / technical report**; it does not claim task-success improvement.
 
 ---
 
@@ -154,13 +154,18 @@ This cell provides a descriptive negative-control reference; because the observa
 
 ---
 
-## 7. Limitations and next steps
+## 7. Limitations and next steps (as of the pilot, 2026-08-14)
 
-This pilot **does not yet support any task-success claim**. Missing per the frozen evaluation plan (`docs/plan/final_evaluation_plan.md`):
+This pilot **did not support any task-success claim at the time it was written**. Missing per the frozen evaluation plan (`docs/plan/final_evaluation_plan.md`) at the time of the pilot:
 
-- **Simulator rollout evaluation** (primary outcome) — the rollout adapter, success predicate, and fixed 50-episode reset bank (seeds 10000–10049) are not implemented; rollout evaluation is deliberately blocked in `cli.py`.
+- **Simulator rollout evaluation** (primary outcome) — at the time of the pilot the rollout adapter, success predicate, and fixed 50-episode reset bank (seeds 10000–10049) were not yet implemented; rollout evaluation was deliberately blocked in `cli.py`. The simulator rollout adapter and the task-independent gates (parity + state restore + action contract + native success-predicate probe) have since been implemented.
 - **Temporal history + BC-RNN baseline** — current models are single-step MLPs.
 - **The remaining four tasks** (Can, Square, Tool Hang, Transport) and the five-task macro-average.
 - **Multi-task / task-conditioned** setting is out of scope for now.
 
-Recommended order: implement Gate 1 (simulator + scripted-oracle validation) → rollout evaluation on Lift with the paired reset bank → BC-RNN/history baseline → remaining tasks. Only then can the offline PhaseForge pattern be tested against task success, and only then would §4 become behavioral claims rather than mechanistic ones.
+Note: Tool Hang's dataset records robosuite 1.5.0 while the other four
+datasets record 1.5.1; Tool Hang must be evaluated in a separately pinned
+1.5.0 environment, not under the 1.5.1 environment used for the other
+four tasks.
+
+Recommended order: implement Gate 1 (parity + state-restore + action-contract + native-predicate validation) → rollout evaluation on Lift with the paired reset bank → BC-RNN/history baseline → remaining tasks. Only then can the offline PhaseForge pattern be tested against task success, and only then would §4 become behavioral claims rather than mechanistic ones.

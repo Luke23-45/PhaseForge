@@ -15,28 +15,10 @@ from phaseforge.evaluations.rollout.runner import (
     resolve_pinned_metadata,
     run_rollout_evaluation,
 )
-from phaseforge.evaluations.rollout.scripted_controller import (
-    ScriptedCanController,
-    ScriptedController,
-    ScriptedControllerConfig,
-    ScriptedLiftConfig,
-    ScriptedLiftController,
-    ScriptedSquareController,
-    ScriptedToolHangController,
-    ScriptedTransportController,
-)
 
 __all__ = [
     "ResetBank",
     "ResetCase",
-    "ScriptedController",
-    "ScriptedLiftController",
-    "ScriptedCanController",
-    "ScriptedSquareController",
-    "ScriptedToolHangController",
-    "ScriptedTransportController",
-    "ScriptedControllerConfig",
-    "ScriptedLiftConfig",
     "RolloutEvaluator",
     "RolloutOutcome",
     "RolloutRunInvalid",

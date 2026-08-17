@@ -31,13 +31,7 @@ name. ``Square`` and ``Transport`` use robosuite's longer names.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from phaseforge.evaluations.rollout.scripted_controller import (
-        ScriptedController,
-    )
-
+from typing import Any
 
 #: Protocol name -> robosuite env_name. Used by the parity gate.
 PROTOCOL_TO_ENV_NAME: dict[str, str] = {
@@ -117,10 +111,6 @@ class TaskSpec:
     default_env_kwargs:
         Fallback ``env_args['env_kwargs']`` for environments that cannot
         reach the dataset (only used by the documented dev fallback path).
-    controller_class_name:
-        Import path of the :class:`ScriptedController` subclass that
-        implements the oracle policy for this task. Stored as a string to
-        avoid importing the rollout module at import time.
     hf_path:
         HuggingFace path on the ``amandlek/robomimic`` repo for the v1.5
         PH low-dim artifact.
@@ -134,7 +124,6 @@ class TaskSpec:
     horizon: int
     schema_version: str
     default_env_kwargs: dict[str, Any] = field(default_factory=dict)
-    controller_class_name: str = ""
 
     @property
     def state_dim(self) -> int:
@@ -155,15 +144,6 @@ class TaskSpec:
                 f"Expected one of {sorted(PROTOCOL_TO_ENV_NAME)}."
             )
         return _BUILD_SPECS[protocol_name]
-
-    def get_controller_class(self) -> type[ScriptedController]:
-        """Import and return the scripted controller class for this task."""
-        import importlib
-
-        module_path, _, class_name = self.controller_class_name.rpartition(".")
-        module = importlib.import_module(module_path)
-        cls = getattr(module, class_name)
-        return cls  # type: ignore[no-any-return]
 
 
 #: Canonical state_keys / state_dims for each task. Lift uses a 10-D object
@@ -208,9 +188,6 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         horizon=500,
         schema_version="robomimic-lift-structured-v1",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
-        controller_class_name=(
-            "phaseforge.evaluations.rollout.scripted_controller.ScriptedLiftController"
-        ),
     ),
     "Can": TaskSpec(
         protocol_name="Can",
@@ -221,9 +198,6 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         horizon=500,
         schema_version="robomimic-can-structured-v1",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
-        controller_class_name=(
-            "phaseforge.evaluations.rollout.scripted_controller.ScriptedCanController"
-        ),
     ),
     "Square": TaskSpec(
         protocol_name="Square",
@@ -234,9 +208,6 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         horizon=500,
         schema_version="robomimic-square-structured-v1",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
-        controller_class_name=(
-            "phaseforge.evaluations.rollout.scripted_controller.ScriptedSquareController"
-        ),
     ),
     "ToolHang": TaskSpec(
         protocol_name="ToolHang",
@@ -247,9 +218,6 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         horizon=500,
         schema_version="robomimic-tool-hang-structured-v1",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
-        controller_class_name=(
-            "phaseforge.evaluations.rollout.scripted_controller.ScriptedToolHangController"
-        ),
     ),
     "Transport": TaskSpec(
         protocol_name="Transport",
@@ -261,9 +229,6 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         horizon=700,
         schema_version="robomimic-transport-structured-v1",
         default_env_kwargs={**_DEFAULT_TWO_ARM_PANDA_KWARGS, "horizon": 700},
-        controller_class_name=(
-            "phaseforge.evaluations.rollout.scripted_controller.ScriptedTransportController"
-        ),
     ),
 }
 

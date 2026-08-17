@@ -18,7 +18,12 @@ def meeting_target(
     payload_quat: np.ndarray,
     eef1: np.ndarray,
 ) -> np.ndarray:
-    """Mirror the controller's nearest-point-on-handle target."""
+    """Nearest point on the payload handle, biased toward arm1.
+
+    Computed geometrically from the dataset payload pose and arm1's current
+    EEF. Validated against recorded demos to confirm it stays inside both
+    Panda arms' reach envelopes.
+    """
     rotation = Rotation.from_quat(payload_quat)
     handle_axis = rotation.apply([0.0, 0.0, 1.0])
     along_handle = float(np.dot(eef1 - payload, handle_axis))

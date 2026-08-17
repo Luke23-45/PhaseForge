@@ -251,6 +251,16 @@ def verify_environment_parity(
     * MuJoCo satisfies ``mujoco_requirement``;
     * the environment name matches ``expected_env_name``.
 
+    The ``robosuite_requirement`` argument is the project-wide default
+    (used when the dataset's ``env_args`` omit ``env_version``). When the
+    dataset records its own ``env_version``, the parity gate uses that
+    exact value instead — the dataset's recorded version is authoritative
+    and never bypassed. The five robomimic PH low-dim datasets split into
+    two version pins:
+
+    * Lift, Can, Square, Transport → robosuite 1.5.1;
+    * ToolHang → robosuite 1.5.0 (use a separately pinned 1.5.0 venv).
+
     Returns the installed ``{"robosuite": ..., "mujoco": ...}`` versions
     on success (the values are also used for provenance records).
 
@@ -273,8 +283,13 @@ def verify_environment_parity(
                 problems.append(
                     f"robosuite {robosuite} installed but the dataset was "
                     f"collected with robosuite {dataset_version} "
-                    f"(env_args['env_version']). Refusing to evaluate a "
-                    "different simulator than the dataset."
+                    f"(env_args['env_version']). The dataset's recorded "
+                    "version is authoritative — install the matching "
+                    f"robosuite release (e.g. `uv pip install "
+                    f"robosuite=={dataset_version}` in a dedicated venv) "
+                    "or evaluate a different dataset. The project-wide "
+                    f"default is {robosuite_requirement}; per-task pins "
+                    "are declared in `data/<task>.yaml`."
                 )
         elif not _satisfies(robosuite, robosuite_requirement):
             problems.append(

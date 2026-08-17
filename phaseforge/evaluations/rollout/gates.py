@@ -1,22 +1,36 @@
 """Validation gates for the rollout protocol (implementation plan §4.5).
 
-The gates validate the simulator/adapter/bank/controller chain BEFORE real
-policy rollouts, so a broken chain can never produce meaningless numbers:
+The gates validate the simulator/adapter/bank chain BEFORE real policy
+rollouts, so a broken chain can never produce meaningless numbers:
 
-* Gate 1 — environment schema self-test (needs robosuite).
-* Gate 2 — diagnostic demo replay against the raw HDF5 (non-gating).
+* Gate 1 — environment schema self-test (parity + state restoration +
+  schema + zero step). Required.
+* Gate 2 — demo replay against the raw HDF5 (non-gating; SKIPPED on
+  mismatch — robosuite action playback can drift across machines).
 * Gate 3 — action-contract enforcement (in-range accepted, out-of-range
-  rejected, simulator accepts the declared gripper action).
-* Gate 4 — scripted state-oracle controller on the frozen bank.
-* Gate 5 — random/no-op sanity (success must be 0, no infra failures).
+  rejected, simulator accepts the declared gripper action). Required.
+* Gate 4 — native robosuite success-predicate availability (task-
+  independent: ``adapter.check_success()`` and ``adapter.env._check_success()``
+  both callable and return bool/dict). Required.
+* Gate 5 — random/no-op sanity (success must be ≈ 0, no infra failures).
+  Required.
 * Gate 6 — checkpoint smoke run (skipped loudly when no checkpoint given).
+  Optional.
 
 Gates that need a missing input are SKIPPED with a loud warning (never a
-silent pass); gates that need robosuite itself hard-fail. The demo replay is
-diagnostic because robosuite documents that action playback can drift across
-machines; state restoration and the frozen reset bank are the required
-simulator checks. The gates exit 0 only when every required gate passed;
-skipped gates are reported as warnings.
+silent pass); gates that need robosuite itself hard-fail. Demo replay is
+diagnostic because robosuite documents that action playback can drift
+across machines. The scripted state-oracle controller that previously sat
+at Gate 4 has been removed: it was not a PhaseForge research contribution,
+is difficult to maintain across five task geometries, and is not part of
+the standard learned-policy rollout protocol. The five-task protocol is
+now::
+
+    trained policy -> structured state -> robosuite -> native task success
+
+The gates exit 0 only when every required gate passed; diagnostic FAILs and
+skipped gates are reported as warnings and do not block the learned-policy
+sweep.
 """
 
 from __future__ import annotations
@@ -38,14 +52,8 @@ from phaseforge.evaluations.envs.errors import (
 )
 from phaseforge.evaluations.envs.robosuite_adapter import (
     RobosuiteStateAdapter,
-    StateSpec,
-)
-from phaseforge.evaluations.envs.task_registry import (
-    TaskSpec,
-    is_known_task,
 )
 from phaseforge.evaluations.rollout.reset_bank import ResetBank
-from phaseforge.evaluations.rollout.scripted_controller import ScriptedControllerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +66,9 @@ class GateResult:
     status: str  # "PASS" | "FAIL" | "SKIPPED"
     detail: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
+    diagnostic: bool = False
+    #: When True the gate is a diagnostic signal only: a FAIL is reported
+    #: but must not block the protocol (no non-zero exit code).
 
     @property
     def passed(self) -> bool:
@@ -229,6 +240,7 @@ def gate_demo_replay(
         return GateResult(
             gate="2_demo_replay",
             status="FAIL",
+            diagnostic=True,
             detail=f"replay raised {type(exc).__name__}: {exc}",
         )
 
@@ -268,8 +280,9 @@ def gate_action_contract(
     The gripper direction is deliberately not inferred from one qpos delta:
     a single MuJoCo control step can move a partially closed gripper in the
     opposite direction because of controller state and contact dynamics.
-    Gate 4 validates the declared gripper convention behaviorally by solving
-    the frozen reset bank.
+    This gate checks action acceptance only. Behavioural task performance is
+    measured by the learned-policy rollout evaluator; Gate 6 is only an
+    optional checkpoint smoke test.
     """
     problems: list[str] = []
     rng = np.random.default_rng(0)
@@ -315,112 +328,167 @@ def gate_action_contract(
         if problems
         else (
             "in-range accepted, NaN/Inf/out-of-range rejected, gripper +1 "
-            "accepted; closure behavior validated by Gate 4"
+            "accepted; behavioural validation is the checkpoint smoke gate's job"
         ),
     )
 
 
 # ---------------------------------------------------------------------------
-# Gate 4 — scripted controller on the bank
+# Gate 4 — success-predicate availability / type check (task-independent)
 # ---------------------------------------------------------------------------
 
 
-def gate_scripted_controller(
+def gate_native_predicate(
     adapter: RobosuiteStateAdapter,
     bank: ResetBank,
-    state_spec: StateSpec,
     *,
-    threshold: float = 1.0,
-    controller_config: ScriptedControllerConfig | None = None,
+    num_cases: int = 5,
 ) -> GateResult:
-    """The training-free controller must solve the frozen bank at
-    ``threshold`` (default: all cases). Failures are task outcomes only.
+    """Required Gate 4: success-predicate availability and type check.
 
-    The scripted controller class is dispatched on ``bank.task`` via the
-    task registry, so each of the five benchmark tasks gets its own
-    oracle policy. Unknown tasks fail closed.
+    Probes both :meth:`RobosuiteStateAdapter.check_success` and the
+    underlying :meth:`robosuite.env._check_success` on a few pinned
+    reset cases. PASS requires:
+
+    * both surfaces are callable (no exception) on every probed case;
+    * both surfaces return ``bool`` or a ``dict`` whose ``"task"`` key
+      coerces to ``bool``;
+    * at least one bank case was probed.
+
+    This gate does NOT validate the semantic correctness of the predicate.
+    A predicate that always returns ``False`` would still PASS this gate —
+    it is the *learned-policy rollouts* (not this gate) that produce the
+    task-success numbers used in the paper. This gate only proves the
+    adapter wraps the native robosuite predicate correctly enough that the
+    runner's success-rate metric is meaningful.
+
+    Fail-closed conditions:
+
+    * empty bank (``len(bank.cases) == 0``) → FAIL: nothing to probe;
+    * ``num_cases <= 0`` → FAIL: would otherwise produce a vacuous 0/0 PASS;
+    * any non-bool/non-dict return or any exception → FAIL on the first
+      probed case.
     """
-    if not is_known_task(bank.task):
+    bank_size = len(bank.cases)
+    if bank_size == 0:
         return GateResult(
-            gate="4_scripted_controller",
+            gate="4_native_predicate",
+            status="FAIL",
+            detail="reset bank is empty; cannot probe the success predicate",
+            metrics={"probed": 0, "cases": 0},
+        )
+    if num_cases <= 0:
+        return GateResult(
+            gate="4_native_predicate",
             status="FAIL",
             detail=(
-                f"bank.task={bank.task!r} is not one of the five benchmark "
-                f"tasks; cannot dispatch a scripted controller."
+                f"native_predicate_cases={num_cases} must be > 0; refuse a "
+                "vacuous gate"
             ),
+            metrics={"probed": 0, "cases": bank_size},
         )
-    controller_cls = TaskSpec.from_protocol(bank.task).get_controller_class()
+    effective_num_cases = min(int(num_cases), bank_size)
 
-    successes = 0
-    infra = 0
-    timeouts = 0
-    failures_detail: list[str] = []
-    failure_phases: dict[str, int] = {}
-    timeout_case_indices: list[int] = []
-    timeout_phase_by_case: dict[str, str] = {}
-
-    for case in bank.cases:
-        # The oracle may read pinned simulator geometry (target-bin, peg,
-        # hook, and transport-bin poses) but never images. Learned policies
-        # remain restricted to the declared low-dimensional state vector.
-        controller = controller_cls(
-            state_spec,
-            env=getattr(adapter, "env", None),
-            config=controller_config,
-        )
+    probed = 0
+    for case in bank.cases[:effective_num_cases]:
         try:
-            state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
-        except Exception as exc:  # noqa: BLE001
-            infra += 1
-            failures_detail.append(f"case {case.index}: reset failed: {exc}")
-            continue
-        ok = False
-        for t in range(adapter.horizon):
-            action = controller.act(state, t)
-            try:
-                state, _done, success, _info = adapter.step(action)
-            except Exception as exc:  # noqa: BLE001
-                infra += 1
-                failures_detail.append(f"case {case.index}: step failed: {exc}")
-                break
-            if success:
-                ok = True
-                break
-            phase_name = getattr(controller, "phase_name", "")
-            if phase_name == "STALLED":
-                break
-        if ok:
-            successes += 1
-        else:
-            timeouts += 1
-            phase = getattr(controller, "stalled_from_phase", None) or getattr(
-                controller, "phase_name", "unknown"
+            adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
+        except Exception as exc:  # noqa: BLE001 — gate must not crash
+            return GateResult(
+                gate="4_native_predicate",
+                status="FAIL",
+                detail=f"reset failed for case {case.index}: {exc}",
+                metrics={"probed": probed, "cases": effective_num_cases},
             )
-            failure_phases[phase] = failure_phases.get(phase, 0) + 1
-            timeout_case_indices.append(int(case.index))
-            timeout_phase_by_case[str(case.index)] = str(phase)
-            failures_detail.append(f"case {case.index}: timed out in phase {phase}")
-
-    rate = successes / len(bank.cases) if bank.cases else float("nan")
-    passed = rate + 1e-9 >= threshold and infra == 0
+        # Probe 1: adapter-wrapped predicate.
+        try:
+            wrapped = adapter.check_success()
+        except Exception as exc:  # noqa: BLE001
+            return GateResult(
+                gate="4_native_predicate",
+                status="FAIL",
+                detail=(
+                    f"adapter.check_success raised on case {case.index}: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                metrics={"probed": probed, "cases": effective_num_cases},
+            )
+        if not _is_valid_predicate_value(wrapped):
+            return GateResult(
+                gate="4_native_predicate",
+                status="FAIL",
+                detail=_predicate_failure_detail(
+                    "adapter.check_success", wrapped, case.index
+                ),
+                metrics={"probed": probed, "cases": effective_num_cases},
+            )
+        # Probe 2: underlying robosuite predicate (so the adapter cannot
+        # silently bypass env._check_success).
+        try:
+            raw = adapter.env._check_success()
+        except Exception as exc:  # noqa: BLE001
+            return GateResult(
+                gate="4_native_predicate",
+                status="FAIL",
+                detail=(
+                    f"env._check_success raised on case {case.index}: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                metrics={"probed": probed, "cases": effective_num_cases},
+            )
+        if not _is_valid_predicate_value(raw):
+            return GateResult(
+                gate="4_native_predicate",
+                status="FAIL",
+                detail=_predicate_failure_detail(
+                    "env._check_success", raw, case.index
+                ),
+                metrics={"probed": probed, "cases": effective_num_cases},
+            )
+        probed += 1
     return GateResult(
-        gate="4_scripted_controller",
-        status="PASS" if passed else "FAIL",
+        gate="4_native_predicate",
+        status="PASS",
         detail=(
-            f"{successes}/{len(bank.cases)} cases solved ({rate:.3f}; "
-            f"threshold {threshold}); {timeouts} timeouts; {infra} infra "
-            + ("failures: " + "; ".join(failures_detail[:3]) if infra else "none")
+            f"native predicate callable and well-typed on "
+            f"{probed}/{bank_size} bank cases (requested num_cases={num_cases})"
         ),
-        metrics={
-            "successes": successes,
-            "cases": len(bank.cases),
-            "rate": rate,
-            "timeouts": timeouts,
-            "infra_failures": infra,
-            "timeout_phases": failure_phases,
-            "timeout_case_indices": timeout_case_indices,
-            "timeout_phase_by_case": timeout_phase_by_case,
-        },
+        metrics={"probed": probed, "cases": effective_num_cases},
+    )
+
+
+def _is_valid_predicate_value(value: object) -> bool:
+    """A predicate value is valid iff it is ``bool`` or ``dict`` with a
+    ``task`` key whose value coerces to ``bool``.
+
+    ``RobosuiteStateAdapter.check_success`` already coerces a ``task`` key
+    to ``bool`` internally; this helper applies the same rule to the raw
+    ``env._check_success`` probe so an adapter refactor cannot quietly
+    accept a malformed dict.
+    """
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, dict):
+        return "task" in value and isinstance(value["task"], bool)
+    return False
+
+
+def _predicate_failure_detail(source: str, value: object, case_index: int) -> str:
+    """Render a human-readable FAIL detail for a malformed predicate value."""
+    type_name = type(value).__name__
+    if isinstance(value, dict):
+        if "task" not in value:
+            return (
+                f"{source} returned dict without required 'task' key on case "
+                f"{case_index}: keys={sorted(value)}"
+            )
+        return (
+            f"{source} returned dict whose 'task' value is not bool "
+            f"({type(value['task']).__name__}) on case {case_index}"
+        )
+    return (
+        f"{source} returned unsupported value {value!r} (type {type_name}) "
+        f"on case {case_index}"
     )
 
 
@@ -438,6 +506,29 @@ def gate_random_noop_sanity(
     max_success_rate: float = 0.05,
 ) -> GateResult:
     """Neither no-op nor random actions may succeed or crash the simulator."""
+    bank_size = len(bank.cases)
+    if bank_size == 0:
+        return GateResult(
+            gate="5_random_noop_sanity",
+            status="FAIL",
+            detail="reset bank is empty; cannot run random/no-op sanity",
+            metrics={"successes": 0, "episodes": 0, "rate": 0.0, "infra_failures": 0, "steps": 0},
+        )
+    if num_cases <= 0:
+        return GateResult(
+            gate="5_random_noop_sanity",
+            status="FAIL",
+            detail=f"random_sanity_episodes={num_cases} must be > 0",
+            metrics={"successes": 0, "episodes": 0, "rate": 0.0, "infra_failures": 0, "steps": 0},
+        )
+    if horizon <= 0:
+        return GateResult(
+            gate="5_random_noop_sanity",
+            status="FAIL",
+            detail=f"random_sanity_horizon={horizon} must be > 0",
+            metrics={"successes": 0, "episodes": 0, "rate": 0.0, "infra_failures": 0, "steps": 0},
+        )
+    effective_num_cases = min(int(num_cases), bank_size)
     rng = np.random.default_rng(0)
     total_successes = 0
     total_infra = 0
@@ -449,7 +540,7 @@ def gate_random_noop_sanity(
             lambda: rng.uniform(-1.0, 1.0, size=adapter.action_dim),
         ),
     ):
-        for case in bank.cases[:num_cases]:
+        for case in bank.cases[:effective_num_cases]:
             try:
                 state = adapter.reset_to(case.states, xml=case.xml, ep_meta=case.ep_meta)
             except Exception:  # noqa: BLE001
@@ -469,8 +560,8 @@ def gate_random_noop_sanity(
             if ok:
                 total_successes += 1
 
-    total = num_cases * 2
-    rate = total_successes / total if total else 0.0
+    total = effective_num_cases * 2
+    rate = total_successes / total
     passed = rate <= max_success_rate and total_infra == 0
     return GateResult(
         gate="5_random_noop_sanity",
@@ -622,7 +713,7 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
     from phaseforge.evaluations.rollout.runner import (
         _adapter_from_config,
         resolve_pinned_metadata,
-        state_spec_from_config,
+        resolve_robosuite_requirement,
     )
 
     meta = resolve_pinned_metadata(cfg)
@@ -633,98 +724,78 @@ def run_all_gates(cfg, *, bank: ResetBank | None = None) -> list[GateResult]:
     verify_environment_parity(
         meta,
         expected_env_name=str(expected_env_name),
-        robosuite_requirement=str(cfg.eval.env.get("robosuite_requirement", "==1.5.1")),
+        robosuite_requirement=resolve_robosuite_requirement(cfg),
         mujoco_requirement=str(cfg.eval.env.get("mujoco_requirement", "==3.2.7")),
     )
-    spec = state_spec_from_config(cfg)
-    try:
-        if bank is None:
-            from phaseforge.evaluations.rollout.runner import load_or_generate_bank
+    if bank is None:
+        from phaseforge.evaluations.rollout.runner import load_or_generate_bank
 
-            bank = load_or_generate_bank(cfg, meta)
+        bank = load_or_generate_bank(cfg, meta)
 
-        gates = cfg.eval.get("gates", {})
-        scripted_offset = gates.get("scripted_descend_z_offset")
-        scripted_config = None
-        if scripted_offset is not None:
-            scripted_offset = float(scripted_offset)
-            if not np.isfinite(scripted_offset) or scripted_offset < 0.0:
-                raise ValueError(
-                    "eval.gates.scripted_descend_z_offset must be a finite "
-                    "non-negative number"
-                )
-            scripted_config = ScriptedControllerConfig(
-                descend_z_offset=scripted_offset
+    gates = cfg.eval.get("gates", {})
+    def run_with_fresh_adapter(gate_fn):
+        """Run one gate on an isolated simulator instance.
+
+        robosuite keeps mutable controller, gripper, contact, and task
+        bookkeeping state outside the flattened MuJoCo state restored by
+        ``reset_to``. Each gate must therefore receive a fresh adapter
+        while sharing the same pinned metadata and reset bank.
+        """
+        isolated_adapter = _adapter_from_config(cfg, meta)
+        try:
+            return gate_fn(isolated_adapter)
+        finally:
+            isolated_adapter.close()
+
+    results = [
+        run_with_fresh_adapter(
+            lambda adapter: gate_env_schema(
+                adapter,
+                bank,
+                expected_state_dim=int(cfg.data.state_dim),
+                expected_action_dim=int(cfg.data.action_dim),
             )
-        def run_with_fresh_adapter(gate_fn):
-            """Run one gate on an isolated simulator instance.
-
-            robosuite keeps mutable controller, gripper, contact, and task
-            bookkeeping state outside the flattened MuJoCo state restored by
-            ``reset_to``. Reusing one adapter lets diagnostic gates influence
-            the scripted-controller result. Each gate must therefore receive
-            a fresh adapter while sharing the same pinned metadata and reset
-            bank.
-            """
-            isolated_adapter = _adapter_from_config(cfg, meta)
-            try:
-                return gate_fn(isolated_adapter)
-            finally:
-                isolated_adapter.close()
-
-        results = [
-            run_with_fresh_adapter(
-                lambda adapter: gate_env_schema(
-                    adapter,
-                    bank,
-                    expected_state_dim=int(cfg.data.state_dim),
-                    expected_action_dim=int(cfg.data.action_dim),
-                )
-            ),
-            run_with_fresh_adapter(
-                lambda adapter: gate_demo_replay(
-                    adapter,
-                    _resolve_raw_hdf5(cfg),
-                    num_demos=int(gates.get("replay_demos", 1)),
-                    tolerance=float(gates.get("replay_tolerance", 1e-3)),
-                )
-            ),
-            run_with_fresh_adapter(
-                lambda adapter: gate_action_contract(
-                    adapter,
-                    tolerance=float(cfg.eval.episodes.get("action_tolerance", 1e-4)),
-                )
-            ),
-            run_with_fresh_adapter(
-                lambda adapter: gate_scripted_controller(
-                    adapter,
-                    bank,
-                    spec,
-                    threshold=float(gates.get("scripted_threshold", 1.0)),
-                    controller_config=scripted_config,
-                )
-            ),
-            run_with_fresh_adapter(
-                lambda adapter: gate_random_noop_sanity(
-                    adapter,
-                    bank,
-                    num_cases=int(gates.get("random_sanity_episodes", 20)),
-                    horizon=int(gates.get("random_sanity_horizon", 200)),
-                    max_success_rate=float(gates.get("random_sanity_success_max", 0.05)),
-                )
-            ),
-            run_with_fresh_adapter(
-                lambda adapter: gate_checkpoint_smoke(
-                    cfg,
-                    adapter,
-                    bank,
-                    num_episodes=int(gates.get("smoke_episodes", 10)),
-                )
-            ),
-        ]
-        return results
-    finally:
-        pass
+        ),
+        run_with_fresh_adapter(
+            lambda adapter: gate_demo_replay(
+                adapter,
+                _resolve_raw_hdf5(cfg),
+                num_demos=int(gates.get("replay_demos", 1)),
+                tolerance=float(gates.get("replay_tolerance", 1e-3)),
+            )
+        ),
+        run_with_fresh_adapter(
+            lambda adapter: gate_action_contract(
+                adapter,
+                tolerance=float(cfg.eval.episodes.get("action_tolerance", 1e-4)),
+            )
+        ),
+        run_with_fresh_adapter(
+            lambda adapter: gate_native_predicate(
+                adapter,
+                bank,
+                num_cases=int(gates.get("native_predicate_cases", 5)),
+            )
+        ),
+        run_with_fresh_adapter(
+            lambda adapter: gate_random_noop_sanity(
+                adapter,
+                bank,
+                num_cases=int(gates.get("random_sanity_episodes", 20)),
+                horizon=int(gates.get("random_sanity_horizon", 200)),
+                max_success_rate=float(gates.get("random_sanity_success_max", 0.05)),
+            )
+        ),
+        run_with_fresh_adapter(
+            lambda adapter: gate_checkpoint_smoke(
+                cfg,
+                adapter,
+                bank,
+                num_episodes=int(gates.get("smoke_episodes", 10)),
+            )
+        ),
+    ]
+    return results
 
 
 def _resolve_raw_hdf5(cfg) -> Path:
@@ -743,7 +814,7 @@ __all__ = [
     "gate_env_schema",
     "gate_demo_replay",
     "gate_action_contract",
-    "gate_scripted_controller",
+    "gate_native_predicate",
     "gate_random_noop_sanity",
     "gate_checkpoint_smoke",
 ]

@@ -112,6 +112,31 @@ class TestParityGate:
                 mujoco_requirement=">=3.2.3",
             )
 
+    def test_version_mismatch_message_is_actionable(self, monkeypatch) -> None:
+        """The ToolHang-vs-1.5.1 case must include the install command."""
+        from phaseforge.evaluations.envs import env_metadata as mod
+
+        # Installed 1.5.1, dataset records 1.5.0 (ToolHang PH low-dim).
+        monkeypatch.setattr(
+            mod, "installed_versions", lambda: {"robosuite": "1.5.1", "mujoco": "3.2.7"}
+        )
+        toolhang_args = {**GOOD_ARGS, "env_name": "ToolHang", "env_version": "1.5.0"}
+        meta = env_args_to_metadata(toolhang_args)
+        with pytest.raises(EnvParityError) as exc_info:
+            verify_environment_parity(
+                meta,
+                expected_env_name="ToolHang",
+                robosuite_requirement="==1.5.1",
+                mujoco_requirement=">=3.2.3",
+            )
+        msg = str(exc_info.value)
+        # Must mention the conflicting versions and the install command.
+        assert "1.5.1" in msg and "1.5.0" in msg
+        assert "robosuite==1.5.0" in msg
+        assert "authoritative" in msg
+        # Must surface the per-task pin location.
+        assert "data/<task>.yaml" in msg or "per-task" in msg
+
     def test_missing_robosuite_fails(self, monkeypatch) -> None:
         from phaseforge.evaluations.envs import env_metadata as mod
 

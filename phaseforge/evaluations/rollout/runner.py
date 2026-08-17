@@ -80,7 +80,7 @@ class RolloutOutcome:
 
 
 class RolloutEvaluator:
-    """Runs one policy (or the scripted controller) over the reset bank."""
+    """Runs one policy over the reset bank."""
 
     def __init__(
         self,
@@ -467,6 +467,19 @@ def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
     return dev_fallback_metadata(task_name)
 
 
+def resolve_robosuite_requirement(cfg: DictConfig) -> str:
+    """Resolve the effective robosuite requirement for this task.
+
+    Per-task data configuration is authoritative when present.  The
+    evaluation-level value remains a compatibility fallback for legacy
+    configs that predate the five-task source pins.
+    """
+    source_requirement = cfg.data.source.get("robosuite_requirement")
+    if source_requirement is not None and str(source_requirement).strip():
+        return str(source_requirement)
+    return str(cfg.eval.env.get("robosuite_requirement", "==1.5.1"))
+
+
 def load_or_generate_bank(cfg: DictConfig, meta: PinnedEnvMetadata) -> ResetBank:
     """Load the frozen bank for the pinned env; generate if configured.
 
@@ -488,7 +501,7 @@ def load_or_generate_bank(cfg: DictConfig, meta: PinnedEnvMetadata) -> ResetBank
     versions = verify_environment_parity(
         meta,
         expected_env_name=expected_env_name,
-        robosuite_requirement=str(cfg.eval.env.get("robosuite_requirement", "==1.5.1")),
+        robosuite_requirement=resolve_robosuite_requirement(cfg),
         mujoco_requirement=str(cfg.eval.env.get("mujoco_requirement", "==3.2.7")),
     )
     bank_id = compute_bank_id(
@@ -649,6 +662,7 @@ __all__ = [
     "RolloutRunInvalid",
     "run_rollout_evaluation",
     "resolve_pinned_metadata",
+    "resolve_robosuite_requirement",
     "load_or_generate_bank",
     "state_spec_from_config",
 ]

@@ -29,6 +29,30 @@ from phaseforge.utils.config import output_base_dir
 logger = logging.getLogger(__name__)
 
 
+def _result_marker(result) -> str:
+    """Render the console marker for one gate result.
+
+    Diagnostic gates use the ``[DIAG-...]`` prefix so their non-blocking
+    nature is visible in the CLI output. SKIPPED gates are never marked
+    diagnostic (SKIPPED is already a non-blocking warning).
+    """
+    if result.diagnostic and result.status != "SKIPPED":
+        return {"PASS": "[DIAG-PASS]", "FAIL": "[DIAG-FAIL]"}[result.status]
+    return {"PASS": "[PASS]", "FAIL": "[FAIL]", "SKIPPED": "[SKIP]"}[result.status]
+
+
+def _compute_exit_code(results) -> int:
+    """Return 0 if every required gate passed, else 1.
+
+    Diagnostic FAILs do not block (they are signals to investigate, not
+    stop conditions); SKIPPED gates are also non-blocking warnings.
+    """
+    for result in results:
+        if result.status == "FAIL" and not result.diagnostic:
+            return 1
+    return 0
+
+
 def _write_report(cfg: DictConfig, results, exit_code: int, base: Path) -> Path:
     timestamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out_dir = base / "_gates" / timestamp
@@ -42,6 +66,7 @@ def _write_report(cfg: DictConfig, results, exit_code: int, base: Path) -> Path:
                 "status": r.status,
                 "detail": r.detail,
                 "metrics": r.metrics,
+                "diagnostic": r.diagnostic,
             }
             for r in results
         ],
@@ -70,21 +95,19 @@ def gates(cfg: DictConfig) -> None:
         logger.exception("Gates could not run: %s", exc)
         sys.exit(2)
 
-    exit_code = 0
+    exit_code = _compute_exit_code(results)
     for result in results:
-        marker = {"PASS": "[PASS]", "FAIL": "[FAIL]", "SKIPPED": "[SKIP]"}[result.status]
-        print(f"{marker} {result.gate}: {result.detail}")
-        if result.status == "FAIL":
-            exit_code = 1
+        print(f"{_result_marker(result)} {result.gate}: {result.detail}")
 
     base = output_base_dir(cfg)
     report = _write_report(cfg, results, exit_code, base)
     print(f"Gate report written to {report}")
     if exit_code:
         print(
-            "Gates FAILED — do not run rollouts until every required gate "
-            "passes. SKIPPED gates (warnings) must be run on the "
-            "evaluation machine."
+            "Required gates FAILED — do not run rollouts until every required "
+            "gate passes. DIAGNOSTIC FAILs and SKIPPED gates are warnings; "
+            "they must be investigated but do not block the learned-policy "
+            "sweep."
         )
     sys.exit(exit_code)
 

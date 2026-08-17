@@ -145,8 +145,8 @@ If PhaseForge matches the controls, report a controlled null result. This still 
 
 Use the evaluator decision tree from the final evaluation plan:
 
-- scripted controller fails → environment/evaluator problem;
-- scripted controller succeeds but structured BC fails → observation, action, temporal, or learning problem;
+- native predicate / state-restore / parity gate fails → environment/evaluator problem;
+- gates pass but structured BC fails → observation, action, temporal, or learning problem;
 - structured BC succeeds but all MoEs fail → MoE implementation or optimization problem;
 - PhaseForge succeeds but does not beat matched controls → the bootstrap hypothesis is unsupported.
 
@@ -167,7 +167,7 @@ Prohibited:
 - claims that phase labels are official benchmark annotations;
 - claims that routing metrics alone prove better control;
 - “first” or “novel” claims without a documented systematic prior-art review;
-- final success claims before the rollout adapter, reset protocol, scripted controller, BC floor, and history baseline are validated.
+- final success claims before the rollout adapter, reset protocol, native-predicate gate, BC floor, and history baseline are validated.
 
 ## 8. Literature record
 

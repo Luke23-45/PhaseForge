@@ -30,8 +30,8 @@ from phaseforge.evaluations.rollout.reset_bank import ResetBank, ResetCase
 TABLE_HEIGHT = 0.8
 SUCCESS_Z = TABLE_HEIGHT + 0.04
 LIFT_GRASP_Z_OFFSET = 0.01
-# Matches ScriptedControllerConfig.descend_z_offset for placement tasks:
-# OBJECT_HALF_SIZE (0.0215) + the 0.02 m clearance used by the real oracle.
+# Vertical clearance for placement tasks: OBJECT_HALF_SIZE (0.0215) +
+# the 0.02 m clearance used by the kinematic fake's placement predicate.
 PLACEMENT_GRASP_Z_OFFSET = 0.0415
 
 #: Supported tasks for the kinematic fake simulator.
@@ -147,6 +147,10 @@ class FakeLiftSim:
         xy_ok = abs(self.cube[0] - target_x) < 0.05 and abs(self.cube[1] - target_y) < 0.05
         return xy_ok and bool(self.cube[2] > SUCCESS_Z)
 
+    def _check_success(self) -> bool:
+        """Mirror of the robosuite native predicate (``_check_success``)."""
+        return self.success
+
     @property
     def sim(self) -> FakeLiftSim:
         """Mirror of the real adapter's ``env.sim`` (flat state accessor)."""
@@ -158,13 +162,7 @@ class FakeLiftSim:
 
 
 def _receptacle_offset_for(task: str) -> tuple[float, float]:
-    """Per-task absolute receptacle xy.
-
-    Must agree with the corresponding scripted controller's
-    ``RECEPTACLE_XY``/``PEG_XY``/``RACK_XY``/``BIN_XY`` constant --
-    consistent geometry is required between the simulator's success
-    predicate and the controller's placement target.
-    """
+    """Per-task absolute receptacle xy used by the kinematic fake's success predicate."""
     return {
         "Can": (0.15, 0.15),
         "Square": (-0.12, -0.08),
@@ -186,6 +184,7 @@ class FakeAdapter:
         state_spec: StateSpec | None = None,
         fail_step_with: Exception | None = None,
         fail_reset_with: Exception | None = None,
+        fail_check_success_with: Exception | None = None,
         obs_key_override: str | None = None,
         task: str = "Lift",
     ) -> None:
@@ -195,6 +194,7 @@ class FakeAdapter:
         self.state_spec = state_spec or lift_state_spec()
         self.fail_step_with = fail_step_with
         self.fail_reset_with = fail_reset_with
+        self.fail_check_success_with = fail_check_success_with
         self.obs_key_override = obs_key_override
         self.task = task
         self.step_calls = 0
@@ -252,6 +252,8 @@ class FakeAdapter:
         return np.asarray(obs, dtype=np.float32)
 
     def check_success(self) -> bool:
+        if self.fail_check_success_with is not None:
+            raise self.fail_check_success_with
         return self.sim.success
 
     def close(self) -> None:

@@ -3,8 +3,8 @@
 The robomimic dataset contains human/expert demonstrations of Transport.
 We extract the eef trajectories and payload motion to see the actual
 solution pattern (who carries the hammer, where the head ends up, the
-grasp poses used) so the scripted controller can mirror the ground truth
-instead of guessing.
+grasp poses used). This is a dataset-geometry analysis tool, independent
+of any rollout policy.
 
 Usage:  uv run python scripts/analyze_transport_demos.py [demo_idx] [--summary]
 """
@@ -38,7 +38,6 @@ def trace_demo(demo_idx: int, verbose: bool = True) -> dict:
 
     payload = obj[:, 0:3]
     pquat = obj[:, 3:7]
-    trash = obj[:, 7:10]
     target_bin = obj[0, 21:24]
     trash_bin = obj[0, 24:27]
 
@@ -87,13 +86,22 @@ def trace_demo(demo_idx: int, verbose: bool = True) -> dict:
 
         # When arm1's eef is near the head:
         near1 = d1h < 0.15
-        print(f"arm1 eef within 0.15m of HEAD: {(near1).sum()} steps (windows {windows(near1)[:8]})")
+        print(
+            "arm1 eef within 0.15m of HEAD: "
+            f"{near1.sum()} steps (windows {windows(near1)[:8]})"
+        )
 
         # z trajectory of the payload (lift height)
         print(f"\npayload z: start={payload[0,2]:.3f} min={payload[:,2].min():.3f} "
               f"max={payload[:,2].max():.3f} end={payload[-1,2]:.3f}")
-        print(f"payload y: start={payload[0,1]:+.3f} end={payload[-1,1]:+.3f} (target_bin y={target_bin[1]:+.3f})")
-        print(f"payload x: start={payload[0,0]:+.3f} end={payload[-1,0]:+.3f} (target_bin x={target_bin[0]:+.3f})")
+        print(
+            f"payload y: start={payload[0,1]:+.3f} end={payload[-1,1]:+.3f} "
+            f"(target_bin y={target_bin[1]:+.3f})"
+        )
+        print(
+            f"payload x: start={payload[0,0]:+.3f} end={payload[-1,0]:+.3f} "
+            f"(target_bin x={target_bin[0]:+.3f})"
+        )
 
         # what z does arm1 use when grasping the head?
         z_near1 = eef1[near1, 2] if near1.any() else np.array([])
@@ -138,11 +146,9 @@ def summary() -> None:
             t = trace_demo(idx, verbose=False)
             stats["n"] += 1
             payload = t["payload"]
-            head = t["head"]
-            eef0, eef1 = t["eef0"], t["eef1"]
+            eef0 = t["eef0"]
             # does payload end near target_bin x/y?
             last = payload[-1]
-            target_bin_x = last[0]
             # crude: payload final x within 0.1 of initial (symmetric)?  Use y sign.
             if last[1] > 0:  # ended on the +y (right) side
                 stats["payload_ends_in_bin"] += 1
@@ -160,7 +166,10 @@ def summary() -> None:
 
     print(f"n demos = {stats['n']}")
     print(f"payload ends on +y (right/target) side: {stats['payload_ends_in_bin']}")
-    print(f"arm0 carries payload across gap (payload y>0 while arm0 near): {stats['arm0_carries_across']}")
+    print(
+        "arm0 carries payload across gap (payload y>0 while arm0 near): "
+        f"{stats['arm0_carries_across']}"
+    )
     print(f"arm0 max horizontal reach used: min={np.min(reach0_max):.3f} "
           f"p50={np.median(reach0_max):.3f} max={np.max(reach0_max):.3f}")
     print(f"arm1 min wrist-to-head distance: min={np.min(reach1_head):.3f} "

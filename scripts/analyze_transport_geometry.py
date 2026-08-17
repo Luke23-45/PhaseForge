@@ -2,8 +2,9 @@
 
 Reads every demo's INITIAL state from the frozen robomimic transport
 dataset and reports the exact object/robot pose distributions so the
-controller's meeting-point and reachability logic can be sized against
-data instead of guesses.
+handover meeting-point and reachability envelope can be sized against
+real data instead of guesses. This is a dataset-geometry analysis tool,
+independent of any rollout policy.
 
 Usage:  uv run python scripts/analyze_transport_geometry.py --all
 """
@@ -45,7 +46,9 @@ def report():
             quat = obj[3:7]
             R = quat_to_rot(quat)
             head_center = payload + R.apply([0.0, 0.0, PAYLOAD_HEAD_OFFSET_Z])
-            # Match ScriptedTransportController._payload_meeting_point().
+            # Handover meeting-point convention: clamp x to the workspace
+            # span, take the payload y directly, and lift z to a safe
+            # handover altitude.
             meeting_x = float(np.clip(payload[0], -0.35, 0.35))
             meeting_y = float(payload[1])
             meeting_z = max(payload[2], 0.90)
@@ -93,7 +96,7 @@ def report():
     stats("head_center", ["x", "y", "z"])
     print("\neef1 (arm1 wrist at reset):")
     stats("eef1", ["x", "y", "z"])
-    print("\nmeeting point (controller convention):")
+    print("\nmeeting point (handover convention):")
     stats("meeting", ["x", "y", "z"])
     print("\nscalars:")
     stats("d1", None)
@@ -107,15 +110,25 @@ def report():
     delta = head - meet
     for i, lbl in enumerate(["x", "y", "z"]):
         c = delta[:, i]
-        print(f"  head-meeting [{lbl}]: min={c.min():+.4f} p50={np.median(c):+.4f} max={c.max():+.4f}")
+        print(
+            f"  head-meeting [{lbl}]: min={c.min():+.4f} "
+            f"p50={np.median(c):+.4f} max={c.max():+.4f}"
+        )
 
     print("\n--- meeting point relative to payload body center ---")
     top_delta = meet[:, 2] - head[:, 2]
-    print(f"  meeting.z - payload.z: min={top_delta.min():+.4f} p50={np.median(top_delta):+.4f} max={top_delta.max():+.4f}")
+    print(
+        f"  meeting.z - payload.z: min={top_delta.min():+.4f} "
+        f"p50={np.median(top_delta):+.4f} max={top_delta.max():+.4f}"
+    )
 
     print("\n--- how far above the PAYLOAD body is the meeting? ---")
     pz = arr["payload"][:, 2]
-    print(f"  meeting.z - payload.z: min={(meet[:,2]-pz).min():+.4f} p50={np.median(meet[:,2]-pz):+.4f} max={(meet[:,2]-pz).max():+.4f}")
+    height_delta = meet[:, 2] - pz
+    print(
+        f"  meeting.z - payload.z: min={height_delta.min():+.4f} "
+        f"p50={np.median(height_delta):+.4f} max={height_delta.max():+.4f}"
+    )
 
     print("\n--- X clamp distortion (payload.x outside +/-0.35) ---")
     px = arr["payload"][:, 0]
@@ -129,8 +142,14 @@ def report():
     # wrist-to-payload horizontal offset (the demonstrated grasp metric)
     print("\n--- wrist-to-payload horizontal offset (x,y only) ---")
     hxy = head[:, :2] - meet[:, :2]
-    print(f"  dx: min={hxy[:,0].min():+.4f} p50={np.median(hxy[:,0]):+.4f} max={hxy[:,0].max():+.4f}")
-    print(f"  dy: min={hxy[:,1].min():+.4f} p50={np.median(hxy[:,1]):+.4f} max={hxy[:,1].max():+.4f}")
+    print(
+        f"  dx: min={hxy[:,0].min():+.4f} p50={np.median(hxy[:,0]):+.4f} "
+        f"max={hxy[:,0].max():+.4f}"
+    )
+    print(
+        f"  dy: min={hxy[:,1].min():+.4f} p50={np.median(hxy[:,1]):+.4f} "
+        f"max={hxy[:,1].max():+.4f}"
+    )
     hnorm = np.linalg.norm(hxy, axis=1)
     print(f"  |horiz|: min={hnorm.min():.4f} p50={np.median(hnorm):.4f} max={hnorm.max():.4f}")
 

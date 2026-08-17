@@ -183,11 +183,11 @@ The release track must be frozen before Gate 1. The [current robomimic v0.1
 dataset documentation](https://robomimic.github.io/docs/v0.4/datasets/robomimic_v0.1.html)
 provides low-dimensional artifacts based on robosuite v1.5.1
 and explicitly warns that the older `offline_study` and v1.4.1 dataset tracks
-may not reproduce the same results. The repository's current optional rollout
-extra is still a temporary v1.4.0 pilot pin; it is not approval to mix that
-environment with the current released artifacts. Before rollout work, either
-select the v1.5.1 artifact/environment pair or deliberately select an older
-matching pair and record it in `MANIFEST.json`.
+may not reproduce the same results. The repository's optional rollout extra
+pins the v1.5.1 environment for Lift, Can, Square, and Transport; it is not
+approval to mix that environment with Tool Hang, whose embedded metadata
+requires v1.5.0. Before rollout work, select the matching per-task
+environment and record it in `MANIFEST.json`.
 
 ### 4.2 Splits
 
@@ -305,11 +305,13 @@ Run, in order:
 1. demonstration-action replay;
 2. state extraction parity checks;
 3. action-scale and normalization checks;
-4. success-predicate checks;
-5. a no-op/random-action baseline;
-6. a scripted or state-oracle controller.
+4. native success-predicate availability (task-independent probe);
+5. a no-op/random-action baseline.
 
-The scripted controller must solve the task instances used by the evaluation harness. If it fails, stop and repair the environment or evaluator before training learned policies.
+The simulator must answer the success-predicate question on a pinned reset
+case and the action-contract / state-restore / parity probes must all pass
+before training learned policies. If any of these fail, stop and repair
+the environment or evaluator.
 
 ### Gate 2 — BC floor
 
@@ -317,7 +319,9 @@ Train BC-MLP and BC-RNN on a small pilot subset first.
 
 Proceed only when structured-state BC produces clearly nonzero rollout success on held-out initial states and outperforms the robot-only negative control where object information is necessary.
 
-If structured-state BC fails while the scripted controller succeeds, investigate task conditioning, observation extraction, temporal context, action scaling, and checkpoint loading. Do not respond by increasing the MoE training budget.
+If structured-state BC fails, investigate task conditioning, observation
+extraction, temporal context, action scaling, and checkpoint loading. Do
+not respond by increasing the MoE training budget.
 
 ### Gate 3 — phase validity
 
@@ -367,6 +371,36 @@ Use the frozen final checkpoints selected only through the validation protocol. 
 
 The 10-episode run must never be presented as the final result when a
 50-episode result is required for the protocol.
+
+### 7.1.1 Robosuite version split (ToolHang vs the other four tasks)
+
+The five robomimic PH low-dim datasets split into two robosuite version
+pins in their embedded `env_args`:
+
+- Lift, Can, Square, Transport → `robosuite==1.5.1`
+- ToolHang → `robosuite==1.5.0`
+
+The parity gate validates the installed robosuite against the dataset's
+recorded `env_version` (exact match). The per-task pins are also declared
+in `data/<task>.yaml` as `source.robosuite_requirement`. ToolHang will
+hard-fail under the 1.5.1 environment used for the other four tasks; the
+operator must run ToolHang in a separately pinned 1.5.0 venv. The
+dataset's recorded version is authoritative and is never bypassed.
+For Tool Hang, create a separate environment without the v1.5.1 rollout
+extra, then install the recorded exception explicitly:
+
+```bash
+uv venv --python 3.11 .venv-toolhang
+source .venv-toolhang/bin/activate
+uv pip install -e '.[dev]'
+uv pip install 'robosuite==1.5.0' 'mujoco==3.2.7'
+```
+
+On PowerShell, activate the same environment with
+`.venv-toolhang\\Scripts\\Activate.ps1` instead.
+
+Do not run `uv sync --extra rollout` in that environment afterward, because it
+would restore robosuite 1.5.1 and the parity gate must reject that mismatch.
 
 ### 7.2 Primary reporting
 
@@ -511,8 +545,8 @@ If PhaseForge does not outperform the matched baselines, report the controlled n
 
 If all learned models obtain SR = 0:
 
-- scripted controller fails → evaluator or environment problem;
-- scripted controller succeeds and structured BC fails → learning, observation, task-conditioning, or action-contract problem;
+- native predicate / parity / state-restore gate fails → evaluator or environment problem;
+- gates pass and structured BC fails → learning, observation, task-conditioning, or action-contract problem;
 - structured BC succeeds and robot-only BC fails → expected information ceiling;
 - BC succeeds and all MoEs fail → MoE implementation or optimization problem;
 - PhaseForge succeeds but does not beat baselines → phase-bootstrap hypothesis is unsupported.
@@ -534,7 +568,7 @@ Before the final matrix, the codebase must implement and test:
 7. explicit task conditioning for any multitask extension;
 8. action normalization and de-normalization checks;
 9. demonstration replay and simulator parity tests;
-10. scripted/state-oracle evaluator validation;
+10. native success-predicate availability probe (task-independent);
 11. paired fixed-initial-state rollout evaluation;
 12. per-task success and failure-stage reporting;
 13. checkpoint-selection safeguards;
@@ -547,10 +581,12 @@ Before the final matrix, the codebase must implement and test:
 17. complete provenance in every result file.
 
 The current repository does not yet satisfy this list: it has the Lift HDF5
-ingestion pilot and offline single-step data path, but not the history-aware
-dataset/model path, simulator rollout adapter, scripted-controller gate, or
-the five-task configuration matrix. No final success-rate claim is valid until
-those missing components are implemented and Gate 1 has passed.
+ingestion pilot, offline single-step data path, simulator rollout adapter,
+and task-independent gates (parity + state restore + action contract +
+native success-predicate probe), but not the history-aware dataset/model
+path or the complete three-seed × five-task configuration matrix. No final
+success-rate claim is valid until the three-seed matrix finishes
+successfully across all five tasks.
 
 The existing PhaseForge router, phase-labeling, routing diagnostics, checkpointing, and evaluation instrumentation may be reused only after they satisfy this benchmark contract.
 

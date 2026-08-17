@@ -9,13 +9,12 @@ from phaseforge.evaluations.rollout.gates import (
     gate_action_contract,
     gate_demo_replay,
     gate_env_schema,
+    gate_native_predicate,
     gate_random_noop_sanity,
-    gate_scripted_controller,
 )
 from tests.rollout_helpers import (
     FakeAdapter,
     FakeLiftSim,
-    lift_state_spec,
     make_bank,
 )
 
@@ -127,44 +126,117 @@ class TestActionContract:
         assert result.status == "PASS", result.detail
 
 
-class TestScriptedController:
-    def test_solves_bank_at_threshold(self) -> None:
-        result = gate_scripted_controller(
+class TestNativePredicate:
+    def test_passes_when_predicate_returns_bool(self) -> None:
+        # The default FakeAdapter returns bool from both check_success and
+        # the underlying env._check_success() probe; Gate 4 must PASS.
+        result = gate_native_predicate(
             FakeAdapter(horizon=500),  # type: ignore[arg-type]
             make_bank(3),
-            lift_state_spec(),
-            threshold=1.0,
+            num_cases=3,
         )
         assert result.status == "PASS", result.detail
-        assert result.metrics["successes"] == 3
-        assert result.metrics["infra_failures"] == 0
-        assert result.metrics["timeout_case_indices"] == []
-        assert result.metrics["timeout_phase_by_case"] == {}
+        assert result.metrics["probed"] == 3
 
-    def test_fails_on_infra(self) -> None:
-        adapter = FakeAdapter(FakeLiftSim(), fail_step_with=InfrastructureError("boom"))
-        result = gate_scripted_controller(
+    def test_fails_when_predicate_raises(self) -> None:
+        # Adapter raises from check_success -> Gate 4 must FAIL on the first case.
+        adapter = FakeAdapter(
+            FakeLiftSim(), fail_check_success_with=InfrastructureError("predicate boom")
+        )
+        result = gate_native_predicate(
             adapter,  # type: ignore[arg-type]
             make_bank(3),
-            lift_state_spec(),
-            threshold=1.0,
+            num_cases=3,
         )
         assert result.status == "FAIL"
-        assert result.metrics["infra_failures"] > 0
+        assert "check_success" in result.detail
 
-    def test_accepts_explicit_scripted_geometry_override(self) -> None:
-        from phaseforge.evaluations.rollout.scripted_controller import (
-            ScriptedControllerConfig,
-        )
-
-        result = gate_scripted_controller(
-            FakeAdapter(horizon=500),  # type: ignore[arg-type]
+    def test_fails_on_reset_error(self) -> None:
+        # Adapter fails to reset -> Gate 4 must FAIL before any probe.
+        adapter = FakeAdapter(FakeLiftSim(), fail_reset_with=InfrastructureError("reset boom"))
+        result = gate_native_predicate(
+            adapter,  # type: ignore[arg-type]
             make_bank(3),
-            lift_state_spec(),
-            threshold=1.0,
-            controller_config=ScriptedControllerConfig(descend_z_offset=0.01),
+            num_cases=3,
+        )
+        assert result.status == "FAIL"
+        assert "reset failed" in result.detail
+
+    def test_limits_to_num_cases(self) -> None:
+        # 5-case bank, num_cases=2 -> only 2 probes counted.
+        result = gate_native_predicate(
+            FakeAdapter(horizon=500),  # type: ignore[arg-type]
+            make_bank(5),
+            num_cases=2,
         )
         assert result.status == "PASS", result.detail
+        assert result.metrics["probed"] == 2
+        assert result.metrics["cases"] == 2
+
+    def test_fails_on_empty_bank(self) -> None:
+        # Empty bank -> FAIL (refuse a vacuous 0/0 PASS).
+        class _EmptyBank:
+            task = "Lift"
+            cases: list = []
+
+        result = gate_native_predicate(
+            FakeAdapter(horizon=500),  # type: ignore[arg-type]
+            _EmptyBank(),  # type: ignore[arg-type]
+            num_cases=5,
+        )
+        assert result.status == "FAIL"
+        assert "empty" in result.detail
+
+    def test_fails_on_zero_num_cases(self) -> None:
+        # num_cases <= 0 -> FAIL (refuse a vacuous gate).
+        result = gate_native_predicate(
+            FakeAdapter(horizon=500),  # type: ignore[arg-type]
+            make_bank(3),
+            num_cases=0,
+        )
+        assert result.status == "FAIL"
+        assert "must be > 0" in result.detail
+
+    def test_clamps_num_cases_to_bank_size(self) -> None:
+        # 3-case bank, num_cases=10 -> only 3 probes counted.
+        result = gate_native_predicate(
+            FakeAdapter(horizon=500),  # type: ignore[arg-type]
+            make_bank(3),
+            num_cases=10,
+        )
+        assert result.status == "PASS", result.detail
+        assert result.metrics["probed"] == 3
+        assert result.metrics["cases"] == 3
+
+    def test_fails_on_dict_without_task_key(self) -> None:
+        # Predicate returns dict without "task" -> FAIL on raw probe.
+        class _DictNoTaskAdapter(FakeAdapter):
+            def _check_success_on_env(self) -> dict:
+                return {"success": True}  # missing "task"
+
+        adapter = _DictNoTaskAdapter(horizon=500)
+        # Override the underlying sim's _check_success to return the bad dict.
+        adapter.env._check_success = lambda: {"success": True}  # type: ignore[assignment]
+        result = gate_native_predicate(
+            adapter,  # type: ignore[arg-type]
+            make_bank(3),
+            num_cases=1,
+        )
+        assert result.status == "FAIL"
+        assert "task" in result.detail
+
+    def test_accepts_dict_with_task_key(self) -> None:
+        # Predicate returns {"task": True} -> PASS (matches robosuite's
+        # multi-stage convention where each key is a sub-predicate).
+        adapter = FakeAdapter(horizon=500)
+        adapter.env._check_success = lambda: {"task": True}  # type: ignore[assignment]
+        result = gate_native_predicate(
+            adapter,  # type: ignore[arg-type]
+            make_bank(3),
+            num_cases=3,
+        )
+        assert result.status == "PASS", result.detail
+        assert result.metrics["probed"] == 3
 
 
 class TestRandomNoop:
@@ -182,6 +254,31 @@ class TestRandomNoop:
         assert result.metrics["successes"] == 0
         assert result.metrics["infra_failures"] == 0
 
+    def test_rejects_empty_bank(self) -> None:
+        class _EmptyBank:
+            cases: list = []
+
+        result = gate_random_noop_sanity(
+            FakeAdapter(),  # type: ignore[arg-type]
+            _EmptyBank(),  # type: ignore[arg-type]
+            num_cases=3,
+            horizon=10,
+        )
+        assert result.status == "FAIL"
+        assert "empty" in result.detail
+
+    def test_rejects_nonpositive_limits(self) -> None:
+        bank = make_bank(3)
+        adapter = FakeAdapter()  # type: ignore[arg-type]
+        assert (
+            gate_random_noop_sanity(adapter, bank, num_cases=0, horizon=10).status
+            == "FAIL"
+        )
+        assert (
+            gate_random_noop_sanity(adapter, bank, num_cases=3, horizon=0).status
+            == "FAIL"
+        )
+
 
 class TestCheckpointSmoke:
     def test_skipped_without_checkpoint(self) -> None:
@@ -193,3 +290,61 @@ class TestCheckpointSmoke:
 
         result = gate_checkpoint_smoke(_Cfg(), FakeAdapter(), make_bank(3), num_episodes=2)  # type: ignore[arg-type]
         assert result.status == "SKIPPED"
+
+
+class TestCLIExitCode:
+    """The CLI rule: a diagnostic FAIL must not block the protocol (exit 0);
+    a required FAIL must block (exit 1)."""
+
+    def _result(self, *, status: str, diagnostic: bool = False) -> object:
+        from phaseforge.evaluations.rollout.gates import GateResult
+
+        return GateResult(gate="probe", status=status, detail="probe", diagnostic=diagnostic)
+
+    def test_diagnostic_fail_does_not_block(self) -> None:
+        from phaseforge.evaluations.rollout.gates_cli import _compute_exit_code
+
+        results = [
+            self._result(status="PASS"),
+            self._result(status="FAIL", diagnostic=True),
+            self._result(status="SKIPPED"),
+        ]
+        assert _compute_exit_code(results) == 0
+
+    def test_required_fail_blocks(self) -> None:
+        from phaseforge.evaluations.rollout.gates_cli import _compute_exit_code
+
+        results = [
+            self._result(status="PASS"),
+            self._result(status="FAIL", diagnostic=False),
+        ]
+        assert _compute_exit_code(results) == 1
+
+    def test_all_pass_returns_zero(self) -> None:
+        from phaseforge.evaluations.rollout.gates_cli import _compute_exit_code
+
+        results = [
+            self._result(status="PASS"),
+            self._result(status="SKIPPED"),
+        ]
+        assert _compute_exit_code(results) == 0
+
+    def test_diagnostic_marker_rendering(self) -> None:
+        from phaseforge.evaluations.rollout.gates_cli import _result_marker
+
+        assert _result_marker(self._result(status="PASS")) == "[PASS]"
+        assert _result_marker(self._result(status="FAIL")) == "[FAIL]"
+        assert _result_marker(self._result(status="SKIPPED")) == "[SKIP]"
+        assert (
+            _result_marker(self._result(status="PASS", diagnostic=True))
+            == "[DIAG-PASS]"
+        )
+        assert (
+            _result_marker(self._result(status="FAIL", diagnostic=True))
+            == "[DIAG-FAIL]"
+        )
+        # SKIPPED never gets a diagnostic marker even if the flag is set.
+        assert (
+            _result_marker(self._result(status="SKIPPED", diagnostic=True))
+            == "[SKIP]"
+        )

@@ -17,10 +17,6 @@ from phaseforge.evaluations.envs.task_registry import (
     known_protocol_tasks,
     protocol_for_env_name,
 )
-from phaseforge.evaluations.rollout.scripted_controller import (
-    ScriptedCanController,
-    ScriptedController,
-)
 
 
 class TestMappings:
@@ -86,13 +82,6 @@ class TestTaskSpec:
         assert spec.state_dim == PROTOCOL_STATE_DIM[protocol_name]
         assert spec.action_dim == PROTOCOL_ACTION_DIM[protocol_name]
         assert spec.horizon == PROTOCOL_HORIZON[protocol_name]
-        cls = spec.get_controller_class()
-        assert issubclass(cls, ScriptedController)
-
-    def test_get_controller_class_actually_returns_a_class(self) -> None:
-        spec = TaskSpec.from_protocol("Can")
-        cls = spec.get_controller_class()
-        assert cls is ScriptedCanController
 
     def test_env_name_to_protocol_inverse(self) -> None:
         # Inverse dict consistency.

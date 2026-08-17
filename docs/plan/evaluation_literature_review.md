@@ -23,7 +23,7 @@ Two research passes. Pass 1 covered the benchmark protocols of the major state-b
 | Reset cases | **Fixed serialized reset cases**, identical and ordered for every method/seed (paired design; basis for paired analysis §5.2) | implementation plan; RoboTwin2 "Clean" split |
 | Checkpoint reporting | Some studies report **max over training** AND/OR **average of last 10 checkpoints**; rule fixed up front | robomimic (max over training); Diffusion Policy (max)/(avg last 10) |
 | Significance testing | Mixed: mean ± s.d. over 3 seeds without tests (robomimic); exact McNemar for matched binary outcomes (Dietterich 1998); t-tests on ≥30 aggregated points in some benchmark comparisons | robomimic; Dietterich |
-| Sanity gates | Scripted/oracle controller gate before learned-policy judgment (ACT ships a scripted policy; recommended in the implementation plan) — a protocol choice, not a universal requirement | ACT; implementation plan |
+| Sanity gates | Task-independent gates (parity + state restore + action contract + native-predicate probe) before learned-policy judgment — a protocol choice, not a universal requirement | ACT; implementation plan |
 | Secondary diagnostics | Offline metrics (action MSE, task progress, routing statistics) kept **secondary**, never primary | robomimic C4; CI-MSE |
 
 These are protocol choices made by the cited studies — reasonable and supported by selected precedents, but not universal standards.
@@ -269,7 +269,7 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 
 ## 9. Negative controls and sanity gates (recommended protocol for this project)
 
-1. **Scripted/oracle controller gate** — must solve the reset bank before any learned policy is trusted (ACT ships `scripted_policy.py`; plan §4.5). Validates env adapter + action contract + success predicate.
+1. **Native success-predicate probe** — task-independent: confirms that `adapter.check_success()` and `env._check_success()` are callable and return bool/dict on the frozen bank before any learned policy is trusted. Validates env adapter + action contract + success predicate chain (plan §4.5).
 2. **Random / no-op control** — lower bound sanity check.
 3. **Observation-schema control** — our robot-only BC (23-dim): a **negative control reported separately, never in the main table** because it has different information content. This is consistent with the role of upper/lower-bound controls in state-only imitation studies.
 4. **Privileged diagnostics** — teacher-forced / oracle routing rows labeled privileged, excluded from decisions (matches oracle-bound practice in SOIL/CIMER).
@@ -282,7 +282,7 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 | Protocol element | Recommendation | Justified by |
 |---|---|---|
 | Environment/dataset freeze | Pin robosuite version pair with dataset metadata; record hashes | plan §4.1; robomimic track warning |
-| Adapter validation | Scripted/oracle controller must solve all reset cases before learned policies | §9; ACT; plan §4.5 |
+| Adapter validation | Native-predicate probe + state-restore + parity gates must pass on the frozen reset bank before learned policies | §9; ACT; plan §4.5 |
 | Reset cases | **50 fixed serialized initial states per task**, disjoint from training/val, identical order for all models and seeds within each task | implementation plan (reset-case protocol); paired-design statistics §5.2 |
 | Episodes per (task, model, seed) | **50 selected evaluation episodes** (Wilson ±12–14 pp) — a defensible precedent, not a universal statistical minimum. Increasing to 100–200 is an optional predeclared precision extension. | §5.1; robomimic; Diffusion Policy |
 | Seeds | Use 3 trained seeds for the first descriptive matrix. If stronger inferential evidence is required, add seeds 45 and 46 before the final paper table; do not silently mix pilot and final results. | §5.4 Colas |
@@ -294,7 +294,7 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 | Invalid episodes | Infrastructure failures excluded from the success denominator; policy-caused NaNs/invalid actions/safety violations reported as policy failures under a strict metric, labeled separately | §3.9; plan §4.4 |
 | Routing diagnostics | Report fraction-to-top-expert, balance coefficient, entropy (over time), collapse, NMI vs phase labels — as diagnostics; note balance-vs-specialization tension (MoE-DP: balance-only → homogenization, entropy-only → collapse) | §6 |
 | Secondary metrics | Action MSE, smoothness, task progress — labeled diagnostic-only | §8 |
-| Controls | Robot-only BC separate appendix; teacher-forced/oracle labeled privileged; scripted + random gates | §9 |
+| Controls | Robot-only BC separate appendix; teacher-forced/oracle labeled privileged; native-predicate + random gates | §9 |
 | Claim boundary | "State-only offline diagnostic + closed-loop success across five separate robomimic tasks"; no vision or multitask claims | plan §1 |
 | Contextual references | Published Lift (PH) values (BC ≈ 100%, BC-RNN 1.00/0.96) as context only; direct comparison requires matching the full dataset/environment/action/reset/checkpoint protocols | §3.10 |
 

@@ -20,8 +20,9 @@ env:
   # the cache-derived value; leave null for the default task-relative
   # behavior (recommended).
   expected_env_name: null
-  # Collection environment per robomimic v0.4's v1.5 track. The gate
-  # compares the installed version against the dataset's env_version first.
+  # Compatibility fallback for legacy configs. Per-task data.source pins are
+  # authoritative when present; the gate also compares the installed version
+  # against the dataset's recorded env_version.
   robosuite_requirement: "==1.5.1"
   mujoco_requirement: ">=3.2.7"
 
@@ -44,15 +45,12 @@ episodes:
   checkpoint_sha256: null
 
 gates:
-  # Gate 4 threshold: fraction of bank cases the scripted controller must
-  # solve (1.0 = all 50; the controller is the pipeline's training-free
-  # end-to-end validation). The scripted controller class is dispatched
-  # on bank.task via the task registry.
-  scripted_threshold: 1.0
-  # Optional geometry probe override for Gate 4. null uses the controller's
-  # pinned production default. Set this only for a deliberate bank-wide
-  # validation sweep, e.g. scripted_descend_z_offset=0.01.
-  scripted_descend_z_offset: null
+  # Gate 4 is the task-independent native-predicate probe: confirms that
+  # adapter.check_success() and the underlying env._check_success() are
+  # both callable and return bool/dict on the frozen bank. Hard FAIL on any
+  # exception or non-bool return — the learned-policy sweep would produce
+  # meaningless numbers without a working success predicate.
+  native_predicate_cases: 5
   # Gate 5 sanity sweep (no-op + random), subsampled for speed.
   random_sanity_episodes: 20
   random_sanity_horizon: 200

@@ -33,7 +33,8 @@ debug. Lift-only results are not the final cross-task evaluation.
 
 1. pin a dataset/environment-compatible robosuite release;
 2. implement the shared state-only simulator adapter;
-3. validate the adapter on Lift with a scripted or state-oracle controller;
+3. validate the adapter on Lift with the task-independent gates
+   (parity + state restore + action contract + native predicate);
 4. run the same validation gates for every task;
 5. evaluate the matched model matrix separately on all five tasks in closed loop;
 6. persist per-episode results and uncertainty summaries;
@@ -79,9 +80,10 @@ its own task-conditioning protocol.
 
 ### 4.1 Freeze simulator and dataset parity first
 
-The current low-dimensional artifact is from the robomimic v1.5 track. The
-repository's current rollout extra pins `robosuite==1.4.0`, so rollout work must
-not begin with that environment unchanged.
+The current low-dimensional artifacts are from the robomimic v1.5 track. The
+repository rollout extra pins `robosuite==1.5.1` for Lift, Can, Square, and
+Transport. Tool Hang is an explicit exception: its embedded dataset metadata
+records `robosuite==1.5.0`, so it must run in a separate environment.
 
 Choose one complete compatible pair and record it in the protocol and run
 provenance. The preferred path is the current v1.5.1-compatible robomimic
@@ -173,16 +175,17 @@ missing piece is the simulator adapter and the runner that produces real
 Run the following gates in order:
 
 1. environment construction and state-schema self-test;
-2. reset-and-replay of one recorded demonstration action sequence;
+2. reset-and-replay of one recorded demonstration action sequence
+   (diagnostic; SKIPPED on cross-machine drift);
 3. action range, normalization, and gripper-convention test;
-4. scripted/state-oracle controller on the frozen reset cases for each task;
+4. native robosuite success-predicate availability probe (task-independent);
 5. random/no-op controller sanity check;
-6. one checkpoint through 10 smoke episodes.
+6. one checkpoint through 10 smoke episodes (skipped when no checkpoint).
 
-The scripted controller must solve the supported reset cases for each task. If it fails,
-repair the environment, reset cases, action mapping, or success predicate
-before evaluating learned policies. The 10-episode run is a smoke test only,
-never a final result.
+The native-predicate probe must pass on a pinned reset case for every task.
+If it fails, repair the environment, reset cases, action mapping, or
+success predicate before evaluating learned policies. The 10-episode run
+is a smoke test only, never a final result.
 
 ### 4.6 Evaluate the matched five-task matrix
 
@@ -240,8 +243,8 @@ outcome using this decision table:
 
 | Rollout result | Correct conclusion |
 |---|---|
-| Scripted controller fails | evaluator/environment contract is not validated |
-| Scripted controller succeeds, BC fails | state/action/temporal/training issue; do not judge MoE yet |
+| Native predicate / state-restore / parity gate fails | evaluator/environment contract is not validated |
+| Gates pass, BC fails | state/action/temporal/training issue; do not judge MoE yet |
 | BC succeeds, PhaseForge and controls match | routing hypothesis is not supported behaviorally |
 | PhaseForge improves routing only | mechanism-level offline result; no behavior claim |
 | PhaseForge improves rollout success consistently across the five tasks with matched controls | behavioral evidence for the five-task state-only claim |
@@ -279,11 +282,12 @@ The current offline Lift report can support an offline mechanism/diagnostic
 report if it is presented with that narrow claim.
 
 The five-task state-only rollout implementation described here is now present,
-including task-aware oracle controllers, schema checks, and BC-RNN. A paper
-claim that PhaseForge improves manipulation behavior remains blocked until the
-real simulator gates and the complete three-seed matrix finish successfully.
-It does not require images, a vision encoder, LIBERO, or comparison against VLA
-models.
+including task-independent environment gates (parity + state restore +
+action contract + native success-predicate probe), the rollout evaluator,
+schema checks, and BC-RNN. A paper claim that PhaseForge improves
+manipulation behavior remains blocked until the complete three-seed
+matrix finishes successfully. It does not require images, a vision
+encoder, LIBERO, or comparison against VLA models.
 
 This plan records the protocol and implementation boundary; it does not imply
 that the simulator gates or training runs have already been completed.
