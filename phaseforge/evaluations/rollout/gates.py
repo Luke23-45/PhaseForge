@@ -458,18 +458,30 @@ def gate_native_predicate(
 
 
 def _is_valid_predicate_value(value: object) -> bool:
-    """A predicate value is valid iff it is ``bool`` or ``dict`` with a
-    ``task`` key whose value coerces to ``bool``.
+    """A predicate value is valid iff it is a Python ``bool`` (or a numpy
+    scalar ``bool``) or a ``dict`` with a ``task`` key whose value
+    coerces to ``bool``.
 
-    ``RobosuiteStateAdapter.check_success`` already coerces a ``task`` key
-    to ``bool`` internally; this helper applies the same rule to the raw
-    ``env._check_success`` probe so an adapter refactor cannot quietly
-    accept a malformed dict.
+    Robosuite success predicates are implemented in numpy and routinely
+    return ``np.bool_`` scalars — those are the canonical "did the task
+    succeed?" answer in the robosuite codebase and rejecting them would
+    flag every state-only rollout pipeline. We accept Python ``bool`` and
+    any numpy scalar with ``dtype.kind == "b"`` as a strict predicate
+    value; everything else (including ``int``, ``np.int_``, ``str``,
+    ``None``) is rejected so a refactor cannot quietly substitute a
+    truthy-but-not-boolean return.
     """
     if isinstance(value, bool):
         return True
+    if isinstance(value, np.generic):
+        return value.dtype.kind == "b"
     if isinstance(value, dict):
-        return "task" in value and isinstance(value["task"], bool)
+        task_value = value.get("task")
+        if not isinstance(task_value, bool):
+            if isinstance(task_value, np.generic) and task_value.dtype.kind == "b":
+                return True
+            return False
+        return True
     return False
 
 

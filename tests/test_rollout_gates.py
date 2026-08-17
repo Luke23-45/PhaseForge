@@ -238,6 +238,37 @@ class TestNativePredicate:
         assert result.status == "PASS", result.detail
         assert result.metrics["probed"] == 3
 
+    def test_accepts_numpy_bool_scalar(self) -> None:
+        """Real Lift ``env._check_success`` returns ``np.bool_`` scalars; the
+        probe must accept them so every state-only rollout pipeline does
+        not fail the gates on a numpy-vs-python-bool type mismatch."""
+        import numpy as np
+
+        adapter = FakeAdapter(horizon=500)
+        adapter.env._check_success = lambda: np.bool_(False)  # type: ignore[assignment]
+        result = gate_native_predicate(
+            adapter,  # type: ignore[arg-type]
+            make_bank(3),
+            num_cases=3,
+        )
+        assert result.status == "PASS", result.detail
+        assert result.metrics["probed"] == 3
+
+    def test_rejects_non_boolean_numpy_scalar(self) -> None:
+        """An ``np.int_`` or ``np.float_`` is not a boolean predicate,
+        even if truthy — it would silently corrupt the success metric."""
+        import numpy as np
+
+        adapter = FakeAdapter(horizon=500)
+        adapter.env._check_success = lambda: np.int_(1)  # type: ignore[assignment]
+        result = gate_native_predicate(
+            adapter,  # type: ignore[arg-type]
+            make_bank(3),
+            num_cases=1,
+        )
+        assert result.status == "FAIL"
+        assert "unsupported" in result.detail
+
 
 class TestRandomNoop:
     def test_no_successes_no_infra(self) -> None:
