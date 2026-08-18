@@ -73,3 +73,14 @@ freeze_encoder: false
 # model/optimizer/scheduler/RNG/callback state and continues from the recorded
 # epoch (null = fresh run).
 resume_from: null
+
+# Inert mirrors of the stage-2 variant keys (docs/research/phase_utilization_
+# design.md): the eval CLI composes the default `train: stage1` group, so
+# stage-2 cell overrides (`train.phase_distill.*`, `train.phase_balance_coeff`)
+# must be valid struct keys here too. Stage-1 training never reads them.
+phase_distill:
+  enabled: false
+  kappa0: 1.0
+  tau: 1.0
+  anneal_epochs: 40
+phase_balance_coeff: 0.0
