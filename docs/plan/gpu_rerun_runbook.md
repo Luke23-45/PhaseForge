@@ -15,27 +15,32 @@ still need a full re-run for a consistent artifact set at one git revision
 (their part-3 eval rows target old checkpoints).
 
 **Fix commits:** `3cd510f` (stage-1 monitor now `val/loss_action`, matching the
-predeclared rule) **and the λ-decay fix (below, commit-pinned in Phase 1.4 of
-`docs/op/implementation_plan.md`)**. All code below must run at exactly the
-final revision (or a descendant with no further training-affecting change).
+predeclared rule). All code below must run at exactly the final revision (or a
+descendant with no further training-affecting change).
 
 **Adopted Phase-1 fix (2026-08-18, CPU-validated on 3 Lift seeds):**
-linear λ decay for the stage-1 auxiliary phase loss,
-`train.lambda_schedule.type=linear, start=1.0, end=0.0`.
-Local validation (tag `lambdav1`): stage-2 NMI spread **0.010** (fixed
-reference 0.021; tie-break 0.044; buggy 0.069) at equal NMI level (0.447),
-0% collapse, final action on the plateau (0.0337/0.0275/0.0312).
-The tie-break re-selection was tested standalone (spread 0.044) and on top of
-λ-decay (0.039) and rejected: the "min val/loss_phase on the plateau"
-criterion selects early epochs whose router-bootstrap centroids are
-consistently worse. Diagnosis that selected the fix family: grad-cosine
-measurement cos(∇L_action, ∇L_phase) ≈ 0 (no gradient conflict → no
-PCGrad/CAGrad/Du-adaptive weighting); val/loss_phase explosion is
-late-training degradation on the flat action plateau.
+the **monitor restoration** — stage-1 best-checkpoint selection by
+`val/loss_action` exactly as the protocol predeclared. Local validation
+(tags `fixed`/`tiebreak_v1` reference): best epochs 41/36/25, action loss
+0.0264/0.0240/0.0261 (spread 0.0024 vs 0.0255 buggy); stage-2 NMI
+0.449/0.457/0.436 (spread 0.021 vs 0.069 buggy) at equal level (0.447).
 
-The λ schedule is inert for every cell except phaseforge stage-1 (BC has no
-phase head → λ·0 = 0; stage-2 loops never read `lambda_schedule`), so it is
-safe in the manifest `defaults`.
+**Deliberately NOT enabled — the λ-decay refinement:** linear λ decay
+(1.0 → 0.0) was locally validated (stage-2 NMI spread 0.021 → 0.010, means
+identical; tags `lambdav1`/`lambdav1_stage2`) but is a **protocol deviation
+affecting only the phase-supervised arms**. Fairness decision 2026-08-18:
+the official comparison runs the predeclared λ = 1.0 for every method;
+baselines are untouched and unchanged. Diagnosis that motivated both changes:
+grad-cosine measurement cos(∇L_action, ∇L_phase) ≈ 0 (no gradient conflict →
+no PCGrad/CAGrad/Du-adaptive weighting); val/loss_phase explosion is
+late-training degradation on the flat action plateau (shared-encoder drift).
+The tie-break re-selection was also tested and rejected (spread 0.044
+standalone, 0.039 on top of λ-decay): its criterion selects early epochs
+whose router-bootstrap centroids are consistently worse.
+
+The λ schedule machinery remains in the code (inert by default: `constant`
+type = bit-identical to no schedule) and is documented as the fallback if
+the Gate 2 spread criterion fails.
 
 ---
 
@@ -48,7 +53,7 @@ safe in the manifest `defaults`.
      Hydra and validates: data task match, `models.name` resolution alias,
      `num_phases` consistency, checkpoint monitor rule, `freeze_encoder`,
      scheduler `T_max`, `eval` group/mode consistency.
-3. `uv run pytest -q` → 509 passed (baseline at this revision).
+3. `uv run pytest -q` → 547 passed (baseline at this revision).
 4. Verify the dataset/cache is present:
    - Processed cache under the shared data root (hash `4b06f5c2b28ebc9f` for
      Lift) OR the raw HDF5 files per task. The pipeline auto-builds from raw
@@ -68,21 +73,30 @@ safe in the manifest `defaults`.
 
 ## 1. Command
 
-### 1a. Manifest edit (reviewed, deliberate — same cells/seeds, one training-affecting change)
+### 1a. No manifest edit — the fix is in the committed config
 
-Add the adopted λ-decay overrides to `experiments/five_task.json` `defaults`:
+The adopted fix is the **monitor restoration** (`val/loss_total` → `val/loss_action`,
+commit `3cd510f`), already in the codebase; `experiments/five_task.json` needs **no change**
+to its `defaults` (only the predeclared `train.early_stopping.enabled=false`). Stage-1 runs
+with λ = 1.0 constant, exactly the predeclared protocol.
+
+**Deliberately NOT enabled — the λ-decay refinement:** linear λ decay (1.0 → 0.0) was locally
+validated (stage-2 NMI spread 0.021 → 0.010, means identical; tags `lambdav1`/`lambdav1_stage2`
+under `outputs_local_train/`) but is a **protocol deviation affecting only the phase-supervised
+arms** (phaseforge, phase_pretrain_random_router, teacher_forced via phaseforge's stage-1).
+Fairness decision 2026-08-18: the official comparison runs the predeclared λ = 1.0 for every
+method; baselines are untouched and unchanged. The refinement remains available: re-adding
 
 ```json
-"defaults": [
-  "train.early_stopping.enabled=false",
-  "train.lambda_schedule.type=linear",
-  "train.lambda_schedule.start=1.0",
-  "train.lambda_schedule.end=0.0"
-]
+"train.lambda_schedule.type=linear",
+"train.lambda_schedule.start=1.0",
+"train.lambda_schedule.end=0.0"
 ```
 
-Inert for all cells except phaseforge stage-1 (see above). After the edit:
-`uv run python scripts/preflight_configs.py` must still print 315 passed.
+to `defaults` (plus the inert `lambda_schedule` block already present in `stage2.yaml`)
+is the full activation, and is the documented fallback if the Gate 2 spread criterion
+fails. Protocol-compliance check on final runs: `train/lambda_phase` must be pinned at 1.0
+on every stage-1 curve.
 
 ### 1b. Phase-2 subset first (professor §7): Lift, the two stage-1-affecting methods
 
@@ -99,9 +113,11 @@ phaseforge-sweep \
 
 Success criteria (professor §7 Phase 2): per-seed rollout spread drops while
 `val/loss_action` stays on its plateau; target PhaseForge spread 0.24 →
-≈0.04–0.10 (plain-encoder control ≈0.04). Local CPU proxy already achieved:
-stage-2 NMI spread 0.010. If achieved, the result upgrades from "highest
-mean, highest variance" to **"highest mean, low variance"**.
+≈0.04–0.10 (plain-encoder control ≈0.04). Local CPU proxy already achieved
+with the official pipeline: stage-2 NMI spread 0.021 (λ-decay refinement:
+0.010 — documented fallback if this criterion fails). If achieved, the
+result upgrades from "highest mean, highest variance" to
+**"highest mean, low variance"**.
 
 ### 1c. Full sweep only after Gate 2 passes
 
@@ -173,21 +189,20 @@ Eval mode: rollout for all except `oracle_moe` (offline metrics).
 
 ## 5. Local validation reference (CPU, for comparison)
 
-Stage-1 (fixed monitor, 3 seeds): best `val/loss_action` 0.0264/0.0240/0.0261
-@ epochs 41/36/25 (buggy: 0.0451/0.0404/0.0659 @ epochs 2/2/1).
+**Official pipeline — fixed monitor, λ = 1.0 constant (3 seeds):**
+stage-1 best `val/loss_action` 0.0264/0.0240/0.0261 @ epochs 41/36/25
+(buggy: 0.0451/0.0404/0.0659 @ epochs 2/2/1); stage-2 final action
+0.0301/0.0279/0.0308, NMI **0.449/0.457/0.436 (spread 0.021)**, collapse 0%.
 
-Stage-1 (fixed monitor **+ λ-decay**, tag `lambdav1`): best `val/loss_action`
-0.0266/0.0241/0.0260 @ epochs 41/36/25; final `val/loss_phase` 2.28–2.47
+**Refinement only — fixed monitor + λ-decay (tag `lambdav1`, not adopted):**
+stage-1 best `val/loss_action` 0.0266/0.0241/0.0260 @ epochs 41/36/25;
+stage-2 (tag `lambdav1_stage2`) final action 0.0337/0.0275/0.0312, NMI
+**0.450/0.450/0.440 (spread 0.010)**; final `val/loss_phase` 2.28–2.47
 (shared-encoder drift, no longer phase-head overfitting).
 
-Stage-2 (warm start from λ-decay checkpoints, tag `lambdav1_stage2`):
-final action 0.0337/0.0275/0.0312; NMI final **0.450/0.450/0.440, spread
-0.010**; collapse 0%. Runs live under `outputs_local_train/`.
-
-For reference, stage-2 from fixed-monitor-no-schedule checkpoints was
-0.0301/0.0279/0.0308 action, NMI 0.449/0.457/0.436 (spread 0.021); from
-tie-break checkpoints NMI 0.440/0.411/0.395 (spread 0.044); from tie-break-
-on-λ checkpoints NMI 0.434/0.414/0.394 (spread 0.039).
+For reference, stage-2 from tie-break checkpoints NMI 0.440/0.411/0.395
+(spread 0.044); from tie-break-on-λ checkpoints NMI 0.434/0.414/0.394
+(spread 0.039). All runs live under `outputs_local_train/`.
 
 ## 6. Notes / cautions
 

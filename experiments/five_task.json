@@ -4,10 +4,7 @@
   "description": "Frozen five-task state-only rollout evaluation. The scientific scope of the experiment (final evaluation plan, sec. 3): one row per (method, task, seed). Lift is the first debugging task because its geometry is the simplest, but the reported results cover all five benchmark tasks (Lift, Can, Square, ToolHang, Transport). Each task is evaluated as a separate single-task policy (not a multi-task policy). The same 10-method matrix is replicated for each task, including the matched temporal BC-RNN comparator.",
   "seeds": [42, 43, 44],
   "defaults": [
-    "train.early_stopping.enabled=false",
-    "train.lambda_schedule.type=linear",
-    "train.lambda_schedule.start=1.0",
-    "train.lambda_schedule.end=0.0"
+    "train.early_stopping.enabled=false"
   ],
   "tasks": ["Lift", "Can", "Square", "ToolHang", "Transport"],
   "methods": [

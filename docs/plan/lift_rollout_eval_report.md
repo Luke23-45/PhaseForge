@@ -38,7 +38,7 @@ the result is **directional, not significant**.
   significance still cannot be claimed. The professor's M=1, N=3 caveat applies verbatim (§7).
 - **Do not claim better manipulation yet.** Per research_definition.md §6 this is a controlled
   null result, or at most a directional result without statistical support; Phase 2 GPU re-runs
-  (with the adopted λ-decay fix) replace these numbers, and Phase 5 computes the seed budget.
+  (with the adopted monitor-restoration fix) replace these numbers, and Phase 5 computes the seed budget.
 
 ---
 
@@ -241,17 +241,23 @@ independent measurements, fixed, and the fix was locally validated before any GP
      to epochs 23/10/14 with phase loss 1.512/1.091/1.170 (< ln 6), but stage-2 NMI became
      **0.440/0.411/0.395 (spread 0.044)** — worse than fixed-reference 0.449/0.457/0.436
      (spread 0.021) → insufficient on its own.
-   - *1.4 λ-decay (ADOPTED):* `train.lambda_schedule` linear 1.0 → 0.0. Inert for BC (no phase
-     head) and stage-2 (own `_compute_loss`); `constant` type is bit-identical to the old code.
-3. **Local CPU validation of the fix (3 seeds, `outputs_local_train/`, tags `lambdav1` +
-   `lambdav1_stage2`):** stage-1 best epoch moved to 41/36/25 with action loss
-   **0.0266/0.0241/0.0260** (spread 0.0025 vs 0.0255 buggy); stage-2 warm-start action loss
-   0.0337/0.0275/0.0312; stage-2 NMI **0.450/0.450/0.440 (spread 0.010)**, 0% collapse in all
-   seeds, final action loss 0.0337/0.0275/0.0312.
+   - *1.4 λ-decay:* `train.lambda_schedule` linear 1.0 → 0.0 was validated (stage-2 NMI
+     spread 0.021 → 0.010, means identical) but is **not adopted for the official
+     comparison**: it deviates from the predeclared λ = 1.0 and affects only the
+     phase-supervised arms (the plain/BC/scratch methods have no phase loss to schedule),
+     which would make H2 compare "phase enc + schedule vs plain enc". Fairness decision
+     (2026-08-18): every method runs its predeclared configuration. λ-decay is retained
+     as a documented refinement (code + tests inert by default; fallback if Gate 2 fails).
+3. **Local CPU validation of the adopted fix (monitor restoration, 3 seeds,
+   `outputs_local_train/`):** stage-1 best epoch moved to 41/36/25 with action loss
+   **0.0264/0.0240/0.0261** (spread 0.0024 vs 0.0255 buggy); stage-2 warm-start action loss
+   0.0301/0.0279/0.0308; stage-2 NMI **0.449/0.457/0.436 (spread 0.021)**, 0% collapse in all
+   seeds, final action loss 0.0286/0.0259/0.0276.
 4. **Do not over-read this report's rollout numbers:** they were produced from *buggy*
-   checkpoints at commit `c09270a`. The corrected pipeline (λ-decay) must be re-run on GPU
-   (Phase 2 of the implementation plan) before any behavioral claim; this report then gets a
-   final §3 update from the fresh `outputs_rerun` episodes.
+   checkpoints at commit `c09270a`. The corrected pipeline (monitor restoration, λ = 1.0
+   as predeclared) must be re-run on GPU (Phase 2 of the implementation plan) before any
+   behavioral claim; this report then gets a final §3 update from the fresh `outputs_rerun`
+   episodes. The λ-decay refinement remains available if the spread criterion fails.
 
 ---
 
@@ -266,11 +272,12 @@ independent measurements, fixed, and the fix was locally validated before any GP
    Its conclusions were computed from the buggy-checkpoint evals; the corrected runs reverse the
    H2 direction and put PhaseForge at the top of the mean. The H3 verdict (not significant) is
    unchanged.
-4. **Next steps, in order:** (a) GPU re-run with the adopted λ-decay fix (runbook
-   `docs/plan/gpu_rerun_runbook.md`, five-task manifest updated with
-   `train.lambda_schedule.*` defaults); (b) complete the missing cells — Teacher-Forced (H4),
-   BC-RNN — before any conclusion; (c) seed budget from Colas et al. power analysis on the
-   post-fix effect size (Phase 5); (d) multi-task claim requires the predeclared 3/5 tasks.
+4. **Next steps, in order:** (a) GPU re-run with the adopted monitor-restoration fix
+   (runbook `docs/plan/gpu_rerun_runbook.md`; five-task manifest needs **no** λ overrides —
+   every method runs its predeclared configuration); (b) complete the missing cells —
+   Teacher-Forced (H4), BC-RNN — before any conclusion; (c) seed budget from Colas et al.
+   power analysis on the post-fix effect size (Phase 5); (d) multi-task claim requires the
+   predeclared 3/5 tasks.
 5. **Use rollout success as the decision metric.** Offline MSE/NMI ordering did not reproduce in
    rollout; §6 documents this explicitly.
 
@@ -294,4 +301,4 @@ independent measurements, fixed, and the fix was locally validated before any GP
 - `outputs/part1/outputs/`, `outputs/part2/outputs/` — `eval/*/seed*/…/episodes.jsonl` for every
   corrected number; runner state and ledgers alongside.
 - Commits: `d127980` (tanh action fix), `a07dd2c` (runner auto-inject fix), `3cd510f` (monitor
-  fix), `c09270a` (commit gate), `186045b` (λ-decay adoption + diagnostics).
+  fix), `c09270a` (commit gate), `186045b` (diagnostics + λ-decay as documented refinement).
