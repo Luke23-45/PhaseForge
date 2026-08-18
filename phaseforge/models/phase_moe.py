@@ -334,7 +334,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             )
 
         elif r_type == "phase_head":
-            phase_weight = self.phase_head.head.weight.data
+            phase_weight = self.phase_head.classifier.weight.data
             weights = compute_phase_head_router_weights(phase_weight, num_experts)
             self.moe_layer.router.gate_linear.weight.data.copy_(weights)
             self.moe_layer.router.gate_linear.bias.data.zero_()

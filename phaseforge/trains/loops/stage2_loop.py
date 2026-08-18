@@ -94,7 +94,7 @@ class Stage2Trainer(BaseTrainer):
                 {"params": other_params, "lr": base_lr},
                 {"params": encoder_params, "lr": base_lr * encoder_lr_scale},
             ]
-            self.optimizer = instantiate(self.train_cfg.optimizer, params=param_groups)
+            self.optimizer = instantiate(self.train_cfg.optimizer, params=param_groups, _convert_="all")
             logger.info(
                 f"Stage 2 Fine-Tuning: Encoder trained with scaled LR "
                 f"{base_lr * encoder_lr_scale:.2e} (scale={encoder_lr_scale}), "
