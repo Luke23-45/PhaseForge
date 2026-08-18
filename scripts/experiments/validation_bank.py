@@ -176,9 +176,10 @@ def _render_report(payload: dict) -> None:
             ci = "-"
             if r.get("ci_low") is not None and r.get("ci_high") is not None:
                 ci = f"{r['ci_low']:.3f}-{r['ci_high']:.3f}"
+            sr_str = f"{sr:.3f}" if sr is not None else "-"
             lines.append(
                 f"| {s} | {bank} | {r.get('best_epoch') if r.get('best_epoch') is not None else '-'} | "
-                f"{sr:.3f if sr is not None else '-'} | {ci} |"
+                f"{sr_str} | {ci} |"
             )
     lines += [
         "",

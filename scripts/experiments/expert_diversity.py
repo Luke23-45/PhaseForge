@@ -62,7 +62,7 @@ def _diversity(outputs: Path, seed: int, epoch: int, max_samples: int, device) -
     if not ckpt.is_file():
         raise FileNotFoundError(f"{ckpt} not found")
     model, cfg = build_model_and_load(ckpt, device)
-    val_loader = build_val_loader(cfg, max_samples=max_samples)
+    val_loader = build_val_loader(cfg)
     latents = _collect_latents(model, val_loader, device, max_samples)
     if latents.shape[0] < 2:
         return {"epoch": epoch, "error": "too few latents"}

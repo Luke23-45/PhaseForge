@@ -83,7 +83,7 @@ def _aggregate(records: list[dict]) -> dict:
             "steps_failure": [],
         })
         slot["n_runs"] += 1
-        slot["episodes"] += r["episodes"]
+        slot["episodes"] += r["episodes"] or 0
         slot["successes"] += sum(1 for s in r["ep_successes"] if s)
         for cat, count in (r["failure_categories"] or {}).items():
             slot["category_counter"][cat] += count
@@ -156,10 +156,11 @@ def _render_report(payload: dict) -> None:
     for slot in payload["by_method"]:
         ms = slot["mean_steps_success"]
         mf = slot["mean_steps_failure"]
+        ms_str = f"{ms:.1f}" if ms is not None else "-"
+        mf_str = f"{mf:.1f}" if mf is not None else "-"
         lines.append(
             f"| {slot['model']} | {slot['tag']} | {slot['n_runs']} | {slot['episodes']} | "
-            f"{slot['success_rate']:.3f} | "
-            f"{ms:.1f if ms is not None else '-'} | {mf:.1f if mf is not None else '-'} |"
+            f"{slot['success_rate']:.3f} | {ms_str} | {mf_str} |"
         )
     lines += ["", "## Failure category breakdown (sum across runs)", ""]
     for slot in payload["by_method"]:

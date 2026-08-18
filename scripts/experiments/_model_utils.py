@@ -43,7 +43,7 @@ def build_model_and_load(ckpt_path: Path, device, overrides=()):
     from phaseforge.cli import _load_state_dict_checked
     from phaseforge.utils.registry import build_model
 
-    cfg = compose_cfg([f"models={name}" for name in []] + list(overrides))
+    cfg = compose_cfg(list(overrides))
     model = build_model(cfg)
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     _load_state_dict_checked(model, ckpt["model_state_dict"], "eval")
@@ -51,7 +51,7 @@ def build_model_and_load(ckpt_path: Path, device, overrides=()):
     return model, cfg
 
 
-def build_val_loader(cfg, max_samples: int | None = None, batch_size: int = 256):
+def build_val_loader(cfg):
     from phaseforge.utils.registry import build_data_pipeline
 
     loaders = build_data_pipeline(cfg).run()
@@ -111,12 +111,12 @@ def read_run_dir(run_dir: Path) -> dict:
     return json.loads(meta_path.read_text(encoding="utf-8"))
 
 
-def resolve_run_dir(seed_dir: Path, model_name: str | None = None, seed: int | None = None, tag: str | None = None) -> Path:
+def resolve_run_dir(seed_dir: Path, model_name: str | None = None, seed: int | None = None, tag: str | None = None, method_name: str | None = None) -> Path:
     """Resolve the timestamped run directory under ``seed_dir``.
 
-    Prefers a run whose ``run_meta.json`` matches (model_name, seed, tag);
-    falls back to the single subdirectory when there is exactly one (the
-    typical layout after a per-seed sweep run).
+    Prefers a run whose ``run_meta.json`` matches (model_name, seed, tag,
+    method). Falls back to the single subdirectory when there is exactly one
+    (the typical layout after a per-seed sweep run).
     """
     if not seed_dir.is_dir():
         raise FileNotFoundError(f"no such directory: {seed_dir}")
@@ -124,6 +124,17 @@ def resolve_run_dir(seed_dir: Path, model_name: str | None = None, seed: int | N
     if not subdirs:
         raise FileNotFoundError(f"no run subdirectory under {seed_dir}")
     if len(subdirs) == 1:
+        meta = read_run_dir(subdirs[0])
+        if method_name is not None and meta.get("method") != method_name:
+            raise FileNotFoundError(
+                f"single run under {seed_dir} is method={meta.get('method')!r}, "
+                f"expected {method_name!r}"
+            )
+        if model_name is not None and meta.get("model_name") != model_name:
+            raise FileNotFoundError(
+                f"single run under {seed_dir} is model={meta.get('model_name')!r}, "
+                f"expected {model_name!r}"
+            )
         return subdirs[0]
     for d in subdirs:
         meta = read_run_dir(d)
@@ -133,17 +144,29 @@ def resolve_run_dir(seed_dir: Path, model_name: str | None = None, seed: int | N
             continue
         if tag is not None and meta.get("tag") != tag:
             continue
+        if method_name is not None and meta.get("method") != method_name:
+            continue
         return d
-    raise FileNotFoundError(f"no run under {seed_dir} matching model={model_name} seed={seed} tag={tag}")
+    raise FileNotFoundError(
+        f"no run under {seed_dir} matching model={model_name} seed={seed} "
+        f"tag={tag} method={method_name}"
+    )
 
 
 def stage2_run_dir(outputs: Path, seed: int) -> Path:
-    """Resolve ``outputs/phaseforge/stage2/seed{S}/<run>``."""
+    """Resolve the *Wave A1 sweep* stage-2 run for a seed.
+
+    The sweep trains with ``project.method=phaseforge``; the Wave B/A3 cells
+    (four_way_init, ablation_grid, validation_bank) reuse the same output
+    tree with different method names, so the method filter keeps this from
+    picking a sibling run.
+    """
     return resolve_run_dir(
         outputs / "phaseforge" / "stage2" / f"seed{seed}",
         model_name="phaseforge",
         seed=seed,
         tag=None,
+        method_name="phaseforge",
     )
 
 

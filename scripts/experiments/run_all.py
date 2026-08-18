@@ -18,9 +18,7 @@ so the CLI logs land on their own stderr streams.
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -91,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Wave prefixes to run (default: all). Examples: A, A1, B3_B4.")
     parser.add_argument("--seeds", default="42,43,44")
     parser.add_argument("--outputs", default="outputs/surgical")
-    parser.add_argument("--timeout", type=int, default=7200)
+    parser.add_argument("--timeout", type=int, default=28800,
+                        help="Per-script timeout in seconds (default 8h; the Wave A1 sweep is the long pole).")
     parser.add_argument("--force", action="store_true", help="Re-run scripts whose findings already exist.")
     parser.add_argument("--uv", default="uv", help="Path to uv (or python) executable.")
     parser.add_argument("--label", default="real_matrix", help="Label for the C2 failure_phase findings file.")

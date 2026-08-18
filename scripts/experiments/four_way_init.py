@@ -118,7 +118,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[b1] seed {seed}: {exc} — run Wave A1 (checkpoint_sweep) first")
             continue
         for tag, label, overrides in CELLS:
-            tagged = dataclasses.replace(base_provider, name=f"phaseforge_b1_{tag}", tag=tag)
+            tagged = dataclasses.replace(
+                base_provider,
+                name=f"phaseforge_b1_{tag}",
+                tag=tag,
+                overrides=overrides,
+            )
             try:
                 run_dir = _find_run_by_meta(_run_dir_base(outputs, tagged, 2, seed), tagged.name, seed, tag)
                 print(f"[b1] seed {seed} cell {tag}: reusing {run_dir.name}")

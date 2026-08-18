@@ -90,7 +90,7 @@ def _process_seed(outputs: Path, seed: int, max_samples: int, device) -> dict:
     if not ckpt.is_file():
         raise FileNotFoundError(f"checkpoint_best.pt missing at {ckpt}")
     model, cfg = build_model_and_load(ckpt, device)
-    val_loader = build_val_loader(cfg, max_samples=max_samples)
+    val_loader = build_val_loader(cfg)
     chunks_lat, chunks_act, chunks_z = [], [], []
     seen = 0
     for batch in iter_val_batches(model, val_loader, device):

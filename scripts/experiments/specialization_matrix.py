@@ -42,7 +42,7 @@ def _contingency(outputs: Path, seed: int, max_samples: int, device) -> dict:
     if not ckpt.is_file():
         raise FileNotFoundError(f"checkpoint_best.pt missing at {ckpt}")
     model, cfg = build_model_and_load(ckpt, device)
-    val_loader = build_val_loader(cfg, max_samples=max_samples)
+    val_loader = build_val_loader(cfg)
     counts = torch.zeros((cfg.models.phase_head.num_phases, cfg.models.router.num_experts), dtype=torch.float64)
     counts_pred = torch.zeros_like(counts)
     n_per_phase = torch.zeros(cfg.models.phase_head.num_phases, dtype=torch.long)
