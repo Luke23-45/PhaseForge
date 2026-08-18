@@ -67,6 +67,7 @@ class Method:
     tag: str | None = None
     evaluate_mode: str = "rollout"
     task: str | None = None
+    defaults: tuple[str, ...] = ()
 
     @property
     def model_name(self) -> str:
@@ -123,6 +124,10 @@ class Protocol:
             if m.index == index and (task is None or m.task == task):
                 return m
         return None
+
+    def defaults_for(self, method: Method) -> tuple[str, ...]:
+        """Per-method hydra overrides, then protocol-level defaults."""
+        return (*method.defaults, *self.defaults)
 
     def select_methods(self, refs: list[str]) -> list[Method]:
         """Resolve a list of user references to ordered :class:`Method`s.
@@ -230,6 +235,14 @@ def _parse_method(raw: dict[str, Any]) -> Method:
     if task is not None and (not isinstance(task, str) or not task):
         raise ProtocolError(f"Method {name!r}: 'task' must be a non-empty string or null.")
 
+    defaults_raw = raw.get("defaults", [])
+    if not isinstance(defaults_raw, list) or not all(
+        isinstance(d, str) and d for d in defaults_raw
+    ):
+        raise ProtocolError(
+            f"Method {name!r}: 'defaults' must be a list of override strings."
+        )
+
     return Method(
         index=index,
         name=name,
@@ -242,6 +255,7 @@ def _parse_method(raw: dict[str, Any]) -> Method:
         tag=tag,
         evaluate_mode=evaluate_mode,
         task=task,
+        defaults=tuple(defaults_raw),
     )
 
 

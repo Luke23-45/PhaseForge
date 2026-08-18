@@ -46,6 +46,10 @@ _VAL_KEY_MAP = {
     "loss_total": "val/loss_total",
     "loss_action": "val/loss_action",
     "loss_phase": "val/loss_phase",
+    # Phase-utilization study (V2/V4): the phase-distillation and
+    # phase-conditional balance losses are computed in validation too.
+    "loss_phase_distill": "val/loss_phase_distill",
+    "loss_phase_balance": "val/loss_phase_balance",
 }
 
 _EMPTY_SOURCE_STAGE1 = {

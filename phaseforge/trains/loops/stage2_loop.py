@@ -61,6 +61,70 @@ class Stage2Trainer(BaseTrainer):
 
         super().fit()
 
+    def _phase_distill_weight(self) -> float:
+        """Effective κ(t) for the phase-distillation warmup (V2).
+
+        ``train.phase_distill`` (disabled by default):
+        ``{enabled, kappa0, tau, anneal_epochs}``. The KL term
+        ``κ(t)·E[KL(g(z) ‖ softmax(F(z)/τ))]`` shapes the router toward the
+        frozen stage-1 phase predictor during the first ``anneal_epochs``
+        epochs and is then released so the action loss takes over.
+        """
+        cfg = self.train_cfg.get("phase_distill") or {}
+        if not cfg.get("enabled", False):
+            return 0.0
+        anneal_epochs = max(1, int(cfg.get("anneal_epochs", 40)))
+        if self.current_epoch >= anneal_epochs:
+            return 0.0
+        kappa0 = float(cfg.get("kappa0", 1.0))
+        t = min(max(float(self.current_epoch), 0.0), float(anneal_epochs))
+        return kappa0 * (1.0 - t / float(anneal_epochs))
+
+    @staticmethod
+    def _phase_conditional_balance(
+        gate_logits: torch.Tensor,
+        phases: torch.Tensor,
+        num_experts: int,
+    ) -> torch.Tensor:
+        """Within-phase Switch balance loss (V4).
+
+        ``L = Σ_p (E / |D_p|) Σ_i f_i^p · p_i^p`` where f_i^p is the fraction
+        of phase-p tokens whose top-1 expert is i and p_i^p is the mean gate
+        probability over phase-p tokens. Global balance (Switch) pushes every
+        token's gate toward the uniform 1/E — the uniformizing force behind
+        pseudo-balancing (docs/research/phase_utilization_design.md Lemma 2).
+        Within-phase balance keeps utilization even inside each phase while
+        allowing phases to commit to small expert subsets.
+
+        Args:
+            gate_logits: (B, E) raw gate logits.
+            phases: (B,) integer phase labels.
+            num_experts: E.
+
+        Returns:
+            Scalar loss.
+        """
+        probs = torch.softmax(gate_logits, dim=-1)
+        top1 = gate_logits.argmax(dim=-1)
+        B, E = gate_logits.shape
+        loss = torch.zeros((), device=gate_logits.device)
+        for p in torch.unique(phases):
+            mask = phases == p
+            n = int(mask.sum().item())
+            if n == 0:
+                continue
+            p_probs = probs[mask]  # (n, E)
+            p_top1 = top1[mask]  # (n,)
+            f = torch.zeros((E,), device=gate_logits.device)
+            if n > 0:
+                f.scatter_add_(
+                    0, p_top1, torch.ones_like(p_top1, dtype=gate_logits.dtype)
+                )
+                f = f / float(n)
+            p_mean = p_probs.mean(dim=0)
+            loss = loss + float(E) * (f * p_mean).sum() * (float(n) / float(B))
+        return loss
+
     def _compute_loss(
         self, batch: dict[str, torch.Tensor], out: ModelOutput | None = None
     ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
@@ -93,6 +157,42 @@ class Stage2Trainer(BaseTrainer):
             "loss_action": action_loss.detach(),
             "loss_balance": balance_loss.detach(),
         }
+
+        # Phase-conditional balance (V4): within-phase Switch balance
+        # replaces the global uniformizing force. Opt-in via
+        # train.phase_balance_coeff > 0 (the V4 cell also sets the router's
+        # balance_coeff to 0 so the two forces do not fight).
+        phase_balance_coeff = float(self.train_cfg.get("phase_balance_coeff", 0.0))
+        if phase_balance_coeff > 0.0 and out.gate_logits is not None:
+            phases = batch["phase"]
+            if mask is not None:
+                phases = phases[mask]
+                gate_logits = out.gate_logits[mask]
+            else:
+                gate_logits = out.gate_logits
+            phase_balance = self._phase_conditional_balance(
+                gate_logits, phases, gate_logits.size(-1)
+            )
+            if phase_balance_coeff != 0.0:
+                total_loss = total_loss + phase_balance_coeff * phase_balance
+                metrics["loss_phase_balance"] = (phase_balance_coeff * phase_balance).detach()
+
+        # Phase distillation warmup (V2): the frozen stage-1 phase predictor
+        # teaches the router (KL), annealed to zero. Requires
+        # models.emit_phase_logits=true so out.phase_logits is available.
+        distill_kappa = self._phase_distill_weight()
+        if distill_kappa > 0.0 and out.phase_logits is not None and out.gate_logits is not None:
+            tau = float((self.train_cfg.get("phase_distill") or {}).get("tau", 1.0))
+            teacher = torch.softmax(out.phase_logits / tau, dim=-1).detach()
+            log_router = torch.log_softmax(out.gate_logits, dim=-1)
+            kl = (teacher * (teacher.clamp_min(1e-9).log() - log_router)).sum(dim=-1)
+            if mask is not None:
+                kl = kl[mask].mean()
+            else:
+                kl = kl.mean()
+            distill_loss = distill_kappa * kl
+            total_loss = total_loss + distill_loss
+            metrics["loss_phase_distill"] = distill_loss.detach()
 
         return total_loss, metrics
 

@@ -135,6 +135,40 @@ def test_load_protocol_valid(tmp_path: Path) -> None:
     assert protocol.defaults == ("train.early_stopping.enabled=false",)
 
 
+def test_load_protocol_method_defaults(tmp_path: Path) -> None:
+    doc = _valid_doc()
+    doc["methods"][0]["defaults"] = ["models.router.init=phase_head", "train.phase_distill.enabled=true"]
+    protocol = load_protocol(_write_protocol(tmp_path, doc))
+    method = protocol.methods[0]
+    assert method.defaults == (
+        "models.router.init=phase_head",
+        "train.phase_distill.enabled=true",
+    )
+    assert protocol.defaults_for(method) == (
+        "models.router.init=phase_head",
+        "train.phase_distill.enabled=true",
+        "train.early_stopping.enabled=false",
+    )
+    assert protocol.defaults_for(protocol.methods[1]) == ("train.early_stopping.enabled=false",)
+
+
+@pytest.mark.parametrize(
+    "bad_defaults, match",
+    [
+        ("models.router.init=phase_head", "list of override strings"),
+        ([42], "list of override strings"),
+        ([""], "list of override strings"),
+    ],
+)
+def test_load_protocol_rejects_bad_method_defaults(
+    tmp_path: Path, bad_defaults, match
+) -> None:
+    doc = _valid_doc()
+    doc["methods"][0]["defaults"] = bad_defaults
+    with pytest.raises(ProtocolError, match=match):
+        load_protocol(_write_protocol(tmp_path, doc))
+
+
 @pytest.mark.parametrize(
     "mutate, match",
     [

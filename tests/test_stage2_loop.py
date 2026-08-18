@@ -111,6 +111,38 @@ class SqrtPoisonModel(torch.nn.Module):
         pass
 
 
+class PhaseEmittingMoEModel(torch.nn.Module):
+    """Fake MoE with deterministic gate + phase-head logits (V2/V4 tests).
+
+    Routes every sample one-hot to its GT phase and emits a one-hot phase
+    predictor that always predicts phase 0.
+    """
+
+    def __init__(self, num_experts: int = 3) -> None:
+        super().__init__()
+        self.num_experts = num_experts
+        self.probe = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        phase = batch["phase"]
+        B = phase.size(0)
+        gate = torch.zeros(B, self.num_experts)
+        gate.scatter_(1, phase.unsqueeze(-1), 100.0)
+        phase_logits = torch.zeros(B, self.num_experts)
+        phase_logits[:, 0] = 10.0
+        return ModelOutput(
+            action_pred=self.probe * torch.zeros(B, 2),
+            phase_logits=phase_logits,
+            routing_weights=torch.ones(B, 1),
+            expert_indices=phase.unsqueeze(-1),
+            gate_logits=gate,
+            aux_losses={"balance": torch.tensor(0.0)},
+        )
+
+    def freeze_encoder(self) -> None:
+        pass
+
+
 def _make_trainer(model: torch.nn.Module, val_loader: DataLoader) -> Stage2Trainer:
     cfg = DictConfig(
         {
@@ -243,3 +275,81 @@ def test_non_finite_gradient_fails_fast() -> None:
 
     with pytest.raises(FloatingPointError, match="Non-finite gradient"):
         trainer.fit()
+
+
+# ---------------------------------------------------------------------------
+# Phase-utilization study: V4 (phase-conditional balance) and V2 (distillation)
+# ---------------------------------------------------------------------------
+
+
+def test_phase_conditional_balance_loss_added() -> None:
+    # Each phase-p token routes one-hot to expert p: f_i^p = 1 for i = p,
+    # p_i^p = 1, so the within-phase term is E * 1 per phase. Total loss =
+    # coeff * E * (sum over phases of n_p/B) = coeff * E = 0.01 * 3.
+    model = CountingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=32, seed=10), batch_size=8))
+    trainer.train_cfg.phase_balance_coeff = 0.01
+
+    batch = next(iter(DataLoader(_DictDataset(num=8, seed=11), batch_size=8)))
+    total_loss, metrics = trainer._compute_loss(batch)
+
+    assert "loss_phase_balance" in metrics
+    assert metrics["loss_phase_balance"] == pytest.approx(0.01 * 3, abs=1e-4)
+    assert "loss_balance" in metrics  # global balance still tracked
+
+
+def test_phase_conditional_balance_off_by_default() -> None:
+    model = CountingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(seed=12), batch_size=8))
+    batch = next(iter(DataLoader(_DictDataset(num=8, seed=13), batch_size=8)))
+    total_loss, metrics = trainer._compute_loss(batch)
+    assert "loss_phase_balance" not in metrics
+
+
+def test_phase_distill_warmup_adds_kl() -> None:
+    # Teacher is one-hot phase 0 (softmax([10,0,0])); the router gate is
+    # one-hot at the GT phase. For a phase-0 sample: KL ≈ log(1/softmax
+    # (gate)_0)... with gate = [100, 0, 0], log q_0 ≈ 0, t_0 ≈ 1, so
+    # KL ≈ 0. For phase-1 samples: log q_1 = log_softmax([100,0,0])_1 ≈
+    # -100, t_0 ≈ 1, so KL ≈ t_0 * (log t_0 - log q_0) ≈ 100. With 1/3 of
+    # samples at each phase the mean KL ≈ 2/3 * 100.
+    model = PhaseEmittingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=32, seed=14), batch_size=8))
+    trainer.train_cfg.phase_distill = {
+        "enabled": True,
+        "kappa0": 1.0,
+        "tau": 1.0,
+        "anneal_epochs": 40,
+    }
+    trainer.current_epoch = 0
+
+    batch = next(iter(DataLoader(_DictDataset(num=12, seed=15), batch_size=12)))
+    total_loss, metrics = trainer._compute_loss(batch)
+
+    assert "loss_phase_distill" in metrics
+    assert metrics["loss_phase_distill"] > 30.0  # dominated by the ~100/phase-1 KLs
+    assert total_loss > metrics["loss_phase_distill"]
+
+
+def test_phase_distill_anneals_to_zero() -> None:
+    model = PhaseEmittingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(seed=16), batch_size=8))
+    trainer.train_cfg.phase_distill = {
+        "enabled": True,
+        "kappa0": 1.0,
+        "tau": 1.0,
+        "anneal_epochs": 40,
+    }
+    trainer.current_epoch = 40
+
+    batch = next(iter(DataLoader(_DictDataset(num=8, seed=17), batch_size=8)))
+    total_loss, metrics = trainer._compute_loss(batch)
+    assert "loss_phase_distill" not in metrics
+
+
+def test_phase_distill_disabled_by_default() -> None:
+    model = PhaseEmittingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(seed=18), batch_size=8))
+    batch = next(iter(DataLoader(_DictDataset(num=8, seed=19), batch_size=8)))
+    total_loss, metrics = trainer._compute_loss(batch)
+    assert "loss_phase_distill" not in metrics

@@ -1,0 +1,89 @@
+{
+  "name": "phase_utilization_variants",
+  "task": "Lift",
+  "description": "GPU rollout validation of the phase-utilization screening winners (V2/V4/V6), trained from the frozen-protocol phaseforge stage-1 checkpoints (same outputs base, same revision). Each cell is the protocol-identical PhaseForge stage-2 cell plus a single screened mechanism channel, per docs/research/phase_utilization_design.md sections 5-10. The official PhaseForge row (V0) comes from experiments/five_task.json in the same outputs base. Screening evidence (3 seeds, CPU): V2 -6.2% and V4 -6.7% best val/loss_action vs V0 on all three seeds; V6 phase-decoded routing reaches parity with the learned router. This manifest is NOT part of the frozen protocol; it is the pre-registered variant validation.",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "defaults": [
+    "train.early_stopping.enabled=false"
+  ],
+  "tasks": [
+    "Lift"
+  ],
+  "methods": [
+    {
+      "index": 1,
+      "name": "phaseforge",
+      "role": "provider (frozen-protocol stage 1, never retrained if present in the outputs base)",
+      "model": "phaseforge",
+      "data": "lift",
+      "task": "Lift",
+      "stages": [
+        1
+      ],
+      "evaluate": false
+    },
+    {
+      "index": 2,
+      "name": "v2_phase_distill",
+      "role": "screening winner: stage-2 phase-distill warmup (KL annealed to zero by epoch 40)",
+      "model": "phaseforge",
+      "data": "lift",
+      "task": "Lift",
+      "stages": [
+        2
+      ],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "defaults": [
+        "models.emit_phase_logits=true",
+        "train.phase_distill.enabled=true"
+      ],
+      "tag": "v2_phase_distill"
+    },
+    {
+      "index": 3,
+      "name": "v4_phase_balance",
+      "role": "screening winner: phase-conditional expert balance (router balance_coeff 0.0)",
+      "model": "phaseforge",
+      "data": "lift",
+      "task": "Lift",
+      "stages": [
+        2
+      ],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "defaults": [
+        "models.router.balance_coeff=0.0",
+        "train.phase_balance_coeff=0.01"
+      ],
+      "tag": "v4_phase_balance"
+    },
+    {
+      "index": 4,
+      "name": "v6_anchored_router",
+      "role": "screening winner: phase-anchored router (low-rank anchor, rank 4)",
+      "model": "phaseforge",
+      "data": "lift",
+      "task": "Lift",
+      "stages": [
+        2
+      ],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "defaults": [
+        "models.router.init=phase_head",
+        "models.router.normalize_input=false",
+        "models.router.anchor=phase_head",
+        "models.router.anchor_rank=4"
+      ],
+      "tag": "v6_anchored_router"
+    }
+  ]
+}

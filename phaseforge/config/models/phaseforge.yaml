@@ -33,6 +33,14 @@ router:
   balance_coeff: 0.01
   normalize_input: true   # Unit-norm latents + unit-norm centroid weights
                           # (set by bootstrap_moe) => true cosine routing.
+  # Phase-utilization study (docs/research/phase_utilization_design.md):
+  # init: "centroid" (protocol) | "phase_head" (V1: router starts as the
+  # exact stage-1 phase predictor). anchor: null | "phase_head" (V6: frozen
+  # phase-head backbone + zero-init low-rank residual). Requires
+  # init="phase_head" when anchor="phase_head".
+  init: "centroid"
+  anchor: null
+  anchor_rank: 4
 
 expert:
   _target_: phaseforge.models.components.expert.ExpertMLP
@@ -42,3 +50,8 @@ expert:
   hidden_dims: [256]
   output_dim: ${data.action_dim}
   activation: "gelu"
+
+# Phase-utilization study: when true, the Stage 2 forward also emits the
+# frozen stage-1 phase head logits (ModelOutput.phase_logits) for
+# distillation (V2) / decoding (V5) use. Protocol default: false.
+emit_phase_logits: false

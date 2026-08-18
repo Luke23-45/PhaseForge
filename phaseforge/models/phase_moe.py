@@ -50,6 +50,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         phase_head: PhaseClassificationHead,
         router: TopKRouter,
         expert: ExpertMLP,
+        emit_phase_logits: bool = False,
     ) -> None:
         super().__init__()
         self.encoder = encoder
@@ -64,6 +65,13 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         # Internal state to track which stage the model is currently configured for
         self._stage = 1
         self._encoder_frozen = False
+
+        # Phase-utilization study (V2/V5): when True, the Stage 2 forward
+        # also emits the FROZEN stage-1 phase head logits (ModelOutput.
+        # phase_logits), so stage-2 trainers can distill from the phase
+        # predictor and offline decoders can route by it. Phase head
+        # parameters stay requires_grad=False after bootstrap.
+        self._emit_phase_logits = bool(emit_phase_logits)
 
         # Storage for the most recent routing information for metrics tracking
         self._last_gate_logits: Tensor | None = None
@@ -136,9 +144,13 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             # Store gate logits for metric callbacks
             self._last_gate_logits = moe_out.gate_logits.detach()
 
+            phase_logits = None
+            if self._emit_phase_logits:
+                phase_logits = self.phase_head(latent)
+
             return ModelOutput(
                 action_pred=moe_out.combined_output,
-                phase_logits=None,  # Phase head is ignored in Stage 2
+                phase_logits=phase_logits,  # emitted only for phase-utilization variants
                 routing_weights=moe_out.routing_weights,
                 expert_indices=moe_out.expert_indices,
                 gate_logits=moe_out.gate_logits,
@@ -170,7 +182,12 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         return {"gate_logits": self._last_gate_logits}
 
     @torch.no_grad()
-    def bootstrap_moe(self, dataloader: DataLoader, device: torch.device | str = "cuda") -> None:
+    def bootstrap_moe(
+        self,
+        dataloader: DataLoader,
+        device: torch.device | str = "cuda",
+        router_init: str = "centroid",
+    ) -> None:
         """The core contribution: Bootstrapping the MoE from Stage 1 knowledge.
 
         This algorithm:
@@ -178,9 +195,22 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         2. Assigns each expert to a phase and initializes its router weights with that centroid.
         3. Copies the pre-trained ActionHead weights into each ExpertMLP to jumpstart them.
 
+        ``router_init`` selects how the stage-1 phase knowledge enters the
+        router (docs/research/phase_utilization_design.md):
+        - ``"centroid"`` (protocol): gate weights = unit-normalized latent
+          centroids per phase (nearest-centroid classifier).
+        - ``"phase_head"`` (V1): gate weights/bias = the stage-1 phase head
+          (W_F, b_F) — the router starts as the exact phase predictor
+          (hyperplane classifier; second-order geometry).
+        - ``"phase_head"`` + router.anchor="phase_head" (V6): the phase head
+          is loaded into the router's frozen ``anchor_linear`` backbone and
+          the zero-init low-rank residual is left as-is (V6 = the phase head
+          IS the router backbone; no centroid pass needed).
+
         Args:
             dataloader: Training dataloader to compute centroids over.
             device: Compute device.
+            router_init: "centroid" (protocol) or "phase_head" (V1/V6).
         """
         logger.info("Starting MoE bootstrapping process...")
         self.to(device)
@@ -191,79 +221,145 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         num_experts = self.moe_layer.router.num_experts
         latent_dim = self.encoder.latent_dim
 
-        if num_phases != num_experts:
-            logger.warning(
-                f"Number of phases ({num_phases}) != number of experts ({num_experts}). "
-                "Phase-bootstrapping works best when E >= P. Centroids will be mapped 1:1 "
-                "for the first P experts, the rest remain random."
-            )
+        router = self.moe_layer.router
+        anchored = router.anchor == "phase_head"
 
-        # 1. Compute latent centroids
-        phase_sums = torch.zeros((num_phases, latent_dim), device=device)
-        phase_counts = torch.zeros((num_phases,), device=device)
-        non_blocking = torch.device(device).type == "cuda"
-
-        for batch in dataloader:
-            state = batch["state"].to(device, non_blocking=non_blocking)
-            phase = batch["phase"].to(device, non_blocking=non_blocking)
-
-            # Handle sequence length dimension if present
-            if state.ndim == 3:
-                state = state.view(-1, state.size(-1))
-                phase = phase.view(-1)
-
-            latent = self.encoder(state)
-
-            # Scatter add the latents to the correct phase sum
-            # Expand phase to match latent dims: (B, D)
-            phase_expanded = phase.unsqueeze(1).expand_as(latent)
-            phase_sums.scatter_add_(0, phase_expanded, latent)
-
-            # Count occurrences of each phase
-            counts = torch.bincount(phase, minlength=num_phases).float()
-            phase_counts += counts
-
-        # Compute mean
-        # An absent phase would produce a zero centroid reported as if it had
-        # one sample — that silently corrupts the router init, so it is a
-        # hard failure instead.
-        absent = phase_counts == 0
-        if absent.any():
+        if router_init not in ("centroid", "phase_head"):
             raise ValueError(
-                "Phase centroid bootstrap: "
-                f"{int(absent.sum().item())} phase(s) have zero samples in the "
-                f"bootstrap dataloader (missing: "
-                f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
-                "Refusing to bootstrap with zero centroids; every phase must "
-                "be present in the training data."
+                f"router_init must be 'centroid' or 'phase_head', got {router_init!r}"
             )
-        centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
+        if anchored and router_init == "centroid":
+            raise ValueError(
+                "router.anchor='phase_head' requires router_init='phase_head' "
+                "(the phase head IS the anchor; centroid init would fight it)."
+            )
 
-        logger.info(f"Computed latent centroids for {num_phases} phases.")
-        for p in range(num_phases):
-            logger.debug(f"  Phase {p} count: {phase_counts[p].item()}")
+        # 1. Phase-head (logit) router initialization: V1 / V6.
+        if router_init == "phase_head":
+            phase_w = self.phase_head.classifier.weight.data  # (P, D)
+            phase_b = self.phase_head.classifier.bias.data  # (P,)
+            if num_phases != num_experts:
+                raise ValueError(
+                    "router_init='phase_head' requires num_experts == num_phases "
+                    f"({num_experts} != {num_phases}); the phase head logits and "
+                    "the gate logits must live in the same space."
+                )
+            if anchored:
+                if router.anchor_linear is None:
+                    raise RuntimeError(
+                        "router.anchor='phase_head' but anchor_linear is None"
+                    )
+                router.anchor_linear.weight.copy_(phase_w)
+                router.anchor_linear.bias.copy_(phase_b)
+                # The low-rank residual is already zero-initialized; freezing
+                # the anchor makes the phase predictor the routing backbone.
+                for param in router.anchor_linear.parameters():
+                    param.requires_grad = False
+                logger.info(
+                    "Initialized anchored router (V6): frozen phase head "
+                    f"backbone, zero-init low-rank residual (rank={router.anchor_rank})."
+                )
+            else:
+                gate_linear = router.gate_linear
+                if not isinstance(gate_linear, torch.nn.Linear):
+                    raise RuntimeError(
+                        "router_init='phase_head' without router.anchor requires a "
+                        "plain nn.Linear gate_linear, got "
+                        f"{type(gate_linear).__name__}"
+                    )
+                gate_linear.weight.copy_(phase_w)
+                gate_linear.bias.copy_(phase_b)
+                logger.info("Initialized router weights from the stage-1 phase head (V1).")
 
-        # 2. Initialize Router
-        # The router's gate computes logits: L = x @ W^T + b. The centroids
-        # are unit-normalized and the router is configured with
-        # normalize_input=True, so L is a true cosine similarity between the
-        # (normalized) latent and each (unit-norm) centroid — not a raw dot
-        # product with an unnormalized latent.
+            # Skip the centroid pass entirely for V1/V6.
+            if num_phases != num_experts:
+                logger.warning(
+                    f"Number of phases ({num_phases}) != number of experts "
+                    f"({num_experts}). Phase-bootstrapping works best when E >= P."
+                )
 
-        # We normalize centroids to ensure stable initial logits
-        centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
+        # 2. Centroid router initialization (protocol path).
+        else:
+            gate_linear = router.gate_linear
+            if not isinstance(gate_linear, torch.nn.Linear):
+                raise RuntimeError(
+                    "router_init='centroid' requires a plain nn.Linear gate "
+                    f"(no anchor); got {type(gate_linear).__name__}"
+                )
 
-        router_weight = self.moe_layer.router.gate_linear.weight.data
-        router_bias = self.moe_layer.router.gate_linear.bias.data
+            if num_phases != num_experts:
+                logger.warning(
+                    f"Number of phases ({num_phases}) != number of experts ({num_experts}). "
+                    "Phase-bootstrapping works best when E >= P. Centroids will be mapped 1:1 "
+                    "for the first P experts, the rest remain random."
+                )
 
-        # Assign centroids to the first min(P, E) experts
-        limit = min(num_phases, num_experts)
-        router_weight[:limit] = centroids_normalized[:limit]
+            # 2a. Compute latent centroids
+            phase_sums = torch.zeros((num_phases, latent_dim), device=device)
+            phase_counts = torch.zeros((num_phases,), device=device)
+            non_blocking = torch.device(device).type == "cuda"
 
-        # Zero the bias to let dot product dominate initially
-        router_bias.zero_()
+            for batch in dataloader:
+                state = batch["state"].to(device, non_blocking=non_blocking)
+                phase = batch["phase"].to(device, non_blocking=non_blocking)
 
-        logger.info(f"Initialized router weights with {limit} phase centroids.")
+                # Handle sequence length dimension if present
+                if state.ndim == 3:
+                    state = state.view(-1, state.size(-1))
+                    phase = phase.view(-1)
+
+                latent = self.encoder(state)
+
+                # Scatter add the latents to the correct phase sum
+                # Expand phase to match latent dim: (B, D)
+                phase_expanded = phase.unsqueeze(1).expand_as(latent)
+                phase_sums.scatter_add_(0, phase_expanded, latent)
+
+                # Count occurrences of each phase
+                counts = torch.bincount(phase, minlength=num_phases).float()
+                phase_counts += counts
+
+            # Compute mean
+            # An absent phase would produce a zero centroid reported as if it had
+            # one sample — that silently corrupts the router init, so it is a
+            # hard failure instead.
+            absent = phase_counts == 0
+            if absent.any():
+                raise ValueError(
+                    "Phase centroid bootstrap: "
+                    f"{int(absent.sum().item())} phase(s) have zero samples in the "
+                    f"bootstrap dataloader (missing: "
+                    f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
+                    "Refusing to bootstrap with zero centroids; every phase must "
+                    "be present in the training data."
+                )
+            centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
+
+            logger.info(f"Computed latent centroids for {num_phases} phases.")
+            for p in range(num_phases):
+                logger.debug(f"  Phase {p} count: {phase_counts[p].item()}")
+
+            # 2b. Initialize Router
+            # The router's gate computes logits: L = x @ W^T + b. The centroids
+            # are unit-normalized and the router is configured with
+            # normalize_input=True, so L is a true cosine similarity between the
+            # (normalized) latent and each (unit-norm) centroid — not a raw dot
+            # product with an unnormalized latent.
+
+            # We normalize centroids to ensure stable initial logits
+            centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
+
+            router_weight = gate_linear.weight.data
+            router_bias = gate_linear.bias.data
+
+            # Assign centroids to the first min(P, E) experts
+            limit = min(num_phases, num_experts)
+            router_weight[:limit] = centroids_normalized[:limit]
+
+            # Zero the bias to let dot product dominate initially
+            router_bias.zero_()
+
+            logger.info(f"Initialized router weights with {limit} phase centroids.")
 
         # 3. Initialize Experts with ActionHead weights
         # This provides the "warm start" for the experts, so they don't destroy

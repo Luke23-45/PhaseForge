@@ -62,6 +62,13 @@ CURVE_OPTIONAL_NUMERIC: tuple[str, ...] = (
     "val/top1_collapse_rate",
     "val/routing_accuracy",
     "val/routing_balanced_accuracy",
+    # Phase-utilization study (docs/research/phase_utilization_design.md):
+    # V2 phase-distillation warmup and V4 phase-conditional balance losses
+    # (Stage 2 only; present only for the variant cells).
+    "train/loss_phase_distill",
+    "val/loss_phase_distill",
+    "train/loss_phase_balance",
+    "val/loss_phase_balance",
     "checkpoint_monitor_value",
 )
 

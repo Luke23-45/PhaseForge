@@ -55,6 +55,8 @@ class TopKRouter(nn.Module):
         noise_std: float = 0.1,
         balance_coeff: float = 0.01,
         normalize_input: bool = False,
+        anchor: str | None = None,
+        anchor_rank: int | None = None,
     ) -> None:
         super().__init__()
         if not isinstance(latent_dim, int) or latent_dim < 1:
@@ -72,6 +74,21 @@ class TopKRouter(nn.Module):
             raise ValueError(f"noise_std must be >= 0.0, got {noise_std}")
         if balance_coeff < 0.0:
             raise ValueError(f"balance_coeff must be >= 0.0, got {balance_coeff}")
+        if anchor not in (None, "phase_head"):
+            raise ValueError(
+                f"anchor must be None or 'phase_head', got {anchor!r}"
+            )
+        if anchor is not None:
+            if not isinstance(anchor_rank, int) or anchor_rank < 1:
+                raise ValueError(
+                    f"anchor_rank must be a positive int when anchor is set, "
+                    f"got {anchor_rank!r}"
+                )
+            if anchor_rank > min(latent_dim, num_experts):
+                raise ValueError(
+                    f"anchor_rank ({anchor_rank}) exceeds "
+                    f"min(latent_dim, num_experts) = {min(latent_dim, num_experts)}"
+                )
 
         self.latent_dim = latent_dim
         self.num_experts = num_experts
@@ -79,8 +96,31 @@ class TopKRouter(nn.Module):
         self.noise_std = noise_std
         self.balance_coeff = balance_coeff
         self.normalize_input = bool(normalize_input)
+        self.anchor = anchor
+        self.anchor_rank = anchor_rank
 
-        self.gate_linear = nn.Linear(latent_dim, num_experts)
+        self.gate_linear: nn.Linear | nn.Sequential
+        self.noise_linear: nn.Linear | None
+
+        # Low-rank anchored router (V6): gate_logits = anchor_linear(z) +
+        # gate_linear(z), where anchor_linear is loaded from the stage-1 phase
+        # head (frozen) and gate_linear is a ZERO-INITIALIZED low-rank
+        # residual. The rank constraint makes the anchor structural (Lemma 3
+        # in docs/research/phase_utilization_design.md): the router can only
+        # deviate from the phase predictor in an anchor_rank-dimensional
+        # subspace, so phase alignment persists by construction instead of
+        # decaying like a plain initialization.
+        self.anchor_linear: nn.Linear | None = None
+        if anchor == "phase_head":
+            assert isinstance(anchor_rank, int)  # validated above
+            self.anchor_linear = nn.Linear(latent_dim, num_experts)
+            self.gate_linear = nn.Sequential(
+                nn.Linear(latent_dim, anchor_rank),
+                nn.Linear(anchor_rank, num_experts),
+            )
+            self.gate_linear.apply(self._zero_init)
+        else:
+            self.gate_linear = nn.Linear(latent_dim, num_experts)
 
         # Linear layer to scale the noise per-input, following standard MoE practices
         if self.noise_std > 0.0:
@@ -90,14 +130,21 @@ class TopKRouter(nn.Module):
 
         self._init_weights()
 
+    @staticmethod
+    def _zero_init(m: nn.Module) -> None:
+        if isinstance(m, nn.Linear):
+            nn.init.zeros_(m.weight)
+            nn.init.zeros_(m.bias)
+
     def _init_weights(self) -> None:
         """Initialize routing weights.
 
         Using normal initialization with a small std dev helps prevent
         all inputs from collapsing to a single expert at the start.
         """
-        nn.init.normal_(self.gate_linear.weight, mean=0.0, std=0.02)
-        nn.init.zeros_(self.gate_linear.bias)
+        if isinstance(self.gate_linear, nn.Linear):
+            nn.init.normal_(self.gate_linear.weight, mean=0.0, std=0.02)
+            nn.init.zeros_(self.gate_linear.bias)
 
         if self.noise_linear is not None:
             nn.init.normal_(self.noise_linear.weight, mean=0.0, std=0.02)
@@ -117,7 +164,12 @@ class TopKRouter(nn.Module):
             # Unit-norm latents + unit-norm centroid weights (set by the
             # bootstrap) => gate logits are true cosine similarities.
             latent = F.normalize(latent, p=2, dim=-1)
-        gate_logits = self.gate_linear(latent)
+        if self.anchor_linear is not None:
+            # Anchored router (V6): the frozen stage-1 phase predictor is the
+            # backbone; the zero-init low-rank residual adds corrections.
+            gate_logits = self.anchor_linear(latent) + self.gate_linear(latent)
+        else:
+            gate_logits = self.gate_linear(latent)
 
         # Add exploration noise during training
         if self.training and self.noise_std > 0.0 and self.noise_linear is not None:

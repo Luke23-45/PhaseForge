@@ -566,7 +566,16 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
                 expected_unexpected_prefixes=("moe_layer",) + _unused_stage1_head_prefixes(model),
             )
 
-            model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
+            router_init = str(
+                cfg.models.router.get("init", "centroid")
+                if "router" in cfg.models
+                else "centroid"
+            )
+            model.bootstrap_moe(
+                dataloader=train_loader,
+                device=cfg.project.get("device", "cuda"),
+                router_init=router_init,
+            )
         else:
             # Models without bootstrapping (ScratchMoE, OraclePhaseMoE)
             # train from scratch — no checkpoint needed.

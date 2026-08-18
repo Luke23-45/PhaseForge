@@ -23,6 +23,11 @@ def build_model(cfg: DictConfig):
     # Training-only metadata carried in the model config (per-model override
     # for `train.freeze_encoder`); it is not a model constructor argument.
     model_cfg.pop("freeze_encoder", None)
+    # Bootstrap metadata for the router (phase-utilization study, V1/V6):
+    # `models.router.init` selects how bootstrap_moe seeds the gate; it is
+    # read by the CLI, not by the router constructor.
+    if isinstance(model_cfg.get("router"), dict):
+        model_cfg["router"].pop("init", None)
     model = instantiate(model_cfg)
     if not isinstance(model, BaseManipulationModel):
         raise TypeError(

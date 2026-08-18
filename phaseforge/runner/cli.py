@@ -282,7 +282,7 @@ def _run_dependency_step(
             step,
             ckpt_path=None,
             outputs_base=outputs_base,
-            defaults=protocol.defaults,
+            defaults=protocol.defaults_for(step.method),
             cwd=PROJECT_ROOT,
             log_level="INFO" if args.verbose else "WARNING",
             toolhang_python=toolhang_python,
@@ -536,7 +536,7 @@ def run(args: argparse.Namespace) -> int:
                 step,
                 ckpt_path=ckpt_abs,
                 outputs_base=outputs_base,
-                defaults=protocol.defaults,
+                defaults=protocol.defaults_for(step.method),
                 cwd=PROJECT_ROOT,
                 log_level="INFO" if args.verbose else "WARNING",
                 toolhang_python=toolhang_python,
@@ -609,7 +609,7 @@ def _print_dry_run(
         else:
             ckpt_abs = _require_stage2_prereq(step, outputs_base, expected_commit)
         cmd = step_command(
-            step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=protocol.defaults
+            step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=protocol.defaults_for(step.method)
         )
         print(f"  [dry-run] WOULD RUN  {step.label}")
         print(f"    $ {' '.join(cmd)}")
@@ -618,7 +618,7 @@ def _print_dry_run(
         if provider is not None:
             dep = Step(kind="train", method=provider, seed=step.seed, stage=1, dependency=True)
             cmd = step_command(
-                dep, ckpt_path=None, outputs_base=outputs_base, defaults=protocol.defaults
+                dep, ckpt_path=None, outputs_base=outputs_base, defaults=protocol.defaults_for(dep.method)
             )
             print(f"  [dry-run] AUTO-INJECT dependency: {dep.label}")
             print(f"    $ {' '.join(cmd)}")
