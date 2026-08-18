@@ -65,9 +65,10 @@ def evaluate_oracle_vs_routed(
         b, a_dim = target_action.shape
         total_elements += b * a_dim
 
-        # 1. Learned routed forward
-        model_out = model(state)
-        routed_pred = model_out.action
+        # 1. Learned routed forward. forward() takes a batch dict (reads
+        #    batch["state"]) and returns ModelOutput.action_pred.
+        model_out = model({"state": state})
+        routed_pred = model_out.action_pred
         routed_sq_diff = (routed_pred - target_action) ** 2
         total_routed_sq_err += routed_sq_diff.sum().item()
 
@@ -182,7 +183,7 @@ def run_oracle_diagnostics(
 
             model = build_model(cfg)
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            model.load_state_dict(ckpt["model_state_dict"], strict=False)
+            model.load_state_dict(ckpt["model_state_dict"], strict=True)
 
             diag = evaluate_oracle_vs_routed(model, val_loader, device=device)
             diag["checkpoint_path"] = str(ckpt_path)

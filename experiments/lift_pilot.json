@@ -1,7 +1,7 @@
 {
   "name": "lift_pilot",
   "task": "Lift",
-  "description": "Frozen single-task Lift pilot matrix (notebook methods 1-9). One row = a complete run: every training stage in order, then the state-only rollout evaluation (eval.mode=rollout) of the final-stage checkpoint on the frozen reset bank. Seed 42 first; expand to 42, 43, 44 after the pilot gates pass.",
+  "description": "Frozen single-task Lift pilot matrix (notebook methods 1-8; oracle is an evaluation-time routing diagnostic, not a training cell). One row = a complete run: every training stage in order, then the state-only rollout evaluation (eval.mode=rollout) of the final-stage checkpoint on the frozen reset bank. Seed 42 first; expand to 42, 43, 44 after the pilot gates pass.",
   "seeds": [42, 43, 44],
   "defaults": [
     "train.early_stopping.enabled=false"

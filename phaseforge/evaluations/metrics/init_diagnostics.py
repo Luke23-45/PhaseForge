@@ -69,9 +69,14 @@ def compute_init_routing_diagnostics(
 
         latent = model.encoder(state)
 
-        # 1. Router forward
-        router_out = moe.router(latent)
-        gate_logits = router_out.gate_logits
+        # 1. Routing logits via the model's actual dispatch path (supports
+        #    teacher_forced, whose router is structural parity only and never
+        #    trained). Falls back to the raw router if the model exposes none.
+        model_out = model({"state": state})
+        if model_out.gate_logits is not None:
+            gate_logits = model_out.gate_logits
+        else:
+            gate_logits = moe.router(latent).gate_logits
         probs = F.softmax(gate_logits, dim=-1)
 
         top1 = probs.argmax(dim=-1)

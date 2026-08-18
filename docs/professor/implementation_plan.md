@@ -34,7 +34,7 @@ Key fairness nuance for the paper: PhaseForge has 1.85× total params of BC but 
 
 | Professor suggestion | Repo status |
 |---|---|
-| 2×2 factorial (encoder × router init) | **Exists** — 4 cells: phaseforge (phase-sup × centroid), phase_pretrain_random_router (phase-sup × random), plain_encoder_phase_bootstrap (plain × centroid), warmstart_moe (plain × random). All trained at `c09270a`/`289b3c3`; rollout results recorded (V0 0.633 mean at `289b3c3`; controlled null w/ directional advantage per stratified stats). |
+| 2×2 factorial (encoder × router init) | **Exists** — 4 cells: phaseforge (phase-sup × centroid), phase_pretrain_random_router (phase-sup × random), plain_encoder_phase_bootstrap (plain × centroid), warmstart_moe (plain × random). All trained at `c09270a`/`289b3c3`; rollout results recorded (V0 0.633 mean at `289b3c3`). Current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage (CIs overlap). |
 | 3×3 factorial (+ unsupervised cluster, + phase-head init) | **Partial** — phase-head init was prototyped on CPU as uncommitted local patch `V1_phase_head_init` (seed 42 only: NMI 0.472 vs V0 0.449, entropy 0.273 — far more peaked than V0's 0.951). K-means router: **missing** (scikit-learn ≥1.4 already a dependency). |
 | Four-way init ablation (random/random, centroid/random, random/warmstart, centroid/warmstart) on the **phaseforge stage-1 encoder** | **2 of 4 cells exist**: D = phaseforge ✓, C = phase_pretrain_random_router ✓. Missing: A (random router + random experts), B (centroid router + random experts). `scratch_moe` is not a substitute (no stage-1 encoder at all). |
 | Parameter-matched dense baseline (BC-large) | **Missing** — needs new config + manifest row only (no new code). |
@@ -43,7 +43,7 @@ Key fairness nuance for the paper: PhaseForge has 1.85× total params of BC but 
 | Jitter σ sweep | **Needs one knob** — `warm_start_experts_from_action_head(..., jitter_std=0.02)` is a hardcoded default (`expert.py:95`); not config-wired. |
 | Spherical vs ordinary centroids | **Small code** — current `bootstrap_moe` averages raw latents then normalizes (`phase_moe.py:240,254`); spherical = normalize latents *before* averaging. |
 | Phase-head-weight router init | **Code exists as prototype only** — V1 was an uncommitted patch; must be re-implemented cleanly. |
-| Phase-label corruption | **Missing** — labels are rule-based at ingestion and cached; corruption must be a seeded post-labeling dataset transform, stage-1 only (stage-2 needs clean GT for teacher_forced/oracle; document). |
+| Phase-label corruption | **Implemented (bootstrap-label variant)** — seeded post-labeling transform on the train split; cells EXP-205..207 corrupt the labels used for prototype computation on the **clean** phaseforge stage-1 encoder (see `research_definition.md` §6). |
 | Fine-tuned encoder variant (PhaseForge-FT) | **Half-ready** — `train.freeze_encoder: false` exists; "small encoder LR" needs optimizer param groups (small code). |
 | Teacher-forced (H4) + oracle MoE cells | **Fully implemented + tested, never run** (`teacher_forced.py`, `oracle_moe.py`; manifest rows exist in `lift_pilot.json`/`five_task.json`). Executing them closes the professor's §17/§18 gap decomposition. |
 | Contingency matrix / entropy trajectories / balance curves | `build_contingency_matrix` exists (`phase_alignment.py:72`) but is **never logged**; entropy/NMI/balance/collapse are already logged per-epoch in stage-2 curves (trajectory plots = scripts only). |
@@ -55,7 +55,7 @@ Key fairness nuance for the paper: PhaseForge has 1.85× total params of BC but 
 
 - `master` @ `e25b646` (rollback of λ-decay to the frozen constant-λ protocol + gitignore). Variant branch `phase-utilization-experiments` @ `289b3c3` carries only inert config keys; the V1/V2/V4/V6 implementations were **local patches, not committed** — do not rely on them; re-implement cleanly on master.
 - `docs/professor/` is untracked (report not yet committed).
-- Current authoritative rollout results (Lift, 3 seeds, constant λ, `289b3c3`): **V0 (phaseforge) 0.633** (0.68/0.72/0.50); variant cells V4 0.600, V2 0.540, V6 0.440. All Wilson/pooled CIs overlap → controlled null with directional PhaseForge advantage (see `scripts/stratified_stats.py`, `f02a48b`).
+- Current authoritative rollout results (Lift, 3 seeds, constant λ, `289b3c3`): **V0 (phaseforge) 0.633** (0.68/0.72/0.50); variant cells V4 0.600, V2 0.540, V6 0.440. All Wilson/pooled CIs overlap → current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage (see `scripts/stratified_stats.py`, `f02a48b`).
 - GPU stage-1/2 checkpoints were never synced to this machine (only metrics/metadata). Any GPU cell that needs a stage-1 checkpoint must either re-run stage 1 on GPU or sync checkpoints from Colab — plan for re-running (cheap, deterministic, commit-gated).
 - Rigor machinery in place: commit-gated runner, fail-closed metadata, NaN monitor guard, 509 tests, `scripts/preflight_configs.py` validates all config cells.
 
@@ -96,10 +96,10 @@ Professor's priority order:
 | 1 | `pf_centroid_random` | phaseforge + expert_init=random | phaseforge | four-way ablation B (professor §33) |
 | 1 | `pf_kmeans` | phaseforge + router_init=kmeans | phaseforge | unsupervised-cluster router (professor §10) |
 | 1 | `pf_phase_head` | phaseforge + router_init=phase_head | phaseforge | phase centroid vs phase-head init (professor §12, §41) |
-| 1 | `teacher_forced`, `oracle_moe` | **existing** | phaseforge / none | gap decomposition (professor §17-18); run, no new code |
-| 2 | `pf_k3`, `pf_k12` | phaseforge + num_experts=3/12 (+ top_k≤E; centroids map 1:1 to first P, rest random per `phase_moe.py:259`) | phaseforge | expert-count sweep (professor §20-21) |
-| 2 | `pf_sigma0`, `pf_sigma005`, `pf_sigma01` | phaseforge + expert_init.jitter_std∈{0,0.005,0.01} (0.02 = current) | phaseforge | jitter ablation (professor §32) |
-| 2 | `pf_corrupt10..100` | phaseforge + `data.phase_corruption_rate`∈{10,25,50,75,100} | own stage 1 per level | label corruption (professor §19) |
+| 1 | `teacher_forced` | **existing** | phaseforge | gap decomposition (professor §17-18). Oracle is **not a training cell**: it is an eval-time routing intervention applied to the fixed trained expert set (`scripts/oracle_routing_diagnostic.py`, locked per professor §58). |
+| 2 | `pf_k3`, `pf_k12` | `pf_spherical` + num_experts=3/12 (+ top_k=2 ≤ E) | phaseforge | expert-count sweep (professor §20-21); explicit prototype construction for arbitrary K via `clustering.py` (E<P super-prototypes, E>P intra-phase spherical K-means) |
+| 2 | `pf_jitter_00`, `pf_jitter_10` | phaseforge + expert_init.jitter_std∈{0.0,0.1} (0.02 = current) | phaseforge | jitter ablation (professor §32) |
+| 2 | `pf_corrupt_25`, `pf_corrupt_50`, `pf_shuffle_control` | phaseforge + `data.phase_corruption_rate`∈{0.25,0.5,1.0(+shuffle)} | shared clean phaseforge | label corruption, bootstrap-label variant (professor §19) |
 | 3 | `pf_spherical` | phaseforge + router_init=spherical_centroid | phaseforge | spherical centroids (professor §13) |
 | 3 | `pf_ft` | phaseforge + freeze_encoder=false + encoder LR group | phaseforge | fine-tuned variant (professor §28) |
 
@@ -111,7 +111,7 @@ New metric module `phaseforge/evaluations/metrics/specialization.py` + evaluator
 - Persist matrices as JSON sidecar files (not curves), with schema entries in `outputs_writer/schema.py` and definitions in the `eval/metric_definitions` payload.
 
 ### 1.4 Label corruption (professor §19)
-Seeded post-labeling transform in the data pipeline (`data.common.dataset`), config `data.phase_corruption_rate` + `data.phase_corruption_seed` (per training seed). Corruption applies **stage-1 only**; stage-2 teacher_forced/oracle must keep clean GT — documented, and preflight must reject corruption on stage-2 cells that consume phases.
+Seeded post-labeling transform in the data pipeline (`data.common.dataset`), config `data.phase_corruption_rate` + `data.phase_corruption_seed` (per training seed) + `data.phase_shuffle_control`. **Implemented semantics (EXP-205..207):** corruption applies to the train-split phase labels that feed prototype computation at bootstrap, on the clean phaseforge stage-1 encoder; validation labels stay clean; teacher_forced/oracle cells are rejected by preflight if corruption is set (done).
 
 ### 1.5 PhaseForge-FT (professor §28)
 `freeze_encoder: false` exists; add optional `train.encoder_lr_scale` (e.g. 0.1×) via optimizer param groups so the encoder adapts at a small LR.
@@ -119,7 +119,7 @@ Seeded post-labeling transform in the data pipeline (`data.common.dataset`), con
 ### 1.6 Fairness accounting script (professor §15)
 `scripts/fairness_accounting.py`: per cell — total params, stage-2 trainable params, active params/sample (K×expert+router), total optimizer steps, examples seen (steps×batch), approximate training FLOPs (fwd+bwd, from resolved config) and inference FLOPs. Run on every cell at Gate 3 and included in the results table.
 
-**Gate 1:** default configs bit-identical (CPU rerun of the V0 reference reproduces its recorded curves); 509+ tests pass; ruff/mypy clean; `preflight_configs.py` extended to validate every new cell (including K≤E top-k, corruption-only-on-stage-1, param-match assert for `bc_large` |ratio−1|≤1.5%).
+**Gate 1:** default configs bit-identical (CPU rerun of the V0 reference reproduces its recorded curves); 509+ tests pass; ruff/mypy clean; `preflight_configs.py` validates every new cell (K≤E top-k, corruption rejected on teacher_forced/oracle, `bc_large` |ratio−1|≤1.5%, freeze/FT consistency, oracle training rejected).
 
 ---
 
@@ -137,12 +137,9 @@ Same discipline as the earlier variant screening (stage-1 ~6 min/seed on CPU):
 
 ## 4. Phase 3 — GPU run (Lift, 3 seeds, frozen protocol rules)
 
-Wave 1 (professor's highest priority, first):
-`bc_large` (+own stage-1), `pf_random_random`, `pf_centroid_random`, `pf_kmeans`, `pf_phase_head`, `teacher_forced`, `oracle_moe` (offline) — 7 methods × 3 seeds; all but `bc_large`/`oracle_moe` reuse the phaseforge stage-1 (re-run on GPU: 3 runs).
+Wave 1 (professor's highest priority, first): the 16 cells of `experiments/lift_ablation.json` EXP-101..116 — phaseforge, bc, bc_large, bc_robot_only, scratch_moe, warmstart_moe, phase_pretrain_random_router, plain_encoder_phase_bootstrap, pf_spherical_kmeans, pf_kmeans, pf_phase_head, pf_random_random, pf_centroid_random, pf_spherical, pf_ft, teacher_forced. 13 stage-2 methods × 3 seeds; shared stage-1 providers: phaseforge, bc, bc_large, bc_robot_only (4 × 3 runs). Oracle = post-hoc eval-time intervention on the phaseforge stage-2 checkpoints (no training cell).
 
-Wave 2 (second priority): `pf_k3`, `pf_k12`, `pf_sigma0`, `pf_sigma005`, `pf_sigma01` (5 × 3 seeds, no stage-1); corruption levels chosen at Gate 2 (stage-1 per level × seeds).
-
-Wave 3 (third priority): `pf_spherical`, `pf_ft` (2 × 3 seeds, no stage-1).
+Wave 2 (second priority): `pf_k3`, `pf_k12`, `pf_jitter_00`, `pf_jitter_10`, `pf_corrupt_25`, `pf_corrupt_50`, `pf_shuffle_control` (7 × 3 seeds, no stage-1 — all reuse the clean phaseforge stage-1).
 
 Same eval protocol: 50 paired episodes, reset bank `a7d3953c0afcf560`, horizon 500, commit-gated runner, `action_mse NaN` in results.jsonl expected and harmless.
 
@@ -154,7 +151,7 @@ Same eval protocol: 50 paired episodes, reset bank `a7d3953c0afcf560`, horizon 5
 
 - **Mechanism story (professor §31):** per-cell trajectory plots — NMI, routing entropy, balance, collapse, action MSE vs epoch (data already logged).
 - **Specialization evidence (professor §16):** M_{z,e} matrices for every MoE cell; NMI alone is never cited as specialization.
-- **Gap decomposition (professor §17-18):** oracle − teacher_forced = phase-predictability gap; teacher_forced − phaseforge = strategy gap; learned-vs-oracle/random/uniform routing comparisons.
+- **Gap decomposition (professor §17-18):** oracle (GT-routed eval-time intervention on the trained expert set) − phaseforge = routing-quality gap; teacher_forced − phaseforge = privileged-training strategy gap; phase predictability is assessed directly via phase-head accuracy vs GT (H5).
 - **Statistics:** existing `scripts/stratified_stats.py` (seed-stratified bootstrap + PoI) on the new matrix; M=1-task caveat kept.
 - **Fairness table (professor §15):** params/steps/examples/FLOPs/active-per-sample for every row of the final comparison.
 - **Decision points for supervisor (professor §43-44):** does PhaseForge beat all four comparators (random-router, plain+centroid, unsupervised-cluster, param-matched dense)? Is oracle only modestly above PhaseForge? Does K=12 reveal sub-phase structure? Only then update the claim wording.
@@ -167,9 +164,10 @@ Same eval protocol: 50 paired episodes, reset bank `a7d3953c0afcf560`, horizon 5
 
 | Wave | Cells × seeds | Stage-2 runs | Extra stage-1 runs | Eval runs |
 |---|---|---|---|---|
-| 1 | 7 × 3 | 18 (oracle trains stage-2, evals offline) | 6 (bc_large ×3 + phaseforge stage-1 ×3) | 21 |
-| 2 | 5 × 3 + corruption levels | 15 + (levels × 3) | levels × 3 (corruption stage-1 per level) | 15 + (levels × 3) |
-| 3 | 2 × 3 | 6 | 0 | 6 |
+| 1 | 13 stage-2 cells × 3 | 39 | 12 (phaseforge, bc, bc_large, bc_robot_only × 3 each) | 16 × 3 rollouts + 3 oracle diagnostics (post-hoc) |
+| 2 | 7 × 3 | 21 | 0 (shared clean phaseforge stage-1) | 21 |
+
+Oracle no longer trains (professor §57-58): the "upper bound" is an eval-time GT-routed pass over the phaseforge stage-2 checkpoints, so it costs 3 offline evals, not 9 training runs.
 
 CPU screening removes the cheapest failures before GPU; waves are independent if compute must be staged.
 
@@ -183,5 +181,5 @@ No architectural additions (router attention, recurrence, contrastive losses, dy
 
 - No "specialization" claim until M_{z,e} is measured (§42).
 - No novelty claim without the fixed related-work table and the two 2026 papers cited (§44's second-pass warning is folded into Gate 0).
-- Null results stay null; the current controlled-null-with-directional-advantage posture remains until the new matrix changes it.
+- Null results stay null; current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage until the new matrix is analyzed.
 - Protocol deviations (e.g., λ-decay) remain documented-refinement-only, exactly as recorded in `docs/op/implementation_plan.md` (Gate 1 result).

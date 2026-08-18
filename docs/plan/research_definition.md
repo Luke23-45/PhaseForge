@@ -120,6 +120,8 @@ PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and
 | EXP-206 | `pf_corrupt_50` | `data.phase_corruption_rate=0.50` | Phase noise sensitivity: 50% label corruption |
 | EXP-207 | `pf_shuffle_control` | `data.phase_corruption_rate=1.0, phase_shuffle_control=true` | Phase noise: 100% permutation shuffle control |
 
+> **Corruption semantics (EXP-205..207):** corruption applies to the **bootstrap-label signal** — the phase labels of the Stage-2 training split used to compute the router prototypes (forced-different replacement: z' = (z + U(1..P-1)) mod P). These cells reuse the **clean** phaseforge Stage-1 encoder and Stage-1 supervision (no stage-1 rerun per level); they isolate the sensitivity of the routing prior to privileged-label noise at bootstrap time. Validation labels remain clean, so routing diagnostics stay interpretable. The 100% shuffle control is a bijective permutation (preserves marginal phase counts) rather than i.i.d. noise.
+
 ---
 
 ## 7. Direct Behavioral Specialization Evidence ($M_{z,e}$)

@@ -228,6 +228,7 @@ def main() -> int:
     methods = [
         ("bc", "baselines/bc", "self"),
         ("bc_large", "baselines/bc_large", "self"),
+        ("bc_robot_only", "baselines/bc", "self"),
         ("scratch_moe", "baselines/scratch_moe", "none"),
         ("warmstart_moe", "baselines/warmstart_moe", "bc"),
         ("phase_pretrain_random_router", "baselines/phase_pretrain_random_router", "phaseforge"),
@@ -246,9 +247,11 @@ def main() -> int:
     records: list[ModelFairnessRecord] = []
     with initialize_config_dir(config_dir=config_dir, version_base=None):
         for method_name, model_override, s1_source in methods:
+            # bc_robot_only uses the robot-only observation schema (state_dim 23)
+            data_override = "robot_only_lift" if method_name == "bc_robot_only" else "common"
             cfg = compose(
                 config_name="main",
-                overrides=[f"models={model_override}", "data=common", "train=stage2"],
+                overrides=[f"models={model_override}", f"data={data_override}", "train=stage2"],
             )
             rec = calculate_model_accounting(cfg, method_name, s1_source)
             records.append(rec)

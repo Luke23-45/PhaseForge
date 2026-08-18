@@ -126,6 +126,17 @@ class DataPipelineStateMachine:
         config that omits the oracle's top-level num_phases doesn't trip it),
         and is skipped entirely when the data config carries no phase-labeler
         block.
+
+        The router width is exempted for PhaseBootstrappedMoE prototype /
+        unsupervised / random inits (``centroid``, ``phase_centroid``,
+        ``spherical_centroid``, ``spherical_kmeans``, ``kmeans``, ``random``):
+        the hierarchical prototype construction supports E != P
+        (super-prototypes E<P, intra-phase scaling E>P) and unsupervised
+        clustering never indexes phase labels, so the Wave-2 expert-scaling
+        sweep (K=3/12 vs P=6) is legal. The 1:1 phase->expert mapping stays
+        mandatory for the phase-head copy init (E rows copied from P rows)
+        and for models without a ``router_init`` block (teacher-forced hard
+        dispatch, oracle).
         """
         labeler_cfg = self.data_cfg.get("phase_labeler")
         if labeler_cfg is None or labeler_cfg.get("num_phases") is None:
@@ -137,13 +148,26 @@ class DataPipelineStateMachine:
         if models_cfg is None:
             return  # model config not part of this run (e.g. eval-only)
 
+        router_init_type: str | None = None
+        router_init_cfg = models_cfg.get("router_init")
+        if router_init_cfg is not None and router_init_cfg.get("type") is not None:
+            router_init_type = str(router_init_cfg.type).lower()
+
         candidates: list[tuple[str, int]] = []
         phase_head = models_cfg.get("phase_head")
         if phase_head is not None and phase_head.get("num_phases") is not None:
             candidates.append(("models.phase_head.num_phases", int(phase_head.num_phases)))
 
         router = models_cfg.get("router")
-        if router is not None and router.get("num_experts") is not None:
+        e_ne_p_capable = router_init_type in (
+            "centroid",
+            "phase_centroid",
+            "spherical_centroid",
+            "spherical_kmeans",
+            "kmeans",
+            "random",
+        )
+        if router is not None and router.get("num_experts") is not None and not e_ne_p_capable:
             candidates.append(("models.router.num_experts", int(router.num_experts)))
 
         # Oracle model carries a top-level num_phases; other models may not.

@@ -225,8 +225,19 @@ def _load_state_dict_checked(
             legitimately different between the checkpoint and target model.
             This covers both missing target keys and unexpected checkpoint
             keys (e.g. ``moe_layer`` when loading a BC Stage 1 checkpoint
-            into a Stage 2 MoE model).
+            into a Stage 2 MoE model). Keys under an allowed prefix whose
+            shapes clash are dropped as well: the bootstrap then overwrites
+            them, so e.g. the Stage 1 checkpoint's 6-expert router must not
+            block a Stage 2 expert-scaling sweep (K=3/12).
     """
+    skipped_shape = 0
+    if expected_unexpected_prefixes:
+        current = model.state_dict()
+        for key in list(state_dict):
+            if key.startswith(expected_unexpected_prefixes) and key in current:
+                if state_dict[key].shape != current[key].shape:
+                    state_dict.pop(key)
+                    skipped_shape += 1
     result = model.load_state_dict(state_dict, strict=False)
     expected_missing = [
         key
@@ -250,6 +261,14 @@ def _load_state_dict_checked(
         )
         return
     if not missing and not unexpected:
+        if skipped_shape:
+            logger.info(
+                "%s: %d shape-mismatched key(s) dropped under prefix(es) %s — "
+                "expected, overwritten by the stage bootstrap.",
+                context,
+                skipped_shape,
+                ", ".join(expected_unexpected_prefixes) or "-",
+            )
         return
 
     raise RuntimeError(

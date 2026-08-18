@@ -53,7 +53,7 @@ def test_load_real_protocol_matches_notebook_methods() -> None:
     protocol = _protocol()
     assert protocol.name == "lift_pilot"
     assert protocol.seeds == (42, 43, 44)
-    assert [m.index for m in protocol.methods] == list(range(1, 10))
+    assert [m.index for m in protocol.methods] == list(range(1, 9))
     names = {m.name for m in protocol.methods}
     assert names == {
         "phaseforge",
@@ -64,7 +64,6 @@ def test_load_real_protocol_matches_notebook_methods() -> None:
         "phase_pretrain_random_router",
         "plain_encoder_phase_bootstrap",
         "teacher_forced",
-        "oracle_moe",
     }
     phaseforge = protocol.method_by_name("phaseforge")
     assert phaseforge is not None
@@ -170,8 +169,8 @@ def test_load_protocol_rejects_unknown_provider(tmp_path: Path) -> None:
 
 def test_select_methods_by_index_and_name() -> None:
     protocol = _protocol()
-    selected = protocol.select_methods(["9", "1", "warmstart_moe"])
-    assert [m.index for m in selected] == [1, 5, 9]
+    selected = protocol.select_methods(["8", "1", "warmstart_moe"])
+    assert [m.index for m in selected] == [1, 5, 8]
     with pytest.raises(ProtocolError, match="Unknown method"):
         protocol.select_methods(["does_not_exist"])
     with pytest.raises(ProtocolError, match="Unknown method index"):
@@ -186,8 +185,8 @@ def test_select_methods_by_index_and_name() -> None:
 def test_build_plan_full_matrix_order_and_count() -> None:
     protocol = _protocol()
     plan = build_plan(protocol, list(protocol.methods), seeds=[42])
-    # phaseforge (3) + 8 single-stage methods (2 each) = 19 steps per seed.
-    assert len(plan) == 19
+    # phaseforge (3) + 7 single-stage methods (2 each) = 17 steps per seed.
+    assert len(plan) == 17
     labels = [s.label for s in plan[:6]]
     assert labels == [
         "phaseforge seed=42 stage1",

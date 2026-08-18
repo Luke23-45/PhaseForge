@@ -399,6 +399,22 @@ class OfflineEvaluator:
             "eval/theoretical_mean_mse": (
                 "Mean MSE over phases under optimal theoretical phase-to-expert selection e*(z)."
             ),
+            "eval/routed_mean_mse": (
+                "Mean MSE over phases of the actual routed policy (per-phase routed MSE averaged)."
+            ),
+            "eval/theoretical_best_phase_mse": (
+                "Per-phase dict: MSE of the best expert e*(z) = argmin_e M_{z,e} on validation "
+                "samples of phase z (in-sample selection; diagnostic only, not out-of-sample)."
+            ),
+            "eval/best_expert_per_phase": (
+                "Per-phase dict: expert index minimizing M_{z,e} on validation samples of phase z."
+            ),
+            "eval/routed_phase_mse": (
+                "Per-phase dict: MSE of the routed policy on validation samples of phase z."
+            ),
+            "eval/phase_expert_contingency": (
+                "P x E matrix: P(top-1 expert = e | phase = z) normalized per phase row."
+            ),
             "eval/boundary_action_smoothness": (
                 "Mean L2 temporal change of PREDICTED actions in a window "
                 "around phase transitions (NOT an error vs target actions); "

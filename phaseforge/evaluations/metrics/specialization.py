@@ -104,8 +104,10 @@ def compute_specialization_matrix(
         expert_preds = torch.stack([expert(latent) for expert in moe_layer.experts], dim=0)
 
         # 3. Forward through full model (supporting PhaseMoE, TeacherForced, etc.)
-        model_out = model(state)
-        routed_pred = model_out.action
+        #    forward() takes a batch dict (reads batch["state"]) and returns
+        #    ModelOutput with the action prediction in ``action_pred``.
+        model_out = model(batch)
+        routed_pred = model_out.action_pred
         if model_out.gate_logits is not None:
             top1_expert = model_out.gate_logits.argmax(dim=-1)
         elif model_out.routing_weights is not None:
