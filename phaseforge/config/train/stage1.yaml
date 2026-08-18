@@ -4,6 +4,25 @@ stage: 1
 epochs: 100
 grad_clip_norm: 1.0
 lambda_phase: 1.0         # Weight on the auxiliary phase classification loss
+# Per-step diagnostic: log cos(grad L_action, grad L_phase) as the
+# train/grad_cos_action_phase curve (auxiliary-task conflict detector,
+# Du et al. 2018 / PCGrad). Diagnostic only — never part of the loss, and
+# computed only when the model has a phase head and lambda_phase > 0.
+# Off by default; the frozen protocol does not enable it.
+grad_cosine: false
+# Effective λ(t) schedule for the auxiliary phase loss. "constant" = the
+# frozen protocol (λ = lambda_phase for every epoch, bit-identical to no
+# schedule). "linear" anneals the multiplier from start to end across the
+# run (0 <= end <= start <= 1): the phase head is shaped early and the
+# action loss dominates late. Chosen over gradient-conflict fixes
+# (PCGrad/CAGrad/Du-adaptive) because the Phase 1.1 diagnostic measured
+# cos(∇L_action, ∇L_phase) ≈ 0 — there is no conflict to resolve; the
+# val/loss_phase explosion is late-training overfitting on the flat
+# action-loss plateau (professor's Phase 1.4).
+lambda_schedule:
+  type: "constant"        # constant | linear
+  start: 1.0              # multiplier at epoch 0 (linear only)
+  end: 0.0                # multiplier at the final epoch (linear only)
 # Phase-head class weighting for the CE loss. "none" = plain CE (protocol).
 # "balanced" = inverse-frequency weights computed from the TRAINING split
 # (counts written to metadata/phase_weights.json). Counteracts the severe

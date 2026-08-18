@@ -99,10 +99,12 @@ class OfflineEvaluator:
         all_routing_weights = []
         all_expert_indices = []
         all_gate_logits = []
+        all_phase_logits = []
         all_masks = []
         all_traj_ids = []
         all_traj_positions = []
         has_trajectory_ids = True
+        boundary_error_enabled = self._metric_enabled("task", "phase_boundary_error")
 
         # 1. Collect all outputs
         for batch in self.dataloader:
@@ -134,6 +136,8 @@ class OfflineEvaluator:
                 all_expert_indices.append(out.expert_indices.detach().cpu())
             if out.gate_logits is not None:
                 all_gate_logits.append(out.gate_logits.detach().cpu())
+            if out.phase_logits is not None and boundary_error_enabled:
+                all_phase_logits.append(out.phase_logits.detach().cpu())
 
         # 2. Fail clearly on an empty loader (never return a hollow results dict).
         if not all_action_preds:
@@ -219,6 +223,21 @@ class OfflineEvaluator:
             )
             if val is not None:
                 results["eval/boundary_action_smoothness"] = val
+
+        # Phase-head error bucketed by distance to the nearest phase
+        # transition (diagnostic: boundary label noise vs uniform auxiliary
+        # overfitting). Per-trajectory temporal metric, gated on the
+        # task.phase_boundary_error config (off by default).
+        if boundary_error_enabled and all_phase_logits:
+            phase_logits = torch.cat(all_phase_logits, dim=0)
+            bucket_edges = self.metrics_cfg.task.phase_boundary_error.get(
+                "bucket_edges", (1, 3, 6, 11)
+            )
+            pooled = self._phase_boundary_error_trajectory_wise(
+                phase_logits, phases, traj_ids, traj_positions, bucket_edges=bucket_edges
+            )
+            if pooled is not None:
+                results.update({f"eval/phase_err_{k}": v for k, v in pooled.items()})
 
         # MoE Metrics
         if is_moe:
@@ -338,6 +357,15 @@ class OfflineEvaluator:
                 "around phase transitions (NOT an error vs target actions); "
                 "computed per trajectory."
             ),
+            "eval/phase_err_dist_*": (
+                "Phase-head classification error rate restricted to timesteps "
+                "whose distance to the nearest phase transition falls in the "
+                "named interval [lo, hi) (final bucket open-ended); computed "
+                "per trajectory and pooled across trajectories. Diagnoses "
+                "boundary label noise (errors cluster near transitions) vs "
+                "uniform auxiliary-head overfitting. Gated on "
+                "task.phase_boundary_error (off by default)."
+            ),
         }
 
         # 5. Honest skip record: temporal metrics that COULD not be computed
@@ -452,3 +480,59 @@ class OfflineEvaluator:
             )
             return None
         return float(sum(valid) / len(valid))
+
+    def _phase_boundary_error_trajectory_wise(
+        self,
+        phase_logits: torch.Tensor,
+        phases: torch.Tensor,
+        traj_ids: torch.Tensor | None,
+        traj_positions: torch.Tensor | None,
+        bucket_edges: tuple[int, ...] = (1, 3, 6, 11),
+    ) -> dict[str, float] | None:
+        """Phase-head error rate by distance-to-transition, pooled per bucket.
+
+        Regroups the pooled phase logits/labels into per-trajectory, time-
+        ordered sequences, computes the distance-bucketed error breakdown
+        per trajectory (``phase_error_by_transition_distance``), then pools
+        error rates across trajectories weighted by per-bucket sample counts.
+        Returns ``None`` (-> metric skipped) when trajectory identity is
+        absent or the logits are not per-step ``(N, C)``.
+        """
+        if phase_logits.ndim != 2:
+            logger.warning(
+                "phase_boundary_error: expected per-step (N, C) phase logits, "
+                "got shape %s — metric omitted.",
+                tuple(phase_logits.shape),
+            )
+            return None
+        logit_sequences = self._trajectory_sequences(phase_logits, traj_ids, traj_positions)
+        phase_sequences = self._trajectory_sequences(phases, traj_ids, traj_positions)
+        if logit_sequences is None or phase_sequences is None:
+            return None
+
+        per_traj = [
+            task_metrics.phase_error_by_transition_distance(
+                logits, labels, bucket_edges=bucket_edges
+            )
+            for logits, labels in zip(logit_sequences, phase_sequences)
+        ]
+        if not per_traj:
+            return None
+
+        # Pool rates per bucket weighted by their per-trajectory sample
+        # counts; per-bucket counts and totals are exact sums.
+        pooled: dict[str, float] = {}
+        bucket_keys = [k for k in per_traj[0] if k.startswith("dist_")]
+        for key in bucket_keys:
+            total_n = float(sum(d[f"n_{key}"] for d in per_traj))
+            weighted_err = float(
+                sum(d[key] * d[f"n_{key}"] for d in per_traj if d[f"n_{key}"] > 0)
+            )
+            pooled[key] = weighted_err / total_n if total_n > 0 else float("nan")
+            pooled[f"n_{key}"] = total_n
+        pooled["n_samples"] = float(sum(d["n_samples"] for d in per_traj))
+        pooled["n_boundaries"] = float(sum(d["n_boundaries"] for d in per_traj))
+        pooled["any_boundary"] = float(
+            sum(d["any_boundary"] for d in per_traj) / len(per_traj)
+        )
+        return pooled

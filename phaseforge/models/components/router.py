@@ -22,7 +22,9 @@ class RouterOutput(NamedTuple):
 class TopKRouter(nn.Module):
     """Sparse top-k expert router with auxiliary load-balancing loss.
 
-    Follows the Switch Transformer routing mechanism:
+    Follows the Shazeer et al. (2017) / GShard-style top-k noisy-gating
+    mechanism (not Switch Transformer, whose defining contribution is
+    top-1 routing):
     1. Compute gate logits via linear projection.
     2. Add scaled Gaussian noise during training for exploration.
     3. Select the top-k experts.
@@ -149,11 +151,14 @@ class TopKRouter(nn.Module):
         )
 
     def _compute_balance_loss(self, routing_probs: Tensor, gate_logits: Tensor) -> Tensor:
-        """Compute the Switch Transformer load balancing loss.
+        """Compute the Switch Transformer auxiliary load-balancing loss.
 
         L_balance = E * sum(f_i * p_i) for i in 1..E
         where f_i is the fraction of items routed to expert i (based on top-1)
         and p_i is the mean routing probability for expert i.
+        (The f_i * p_i auxiliary-loss formulation is Switch Transformer's;
+        the surrounding top-k noisy-gating mechanism is Shazeer et al.
+        (2017) / GShard lineage.)
 
         .. note:: Routing semantics — this loss is computed on the *top-1*
             hard assignment (``argmax`` of the gate logits, as in Switch

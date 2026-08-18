@@ -76,6 +76,15 @@ task:
     # error against target actions (named accordingly; a target-based
     # boundary error requires trajectory-aligned targets).
 
+  phase_boundary_error:
+    enabled: false            # Diagnostic (phase-head error by distance to
+                              # transition); off for the frozen protocol.
+    bucket_edges: [1, 3, 6, 11]
+    # Temporal diagnostic — computed per trajectory (E9). Distinguishes
+    # boundary label noise (errors cluster at transitions) from uniform
+    # auxiliary overfitting. Requires per-step (N, C) phase logits (single-
+    # step stage-1 models); multi-step sequences are skipped with a warning.
+
   sample_efficiency:
     enabled: false            # Expensive; enable only for dedicated ablation runs
     fractions: [0.25, 0.50, 0.75, 1.00]

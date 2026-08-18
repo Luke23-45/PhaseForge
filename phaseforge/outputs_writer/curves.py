@@ -46,6 +46,8 @@ CURVE_CORE_REQUIRED: tuple[str, ...] = (
 #: monitor value all live here (type-checked only when present).
 CURVE_OPTIONAL_NUMERIC: tuple[str, ...] = (
     "train/loss_phase",
+    "train/grad_cos_action_phase",
+    "train/lambda_phase",
     "val/loss_phase",
     "train/phase_acc",
     "val/phase_acc",

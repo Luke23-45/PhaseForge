@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from phaseforge.models.base import ModelOutput
@@ -11,6 +14,56 @@ from phaseforge.trains.loops.base import (
     MetricValue,
     _PhaseAccumulator,
 )
+
+
+def _grad_cosine_similarity(
+    loss_action: torch.Tensor,
+    loss_phase: torch.Tensor,
+    parameters: Iterable[nn.Parameter],
+) -> torch.Tensor | None:
+    """Cosine similarity between the action- and phase-loss gradients.
+
+    Auxiliary-task conflict diagnostic (Du et al. 2018 gradient-cosine
+    weighting; PCGrad's conflict definition): the angle between the two
+    per-task gradient vectors over all trainable parameters. Sustained
+    negative values indicate active gradient conflict between the action
+    objective and the phase head; values near zero indicate the tasks are
+    (locally) orthogonal. Parameters not reached by a loss contribute zero
+    (their true gradient). Returns ``None`` when either gradient vector is
+    degenerate (zero norm), which the caller must tolerate.
+
+    Diagnostic only: computed with ``retain_graph=True`` and detached, so
+    it never changes the optimizer update. The extra backward passes run
+    only when ``train.grad_cosine`` is enabled.
+    """
+    if not (loss_action.requires_grad and loss_phase.requires_grad):
+        return None
+    params = [p for p in parameters if p.requires_grad]
+    if not params:
+        return None
+    grads_action = torch.autograd.grad(
+        loss_action, params, retain_graph=True, allow_unused=True
+    )
+    grads_phase = torch.autograd.grad(
+        loss_phase, params, retain_graph=True, allow_unused=True
+    )
+    flat_a = torch.cat(
+        [
+            (g if g is not None else torch.zeros_like(p)).detach().flatten()
+            for g, p in zip(grads_action, params)
+        ]
+    )
+    flat_p = torch.cat(
+        [
+            (g if g is not None else torch.zeros_like(p)).detach().flatten()
+            for g, p in zip(grads_phase, params)
+        ]
+    )
+    norm_a = flat_a.norm()
+    norm_p = flat_p.norm()
+    if norm_a == 0.0 or norm_p == 0.0:
+        return None
+    return (flat_a @ flat_p) / (norm_a * norm_p)
 
 
 class Stage1Trainer(BaseTrainer):
@@ -32,6 +85,43 @@ class Stage1Trainer(BaseTrainer):
         self._train_phase_acc = _PhaseAccumulator(device=self.device)
         self._val_phase_acc = _PhaseAccumulator(device=self.device)
 
+    def _effective_lambda_phase(self) -> float:
+        """Effective λ(t) for the auxiliary phase loss at the current epoch.
+
+        ``train.lambda_schedule.type``:
+        - ``"constant"`` (protocol default): λ = ``lambda_phase`` for every
+          epoch — the frozen-protocol behavior, bit-identical to a config
+          with no schedule.
+        - ``"linear"``: the multiplier anneals ``start -> end`` linearly
+          over the run (``end <= start``, both in [0, 1]), so the phase head
+          is shaped early and the action loss dominates late. Chosen over
+          gradient-conflict fixes (PCGrad/CAGrad/Du-adaptive) because the
+          Phase 1.1 measurement showed cos(∇L_action, ∇L_phase) ≈ 0 — there
+          is no conflict to resolve; the val/loss_phase explosion is
+          late-training overfitting on the flat action-loss plateau.
+        """
+        base = float(self.train_cfg.get("lambda_phase", 1.0))
+        schedule = self.train_cfg.get("lambda_schedule") or {}
+        sched_type = str(schedule.get("type", "constant"))
+        if sched_type == "constant":
+            return base
+        if sched_type == "linear":
+            start = float(schedule.get("start", 1.0))
+            end = float(schedule.get("end", 0.0))
+            if not 0.0 <= end <= start <= 1.0:
+                raise ValueError(
+                    "train.lambda_schedule.linear requires 0 <= end <= start <= 1, "
+                    f"got start={start}, end={end}"
+                )
+            total = max(1, int(self.train_cfg.get("epochs", 1)))
+            t = min(max(float(self.current_epoch), 0.0), float(total))
+            multiplier = start + (end - start) * (t / total)
+            return base * max(0.0, multiplier)
+        raise ValueError(
+            f"unknown train.lambda_schedule.type {sched_type!r} "
+            "(expected 'constant' or 'linear')"
+        )
+
     def _compute_loss(
         self, batch: dict[str, torch.Tensor], out: ModelOutput | None = None
     ) -> tuple[torch.Tensor, dict[str, MetricValue]]:
@@ -44,7 +134,13 @@ class Stage1Trainer(BaseTrainer):
         target_phase = batch["phase"]  # (B,) or (B, T)
         mask = batch.get("padding_mask")  # (B, T) boolean or None
 
-        lambda_phase = self.train_cfg.lambda_phase
+        lambda_phase = self._effective_lambda_phase()
+        # The raw phase loss is always computed (and always reported on the
+        # curve) when the model has a phase head and the BASE weight is
+        # positive, even under a schedule whose effective λ(t) has reached
+        # zero — otherwise the val/loss_phase overfitting signal that the
+        # schedule is supposed to suppress would be masked on the curve.
+        base_lambda_positive = float(self.train_cfg.get("lambda_phase", 1.0)) > 0.0
 
         # Optional inverse-frequency class weights for the phase CE
         # (train.phase_class_weight="balanced", injected by cli.py as
@@ -74,7 +170,7 @@ class Stage1Trainer(BaseTrainer):
 
         # Phase Loss (Cross Entropy)
         phase_loss = torch.tensor(0.0, device=self.device)
-        if out.phase_logits is not None and lambda_phase > 0.0:
+        if out.phase_logits is not None and base_lambda_positive:
             logits = out.phase_logits
             if mask is not None:
                 # Reshape for CE: (B*T, num_classes) and (B*T,)
@@ -104,8 +200,27 @@ class Stage1Trainer(BaseTrainer):
             # batch would force a host/device synchronization each step.
             "loss_total": total_loss.detach(),
             "loss_action": action_loss.detach(),
-            "loss_phase": phase_loss.detach() if lambda_phase > 0.0 else 0.0,
+            "loss_phase": phase_loss.detach() if base_lambda_positive else 0.0,
+            "lambda_phase": lambda_phase,
         }
+
+        # Optional per-step diagnostic: cosine similarity between the action
+        # and phase gradient vectors (auxiliary-task conflict detector, Du et
+        # al. 2018 / PCGrad). Diagnostic only — off by default, never part of
+        # the loss, and computed only during training (torch.is_grad_enabled
+        # is False inside validation's no_grad context). Skipped when the
+        # phase loss carries no gradient (no phase head, lambda=0, or an
+        # empty masked batch).
+        if (
+            self.train_cfg.get("grad_cosine", False)
+            and torch.is_grad_enabled()
+            and phase_loss.requires_grad
+        ):
+            grad_cos = _grad_cosine_similarity(
+                action_loss, phase_loss, self.model.parameters()
+            )
+            if grad_cos is not None:
+                metrics["grad_cos_action_phase"] = grad_cos.detach()
 
         return total_loss, metrics
 

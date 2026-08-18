@@ -80,6 +80,89 @@ def action_mse(
     return float(((predicted_actions - target_actions) ** 2).mean())
 
 
+def phase_error_by_transition_distance(
+    logits: Tensor,
+    labels: Tensor,
+    bucket_edges: tuple[int, ...] = (1, 3, 6, 11),
+) -> dict[str, float]:
+    """Phase-head classification error rate bucketed by distance to transition.
+
+    Distinguishes *boundary label noise* (errors cluster at the labeler's
+    decision boundaries) from *uniform auxiliary overfitting* (errors spread
+    across all distances). Per-trajectory temporal metric: transitions are
+    detected from the label stream itself, and each timestep is assigned the
+    distance to its nearest transition (0 = the transition timestep itself).
+
+    Args:
+        logits: (T, C) phase-head logits for ONE trajectory.
+        labels: (T,) integer phase labels for the same trajectory.
+        bucket_edges: ascending exclusive upper edges for the distance
+            buckets. Bucket i covers ``[lo, hi)`` with ``lo = 0`` for the
+            first bucket and ``lo = edges[i-1]`` afterwards; the final bucket
+            is ``[edges[-1], inf)``. Defaults ``(1, 3, 6, 11)`` produce
+            distances 0 / 1-2 / 3-5 / 6-10 / 11+.
+
+    Returns:
+        A flat dict with one ``dist_<lo>_<hi>`` error-rate key per bucket
+        (``dist_11_plus`` for the open-ended bucket), matching ``n_dist_*``
+        per-bucket sample counts, plus ``n_samples`` (valid timesteps),
+        ``n_boundaries`` (detected transitions) and ``any_boundary``
+        (1.0/0.0). When a trajectory has no transitions every step falls
+        into the final bucket.
+    """
+    if logits.ndim != 2 or labels.ndim != 1:
+        raise ValueError(
+            "phase_error_by_transition_distance expects (T, C) logits and "
+            f"(T,) labels, got {tuple(logits.shape)} and {tuple(labels.shape)}"
+        )
+    if logits.size(0) != labels.size(0):
+        raise ValueError("logits and labels must cover the same timesteps")
+    if not logits.numel() or not labels.numel():
+        raise ValueError("logits/labels must not be empty")
+    if not torch.isfinite(logits).all():
+        raise ValueError("logits contains non-finite values")
+    edges = tuple(int(e) for e in bucket_edges)
+    if not edges or edges != tuple(sorted(edges)) or edges[0] < 1:
+        raise ValueError(
+            f"bucket_edges must be a strictly ascending tuple of ints >= 1, got {bucket_edges}"
+        )
+
+    T = logits.size(0)
+    preds = logits.argmax(dim=-1)
+    errors = (preds != labels).float()  # (T,)
+
+    # Transition positions: first timestep of each new phase segment.
+    changed = labels[1:] != labels[:-1]
+    boundary_positions = torch.nonzero(changed, as_tuple=False).flatten() + 1  # (K,)
+
+    if boundary_positions.numel():
+        positions = boundary_positions.unsqueeze(0)  # (1, K)
+        steps = torch.arange(T, device=logits.device).unsqueeze(1)  # (T, 1)
+        distances = (steps - positions).abs().min(dim=1).values  # (T,)
+    else:
+        distances = torch.full((T,), float("inf"), device=logits.device)
+
+    # Bucket assignment: [0, e0) -> 0, [e0, e1) -> 1, ..., [e_last, inf) -> K.
+    # right=True keeps the buckets LEFT-closed / RIGHT-open, so distance 0 is
+    # isolated in its own bucket and distance e0 falls into the next bucket.
+    edges_t = torch.tensor(edges, device=logits.device)
+    bucket_idx = torch.bucketize(distances, edges_t, right=True).clamp(max=len(edges))
+
+    out: dict[str, float] = {}
+    for i in range(len(edges) + 1):
+        lo = 0 if i == 0 else edges[i - 1]
+        hi = "plus" if i == len(edges) else edges[i]
+        bucket_mask = bucket_idx == i
+        n = int(bucket_mask.sum().item())
+        rate = float(errors[bucket_mask].mean().item()) if n else float("nan")
+        out[f"dist_{lo}_{hi}"] = rate
+        out[f"n_dist_{lo}_{hi}"] = float(n)
+    out["n_samples"] = float(T)
+    out["n_boundaries"] = float(boundary_positions.numel())
+    out["any_boundary"] = 1.0 if boundary_positions.numel() else 0.0
+    return out
+
+
 def boundary_action_smoothness(
     predicted_actions: Tensor, phases: Tensor, boundary_window: int = 3
 ) -> float:

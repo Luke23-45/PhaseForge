@@ -14,9 +14,28 @@ degenerate policies. Only three methods consume phaseforge's stage-1
 still need a full re-run for a consistent artifact set at one git revision
 (their part-3 eval rows target old checkpoints).
 
-**Fix commit:** `3cd510f` (stage-1 monitor now `val/loss_action`, matching the
-predeclared rule). All code below must run at exactly this revision (or a
-descendant with no further training-affecting change).
+**Fix commits:** `3cd510f` (stage-1 monitor now `val/loss_action`, matching the
+predeclared rule) **and the λ-decay fix (below, commit-pinned in Phase 1.4 of
+`docs/op/implementation_plan.md`)**. All code below must run at exactly the
+final revision (or a descendant with no further training-affecting change).
+
+**Adopted Phase-1 fix (2026-08-18, CPU-validated on 3 Lift seeds):**
+linear λ decay for the stage-1 auxiliary phase loss,
+`train.lambda_schedule.type=linear, start=1.0, end=0.0`.
+Local validation (tag `lambdav1`): stage-2 NMI spread **0.010** (fixed
+reference 0.021; tie-break 0.044; buggy 0.069) at equal NMI level (0.447),
+0% collapse, final action on the plateau (0.0337/0.0275/0.0312).
+The tie-break re-selection was tested standalone (spread 0.044) and on top of
+λ-decay (0.039) and rejected: the "min val/loss_phase on the plateau"
+criterion selects early epochs whose router-bootstrap centroids are
+consistently worse. Diagnosis that selected the fix family: grad-cosine
+measurement cos(∇L_action, ∇L_phase) ≈ 0 (no gradient conflict → no
+PCGrad/CAGrad/Du-adaptive weighting); val/loss_phase explosion is
+late-training degradation on the flat action plateau.
+
+The λ schedule is inert for every cell except phaseforge stage-1 (BC has no
+phase head → λ·0 = 0; stage-2 loops never read `lambda_schedule`), so it is
+safe in the manifest `defaults`.
 
 ---
 
@@ -49,8 +68,44 @@ descendant with no further training-affecting change).
 
 ## 1. Command
 
+### 1a. Manifest edit (reviewed, deliberate — same cells/seeds, one training-affecting change)
+
+Add the adopted λ-decay overrides to `experiments/five_task.json` `defaults`:
+
+```json
+"defaults": [
+  "train.early_stopping.enabled=false",
+  "train.lambda_schedule.type=linear",
+  "train.lambda_schedule.start=1.0",
+  "train.lambda_schedule.end=0.0"
+]
+```
+
+Inert for all cells except phaseforge stage-1 (see above). After the edit:
+`uv run python scripts/preflight_configs.py` must still print 315 passed.
+
+### 1b. Phase-2 subset first (professor §7): Lift, the two stage-1-affecting methods
+
 ```bash
 # From the repo root, with the venv active:
+phaseforge-sweep \
+  --manifest experiments/five_task.json \
+  --outputs outputs_rerun \
+  --methods phaseforge,phase_pretrain_random_router \
+  --seeds 42,43,44 \
+  --with-dependencies \
+  --continue-on-error
+```
+
+Success criteria (professor §7 Phase 2): per-seed rollout spread drops while
+`val/loss_action` stays on its plateau; target PhaseForge spread 0.24 →
+≈0.04–0.10 (plain-encoder control ≈0.04). Local CPU proxy already achieved:
+stage-2 NMI spread 0.010. If achieved, the result upgrades from "highest
+mean, highest variance" to **"highest mean, low variance"**.
+
+### 1c. Full sweep only after Gate 2 passes
+
+```bash
 phaseforge-sweep \
   --manifest experiments/five_task.json \
   --outputs outputs_rerun \
@@ -70,6 +125,10 @@ phaseforge-sweep \
   artifacts. The runner's commit gating would refuse to reuse pre-fix
   checkpoints anyway (`state.json` entries and filesystem scans are both
   filtered by `git_commit`), but a clean base is simplest.
+- Stage-1 snapshots: keep `train.checkpoint.every_n_epochs` at the stage-1
+  default (10) for the re-run — the tie-break is NOT part of the adopted
+  fix, so per-epoch snapshots are unnecessary disk. Re-selection scripts
+  (`scripts/tie_break_selector.py`) remain available for post-hoc audits.
 
 ## 2. What will run (50 method rows × 3 seeds)
 
@@ -116,9 +175,19 @@ Eval mode: rollout for all except `oracle_moe` (offline metrics).
 
 Stage-1 (fixed monitor, 3 seeds): best `val/loss_action` 0.0264/0.0240/0.0261
 @ epochs 41/36/25 (buggy: 0.0451/0.0404/0.0659 @ epochs 2/2/1).
-Stage-2 (warm start from those): action 0.0301/0.0279/0.0308; NMI final
-0.449/0.457/0.436; collapse 0%. Runs live under `outputs_local_train/`
-(tag `Lift_fixed_v3_stage1`/`Lift_fixed_v3_stage2`).
+
+Stage-1 (fixed monitor **+ λ-decay**, tag `lambdav1`): best `val/loss_action`
+0.0266/0.0241/0.0260 @ epochs 41/36/25; final `val/loss_phase` 2.28–2.47
+(shared-encoder drift, no longer phase-head overfitting).
+
+Stage-2 (warm start from λ-decay checkpoints, tag `lambdav1_stage2`):
+final action 0.0337/0.0275/0.0312; NMI final **0.450/0.450/0.440, spread
+0.010**; collapse 0%. Runs live under `outputs_local_train/`.
+
+For reference, stage-2 from fixed-monitor-no-schedule checkpoints was
+0.0301/0.0279/0.0308 action, NMI 0.449/0.457/0.436 (spread 0.021); from
+tie-break checkpoints NMI 0.440/0.411/0.395 (spread 0.044); from tie-break-
+on-λ checkpoints NMI 0.434/0.414/0.394 (spread 0.039).
 
 ## 6. Notes / cautions
 
