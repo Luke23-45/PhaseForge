@@ -85,5 +85,10 @@ split:
 # Cache reuse is fail-closed: a different schema/source/split may not be used.
 enforce_strict_cache: true
 
+# Wave-2 corruption ablation overrides (default: no corruption).
+phase_corruption_rate: 0.0
+phase_shuffle_control: false
+
 # Cache root (resolved under the shared data root by the cache manager).
 cache_root: "cache"
+

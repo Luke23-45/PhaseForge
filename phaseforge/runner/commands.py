@@ -71,6 +71,8 @@ def train_command(
     if ckpt_path is not None:
         cmd.append(f"train.stage1_ckpt_path={ckpt_path}")
     cmd.extend(defaults)
+    if method.overrides:
+        cmd.extend(method.overrides)
     return cmd
 
 
@@ -121,4 +123,6 @@ def eval_command(
     if method.name:
         cmd.append(f"project.method={method.name}")
     cmd.extend(defaults)
+    if method.overrides:
+        cmd.extend(method.overrides)
     return cmd

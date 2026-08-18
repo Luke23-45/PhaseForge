@@ -107,5 +107,14 @@ split:
 # Cache reuse is fail-closed: a different schema/source/split may not be used.
 enforce_strict_cache: true
 
+# Wave-2 corruption ablation overrides (default: no corruption).
+# phase_corruption_rate: fraction of phase labels uniformly re-assigned at
+#   random in Stage 1 training. 0.0 = no corruption, 1.0 = all labels random.
+# phase_shuffle_control: when true AND phase_corruption_rate=1.0, applies a
+#   permutation (bijective relabelling) instead of uniform random noise,
+#   preserving marginal phase counts.
+phase_corruption_rate: 0.0
+phase_shuffle_control: false
+
 # Cache root (resolved under the shared data root by the cache manager).
 cache_root: "cache"

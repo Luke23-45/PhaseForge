@@ -1,6 +1,7 @@
-# config/models/phaseforge.yaml — Phase-Bootstrapped MoE (proposed method)
+# config/models/baselines/pf_phase_head.yaml — Linear Phase-Head Router Init
+# Phase-supervised Stage-1 encoder + Normalized Linear Phase-Head Router + Warmstart Experts
 
-name: "phaseforge"
+name: "pf_phase_head"
 _target_: phaseforge.models.phase_moe.PhaseBootstrappedMoE
 
 encoder:
@@ -31,22 +32,18 @@ router:
   top_k: 2
   noise_std: 0.1
   balance_coeff: 0.01
-  normalize_input: true   # Unit-norm latents + unit-norm centroid weights
-                          # (set by bootstrap_moe) => true cosine routing.
+  normalize_input: true
 
 expert:
   _target_: phaseforge.models.components.expert.ExpertMLP
   input_dim: 128
-  # Single hidden layer matching action_head.hidden_dim so the Stage 1
-  # ActionHead can be copied into the experts exactly (strict warm start).
   hidden_dims: [256]
   output_dim: ${data.action_dim}
   activation: "gelu"
 
 router_init:
-  type: "centroid"
+  type: "phase_head"
 
 expert_init:
   type: "warmstart"
   jitter_std: 0.02
-

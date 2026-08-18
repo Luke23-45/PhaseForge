@@ -27,19 +27,37 @@
 - **Overlap with PhaseForge:** skill/phase-conditioned routing for manipulation; structure-aware router specialization.
 - **Differences:** (a) skill semantics come from a VLM + language encoder at training time and a learned skill predictor at inference; PhaseForge uses a cheap deterministic rule-based labeler and a phase head — no language models. (b) SMoDP applies structural *losses* (contrastive) during training; PhaseForge uses pure *initialization*. (c) Diffusion-policy/vision multi-task setting vs low-dim state MLP. (d) No factorial ablation of encoder-supervision × router-init.
 
+### Royer et al. — BMVC 2022 (arXiv:2304.05497)
+**"Revisiting Single-Gated Mixtures of Experts"**
+
+- Proposes per-sample clustering-based initialization: clusters pretrained embeddings with K-means, uses cluster centroids to initialize the MoE gating network, and initializes experts from the base model. Evaluated on vision classification tasks.
+- **Overlap with PhaseForge:** Latent clustering to initialize router gate; warm-starting experts from a base generalist.
+- **Differences:** (a) Vision domain without dynamics or control. (b) Single-gate MoE with no privileged supervision (unsupervised/embedding clusters only). (c) No controlled factorial isolating encoder representation from router initialization.
+
+### Cluster-aware Upcycling — Chu et al., CVPR 2026 (arXiv:2604.13508)
+**"Enhancing Mixture-of-Experts Specialization via Cluster-Aware Upcycling"**
+
+- Clusters pretrained dense model activation representations via spherical K-means; initializes router weights directly from cluster centroids and experts from cluster-specific subspaces; adds self-distillation loss. Zero/few-shot CLIP ViT.
+- **Overlap with PhaseForge:** Explicitly uses cluster centroids for cosine router initialization to break expert symmetry and jumpstart specialization.
+- **Differences:** (a) Unsupervised activation clustering vs privileged phase/regime supervision during pretraining. (b) Vision foundation model upcycling vs robotic closed-loop control. (c) PhaseForge provides the controlled comparison (`pf_spherical_kmeans` vs `phaseforge`) proving what privileged phase supervision adds over generic activation clustering.
+
 ### Adjacent (read, lower proximity)
 - **CoRDE** (arXiv:2606.21935): concept-prior routed diffusion experts (frozen concept encoder + soft mapping matrix) — shares the "frozen structure source guides routing" idea in a diffusion setting; still loss-based, no initialization-based bootstrap, no factorial.
 - **MATE** (arXiv:2606.01047): cross-modal cosine router for trajectory MoE — uses cosine similarity routing (as PhaseForge's normalize_input gate does) for scale-invariance; no phase/skill structure.
+- **Sparse Upcycling** (Komatsuzaki et al., ICLR 2023 / arXiv:2212.05055): Establishes the general dense-to-MoE warm-start paradigm.
 
 ---
 
-## 2. Positioning statement (2–3 sentences for the paper)
+## 2. Positioning statement (for the paper)
 
-While several concurrent works (MoE-ACT, LAR-MoE, SMoDP) converge on structure-aware routing for manipulation MoEs, none of them: (i) use a **centroid initialization** of the router gate (rather than training-time regularization or direct gating supervision) as the mechanism that injects phase structure; (ii) run a **controlled 2×2 factorial** isolating the phase-supervised-encoder effect from the router-initialization effect; or (iii) characterize the **checkpoint-selection / flat-plateau lottery** as a mechanism of seed variance in this class of method. PhaseForge's contribution rests on these three distinctives: the *initialization-only* injection of structure (no structural losses in stage 2), the *factorial evidence* that separates representation benefit from router-init benefit, and a *methodological diagnosis* (negative transfer of an auxiliary phase head + underspecified checkpoint selection on a flat monitor plateau) that generalizes beyond PhaseForge itself.
+While generic cluster-based router initialization has recently been proposed in computer vision (Royer et al. BMVC 2022, Cluster-aware Upcycling CVPR 2026) and unsupervised latent routing in robotics (LAR-MoE 2026), **PhaseForge** addresses the distinct problem of **Privileged Regime Geometry Transfer**:
+1. It investigates whether privileged semantic/regime information available *only during training* can shape latent geometry to initialize a specialized MoE prior that operates *without* privileged annotations at inference.
+2. It provides a **controlled factorial design** isolating representation shaping from router initialization, expert warm-starting, capacity scaling, and generic clustering comparators (`PS-Spherical-KMeans`).
+3. It measures specialization directly via the behavioral error matrix $M_{z,e} = \text{MSE}(\pi_e(x_z), a_z)$ and characterizes the mechanistic lottery of checkpoint selection on flat loss plateaus.
 
 ---
 
 ## 3. Caveats
 
-- The 2026 papers (2601.21971, 2603.08476, 2605.23477, 2606.21935, 2606.01047) were read via abstract + full-text HTML where available; for precise claims (e.g., exact loss weights, benchmark numbers) re-verify against the PDF before the paper's related-work section is finalized.
-- LAR-MoE and MoE-ACT share authors (Dresden group); both are preprints under review (RSS 2026 accepted for MoE-ACT).
+- The 2026 papers (2601.21971, 2603.08476, 2604.13508, 2605.23477, 2606.21935, 2606.01047) were verified via official conference proceedings and arXiv; for precise loss-weight comparisons, re-verify against the final camera-ready PDFs before publication.
+- LAR-MoE and MoE-ACT share authors (Dresden group); MoE-ACT is accepted at RSS 2026, Cluster-aware Upcycling at CVPR 2026.

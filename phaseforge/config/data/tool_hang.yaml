@@ -82,4 +82,7 @@ split:
 
 enforce_strict_cache: true
 
+phase_corruption_rate: 0.0
+phase_shuffle_control: false
+
 cache_root: "cache"

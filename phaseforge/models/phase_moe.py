@@ -1,15 +1,20 @@
-"""PhaseBootstrappedMoE: The core proposed model architecture."""
-
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.action_head import ActionHead
+from phaseforge.models.components.clustering import (
+    compute_hierarchical_phase_prototypes,
+    compute_phase_head_router_weights,
+    spherical_kmeans,
+)
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
@@ -27,13 +32,14 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
     This model operates in two distinct stages:
     Stage 1: Generalist pretraining with auxiliary phase supervision.
-             Forward pass uses encoder → action_head + phase_head.
+             Forward pass uses encoder -> action_head + phase_head.
     Stage 2: Bootstrapped MoE specialization.
-             Forward pass uses encoder → moe_layer.
+             Forward pass uses encoder -> moe_layer.
 
     The transition between stages is mediated by the `bootstrap_moe()` method,
-    which computes latent centroids for each phase and initializes the router
-    weights accordingly.
+    which transfers privileged regime structure (or generic clustering / phase head
+    weights) into the MoE router and warm-starts or resets experts according to
+    configuration.
 
     Args:
         encoder: The StateEncoder instance.
@@ -41,6 +47,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         phase_head: The PhaseClassificationHead used in Stage 1.
         router: The TopKRouter for Stage 2.
         expert: A single ExpertMLP template to be cloned for Stage 2.
+        router_init: Optional configuration dictionary for router initialization.
+            Keys: 'type' ('centroid' | 'spherical_centroid' | 'spherical_kmeans' |
+                  'kmeans' | 'phase_head' | 'random'), 'seed' (int).
+        expert_init: Optional configuration dictionary for expert initialization.
+            Keys: 'type' ('warmstart' | 'random'), 'jitter_std' (float).
     """
 
     def __init__(
@@ -50,6 +61,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         phase_head: PhaseClassificationHead,
         router: TopKRouter,
         expert: ExpertMLP,
+        router_init: dict[str, Any] | None = None,
+        expert_init: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.encoder = encoder
@@ -60,6 +73,16 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
         # Stage 2 components
         self.moe_layer = MoELayer(router=router, experts=expert)
+
+        # Initialization strategy configurations
+        self.router_init_cfg = (
+            dict(router_init) if router_init is not None else {"type": "centroid"}
+        )
+        self.expert_init_cfg = (
+            dict(expert_init)
+            if expert_init is not None
+            else {"type": "warmstart", "jitter_std": 0.02}
+        )
 
         # Internal state to track which stage the model is currently configured for
         self._stage = 1
@@ -92,11 +115,18 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         self.encoder.eval()
         logger.info("Encoder weights frozen; encoder kept in eval mode (no dropout).")
 
+    def unfreeze_encoder(self) -> None:
+        """Unfreeze the encoder for fine-tuning in Stage 2 (PhaseForge-FT)."""
+        for param in self.encoder.parameters():
+            param.requires_grad = True
+        self._encoder_frozen = False
+        logger.info("Encoder weights unfrozen for Stage 2 fine-tuning.")
+
     def train(self, mode: bool = True) -> PhaseBootstrappedMoE:
         """Override so a frozen encoder stays deterministic during Stage 2.
 
         The training loop calls ``model.train()`` every epoch, which would
-        otherwise re-enable the encoder's dropout.
+        otherwise re-enable the encoder's dropout when frozen.
         """
         super().train(mode)
         if mode and self._encoder_frozen:
@@ -170,119 +200,182 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         return {"gate_logits": self._last_gate_logits}
 
     @torch.no_grad()
-    def bootstrap_moe(self, dataloader: DataLoader, device: torch.device | str = "cuda") -> None:
-        """The core contribution: Bootstrapping the MoE from Stage 1 knowledge.
+    def bootstrap_moe(
+        self,
+        dataloader: DataLoader,
+        device: torch.device | str = "cuda",
+        router_init: dict[str, Any] | None = None,
+        expert_init: dict[str, Any] | None = None,
+    ) -> None:
+        """Bootstrapping the MoE from Stage 1 knowledge.
 
-        This algorithm:
-        1. Computes the centroid in latent space for every phase using the training data.
-        2. Assigns each expert to a phase and initializes its router weights with that centroid.
-        3. Copies the pre-trained ActionHead weights into each ExpertMLP to jumpstart them.
+        Supports the full factorial and unconfounded prototype generation:
+        - Router initialization:
+            * 'centroid' / 'phase_centroid': unconfounded hierarchical phase prototypes.
+            * 'spherical_centroid': phase centroids with spherical pre-normalization.
+            * 'spherical_kmeans': unsupervised spherical K-means on all training latents.
+            * 'kmeans': Euclidean K-means on all training latents.
+            * 'phase_head': normalized rows of linear phase head classifier.
+            * 'random': keeps random router initialization.
+        - Expert initialization:
+            * 'warmstart': ActionHead weights copied with configurable jitter_std.
+            * 'random': independent Kaiming draws.
 
         Args:
-            dataloader: Training dataloader to compute centroids over.
+            dataloader: Training dataloader to compute centroids/clusters over.
             device: Compute device.
+            router_init: Optional override for router initialization config.
+            expert_init: Optional override for expert initialization config.
         """
-        logger.info("Starting MoE bootstrapping process...")
+        r_cfg = router_init or self.router_init_cfg
+        e_cfg = expert_init or self.expert_init_cfg
+
+        r_type = str(r_cfg.get("type", "centroid")).lower()
+        e_type = str(e_cfg.get("type", "warmstart")).lower()
+        jitter_std = float(e_cfg.get("jitter_std", 0.02))
+        cluster_seed = int(r_cfg.get("seed", 42))
+
+        logger.info(
+            f"Starting MoE bootstrapping process (router_init='{r_type}', "
+            f"expert_init='{e_type}', jitter_std={jitter_std})..."
+        )
         self.to(device)
         self.eval()
 
-        # We assume number of experts == number of phases for the default PhaseForge
         num_phases = self.phase_head.num_phases
         num_experts = self.moe_layer.router.num_experts
         latent_dim = self.encoder.latent_dim
-
-        if num_phases != num_experts:
-            logger.warning(
-                f"Number of phases ({num_phases}) != number of experts ({num_experts}). "
-                "Phase-bootstrapping works best when E >= P. Centroids will be mapped 1:1 "
-                "for the first P experts, the rest remain random."
-            )
-
-        # 1. Compute latent centroids
-        phase_sums = torch.zeros((num_phases, latent_dim), device=device)
-        phase_counts = torch.zeros((num_phases,), device=device)
         non_blocking = torch.device(device).type == "cuda"
 
-        for batch in dataloader:
-            state = batch["state"].to(device, non_blocking=non_blocking)
-            phase = batch["phase"].to(device, non_blocking=non_blocking)
+        # 1. Collect training latents and phase labels if needed for data-driven router inits
+        needs_latents = r_type in (
+            "centroid", "phase_centroid", "spherical_centroid", "spherical_kmeans", "kmeans"
+        )
+        latents_list: list[Tensor] = []
+        phases_list: list[Tensor] = []
 
-            # Handle sequence length dimension if present
-            if state.ndim == 3:
-                state = state.view(-1, state.size(-1))
-                phase = phase.view(-1)
+        if needs_latents:
+            logger.info("Computing latent representations across training dataloader...")
+            for batch in dataloader:
+                state = batch["state"].to(device, non_blocking=non_blocking)
+                phase = batch["phase"].to(device, non_blocking=non_blocking)
 
-            latent = self.encoder(state)
+                if state.ndim == 3:
+                    state = state.view(-1, state.size(-1))
+                    phase = phase.view(-1)
 
-            # Scatter add the latents to the correct phase sum
-            # Expand phase to match latent dims: (B, D)
-            phase_expanded = phase.unsqueeze(1).expand_as(latent)
-            phase_sums.scatter_add_(0, phase_expanded, latent)
+                latent = self.encoder(state)
+                latents_list.append(latent)
+                phases_list.append(phase)
 
-            # Count occurrences of each phase
-            counts = torch.bincount(phase, minlength=num_phases).float()
-            phase_counts += counts
+            if not latents_list:
+                raise ValueError("Bootstrap dataloader is empty. Cannot compute prototypes.")
 
-        # Compute mean
-        # An absent phase would produce a zero centroid reported as if it had
-        # one sample — that silently corrupts the router init, so it is a
-        # hard failure instead.
-        absent = phase_counts == 0
-        if absent.any():
-            raise ValueError(
-                "Phase centroid bootstrap: "
-                f"{int(absent.sum().item())} phase(s) have zero samples in the "
-                f"bootstrap dataloader (missing: "
-                f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
-                "Refusing to bootstrap with zero centroids; every phase must "
-                "be present in the training data."
+            all_latents = torch.cat(latents_list, dim=0)
+            all_phases = torch.cat(phases_list, dim=0)
+            logger.info(
+                f"Collected {all_latents.size(0)} training latent vectors (dim={latent_dim})."
             )
-        centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
 
-        logger.info(f"Computed latent centroids for {num_phases} phases.")
-        for p in range(num_phases):
-            logger.debug(f"  Phase {p} count: {phase_counts[p].item()}")
+        # 2. Router Initialization
+        if r_type in ("centroid", "phase_centroid"):
+            prototypes = compute_hierarchical_phase_prototypes(
+                all_latents,
+                all_phases,
+                num_phases,
+                num_experts,
+                seed=cluster_seed,
+                spherical=False,
+            )
+            self.moe_layer.router.gate_linear.weight.data.copy_(prototypes)
+            self.moe_layer.router.gate_linear.bias.data.zero_()
+            logger.info(
+                f"Initialized router weights with {num_experts} hierarchical phase prototypes."
+            )
 
-        # 2. Initialize Router
-        # The router's gate computes logits: L = x @ W^T + b. The centroids
-        # are unit-normalized and the router is configured with
-        # normalize_input=True, so L is a true cosine similarity between the
-        # (normalized) latent and each (unit-norm) centroid — not a raw dot
-        # product with an unnormalized latent.
+        elif r_type == "spherical_centroid":
+            prototypes = compute_hierarchical_phase_prototypes(
+                all_latents,
+                all_phases,
+                num_phases,
+                num_experts,
+                seed=cluster_seed,
+                spherical=True,
+            )
+            self.moe_layer.router.gate_linear.weight.data.copy_(prototypes)
+            self.moe_layer.router.gate_linear.bias.data.zero_()
+            logger.info(
+                f"Initialized router weights with {num_experts} spherical phase prototypes."
+            )
 
-        # We normalize centroids to ensure stable initial logits
-        centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
+        elif r_type == "spherical_kmeans":
+            centroids, _ = spherical_kmeans(all_latents, k=num_experts, seed=cluster_seed)
+            self.moe_layer.router.gate_linear.weight.data.copy_(centroids)
+            self.moe_layer.router.gate_linear.bias.data.zero_()
+            logger.info(
+                f"Initialized router weights with {num_experts} Spherical K-Means centroids."
+            )
 
-        router_weight = self.moe_layer.router.gate_linear.weight.data
-        router_bias = self.moe_layer.router.gate_linear.bias.data
+        elif r_type == "kmeans":
+            from sklearn.cluster import KMeans
 
-        # Assign centroids to the first min(P, E) experts
-        limit = min(num_phases, num_experts)
-        router_weight[:limit] = centroids_normalized[:limit]
+            latents_np = all_latents.cpu().numpy()
+            km = KMeans(
+                n_clusters=num_experts, random_state=cluster_seed, n_init=10
+            ).fit(latents_np)
+            centroids = torch.from_numpy(km.cluster_centers_).to(
+                device=device, dtype=all_latents.dtype
+            )
+            centroids_normalized = F.normalize(centroids, p=2, dim=-1)
+            self.moe_layer.router.gate_linear.weight.data.copy_(centroids_normalized)
+            self.moe_layer.router.gate_linear.bias.data.zero_()
+            logger.info(
+                f"Initialized router weights with {num_experts} Euclidean KMeans centroids."
+            )
 
-        # Zero the bias to let dot product dominate initially
-        router_bias.zero_()
+        elif r_type == "phase_head":
+            phase_weight = self.phase_head.head.weight.data
+            weights = compute_phase_head_router_weights(phase_weight, num_experts)
+            self.moe_layer.router.gate_linear.weight.data.copy_(weights)
+            self.moe_layer.router.gate_linear.bias.data.zero_()
+            logger.info(
+                "Initialized router weights with normalized phase-head directions "
+                f"({num_experts} rows)."
+            )
 
-        logger.info(f"Initialized router weights with {limit} phase centroids.")
+        elif r_type == "random":
+            logger.info("Router initialization: keeping random router weights (standard init).")
+        else:
+            raise ValueError(
+                f"Unknown router_init type '{r_type}'. Supported: "
+                "centroid, spherical_centroid, spherical_kmeans, kmeans, phase_head, random."
+            )
 
-        # 3. Initialize Experts with ActionHead weights
-        # This provides the "warm start" for the experts, so they don't destroy
-        # the performance achieved in Stage 1. The copy is exact and strict
-        # (architecturally compatible ExpertMLP required) plus a small
-        # symmetry-breaking jitter so the router can learn to differentiate
-        # experts from the action loss.
-        warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
+        # 3. Expert Initialization
+        if e_type == "warmstart":
+            warm_start_experts_from_action_head(
+                self.moe_layer.experts, self.action_head, jitter_std=jitter_std
+            )
+            logger.info(
+                f"Warm-started all {num_experts} experts from ActionHead (jitter_std={jitter_std})."
+            )
+        elif e_type == "random":
+            for expert in self.moe_layer.experts:
+                expert.reset_parameters()
+            logger.info(
+                f"Reset all {num_experts} experts to independent random draws "
+                "(scratch distribution)."
+            )
+        else:
+            raise ValueError(f"Unknown expert_init type '{e_type}'. Supported: warmstart, random.")
 
-        # Stage 1 heads are not part of the Stage 2 computation graph; exclude
-        # them from the optimizer so trainable-parameter counts and optimizer
-        # state reflect the Stage 2 architecture.
+        # Exclude Stage 1 heads from the optimizer in Stage 2
         for param in self.action_head.parameters():
             param.requires_grad = False
         for param in self.phase_head.parameters():
             param.requires_grad = False
 
-        logger.info("Initialized all experts with Stage 1 ActionHead weights.")
-
-        # Automatically transition to Stage 2
+        # Transition to Stage 2
         self.stage = 2
         logger.info("MoE Bootstrapping complete. Ready for Stage 2.")
+

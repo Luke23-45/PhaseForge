@@ -1,0 +1,316 @@
+{
+  "name": "lift_ablation",
+  "task": "Lift",
+  "description": "Comprehensive PhaseForge research evaluation protocol based on literature review & professor feedback. Wave 1: Core Confirmatory Matrix (15 methods) covering 4-way initialization factorial, parameter-matched BC-Large, negative control, generic spherical/Euclidean KMeans controls, linear phase-head init, spherical averaging, PhaseForge-FT, and teacher-forced. Oracle MoE is an evaluation-time routing intervention applied to a fixed trained expert set. Wave 2: Expert scaling (unconfounded K=3/12), jitter sweep (0.0/0.1), and phase label corruption (25%/50%/shuffle).",
+  "seeds": [42, 43, 44],
+  "defaults": [
+    "train.early_stopping.enabled=false"
+  ],
+  "methods": [
+    {
+      "index": 1,
+      "experiment_id": "EXP-101",
+      "name": "phaseforge",
+      "role": "proposed method (Privileged Regime Geometry Transfer)",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 2,
+      "experiment_id": "EXP-102",
+      "name": "bc",
+      "role": "standard structured-state behavior cloning floor",
+      "model": "baselines/bc",
+      "data": "common",
+      "stages": [1],
+      "stage2_source": null,
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 3,
+      "experiment_id": "EXP-103",
+      "name": "bc_large",
+      "role": "parameter-matched dense baseline (+0.8% params vs PhaseForge)",
+      "model": "baselines/bc_large",
+      "data": "common",
+      "stages": [1],
+      "stage2_source": null,
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 4,
+      "experiment_id": "EXP-104",
+      "name": "bc_robot_only",
+      "role": "negative control without object state (floor sanity check)",
+      "model": "baselines/bc",
+      "data": "robot_only_lift",
+      "tag": "robot_only",
+      "stages": [1],
+      "stage2_source": null,
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 5,
+      "experiment_id": "EXP-105",
+      "name": "scratch_moe",
+      "role": "scratch MoE (random init, no pretraining)",
+      "model": "baselines/scratch_moe",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": null,
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 6,
+      "experiment_id": "EXP-106",
+      "name": "warmstart_moe",
+      "role": "warm-start MoE (plain BC encoder x random router)",
+      "model": "baselines/warmstart_moe",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "bc",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 7,
+      "experiment_id": "EXP-107",
+      "name": "phase_pretrain_random_router",
+      "role": "H1 control (phase-supervised encoder x random router x warmstart experts)",
+      "model": "baselines/phase_pretrain_random_router",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 8,
+      "experiment_id": "EXP-108",
+      "name": "plain_encoder_phase_bootstrap",
+      "role": "H2 control (plain BC encoder x phase centroid router x warmstart experts)",
+      "model": "baselines/plain_encoder_phase_bootstrap",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "bc",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 9,
+      "experiment_id": "EXP-109",
+      "name": "pf_spherical_kmeans",
+      "role": "generic directional clustering control (Spherical KMeans router)",
+      "model": "baselines/pf_spherical_kmeans",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 10,
+      "experiment_id": "EXP-110",
+      "name": "pf_kmeans",
+      "role": "generic Euclidean KMeans router initialization control",
+      "model": "baselines/pf_kmeans",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 11,
+      "experiment_id": "EXP-111",
+      "name": "pf_phase_head",
+      "role": "prototype vs discriminative classifier direction initialization",
+      "model": "baselines/pf_phase_head",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 12,
+      "experiment_id": "EXP-112",
+      "name": "pf_random_random",
+      "role": "4-way init Cell A: expert-init control (PS-Rand-Rand)",
+      "model": "baselines/pf_random_random",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 13,
+      "experiment_id": "EXP-113",
+      "name": "pf_centroid_random",
+      "role": "4-way init Cell B: router-init control (PS-Centroid-Rand)",
+      "model": "baselines/pf_centroid_random",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 14,
+      "experiment_id": "EXP-114",
+      "name": "pf_spherical",
+      "role": "spherical vs Euclidean centroid averaging ablation",
+      "model": "baselines/pf_spherical",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 15,
+      "experiment_id": "EXP-115",
+      "name": "pf_ft",
+      "role": "PhaseForge-FT fine-tuning variant (small encoder LR in Stage 2)",
+      "model": "baselines/pf_ft",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "train.freeze_encoder=false",
+        "models.encoder_lr_scale=0.1"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 16,
+      "experiment_id": "EXP-116",
+      "name": "teacher_forced",
+      "role": "privileged-training diagnostic (GT-at-train, predicted-at-eval)",
+      "model": "baselines/teacher_forced",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 17,
+      "experiment_id": "EXP-201",
+      "name": "pf_k3",
+      "role": "Wave 2 K sweep: super-prototype reduction (E=3 < P=6)",
+      "model": "baselines/pf_spherical",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.router.num_experts=3",
+        "models.router.top_k=2"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 18,
+      "experiment_id": "EXP-202",
+      "name": "pf_k12",
+      "role": "Wave 2 K sweep: intra-phase sub-prototype scaling (E=12 > P=6)",
+      "model": "baselines/pf_spherical",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.router.num_experts=12",
+        "models.router.top_k=2"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 19,
+      "experiment_id": "EXP-203",
+      "name": "pf_jitter_00",
+      "role": "Wave 2 Jitter sweep: zero expert warmstart jitter (jitter_std=0.0)",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.jitter_std=0.0"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 20,
+      "experiment_id": "EXP-204",
+      "name": "pf_jitter_10",
+      "role": "Wave 2 Jitter sweep: high expert warmstart jitter (jitter_std=0.1)",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.jitter_std=0.1"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 21,
+      "experiment_id": "EXP-205",
+      "name": "pf_corrupt_25",
+      "role": "Wave 2 Phase noise sensitivity: 25% phase label corruption",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "data.phase_corruption_rate=0.25"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 22,
+      "experiment_id": "EXP-206",
+      "name": "pf_corrupt_50",
+      "role": "Wave 2 Phase noise sensitivity: 50% phase label corruption",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "data.phase_corruption_rate=0.50"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 23,
+      "experiment_id": "EXP-207",
+      "name": "pf_shuffle_control",
+      "role": "Wave 2 Phase noise sensitivity: 100% permutation shuffle control",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "data.phase_corruption_rate=1.0",
+        "data.phase_shuffle_control=true"
+      ],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    }
+  ]
+}

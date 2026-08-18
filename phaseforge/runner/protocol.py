@@ -67,6 +67,8 @@ class Method:
     tag: str | None = None
     evaluate_mode: str = "rollout"
     task: str | None = None
+    experiment_id: str | None = None
+    overrides: tuple[str, ...] = ()
 
     @property
     def model_name(self) -> str:
@@ -230,6 +232,14 @@ def _parse_method(raw: dict[str, Any]) -> Method:
     if task is not None and (not isinstance(task, str) or not task):
         raise ProtocolError(f"Method {name!r}: 'task' must be a non-empty string or null.")
 
+    experiment_id = raw.get("experiment_id")
+    if experiment_id is not None and (not isinstance(experiment_id, str) or not experiment_id):
+        raise ProtocolError(f"Method {name!r}: 'experiment_id' must be a non-empty string or null.")
+
+    overrides_raw = raw.get("overrides", [])
+    if not isinstance(overrides_raw, list) or not all(isinstance(x, str) for x in overrides_raw):
+        raise ProtocolError(f"Method {name!r}: 'overrides' must be a list of strings.")
+
     return Method(
         index=index,
         name=name,
@@ -242,6 +252,8 @@ def _parse_method(raw: dict[str, Any]) -> Method:
         tag=tag,
         evaluate_mode=evaluate_mode,
         task=task,
+        experiment_id=experiment_id,
+        overrides=tuple(overrides_raw),
     )
 
 

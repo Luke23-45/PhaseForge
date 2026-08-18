@@ -45,17 +45,68 @@ class Stage2Trainer(BaseTrainer):
         self._val_routing_acc = _PhaseAccumulator(device=self.device)
 
     def fit(self) -> None:
-        """Override fit to handle encoder freezing before the loop starts."""
-        if self.train_cfg.freeze_encoder:
-            self.model.freeze_encoder()
-
-        # Re-initialize optimizer because freezing might have changed requires_grad
+        """Override fit to handle encoder freezing and fine-tuning LR scaling."""
         from hydra.utils import instantiate
 
-        active_params = [p for p in self.model.parameters() if p.requires_grad]
-        self.optimizer = instantiate(self.train_cfg.optimizer, params=active_params)
+        # Precedence: per-model models.freeze_encoder wins when key is present;
+        # train.freeze_encoder otherwise; default True.
+        models_cfg = (
+            self.cfg.get("models")
+            if hasattr(self, "cfg") and self.cfg is not None
+            else None
+        )
+        if (
+            models_cfg is not None
+            and "freeze_encoder" in models_cfg
+            and models_cfg.get("freeze_encoder") is not None
+        ):
+            freeze = bool(models_cfg.get("freeze_encoder"))
+        elif self.train_cfg.get("freeze_encoder") is not None:
+            freeze = bool(self.train_cfg.get("freeze_encoder"))
+        else:
+            freeze = True
+
+        if freeze:
+            if hasattr(self.model, "freeze_encoder"):
+                self.model.freeze_encoder()
+        elif hasattr(self.model, "unfreeze_encoder"):
+            self.model.unfreeze_encoder()
+
+        # Precedence: models.encoder_lr_scale wins if present, else train.encoder_lr_scale, else 1.0.
+        if (
+            models_cfg is not None
+            and "encoder_lr_scale" in models_cfg
+            and models_cfg.get("encoder_lr_scale") is not None
+        ):
+            encoder_lr_scale = float(models_cfg.get("encoder_lr_scale"))
+        elif self.train_cfg.get("encoder_lr_scale") is not None:
+            encoder_lr_scale = float(self.train_cfg.get("encoder_lr_scale"))
+        else:
+            encoder_lr_scale = 1.0
+        if not freeze and encoder_lr_scale != 1.0 and hasattr(self.model, "encoder"):
+            base_lr = float(self.train_cfg.optimizer.get("lr", 1e-4))
+            encoder_params = [p for p in self.model.encoder.parameters() if p.requires_grad]
+            other_params = [
+                p for n, p in self.model.named_parameters()
+                if not n.startswith("encoder.") and p.requires_grad
+            ]
+            param_groups = [
+                {"params": other_params, "lr": base_lr},
+                {"params": encoder_params, "lr": base_lr * encoder_lr_scale},
+            ]
+            self.optimizer = instantiate(self.train_cfg.optimizer, params=param_groups)
+            logger.info(
+                f"Stage 2 Fine-Tuning: Encoder trained with scaled LR "
+                f"{base_lr * encoder_lr_scale:.2e} (scale={encoder_lr_scale}), "
+                f"other parameters at base LR {base_lr:.2e}."
+            )
+        else:
+            active_params = [p for p in self.model.parameters() if p.requires_grad]
+            self.optimizer = instantiate(self.train_cfg.optimizer, params=active_params)
+
         self.scheduler = instantiate(self.train_cfg.scheduler, optimizer=self.optimizer)
 
+        active_params = [p for p in self.model.parameters() if p.requires_grad]
         n_params = sum(p.numel() for p in active_params)
         logger.info(f"Stage 2 initialized. Trainable parameters: {n_params}")
 

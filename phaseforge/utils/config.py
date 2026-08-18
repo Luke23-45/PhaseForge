@@ -287,6 +287,20 @@ def resolve_checkpoint_source(model_name: str) -> str:
         "plain_encoder_phase_bootstrap": "bc",
         "phase_pretrain_random_router": "phaseforge",
         "teacher_forced": "phaseforge",
+        "pf_random_random": "phaseforge",
+        "pf_centroid_random": "phaseforge",
+        "pf_kmeans": "phaseforge",
+        "pf_spherical_kmeans": "phaseforge",
+        "pf_phase_head": "phaseforge",
+        "pf_spherical": "phaseforge",
+        "pf_ft": "phaseforge",
+        "pf_k3": "phaseforge",
+        "pf_k12": "phaseforge",
+        "pf_jitter_00": "phaseforge",
+        "pf_jitter_10": "phaseforge",
+        "pf_corrupt_25": "phaseforge",
+        "pf_corrupt_50": "phaseforge",
+        "pf_shuffle_control": "phaseforge",
     }
     return alias_map.get(model_name, model_name)
 

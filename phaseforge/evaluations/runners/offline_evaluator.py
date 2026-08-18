@@ -307,6 +307,43 @@ class OfflineEvaluator:
                     phases, expert_indices
                 )
 
+            # Direct Expert Specialization & Behavioral Diagnostics (M_{z,e} matrix)
+            try:
+                from phaseforge.evaluations.metrics.specialization import (
+                    compute_specialization_matrix,
+                )
+
+                spec_data = compute_specialization_matrix(
+                    self.model, self.dataloader, device=self.device
+                )
+                if spec_data:
+                    results["eval/expert_phase_mse_matrix"] = (
+                        spec_data["expert_phase_mse_matrix"]
+                    )
+                    results["eval/best_expert_per_phase"] = (
+                        spec_data["best_expert_per_phase"]
+                    )
+                    results["eval/theoretical_best_phase_mse"] = (
+                        spec_data["theoretical_best_phase_mse"]
+                    )
+                    results["eval/routed_phase_mse"] = (
+                        spec_data["routed_phase_mse"]
+                    )
+                    results["eval/theoretical_mean_mse"] = (
+                        spec_data["theoretical_mean_mse"]
+                    )
+                    results["eval/expert_pairwise_divergence"] = (
+                        spec_data["expert_pairwise_divergence"]
+                    )
+                    results["eval/mean_expert_divergence"] = (
+                        spec_data["mean_expert_divergence"]
+                    )
+                    results["eval/phase_expert_contingency"] = (
+                        spec_data["phase_expert_contingency"]
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not compute specialization matrix: %s", exc)
+
         # 4. Metric-definition record (E9): every reported routing metric is
         #    explicitly labeled so results cannot be misread downstream.
         results["eval/metric_definitions"] = {
@@ -351,6 +388,16 @@ class OfflineEvaluator:
             "eval/phase_expert_nmi": (
                 "NMI between phase labels and the TOP-1 routing assignment "
                 "(top-1 only; distinct from the top-k balance counts)."
+            ),
+            "eval/expert_phase_mse_matrix": (
+                "P x E behavioral matrix M_{z,e} = MSE(pi_e(x_z), a_z) running "
+                "each expert e independently across validation samples of phase z."
+            ),
+            "eval/mean_expert_divergence": (
+                "Mean pairwise L2 distance between individual expert outputs on shared inputs."
+            ),
+            "eval/theoretical_mean_mse": (
+                "Mean MSE over phases under optimal theoretical phase-to-expert selection e*(z)."
             ),
             "eval/boundary_action_smoothness": (
                 "Mean L2 temporal change of PREDICTED actions in a window "

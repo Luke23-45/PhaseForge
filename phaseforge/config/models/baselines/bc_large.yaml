@@ -1,0 +1,21 @@
+# config/models/baselines/bc_large.yaml — Parameter-Matched Dense Baseline
+# Matches PhaseForge's 382,646 total parameters with 385,855 parameters (+0.8%).
+
+name: "bc_large"
+_target_: phaseforge.models.baselines.bc.BehaviorCloningModel
+
+encoder:
+  _target_: phaseforge.models.components.encoder.StateEncoder
+  input_dim: ${data.state_dim}
+  hidden_dims: [372, 372, 372]
+  latent_dim: 128
+  activation: "gelu"
+  dropout: 0.1
+  use_residual: true
+
+action_head:
+  _target_: phaseforge.models.components.action_head.ActionHead
+  input_dim: 128
+  output_dim: ${data.action_dim}
+  head_type: "deterministic"
+  hidden_dim: 372

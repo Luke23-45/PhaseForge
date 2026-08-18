@@ -58,6 +58,7 @@ class Cell:
     seed: int
     tag: str | None = None
     defaults: tuple[str, ...] = ()
+    overrides: tuple[str, ...] = ()
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -87,6 +88,7 @@ def _compose_cell(cell: Cell) -> DictConfig | None:
     if cell.method:
         overrides.append(f"project.method={cell.method}")
     overrides.extend(cell.defaults)
+    overrides.extend(cell.overrides)
     try:
         cfg = compose(config_name="main", overrides=overrides)
         return cfg
@@ -144,10 +146,51 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
                 f"scheduler T_max={t_max} < epochs={epochs} (premature LR decay)"
             )
 
+    if cell.method == "oracle_moe" or model_name == "oracle_moe":
+        cell.fail(
+            "oracle_moe cannot be trained; it is an eval-time routing intervention "
+            "on fixed trained experts"
+        )
+
+    # Compute effective freeze and encoder_lr_scale following exact precedence:
+    # models config wins if key present, else train config, else defaults
+    models_cfg = cfg.get("models")
+    if (
+        models_cfg is not None
+        and "freeze_encoder" in models_cfg
+        and models_cfg.get("freeze_encoder") is not None
+    ):
+        effective_freeze = bool(models_cfg.get("freeze_encoder"))
+    elif train.get("freeze_encoder") is not None:
+        effective_freeze = bool(train.get("freeze_encoder"))
+    else:
+        effective_freeze = True
+
+    if (
+        models_cfg is not None
+        and "encoder_lr_scale" in models_cfg
+        and models_cfg.get("encoder_lr_scale") is not None
+    ):
+        effective_lr_scale = float(models_cfg.get("encoder_lr_scale"))
+    elif train.get("encoder_lr_scale") is not None:
+        effective_lr_scale = float(train.get("encoder_lr_scale"))
+    else:
+        effective_lr_scale = 1.0
+
     if cell.stage == 2:
-        freeze = bool(train.get("freeze_encoder", False))
-        if not freeze:
-            cell.fail("stage-2 train.freeze_encoder=false (protocol requires true)")
+        is_unfrozen = (
+            model_name in ("scratch_moe", "pf_ft")
+            or cell.method in ("scratch_moe", "pf_ft")
+        )
+        if not effective_freeze and not is_unfrozen:
+            cell.fail(
+                "stage-2 train.freeze_encoder=false (protocol requires true for frozen models)"
+            )
+        if effective_freeze and effective_lr_scale != 1.0:
+            cell.fail(
+                f"encoder_lr_scale={effective_lr_scale} != 1.0 with effective freeze (dead config)"
+            )
+
         src = train.get("stage1_ckpt_path")
         if not src:
             # The CLI auto-resolves; verify the alias chain exists here too.
@@ -160,6 +203,50 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
     else:
         if bool(train.get("freeze_encoder", False)):
             cell.fail("stage-1 train.freeze_encoder must be false")
+
+    # Validate router top_k <= num_experts
+    router_cfg = cfg.models.get("router")
+    if router_cfg is not None:
+        top_k = int(router_cfg.get("top_k", 2))
+        num_experts = int(router_cfg.get("num_experts", 6))
+        if top_k > num_experts:
+            cell.fail(f"router top_k ({top_k}) > num_experts ({num_experts})")
+
+    # Validate BC-large parameter matching (|ratio - 1| <= 0.015)
+    if "bc_large" in model_name:
+        from phaseforge.utils.registry import build_model
+
+        try:
+            m = build_model(cfg)
+            params = sum(p.numel() for p in m.parameters())
+            target_params = 382646  # PhaseForge deployed parameter count
+            ratio = params / target_params
+            if abs(ratio - 1.0) > 0.015:
+                cell.fail(
+                    f"bc_large params={params} deviates from PhaseForge "
+                    f"({target_params}) by {abs(ratio - 1.0):.2%}"
+                )
+        except Exception as exc:
+            cell.fail(f"bc_large parameter count validation failed: {exc}")
+
+    # Validate phase_head router init requirement
+    router_init = cfg.models.get("router_init")
+    if router_init is not None and router_init.get("type") == "phase_head":
+        if cfg.models.get("phase_head") is None:
+            cell.fail("router_init=phase_head requires models.phase_head in config")
+        from phaseforge.utils.config import resolve_checkpoint_source
+
+        src_model = resolve_checkpoint_source(model_name)
+        if src_model not in ("phaseforge", "self") and cell.stage == 2:
+            cell.fail(
+                "router_init=phase_head requires phase-supervised Stage 1 source 'phaseforge', "
+                f"got '{src_model}'"
+            )
+
+    # Validate corruption conflicts
+    corruption_rate = float(cfg.data.get("phase_corruption_rate", 0.0))
+    if corruption_rate > 0.0 and cell.method in ("teacher_forced", "oracle_moe"):
+        cell.fail(f"Phase corruption not allowed for {cell.method}")
 
     # phase_class_weight sanity: balanced requires the schema key present.
     pw = str(train.get("phase_class_weight", "none"))
@@ -184,6 +271,7 @@ def _iter_manifest_cells(manifest: dict) -> list[Cell]:
     cells: list[Cell] = []
     for m in manifest.get("methods", []):
         stages = list(m.get("stages") or [])
+        cell_overrides = tuple(m.get("overrides") or [])
         for stage in stages:
             for seed in manifest.get("seeds", []):
                 cells.append(
@@ -196,6 +284,7 @@ def _iter_manifest_cells(manifest: dict) -> list[Cell]:
                         seed=int(seed),
                         tag=(str(m["tag"]) if m.get("tag") else None),
                         defaults=tuple(manifest.get("defaults", [])),
+                        overrides=cell_overrides,
                     )
                 )
     return cells

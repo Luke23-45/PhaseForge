@@ -777,12 +777,31 @@ class DataPipelineStateMachine:
                 continue
 
             split_trajs = [self._trajectories[i] for i in indices]
+            is_train = split_name == "train"
+            corruption_rate = (
+                float(data_cfg.get("phase_corruption_rate", 0.0)) if is_train else 0.0
+            )
+            default_seed = int(self.cfg.get("project", {}).get("seed", 42))
+            corruption_seed = (
+                int(data_cfg.get("phase_corruption_seed", default_seed))
+                if is_train
+                else 42
+            )
+            labeler_cfg = data_cfg.get("phase_labeler")
+            num_phases_val = int(labeler_cfg.get("num_phases", 6)) if labeler_cfg else 6
+            phase_shuffle = (
+                bool(data_cfg.get("phase_shuffle_control", False)) if is_train else False
+            )
+
             dataset = StateOnlyDataset(
                 trajectories=split_trajs,
                 sequence_length=int(data_cfg.sequence_length),
                 stride=int(data_cfg.stride),
+                phase_corruption_rate=corruption_rate,
+                phase_corruption_seed=corruption_seed,
+                num_phases=num_phases_val,
+                phase_shuffle_control=phase_shuffle,
             )
-            is_train = split_name == "train"
 
             # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns.
             # The dataset is fully materialized in memory, so zero remains a

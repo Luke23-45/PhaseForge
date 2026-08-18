@@ -1,182 +1,147 @@
-# PhaseForge — Research Definition and Falsifiable Hypotheses
+# PhaseForge — Research Definition, Causal Framework, and Falsifiable Hypotheses
 
-**Status:** finalized research definition; implementation and empirical gates remain pending
+**Status:** finalized research specification (incorporating literature audit & professor feedback)
 
 **Scope:** non-visual robot manipulation from privileged structured low-dimensional simulator state
 
 **Benchmark:** robomimic v0.1 low-dimensional demonstrations with a single, explicitly pinned robosuite release track
 
-This document defines what PhaseForge is testing. It is intentionally more conservative than a novelty claim: the mechanism is a candidate contribution until the controlled experiments and a systematic prior-art search support that claim.
+---
 
-## 1. What the project is about
+## 1. What the project is about: Privileged Regime Geometry Transfer
 
-PhaseForge is a training-strategy study for a small manipulation policy. It asks whether phase structure can be used as an initialization prior for a mixture-of-experts router.
+PhaseForge investigates the following core scientific question:
+> **Can privileged regime information available during training be converted into useful latent geometry and transferred into an MoE routing prior, enabling specialized control without requiring the privileged phase signal at inference?**
 
-The proposed pipeline is:
+The causal framework is structured as four distinct, testable links:
 
-1. Train a low-dimensional behavioral-cloning policy with an auxiliary phase-classification head.
-2. Keep the learned encoder fixed for the specialization stage.
-3. Compute one latent centroid per auxiliary phase from training demonstrations.
-4. Initialize the MoE router from those centroids and initialize the experts from the pretrained action head.
-5. Continue training the MoE with the same action objective and the declared routing-balance objective.
-6. Deploy without phase labels. At inference, the policy receives only the declared structured state and its history once history support is implemented.
+$$\boxed{\text{Phase Supervision} \xrightarrow{(1)} \text{Phase-Discriminative Geometry} \xrightarrow{(2)} \text{Routing Prior Initialization} \xrightarrow{(3)} \text{Autonomous Expert Specialization} \xrightarrow{(4)} \text{Superior Control Performance}}$$
 
-The central variable is therefore router initialization, not perception, model scale, language grounding, or a new simulator.
+### The Three-Layer Mechanism:
+1. **Stage 1 (Representation Shaping):** Generalist policy pretraining with an auxiliary phase-classification head shapes the latent space to reflect behavioral regimes.
+2. **Transfer (Bootstrap Prior):** Latent centroids/prototypes transfer into the MoE router weights, and the action head warm-starts the experts.
+3. **Stage 2 (Autonomous Specialization):** Privileged phase labels disappear. The MoE policy trains with the action loss and load balancing, autonomously settling its own routing decomposition.
+4. **Inference Deployment:** Deployed without privileged phase labels; receives only the structured state.
 
-The primary scientific comparison is the controlled 2×2 matrix:
+---
 
-| Encoder initialization | Router initialization | Code cell |
+## 2. Literature Positioning & Prior Art
+
+PhaseForge sits at the intersection of four research traditions:
+1. **Classical Mixture-of-Experts:** Jordan & Jacobs (1991), Jacobs et al. (1991) — partitioning complex dynamical state spaces into simpler local experts.
+2. **Modern Sparse / Noisy Top-k MoE:** Shazeer et al. (2017), Switch Transformer (Fedus et al. 2022) — noisy top-k dispatch and load-balancing auxiliary losses.
+3. **Dense-to-MoE Upcycling:** Sparse Upcycling (Komatsuzaki et al. 2022) — initializing MoE experts from pretrained dense generalists.
+4. **Cluster-Based Router Initialization & Latent Routing:**
+   - **Royer et al. (BMVC 2022):** Proposes clustering pretrained embeddings to initialize an MoE gate and experts from a base model.
+   - **Cluster-aware Upcycling (CVPR 2026):** Clusters activation spaces via spherical K-means and initializes router weights from cluster centroids.
+   - **LAR-MoE (March 2026):** Latent-aligned routing in robotic imitation learning using unsupervised representations.
+5. **Phase / Subtask-Conditioned Manipulation:** PAMAE (Yang et al. 2026), SMP (Hao et al. 2026).
+
+**Differentiator:** PhaseForge investigates **privileged regime geometry transfer** under a controlled factorial design, comparing privileged phase prototypes against generic unsupervised clustering (Spherical K-means) and discriminative classification directions.
+
+---
+
+## 3. Falsifiable Hypotheses
+
+### H1 — Router-Initialization Effect
+Holding the encoder and expert warm-start fixed, phase-centroid initialization will produce higher initial routing alignment ($t=0$), faster specialization, and lower action error than random router initialization (`PhaseForge` vs `Phase-Pretrain Random-Router`).
+
+### H2 — Phase-Representation Effect
+Holding router initialization and expert warm-start fixed, a phase-supervised encoder will produce more useful regime-conditioned routing priors than an unsupervised BC encoder (`PhaseForge` vs `Plain-Encoder Phase-Bootstrap`).
+
+### H3 — Privileged Transfer vs Generic Clustering
+Privileged phase-supervised prototypes will provide more control-relevant routing priors than generic unsupervised activation clustering (`PhaseForge` vs `PS-Spherical-KMeans`).
+
+### H4 — Prototype vs Discriminative Classifier Initialization
+Class prototype vectors (mean latent directions) provide a more effective routing prior than discriminative classifier weights (`PhaseForge` vs `PS-Phase-Head`).
+
+### H5 — Routing Quality on Fixed Experts
+> **Oracle MoE is an evaluation-time routing intervention applied to a fixed trained expert set.**
+
+The routing gap measures how much performance the autonomous learned router leaves on the table compared to oracle (ground-truth phase-directed) dispatch on the **same trained experts**:
+
+$$\text{Routing Gap} = \text{Oracle} - \text{PhaseForge}$$
+
+A small gap indicates the learned router is already near-optimal for the expert specializations it has induced. A large gap indicates routing is the binding constraint, not expert quality.
+
+The oracle baseline is **not** a separate trained model — it is an eval-time diagnostic that replaces learned gating with deterministic phase-directed dispatch ($e = \text{phase} \pmod{E}$) on PhaseForge's trained expert set.
+
+### H6 — Rollout Success (Primary Performance Hypothesis)
+PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and WarmStart-MoE (random router + BC encoder) under frozen evaluation seeds, establishing that privileged geometry transfer yields a deployable advantage.
+
+> **Decision tree (SR = 0 across all methods):** If no method achieves SR > 0 on Lift, the protocol pivots to reporting **MSE-only** comparisons across the full matrix. No rollout-success claims are permitted; the paper reports "training converged but no policy transferred to closed-loop control."
+
+---
+
+## 4. Claims Permitted / Prohibited
+
+| Condition | Permitted Claims | Prohibited Claims |
 |---|---|---|
-| plain BC encoder | random | Warm-Start MoE |
-| phase-supervised encoder | random | Phase-Pretrain Random-Router |
-| plain BC encoder | phase-centroid | Plain-Encoder Phase-Bootstrap |
-| phase-supervised encoder | phase-centroid | PhaseForge |
+| PhaseForge SR > BC SR (significant) | "Privileged geometry transfer improves rollout success" | — |
+| PhaseForge SR ≈ BC SR | Report MSE advantage only, if any | "PhaseForge improves control" |
+| All SR = 0 | MSE comparisons, specialization metrics, routing quality | Any rollout-success claim |
+| PhaseForge MSE > BC MSE | "The transfer mechanism did not improve action prediction" | "PhaseForge is better" |
+| current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage | Report point estimates with CIs; note directional evidence | "PhaseForge significantly outperforms" |
 
-BC-MLP and BC-RNN are control floors. Scratch MoE is an additional baseline, not one of the four factorial cells. Teacher-Forced Routing and Ground-Truth Routing are diagnostic references and must be labeled as privileged-training or non-deployable, respectively.
+---
 
-## 2. What is already established by prior work
+## 5. Primary Confirmatory Matrix (Wave 1)
 
-The following points are not PhaseForge contributions:
+| EXP | Cell Name | Encoder Source | Router Init | Expert Init | Causal Contrast / Purpose |
+|---|---|---|---|---|---|
+| EXP-101 | `phaseforge` | Phase-supervised | Phase Centroid | Warmstart (0.02) | **Proposed Method (Privileged Geometry Transfer)** |
+| EXP-102 | `bc` | Plain (BC) | — | — | Behavior floor |
+| EXP-103 | `bc_large` | Plain (BC-Large) | — | — | Capacity control (385,855 params, +0.8%) |
+| EXP-104 | `bc_robot_only` | Plain (BC) | — | — | Negative control (no object state) |
+| EXP-105 | `scratch_moe` | Random | Random | Random | No-pretraining baseline |
+| EXP-106 | `warmstart_moe` | Plain (BC) | Random | Warmstart (0.02) | Warm-start MoE (BC encoder × random router) |
+| EXP-107 | `phase_pretrain_random_router` | Phase-supervised | Random | Warmstart (0.02) | H1: Router init holding representation & experts fixed |
+| EXP-108 | `plain_encoder_phase_bootstrap` | Plain (BC) | Phase Centroid | Warmstart (0.02) | H2: Phase supervision holding router & experts fixed |
+| EXP-109 | `pf_spherical_kmeans` | Phase-supervised | Spherical KMeans | Warmstart (0.02) | H3: Generic clustering control (vs Cluster-aware Upcycling) |
+| EXP-110 | `pf_kmeans` | Phase-supervised | Euclidean KMeans | Warmstart (0.02) | Euclidean KMeans router initialization control |
+| EXP-111 | `pf_phase_head` | Phase-supervised | Linear Phase Head | Warmstart (0.02) | H4: Prototype vs discriminative classifier direction init |
+| EXP-112 | `pf_random_random` | Phase-supervised | Random | Random | 4-Way Matrix Cell A: Expert-init control |
+| EXP-113 | `pf_centroid_random` | Phase-supervised | Phase Centroid | Random | 4-Way Matrix Cell B: Router-init control |
+| EXP-114 | `pf_spherical` | Phase-supervised | Spherical centroid avg | Warmstart (0.02) | Spherical vs Euclidean centroid averaging ablation |
+| EXP-115 | `pf_ft` | Phase-supervised | Phase Centroid | Warmstart (0.02) | PhaseForge-FT: encoder unfrozen (LR scale 0.1) |
+| EXP-116 | `teacher_forced` | Phase-supervised | GT (train) / PhaseHead (eval) | Warmstart (0.02) | Privileged routing diagnostic & gap decomposition |
 
-- Low-dimensional robot manipulation with task-relevant object state is an established evaluation setting. robosuite documents separate robot-proprioceptive and task-specific object-state observations, and robomimic treats low-dimensional state as a first-class observation modality.
-- The robomimic CoRL 2021 study provides released low-dimensional datasets and BC/BC-RNN baselines on Lift, Can, Square, Transport, and Tool Hang. Its model-zoo results are approximate references and require matching software/data versions; they are not numbers PhaseForge may copy into its own results table.
-- Temporal context is an established part of strong imitation-learning baselines. A single-step MLP is therefore a pilot baseline, not evidence for a history-dependent manipulation claim.
-- Phase-aware or skill-aware expert specialization is not a new general idea. Recent work such as PAMAE and SMP uses phase/skill structure or phase-consistent routing in substantially different VLA/diffusion and multi-task settings.
-- State-only evaluation does not imply bare proprioception. The main PhaseForge input includes structured object state and is privileged simulator state. The robot-only condition is a negative control, not the main research setting.
+> **Oracle MoE** (EXP-117) is not listed as a training cell. It is an eval-time routing intervention on PhaseForge's trained expert set (see §3 H5). Implemented in `scripts/oracle_routing_diagnostic.py`.
 
-The relevant primary sources are listed in Section 8. These sources justify the benchmark and comparison discipline; they do not establish the PhaseForge mechanism as novel.
+## 6. Wave 2 — Sensitivity & Scaling Ablations
 
-## 3. Candidate contribution, stated cautiously
+| EXP | Cell Name | Override | Purpose |
+|---|---|---|---|
+| EXP-201 | `pf_k3` | `models.router.num_experts=3, top_k=2` | K sweep: super-prototype reduction (E=3 < P=6) |
+| EXP-202 | `pf_k12` | `models.router.num_experts=12, top_k=2` | K sweep: intra-phase sub-prototype scaling (E=12 > P=6) |
+| EXP-203 | `pf_jitter_00` | `models.expert_init.jitter_std=0.0` | Jitter sweep: zero symmetry-breaking noise |
+| EXP-204 | `pf_jitter_10` | `models.expert_init.jitter_std=0.1` | Jitter sweep: high symmetry-breaking noise |
+| EXP-205 | `pf_corrupt_25` | `data.phase_corruption_rate=0.25` | Phase noise sensitivity: 25% label corruption |
+| EXP-206 | `pf_corrupt_50` | `data.phase_corruption_rate=0.50` | Phase noise sensitivity: 50% label corruption |
+| EXP-207 | `pf_shuffle_control` | `data.phase_corruption_rate=1.0, phase_shuffle_control=true` | Phase noise: 100% permutation shuffle control |
 
-The candidate contribution is:
+---
 
-> A controlled test of whether initializing an MoE router from phase-conditioned centroids in a frozen, phase-supervised low-dimensional latent produces more persistent phase–expert alignment and better simulator task success than matched random-router and plain-encoder controls.
+## 7. Direct Behavioral Specialization Evidence ($M_{z,e}$)
 
-This wording is deliberately narrower than “the first phase-aware MoE” or “a novel state-only manipulation method.” Those broader claims are not permitted. Phase-aware MoE, staged training, expert balancing, and structured state inputs already have relevant precedents.
+Expert specialization is measured directly, not inferred from NMI alone:
+1. **Behavioral Matrix ($M_{z,e}$):** $M_{z,e} = \text{MSE}(\pi_e(x_z), a_z)$ computed by running each expert $e$ independently over validation samples of phase $z$.
+2. **Optimal Selection ($e^*(z)$):** $e^*(z) = \arg\min_e M_{z,e}$, comparing theoretical minimum error $M_{z,e^*(z)}$ with routed error $M_{z,\text{routed}}$.
+3. **Expert Divergence ($D(e_i, e_j)$):** Mean pairwise $L_2$ distance between expert predictions $D(e_i, e_j) = \mathbb{E}[\|\pi_i(x) - \pi_j(x)\|_2]$ on shared inputs.
+4. **Routing Contingency ($\mathcal{C}_{p,e}$):** Normalized probability matrix $P(\text{expert } e \mid \text{phase } p)$.
 
-Before using “novel,” “first,” or “state of the art” in a paper, perform a systematic search covering phase-aware MoE, skill-conditioned MoE, router initialization, latent-centroid routing, manipulation imitation learning, and low-dimensional robomimic experiments. Record search dates, databases, inclusion criteria, and excluded papers.
+## 8. t=0 Routing Diagnostics
 
-## 4. Falsifiable hypotheses
+Immediately after `bootstrap_moe()` and before any Stage 2 gradient update, the following diagnostics are computed and persisted to `metadata/init_routing.json`:
 
-### H1 — Router-initialization effect
-
-Holding the encoder initialization, expert initialization, data split, optimizer, parameter budget, and evaluation protocol fixed, phase-centroid initialization will produce stronger early phase–expert alignment and better alignment retention than random router initialization.
-
-The cleanest test is:
-
-```text
-PhaseForge vs Phase-Pretrain Random-Router
-```
-
-Primary evidence: predeclared routing-alignment trajectory, final alignment, routing entropy, expert load, and collapse rate. A single final NMI value is insufficient because it can be produced by an imbalanced or collapsed router.
-
-### H2 — Phase-representation effect
-
-Holding router initialization and the MoE architecture fixed, a phase-supervised encoder will produce more useful phase-conditioned latent structure than a plain BC encoder.
-
-The cleanest test is:
-
-```text
-PhaseForge vs Plain-Encoder Phase-Bootstrap
-```
-
-If this comparison is not run, PhaseForge cannot separate the value of phase-supervised representation learning from the value of centroid initialization.
-
-### H3 — Behavioral effect
-
-PhaseForge will improve the predeclared aggregate held-out simulator success over the matched Warm-Start MoE and Scratch MoE baselines, with the direction replicated on a predeclared majority of tasks, without reducing the structured-state BC floor.
-
-This is the main performance hypothesis. The frozen protocol uses the
-unweighted macro-average over the five tasks, 50 paired simulator episodes per
-task for each training seed, evaluation reset seeds 10000–10049, and training
-seeds 42, 43, and 44. Per-episode uncertainty is summarized with 95% Wilson
-intervals; training uncertainty is reported across the three paired seeds.
-Offline action loss, phase accuracy,
-and routing metrics cannot substitute for paired rollout success.
-
-### H4 — Phase observability
-
-The declared phase labels must be predictable from the policy’s permitted input. If a teacher-forced model using the learned phase predictor performs far below a ground-truth-routing reference, the phase signal is not sufficiently observable from the deployed state and the PhaseForge mechanism is not well grounded.
-
-Ground-truth routing is a diagnostic reference only. It is not a success upper bound: its experts, optimization, and routing rule differ from the learned policy, so its task success may be lower or higher for reasons unrelated to phase information.
-
-### H0 — Null hypothesis
-
-After controlling the protocol, PhaseForge does not improve task success or routing persistence over the matched controls. This is a valid outcome. It means the proposed initialization prior is not supported under this setting; it does not mean the benchmark or BC baseline is invalid.
-
-## 5. Required experiment matrix
-
-Every primary comparison must use the same task, low-dimensional schema, history window, trajectory split, normalization, optimizer budget, checkpoint rule, evaluation initial states, and training seeds.
-
-Required rows:
-
-1. Robot-only BC — information-ceiling negative control.
-2. Structured-state BC-MLP — instantaneous control floor.
-3. Structured-state BC-RNN or equivalent history baseline — temporal control floor.
-4. Scratch MoE — architecture/training baseline without Stage 1 pretraining.
-5. Warm-Start MoE — plain encoder plus random router.
-6. Phase-Pretrain Random-Router — phase encoder plus random router.
-7. Plain-Encoder Phase-Bootstrap — plain encoder plus centroid router.
-8. PhaseForge — phase encoder plus centroid router.
-9. Teacher-Forced Routing — privileged-training diagnostic; no ground-truth phase at deployment.
-10. Ground-Truth Routing — non-deployable routing diagnostic only.
-
-The four factorial rows are the causal core. BC-RNN and rollout validation are required because robomimic’s published protocol is not a single-step offline-loss exercise.
-
-## 6. How results will be interpreted
-
-### Positive mechanism result
-
-The initialization hypothesis is supported only when the centroid-router comparison improves routing persistence or specialization under matched controls, and the effect is accompanied by a nontrivial task-success result. Balanced routing alone is not specialization.
-
-### Mechanism without behavior
-
-If PhaseForge improves NMI, routing stability, or expert utilization but not task success, report a routing-mechanism result only. Do not claim better manipulation.
-
-### Behavior without mechanism
-
-If PhaseForge improves task success but does not improve the declared routing diagnostics, report a behavioral result and treat the proposed mechanism as unverified. Do not infer causality from success alone.
-
-### No difference
-
-If PhaseForge matches the controls, report a controlled null result. This still identifies whether phase-centroid initialization is useful under the chosen state-based protocol.
-
-### SR = 0
-
-Use the evaluator decision tree from the final evaluation plan:
-
-- native predicate / state-restore / parity gate fails → environment/evaluator problem;
-- gates pass but structured BC fails → observation, action, temporal, or learning problem;
-- structured BC succeeds but all MoEs fail → MoE implementation or optimization problem;
-- PhaseForge succeeds but does not beat matched controls → the bootstrap hypothesis is unsupported.
-
-Never convert SR = 0 into a claim of model failure until the evaluator and structured-state BC gates pass.
-
-## 7. Claims permitted and prohibited
-
-Permitted after the required gates pass:
-
-> We study whether phase-centroid router initialization improves expert specialization and manipulation success in a controlled, privileged low-dimensional robomimic/robosuite setting.
-
-Prohibited:
-
-- “state of the art” against vision or VLA models;
-- perception or visual-understanding claims;
-- general manipulation claims from a simulator state oracle;
-- claims that bare proprioception solves object-dependent tasks;
-- claims that phase labels are official benchmark annotations;
-- claims that routing metrics alone prove better control;
-- “first” or “novel” claims without a documented systematic prior-art review;
-- final success claims before the rollout adapter, reset protocol, native-predicate gate, BC floor, and history baseline are validated.
-
-## 8. Literature record
-
-- Mandlekar et al., **What Matters in Learning from Offline Human Demonstrations for Robot Manipulation**, CoRL 2021: [paper](https://arxiv.org/abs/2108.03298), [official dataset and reproduction documentation](https://robomimic.github.io/docs/v0.4/datasets/robomimic_v0.1.html).
-- robomimic, **Robosuite Datasets**: [official observation extraction and train/validation filter documentation](https://robomimic.github.io/docs/v0.4/datasets/robosuite.html).
-- robomimic, **Multimodal Observations**: [official low-dimensional modality documentation](https://robomimic.github.io/docs/tutorials/observations.html).
-- robosuite, **Environments**: [official structured observation and success-predicate documentation](https://robosuite.ai/docs/modules/environments.html).
-- Chi et al., **Diffusion Policy**, RSS 2023: [official project](https://diffusion-policy.cs.columbia.edu/), which exposes separate state-based and vision-based resources and uses the same robomimic task family for part of its simulation evaluation.
-- Yang et al., **PAMAE**, 2026: [arXiv paper](https://arxiv.org/abs/2606.27144), relevant because it demonstrates that phase-aware MoE routing is already an active research direction, although its setting is VLA/action-generation rather than this state-only study.
-- Hao et al., **SMP**, ICLR 2026: [paper](https://openreview.net/pdf?id=VSWjHIveqZ), relevant because it studies skill-mixture routing and phase-consistent expert activation in a diffusion-policy setting.
-
-The literature supports the benchmark choice and warns against overstating the contribution. It does not, by itself, prove that PhaseForge’s specific centroid initialization is novel or effective; those remain empirical questions for the controlled matrix above.
+| Metric | Definition |
+|---|---|
+| `nmi_phase_top1` | Normalized Mutual Information between phase labels and top-1 expert assignments |
+| `routing_entropy_mean` | Mean Shannon entropy of routing distributions across validation samples |
+| `routing_entropy_normalized` | Mean entropy normalized by $\log(E)$ |
+| `top1_cv` | Coefficient of variation of top-1 expert usage counts |
+| `topk_cv` | Coefficient of variation of top-k expert usage counts |
+| `collapse_rate` | Fraction of experts receiving < 1% of total dispatch weight |
+| `dead_expert_count` | Number of experts with zero top-1 assignments |
+| `phase_head_accuracy` | Phase head accuracy on validation set (Stage 1 quality check) |
+| `phase_head_agreement` | Agreement between phase head predictions and top-1 expert assignments |

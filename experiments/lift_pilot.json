@@ -95,17 +95,6 @@
       "stage2_source": "phaseforge",
       "evaluate": true,
       "evaluate_mode": "rollout"
-    },
-    {
-      "index": 9,
-      "name": "oracle_moe",
-      "role": "ground-truth routing diagnostic (non-deployable)",
-      "model": "baselines/oracle_moe",
-      "data": "common",
-      "stages": [2],
-      "stage2_source": null,
-      "evaluate": true,
-      "evaluate_mode": "rollout"
     }
   ]
 }

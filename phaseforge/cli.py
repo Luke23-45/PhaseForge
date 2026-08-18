@@ -567,6 +567,25 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
             )
 
             model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
+
+            # Compute and persist t=0 initial routing diagnostics (professor Change 7)
+            try:
+                from phaseforge.evaluations.metrics.init_diagnostics import (
+                    compute_init_routing_diagnostics,
+                )
+
+                init_diag = compute_init_routing_diagnostics(
+                    model, val_loader, device=cfg.project.get("device", "cuda")
+                )
+                if init_diag:
+                    meta_dir = output_dir / "metadata"
+                    meta_dir.mkdir(parents=True, exist_ok=True)
+                    (meta_dir / "init_routing.json").write_text(
+                        json.dumps(init_diag, indent=2), encoding="utf-8"
+                    )
+                    logger.info("Persisted t=0 routing diagnostics to metadata/init_routing.json")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not compute init routing diagnostics: %s", exc)
         else:
             # Models without bootstrapping (ScratchMoE, OraclePhaseMoE)
             # train from scratch — no checkpoint needed.
