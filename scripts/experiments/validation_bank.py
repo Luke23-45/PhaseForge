@@ -45,7 +45,10 @@ def _step(method, seed: int, stage: int | None) -> Step:
 
 
 def _train_stage2(provider, seed: int, outputs: Path, defaults, epochs: int, ckpt_path: Path, logs: Path, timeout: int) -> Path:
-    quiet = list(TRAIN_QUIET) + list(STAGE2_QUIET) + [f"train.epochs={epochs}"]
+    quiet = list(TRAIN_QUIET) + list(STAGE2_QUIET) + [
+        f"train.epochs={epochs}",
+        "train.checkpoint.every_n_epochs=10",
+    ]
     step = _step(provider, seed, 2)
     cmd = train_command(step, outputs_base=outputs, defaults=defaults + tuple(quiet), ckpt_path=ckpt_path)
     _execute(["phaseforge-train", "project.log_level=WARNING"] + cmd[1:],

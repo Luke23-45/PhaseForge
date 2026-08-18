@@ -37,7 +37,7 @@ from experiments._model_utils import (  # noqa: E402
 FINDINGS_DIR = Path("outputs/surgical/_findings")
 REPORT_PATH = Path("docs/dev/findings/expert_diversity.md")
 
-EPOCHS = [1, 5, 20, 200]
+EPOCHS = [10, 30, 100, 200]
 
 
 def _collect_latents(model, val_loader, device, max_samples: int) -> torch.Tensor:

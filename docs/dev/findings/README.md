@@ -5,9 +5,15 @@ All experiments here run on the dedicated surgical-analysis branch
 raw JSON under `outputs/surgical/_findings/` and a rendered report in this
 directory. The register tracks status and the one-line conclusion.
 
-Run the whole sequence on the cloud with:
+Run the sequence on the cloud, evidence-first:
 
-    !uv run python scripts/experiments/run_all.py --waves A B C --seeds 42,43,44
+    !uv run python scripts/experiments/run_all.py --waves probe      # A1, 1 seed, ~30 min
+    !uv run python scripts/experiments/run_all.py --waves offline   # A2, A4, A5, B2, C1, C2 (no training)
+    !uv run python scripts/experiments/run_all.py --waves gated     # A3, B1, B3_B4 (only if warranted)
+
+A1 defaults to a single seed (42), 10-epoch checkpoint cadence and evals at
+{10, 30, 100, 200, best}; expand with `--waves A1 --seeds 42,43,44` if the
+probe shows a checkpoint-selection signal.
 
 ## Wave A — absolutely first (from docs/dev/final_plan.md)
 
@@ -24,7 +30,7 @@ Run the whole sequence on the cloud with:
 | # | Experiment | Script | Status |
 |---|------------|--------|--------|
 | B1 | Four-way router×expert init matrix | `scripts/experiments/four_way_init.py` | written — cloud pending |
-| B2 | Expert divergence trajectory D_ij(t) at t=1,5,20,200 | `scripts/experiments/expert_diversity.py` | written — cloud pending |
+| B2 | Expert divergence trajectory D_ij(t) at t=10,30,100,200 | `scripts/experiments/expert_diversity.py` | written — cloud pending |
 | B3 | balance_coeff ∈ {0.0, 0.01, 0.1} | `scripts/experiments/ablation_grid.py` | written — cloud pending |
 | B4 | router noise σ ∈ {0.0, 0.1, 0.5} | `scripts/experiments/ablation_grid.py` | written — cloud pending |
 

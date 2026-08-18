@@ -1,19 +1,27 @@
 """Master runner for the surgical-cpu-analysis investigation.
 
-Executes the Wave A -> B -> C scripts in order on the configured seeds.
-Each script writes its own ``outputs/surgical/_findings/<name>.json``
-and the rendered markdown report under ``docs/dev/findings/``. Skips
-scripts whose findings JSON already exists (set ``--force`` to
-re-run).
+Evidence-first flow:
+
+1. ``--waves probe``  — Wave A1 checkpoint sweep on a single seed (default).
+   This is the only training that runs up front (~30 min on the cloud GPU):
+   it answers whether checkpoint selection is a bottleneck.
+2. ``--waves offline`` — every script that needs no training (A2, A4, A5, B2,
+   C1, C2); runs in minutes off the probe artifacts.
+3. Review the findings, then decide whether the signal justifies the gated
+   training scripts (``--waves gated``: A3 validation banks, B1 four-way init,
+   B3_B4 ablation grid) or an expanded sweep (``--waves A1 --seeds 42,43,44``).
+
+Each script writes its own ``outputs/surgical/_findings/<name>.json`` and the
+rendered markdown report under ``docs/dev/findings/``. Skips scripts whose
+findings JSON already exists (set ``--force`` to re-run).
 
 Default cloud invocation:
-    !uv run python scripts/experiments/run_all.py
-        --waves A B C
-        --seeds 42,43,44
-        --outputs outputs/surgical
+    !uv run python scripts/experiments/run_all.py --waves probe
+    !uv run python scripts/experiments/run_all.py --waves offline
+    !uv run python scripts/experiments/run_all.py --waves gated --force
 
-The runner launches each script via subprocess (``uv run python ...``)
-so the CLI logs land on their own stderr streams.
+The runner launches each script via subprocess (``uv run python ...``) so the
+CLI logs land on their own stderr streams.
 """
 from __future__ import annotations
 
@@ -38,6 +46,12 @@ WAVE_SCRIPTS = {
     "B3_B4": ("ablation_grid.py",        "ablation_grid.json"),
     "C1": ("latent_geometry.py",         "latent_geometry.json"),
     "C2": ("failure_phase.py",           "failure_phase_<label>.json"),
+}
+
+WAVE_ALIASES = {
+    "probe": ["A1"],
+    "offline": ["A2", "A4", "A5", "B2", "C1", "C2"],
+    "gated": ["A3", "B1", "B3_B4"],
 }
 
 FAILURE_PHASE_DIRS = ["outputs/part4/1", "outputs/part4/2", "outputs/part4/3", "outputs/part5"]
@@ -85,9 +99,11 @@ def _run(label: str, script: str, extra: list[str], timeout: int, force: bool, u
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--waves", nargs="+", default=["A", "B", "C"],
-                        help="Wave prefixes to run (default: all). Examples: A, A1, B3_B4.")
-    parser.add_argument("--seeds", default="42,43,44")
+    parser.add_argument("--waves", nargs="+", default=["probe"],
+                        help="Wave prefixes/aliases to run (default: probe). "
+                             "Aliases: probe (A1), offline (A2,A4,A5,B2,C1,C2), "
+                             "gated (A3,B1,B3_B4). Examples: A, A1, B3_B4.")
+    parser.add_argument("--seeds", default="42")
     parser.add_argument("--outputs", default="outputs/surgical")
     parser.add_argument("--timeout", type=int, default=28800,
                         help="Per-script timeout in seconds (default 8h; the Wave A1 sweep is the long pole).")
@@ -96,7 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label", default="real_matrix", help="Label for the C2 failure_phase findings file.")
     args = parser.parse_args(argv)
 
-    queue = _resolve_scripts(args.waves)
+    waves: list[str] = []
+    for w in args.waves:
+        if w in WAVE_ALIASES:
+            waves.extend(WAVE_ALIASES[w])
+        else:
+            waves.append(w)
+    queue = _resolve_scripts(waves)
     if not queue:
         print("[run-all] no scripts selected")
         return 1

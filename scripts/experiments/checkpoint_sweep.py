@@ -1,19 +1,27 @@
 """Wave A1: checkpoint sweep — SR vs epoch on the same 50 paired episodes.
 
-Trains phaseforge stage-1 and stage-2 (per-epoch checkpoints) for the given
-seeds on CPU, then rollout-evaluates every requested checkpoint epoch on the
-frozen reset bank (seed 2026, 50 cases — identical episodes across
-checkpoints). Overlays the training telemetry (val action loss, NMI, routing
-entropy, balance, collapse) per epoch and reports SR-vs-val-loss correlation.
+Trains phaseforge stage-1 and stage-2 (checkpoints every ``--ckpt-cadence``
+epochs) for the given seeds, then rollout-evaluates the requested checkpoint
+epochs on the frozen reset bank (seed 2026, 50 cases — identical episodes
+across checkpoints). Overlays the training telemetry (val action loss, NMI,
+routing entropy, balance, collapse) per epoch and reports SR-vs-val-loss
+correlation.
+
+Evidence-first probe defaults: a single seed (42) and the epoch set
+{10, 30, 100, 200, best} — the span of training plus the protocol-selected
+checkpoint. That is enough to decide whether checkpoint selection is a
+bottleneck; expand seeds/epochs only if the signal warrants it. Stage-1
+and stage-2 runs already present are reused; completed evals are reused
+unless ``--force-evals``.
 
 Outputs:
     outputs/surgical/_findings/checkpoint_sweep.json
     docs/dev/findings/checkpoint_sweep.md
 
 Usage:
-    python scripts/experiments/checkpoint_sweep.py [--seeds 42,43,44]
-        [--stage1-epochs 100] [--epochs 200]
-        [--eval-epochs 1,2,4,8,16,30,50,100,200,best]
+    python scripts/experiments/checkpoint_sweep.py [--seeds 42]
+        [--stage1-epochs 100] [--epochs 200] [--ckpt-cadence 10]
+        [--eval-epochs 10,30,100,200,best]
         [--outputs outputs/surgical] [--skip-provider] [--dry-run]
 """
 
@@ -80,13 +88,29 @@ def _train_stage1(provider, seed: int, outputs: Path, defaults, epochs: int, log
     return run_dir
 
 
-def _train_stage2(provider, seed: int, outputs: Path, defaults, epochs: int, ckpt_path: Path, logs: Path, timeout: int) -> Path:
-    quiet = list(TRAIN_QUIET) + list(STAGE2_QUIET) + [f"train.epochs={epochs}"]
+def _train_stage2(provider, seed: int, outputs: Path, defaults, epochs: int, cadence: int, ckpt_path: Path, logs: Path, timeout: int) -> Path:
+    quiet = list(TRAIN_QUIET) + list(STAGE2_QUIET) + [
+        f"train.epochs={epochs}",
+        f"train.checkpoint.every_n_epochs={cadence}",
+    ]
     step = _step(provider, seed, 2)
     cmd = train_command(step, outputs_base=outputs, defaults=defaults + tuple(quiet), ckpt_path=ckpt_path)
     _execute(["phaseforge-train", "project.log_level=WARNING"] + cmd[1:],
              logs / f"stage2_seed{seed}.log", timeout)
     return _find_run_by_meta(_run_dir_base(outputs, provider, 2, seed), provider.name, seed, None)
+
+
+def _read_eval_summary(run_dir: Path) -> dict | None:
+    summary = run_dir / "rollout_summary.json"
+    if not summary.is_file():
+        return None
+    data = json.loads(summary.read_text(encoding="utf-8"))
+    metrics = data.get("metrics", {})
+    return {
+        "sr": metrics.get("eval/rollout/success_rate"),
+        "ci_low": metrics.get("eval/rollout/wilson_ci95_low"),
+        "ci_high": metrics.get("eval/rollout/wilson_ci95_high"),
+    }
 
 
 def _eval_epoch(outputs: Path, provider, seed: int, ckpt_path: Path, epoch_label: str, defaults, logs: Path, timeout: int) -> dict:
@@ -98,16 +122,10 @@ def _eval_epoch(outputs: Path, provider, seed: int, ckpt_path: Path, epoch_label
     _execute(["phaseforge-eval", "project.log_level=WARNING"] + cmd[1:],
              logs / f"eval_seed{seed}_{epoch_label}.log", timeout)
     run_dir = _find_eval_run(outputs, provider.model_name, seed, f"cp_e{epoch_label}")
-    summary = run_dir / "rollout_summary.json"
-    if not summary.is_file():
+    result = _read_eval_summary(run_dir)
+    if result is None:
         raise RuntimeError(f"no rollout_summary.json under {run_dir}")
-    data = json.loads(summary.read_text(encoding="utf-8"))
-    metrics = data.get("metrics", {})
-    return {
-        "sr": metrics.get("eval/rollout/success_rate"),
-        "ci_low": metrics.get("eval/rollout/wilson_ci95_low"),
-        "ci_high": metrics.get("eval/rollout/wilson_ci95_high"),
-    }
+    return result
 
 
 def _telemetry_at_epoch(curves_path: Path, epoch: int) -> dict:
@@ -128,12 +146,17 @@ def _telemetry_at_epoch(curves_path: Path, epoch: int) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seeds", default="42,43,44")
+    parser.add_argument("--seeds", default="42")
     parser.add_argument("--stage1-epochs", type=int, default=100)
     parser.add_argument("--epochs", type=int, default=200)
-    parser.add_argument("--eval-epochs", default="1,2,4,8,16,30,50,100,200,best")
+    parser.add_argument("--ckpt-cadence", type=int, default=10,
+                        help="Save a checkpoint every N stage-2 epochs (default 10).")
+    parser.add_argument("--eval-epochs", default="10,30,100,200,best")
     parser.add_argument("--outputs", default="outputs/surgical")
-    parser.add_argument("--skip-provider", action="store_true")
+    parser.add_argument("--skip-provider", action="store_true",
+                        help="Reuse the existing stage-1 run only; fail if absent.")
+    parser.add_argument("--force-evals", action="store_true",
+                        help="Re-run evals whose run already exists.")
     parser.add_argument("--timeout", type=int, default=7200)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -158,12 +181,14 @@ def main(argv: list[str] | None = None) -> int:
 
     for seed in seeds:
         prov_dir: Path | None = None
-        if args.skip_provider:
-            try:
-                prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
-            except RuntimeError:
-                prov_dir = None
+        try:
+            prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
+        except RuntimeError:
+            prov_dir = None
         if prov_dir is None:
+            if args.skip_provider:
+                print(f"[sweep] seed {seed}: --skip-provider but no stage-1 run found; aborting")
+                return 1
             print(f"[sweep] seed {seed}: training phaseforge stage 1 ({args.stage1_epochs} epochs)")
             if args.dry_run:
                 continue
@@ -183,11 +208,13 @@ def main(argv: list[str] | None = None) -> int:
         if run_dir is not None and (run_dir / f"checkpoints/checkpoint_epoch_{max_reg:04d}.pt").is_file():
             print(f"[sweep] seed {seed}: stage 2 already complete ({run_dir.name})")
         else:
-            print(f"[sweep] seed {seed}: training phaseforge stage 2 ({args.epochs} epochs, every-epoch checkpoints)")
+            print(f"[sweep] seed {seed}: training phaseforge stage 2 ({args.epochs} epochs, "
+                  f"every {args.ckpt_cadence}-epoch checkpoints)")
             if args.dry_run:
                 continue
             run_dir = _train_stage2(
-                provider, seed, outputs, defaults, args.epochs, provider_ckpt, logs, args.timeout
+                provider, seed, outputs, defaults, args.epochs, args.ckpt_cadence,
+                provider_ckpt, logs, args.timeout,
             )
             run_dir = _find_run_by_meta(stage2_dir, provider.name, seed, None)
 
@@ -209,11 +236,23 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             if args.dry_run:
                 continue
-            print(f"[sweep] seed {seed}: evaluating epoch {epoch_label} "
-                  f"({time.time() - start:.0f}s elapsed)")
-            result = _eval_epoch(
-                outputs, provider, seed, ckpt, epoch_label, defaults, logs, args.timeout
-            )
+            existing = None
+            if not args.force_evals:
+                try:
+                    existing = _find_eval_run(outputs, provider.model_name, seed, f"cp_e{epoch_label}")
+                except RuntimeError:
+                    existing = None
+            result = None
+            if existing is not None:
+                result = _read_eval_summary(existing)
+                if result is not None:
+                    print(f"[sweep] seed {seed}: reusing eval epoch {epoch_label} ({existing.name})")
+            if result is None:
+                print(f"[sweep] seed {seed}: evaluating epoch {epoch_label} "
+                      f"({time.time() - start:.0f}s elapsed)")
+                result = _eval_epoch(
+                    outputs, provider, seed, ckpt, epoch_label, defaults, logs, args.timeout
+                )
             result["val_loss"] = telemetry.get("val_loss")
             result["nmi"] = telemetry.get("nmi")
             result["entropy"] = telemetry.get("entropy")
@@ -244,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
     payload = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "seeds": seeds,
+        "ckpt_cadence": args.ckpt_cadence,
+        "eval_epochs": eval_epochs,
         "evals": evals,
         "corr_val_sr": corr,
         "selected_epoch": selected,
@@ -262,6 +303,9 @@ def _render_report(payload: dict) -> None:
         "# Wave A1 — Checkpoint sweep: SR vs epoch (paired 50-episode bank)",
         "",
         f"Created {payload['created']} on branch `surgical-cpu-analysis`.",
+        "",
+        f"Config: seeds={payload['seeds']}, stage-2 checkpoint cadence={payload['ckpt_cadence']}, "
+        f"evaluated epochs={payload['eval_epochs']} (best = protocol-selected val-loss checkpoint).",
         "",
     ]
     for seed in payload["seeds"]:
