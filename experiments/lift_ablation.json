@@ -176,6 +176,22 @@
       "evaluate": true,
       "evaluate_mode": "rollout"
     },
+{
+      "index": 24,
+      "experiment_id": "EXP-208",
+      "name": "pf_random_warm",
+      "role": "router-init x expert-init ablation (random router + warmstart experts)",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "models.router_init.type=random"
+      ],
+      "tag": "random_warm"
+    },
     {
       "index": 15,
       "experiment_id": "EXP-115",

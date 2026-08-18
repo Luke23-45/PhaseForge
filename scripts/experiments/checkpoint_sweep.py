@@ -7,14 +7,14 @@ checkpoints). Overlays the training telemetry (val action loss, NMI, routing
 entropy, balance, collapse) per epoch and reports SR-vs-val-loss correlation.
 
 Outputs:
-    outputs/cpu_sweep/_findings/checkpoint_sweep.json
+    outputs/surgical/_findings/checkpoint_sweep.json
     docs/dev/findings/checkpoint_sweep.md
 
 Usage:
     python scripts/experiments/checkpoint_sweep.py [--seeds 42,43,44]
         [--stage1-epochs 100] [--epochs 200]
         [--eval-epochs 1,2,4,8,16,30,50,100,200,best]
-        [--outputs outputs/cpu_sweep] [--skip-provider] [--dry-run]
+        [--outputs outputs/surgical] [--skip-provider] [--dry-run]
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from smoke_matrix import (  # noqa: E402
     _run_dir_base,
 )
 
-FINDINGS_DIR = Path("outputs/cpu_sweep/_findings")
+FINDINGS_DIR = Path("outputs/surgical/_findings")
 REPORT_PATH = Path("docs/dev/findings/checkpoint_sweep.md")
 EVAL_METHOD = "phaseforge_cpsweep"
 
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage1-epochs", type=int, default=100)
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--eval-epochs", default="1,2,4,8,16,30,50,100,200,best")
-    parser.add_argument("--outputs", default="outputs/cpu_sweep")
+    parser.add_argument("--outputs", default="outputs/surgical")
     parser.add_argument("--skip-provider", action="store_true")
     parser.add_argument("--timeout", type=int, default=7200)
     parser.add_argument("--dry-run", action="store_true")

@@ -6,11 +6,11 @@ control objective (rollout SR) per seed and pooled, plus the early-epoch
 (1..50) and late-epoch (100..200) sub-correlations.
 
 Outputs:
-    outputs/cpu_sweep/_findings/sr_val_corr.json
+    outputs/surgical/_findings/sr_val_corr.json
     docs/dev/findings/sr_val_corr.md
 
 Usage:
-    python scripts/experiments/sr_val_corr.py [--findings outputs/cpu_sweep/_findings/checkpoint_sweep.json]
+    python scripts/experiments/sr_val_corr.py [--findings outputs/surgical/_findings/checkpoint_sweep.json]
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def _corr_over(rows: dict, early: bool) -> float | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--findings", default="outputs/cpu_sweep/_findings/checkpoint_sweep.json")
+    parser.add_argument("--findings", default="outputs/surgical/_findings/checkpoint_sweep.json")
     args = parser.parse_args(argv)
 
     src = (PROJECT_ROOT / args.findings).resolve()
@@ -91,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         "corr_early_1_50": _pearson(early_x, early_y),
     }
 
-    findings = PROJECT_ROOT / "outputs/cpu_sweep/_findings/sr_val_corr.json"
+    findings = PROJECT_ROOT / "outputs/surgical/_findings/sr_val_corr.json"
     findings.parent.mkdir(parents=True, exist_ok=True)
     findings.write_text(json.dumps(out, indent=2), encoding="utf-8")
 

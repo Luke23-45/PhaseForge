@@ -1,20 +1,31 @@
-# Experiment scripts — surgical analysis (CPU, branch: surgical-cpu-analysis)
+# Experiment scripts — surgical analysis (branch: surgical-cpu-analysis)
 
-Every script is standalone (`python scripts/experiments/<name>.py`) and writes
-its raw findings JSON to `outputs/cpu_sweep/_findings/` and a rendered report
-to `docs/dev/findings/`.
+Every script is standalone and uv-compatible:
 
-| Script | Purpose |
-|--------|---------|
-| `checkpoint_sweep.py` | Train phaseforge stage-1+2 (3 seeds) on CPU with per-epoch checkpoints; rollout-eval SR at epochs {1,2,4,8,16,30,50,100,200,best} on the same 50-case bank; overlay val-loss/NMI/entropy/balance per epoch (Wave A1). |
-| `sr_val_corr.py` | Pearson corr(val action MSE, rollout SR) across checkpoints per seed + pooled; stratified per-epoch table (Wave A2). |
-| `validation_bank.py` | planned — multiple fixed val banks, checkpoint ranking correlation with SR ranking (Wave A3). |
-| `specialization_matrix.py` | planned — M_{z,e} = MSE(expert e on phase z), Case A/B diagnosis (Wave A4). |
-| `routing_counterfactuals.py` | planned — learned vs frozen-centroid vs oracle vs uniform vs random router rollouts (Wave A5). |
-| `expert_diversity.py` | planned — D_ij(t) expert-output divergence at t=1,5,20,200 (Wave B2). |
-| `failure_phase.py` | planned — failure-by-phase analysis from episodes (Wave C2). |
+    !uv run python scripts/experiments/<name>.py [--seeds 42,43,44] [--outputs outputs/surgical]
 
-Run order: `checkpoint_sweep.py` first (produces the checkpointed stage-2
-runs every other script consumes), then the static analyzers. All rollout
-evals reuse the frozen reset bank (seed 2026, 50 cases) so episodes are
-paired across checkpoints.
+Each writes its raw findings JSON to `outputs/surgical/_findings/` and a
+rendered report to `docs/dev/findings/`. Run order matters: the Wave A1
+sweep (`checkpoint_sweep.py`) produces the per-epoch stage-2 checkpoints the
+static analyzers consume; Waves A3/B1/B3_B4 train their own runs on top of
+the shared stage-1 checkpoint from Wave A1. `run_all.py` orchestrates the
+whole sequence and skips any script whose findings JSON already exists.
+
+| Script | Wave | Purpose |
+|--------|------|---------|
+| `checkpoint_sweep.py` | A1 | Train phaseforge stage-1+2 (3 seeds) with per-epoch checkpoints; rollout-eval SR at epochs {1,2,4,8,16,30,50,100,200,best} on the same 50-case bank; overlay val-loss/NMI/entropy/balance per epoch. |
+| `sr_val_corr.py` | A2 | Pearson corr(val action MSE, rollout SR) across checkpoints per seed + pooled. |
+| `validation_bank.py` | A3 | 4 fixed val-bank seeds × 3 training seeds; SR spread vs checkpoint-selection noise. |
+| `specialization_matrix.py` | A4 | Offline M_{z,e} = mean P(expert e | phase z) contingency from validation latents. |
+| `routing_counterfactuals.py` | A5 | Offline action-MSE of learned vs oracle_true vs oracle_pred vs uniform vs random router distributions. |
+| `four_way_init.py` | B1 | 4 cells (router_init × expert_init) × 3 seeds; best-epoch rollout eval. |
+| `expert_diversity.py` | B2 | Offline expert-output divergence D_ij(t) at t=1,5,20,200 from Wave A1 checkpoints. |
+| `ablation_grid.py` | B3+B4 | balance_coeff {0.0, 0.01, 0.1} × noise_std {0.0, 0.1, 0.5} grid; best-epoch rollout eval. |
+| `latent_geometry.py` | C1 | Offline per-phase centroid/intra/inter distances + silhouette on validation latents. |
+| `failure_phase.py` | C2 | Artifact-only failure analysis (success rate, steps-to-failure, failure categories) over any eval dirs. |
+| `run_all.py` | — | Master runner: `--waves A B C` executes everything in order, skip-if-done, `--force` to rerun. |
+
+All rollout evals reuse the frozen reset bank (seed 2026, 50 cases) so
+episodes are paired across checkpoints. Offline analyzers load checkpoints
+via `_model_utils.py` (Hydra compose + `build_model` + `_load_state_dict_checked`,
+matching the training CLI exactly).
