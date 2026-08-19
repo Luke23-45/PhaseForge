@@ -193,6 +193,23 @@
       "tag": "random_warm"
     },
     {
+      "index": 25,
+      "experiment_id": "EXP-209",
+      "name": "phaseforge_e6",
+      "role": "V2 diagnostic: report1 phaseforge config (E=6, centroid init) on the shared bank",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "models.router.num_experts=6",
+        "models.router_init.type=centroid"
+      ],
+      "tag": "e6_diag"
+    },
+    {
       "index": 15,
       "experiment_id": "EXP-115",
       "name": "pf_ft",

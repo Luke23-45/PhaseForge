@@ -16,6 +16,10 @@ so the stepwise gating from report1.md stays enforceable:
   ``scratch_moe`` (reset) and ``warmstart_moe`` (warm) against the soft
   mapping scheme. Gated on the G2 separability verdict by convention: run
   only after reviewing ``outputs/_findings/phase_merge_separability.json``.
+* ``g6`` — E=6 centroid diagnostic (EXP-209): re-run the report1
+  phaseforge configuration (``num_experts=6``, ``router_init.type=centroid``)
+  on the shared wave-3 bank to separate the bank effect from the V2-B
+  config change when the G3 re-baseline disagrees with the Wave-1 number.
 
 Per-gate findings (SR + CI + bank id per seed) are collected from each
 cell's ``rollout_summary.json`` into ``outputs/_findings/v2_gates_<gate>.json``.
@@ -54,6 +58,11 @@ GATES: dict[str, dict] = {
         "methods": ["scratch_moe", "warmstart_moe"],
         "namespace": "outputs/v2_g4",
         "role": "warm-vs-reset under V2-B (EXP-105 + EXP-106)",
+    },
+    "g6": {
+        "methods": ["phaseforge_e6"],
+        "namespace": "outputs/v2_e6_diag",
+        "role": "E=6 centroid re-run on shared bank (EXP-209)",
     },
 }
 
