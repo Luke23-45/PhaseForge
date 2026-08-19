@@ -1,11 +1,12 @@
 """Wave A3: validation-set sampling variance.
 
 For each seed, repeat the stage-2 training four times with a different
-validation split seed (``data.split.seed``); rollout-evaluate the
-best-epoch checkpoint on the frozen reset bank (50 episodes). The spread
-of the four SRs quantifies how much of the seed-to-seed variance is
-``checkpoint selection noise from a 20-trajectory val split`` versus
-``inherent stage-2 variance``.
+validation split seed (``data.split.seed`` with ``data.split.use_dataset_filters=false``,
+because the HDF5 train/valid filters would otherwise short-circuit the split
+RNG and fix the fold); rollout-evaluate the best-epoch checkpoint on the
+frozen reset bank (50 episodes). The spread of the four SRs quantifies how
+much of the seed-to-seed variance is ``checkpoint selection noise from a
+20-trajectory val split`` versus ``inherent stage-2 variance``.
 
 Outputs:
     outputs/surgical/_findings/validation_bank.json
@@ -22,6 +23,7 @@ from pathlib import Path
 
 from phaseforge.runner.commands import eval_command, train_command
 from phaseforge.runner.protocol import Step, load_protocol
+from omegaconf import OmegaConf
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
@@ -80,6 +82,17 @@ def _eval_best(outputs: Path, provider, seed: int, ckpt_path: Path, tag: str, de
     }
 
 
+def _run_has_filters_disabled(run_dir: Path) -> bool:
+    cfg_path = run_dir / "resolved_config.yaml"
+    if not cfg_path.is_file():
+        return False
+    try:
+        cfg = OmegaConf.load(str(cfg_path))
+        return not bool(cfg.get("data", {}).get("split", {}).get("use_dataset_filters", True))
+    except Exception:
+        return False
+
+
 def _find_provider_ckpt(outputs: Path, provider, seed: int) -> Path:
     prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
     return prov_dir / "checkpoints" / "checkpoint_best.pt"
@@ -120,10 +133,16 @@ def main(argv: list[str] | None = None) -> int:
                 base_provider,
                 name=f"phaseforge_vbank_{bank}",
                 tag=tag,
-                overrides=[f"data.split.seed={bank}"],
+                overrides=[
+                    f"data.split.seed={bank}",
+                    "data.split.use_dataset_filters=false",
+                ],
             )
             try:
                 run_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 2, seed), provider.name, seed, tag)
+                if not _run_has_filters_disabled(run_dir):
+                    print(f"[vbank] seed {seed} bank {bank}: stale run {run_dir.name} (dataset filters enabled), retraining")
+                    raise RuntimeError("stale run without use_dataset_filters=false")
                 print(f"[vbank] seed {seed} bank {bank}: reusing {run_dir.name}")
             except RuntimeError:
                 print(f"[vbank] seed {seed} bank {bank}: training stage 2")
