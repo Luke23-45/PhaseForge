@@ -44,6 +44,7 @@ from smoke_matrix import (  # noqa: E402
     STAGE2_QUIET,
     TRAIN_QUIET,
     _execute,
+    _find_provider_ckpt,
     _find_run_by_meta,
     _run_dir_base,
 )
@@ -180,14 +181,14 @@ def main(argv: list[str] | None = None) -> int:
     start = time.time()
 
     for seed in seeds:
-        prov_dir: Path | None = None
         try:
-            prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
-        except RuntimeError:
-            prov_dir = None
-        if prov_dir is None:
+            provider_ckpt = _find_provider_ckpt(outputs, provider, seed)
+        except RuntimeError as exc:
+            print(f"[sweep] seed {seed}: stage-1 reuse unavailable ({exc}); training fresh")
+            provider_ckpt = None
+        if provider_ckpt is None:
             if args.skip_provider:
-                print(f"[sweep] seed {seed}: --skip-provider but no stage-1 run found; aborting")
+                print(f"[sweep] seed {seed}: --skip-provider but no complete stage-1 run found; aborting")
                 return 1
             print(f"[sweep] seed {seed}: training phaseforge stage 1 ({args.stage1_epochs} epochs)")
             if args.dry_run:
@@ -195,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             prov_dir = _train_stage1(
                 provider, seed, outputs, defaults, args.stage1_epochs, logs, args.timeout
             )
-        provider_ckpt = prov_dir / "checkpoints" / "checkpoint_best.pt"
+            provider_ckpt = prov_dir / "checkpoints" / "checkpoint_best.pt"
 
         stage2_dir = _run_dir_base(outputs, provider, 2, seed)
         run_dir: Path | None = None

@@ -107,6 +107,17 @@ def _find_run_by_meta(base: Path, method_name: str, seed: int, tag: str | None) 
     return sorted(matches)[-1]
 
 
+def _find_provider_ckpt(outputs: Path, provider, seed: int) -> Path:
+    """Stage-1 best checkpoint, refusing incomplete runs (no checkpoint files)."""
+    prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
+    ckpt = prov_dir / "checkpoints" / "checkpoint_best.pt"
+    if not ckpt.is_file():
+        raise RuntimeError(
+            f"stage-1 run {prov_dir.name} is incomplete (missing checkpoints/checkpoint_best.pt)"
+        )
+    return ckpt
+
+
 def _execute(argv: list[str], log_path: Path, timeout: int) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w", encoding="utf-8") as log:

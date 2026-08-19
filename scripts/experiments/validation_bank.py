@@ -32,6 +32,7 @@ from smoke_matrix import (  # noqa: E402
     STAGE2_QUIET,
     TRAIN_QUIET,
     _execute,
+    _find_provider_ckpt,
     _find_run_by_meta,
     _run_dir_base,
 )
@@ -91,11 +92,6 @@ def _run_has_filters_disabled(run_dir: Path) -> bool:
         return not bool(cfg.get("data", {}).get("split", {}).get("use_dataset_filters", True))
     except Exception:
         return False
-
-
-def _find_provider_ckpt(outputs: Path, provider, seed: int) -> Path:
-    prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
-    return prov_dir / "checkpoints" / "checkpoint_best.pt"
 
 
 def main(argv: list[str] | None = None) -> int:

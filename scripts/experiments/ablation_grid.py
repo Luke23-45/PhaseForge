@@ -26,6 +26,7 @@ from smoke_matrix import (  # noqa: E402
     STAGE2_QUIET,
     TRAIN_QUIET,
     _execute,
+    _find_provider_ckpt,
     _find_run_by_meta,
     _run_dir_base,
 )
@@ -69,11 +70,6 @@ def _eval_best(outputs: Path, provider, seed: int, ckpt_path: Path, tag: str, de
         "ci_low": metrics.get("eval/rollout/wilson_ci95_low"),
         "ci_high": metrics.get("eval/rollout/wilson_ci95_high"),
     }
-
-
-def _find_provider_ckpt(outputs: Path, provider, seed: int) -> Path:
-    prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
-    return prov_dir / "checkpoints" / "checkpoint_best.pt"
 
 
 def main(argv: list[str] | None = None) -> int:
