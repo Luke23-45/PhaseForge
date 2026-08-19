@@ -163,6 +163,8 @@ def _append_eval_result_row(
     (not the default ``train`` group); ``ckpt_path`` records the exact
     artifact evaluated so the paper tables can be traced to a checkpoint.
     """
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
     _timestamp, _tag, run_id = parse_run_dir(output_dir.name)
     git = git_info()
     row: dict[str, Any] = {
@@ -178,6 +180,9 @@ def _append_eval_result_row(
         "tag": cfg.project.get("tag"),
         "method": cfg.project.get("method"),
         "action_mse": float(results["eval/action_mse"]),
+        "data_config_hash": CacheManager.compute_hash(cfg.data),
+        "reset_bank": results.get("eval/rollout/reset_bank"),
+        "reset_seed": results.get("eval/rollout/reset_seed"),
     }
     for metric in OPTIONAL_METRIC_FIELDS:
         key = f"eval/{metric}"
@@ -452,6 +457,27 @@ def _copy_data_provenance(cfg: DictConfig, output_dir: Path) -> None:
     copy_cache_provenance(output_dir, processed_cache_root(), config_hash_val)
 
 
+def _phase_class_weights(
+    mode: str, counts: dict[int, int], beta: float = 0.999
+) -> list[float]:
+    """Per-class weights for the stage-1 phase CE from training-split counts.
+
+    ``"balanced"``: inverse frequency ``total / (C * n_c)``.
+    ``"cui"``: class-wise uniform increasing ``(1-β)/(1-β^{n_c})`` — bounded
+    by construction (1 for a singleton class, decaying toward ``1-β`` as the
+    count grows) so a near-empty class cannot dominate the loss.
+    """
+    if mode == "balanced":
+        total = sum(counts.values())
+        n_classes = len(counts)
+        return [total / (n_classes * counts[c]) for c in range(n_classes)]
+    if mode == "cui":
+        if not 0.0 < beta < 1.0:
+            raise ValueError(f"train.cui_beta must be in (0, 1), got {beta}")
+        return [(1.0 - beta) / (1.0 - beta**counts[c]) for c in range(len(counts))]
+    raise ValueError(f"unknown phase_class_weight mode {mode!r}")
+
+
 def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
     """The training work itself, wrapped in run lifecycle bookkeeping."""
     # 2. Init W&B (lazy import: cli.py stays importable without wandb installed)
@@ -478,37 +504,48 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
     if train_loader is None:
         raise RuntimeError("No training data found. Check split ratios and cache.")
 
-    # 3b. Optional balanced phase class weighting (Stage 1 only).
+    # 3b. Optional phase class weighting (Stage 1 only).
     # Lift's phase labels are severely imbalanced (phases 1/5 ≈ 1.2%/0.6% of
     # steps). Plain CE lets the phase head overfit the majority phases
     # (val/loss_phase 2.59 > ln(6) ≈ 1.79 random baseline, report §5.3),
     # which then drags stage-2 routing for phase_pretrain_random_router and
-    # teacher_forced. Inverse-frequency weights computed from the TRAINING
-    # split keep the head from memorising the majority class. Opt-in via
-    # train.phase_class_weight="balanced"; "none" preserves the protocol.
+    # teacher_forced. Weights computed from the TRAINING split keep the head
+    # from memorising the majority class. Opt-in via
+    # train.phase_class_weight="balanced" (inverse frequency) or "cui"
+    # (class-wise uniform increasing: w_c = (1-β)/(1-β^{n_c}), bounded by
+    # construction so a near-empty class cannot dominate the loss);
+    # "none" preserves the protocol.
     phase_weights: list[float] | None = None
-    if (
-        int(cfg.train.get("stage", 1)) == 1
-        and str(cfg.train.get("phase_class_weight", "none")) == "balanced"
+    phase_weight_mode = str(cfg.train.get("phase_class_weight", "none"))
+    if int(cfg.train.get("stage", 1)) == 1 and phase_weight_mode in (
+        "balanced",
+        "cui",
     ):
         counts = pipeline.phase_counts("train")
         if not counts:
             raise RuntimeError(
-                "train.phase_class_weight='balanced' requested but the training "
-                "split contains no phase-labelled steps."
+                f"train.phase_class_weight={phase_weight_mode!r} requested but "
+                "the training split contains no phase-labelled steps."
             )
-        total = sum(counts.values())
         n_classes = len(counts)
         if any(counts[c] == 0 for c in range(n_classes)):
             raise RuntimeError(
-                "train.phase_class_weight='balanced' requested but some phase "
-                f"classes have zero training steps: {counts}"
+                f"train.phase_class_weight={phase_weight_mode!r} requested but "
+                f"some phase classes have zero training steps: {counts}"
             )
-        phase_weights = [total / (n_classes * counts[c]) for c in range(n_classes)]
+        cui_beta = None
+        if phase_weight_mode == "cui":
+            cui_beta = float(cfg.train.get("cui_beta", 0.999))
+            if not 0.0 < cui_beta < 1.0:
+                raise RuntimeError("train.cui_beta must be in (0, 1)")
+        phase_weights = _phase_class_weights(
+            phase_weight_mode, counts, beta=cui_beta or 0.999
+        )
         cfg.train.phase_weights = phase_weights
         logger.info(
-            "Balanced phase class weighting (from training split): "
+            "%s phase class weighting (from training split): "
             "counts=%s weights=%s",
+            phase_weight_mode,
             counts,
             [round(w, 4) for w in phase_weights],
         )
@@ -520,9 +557,11 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
             (meta_dir / "phase_weights.json").write_text(
                 json.dumps(
                     {
+                        "method": phase_weight_mode,
                         "counts": counts,
                         "weights": phase_weights,
                         "data_config_hash": CacheManager.compute_hash(cfg.data),
+                        **({"cui_beta": cui_beta} if cui_beta is not None else {}),
                     },
                     indent=2,
                     sort_keys=True,
@@ -582,7 +621,15 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
                 model,
                 ckpt["model_state_dict"],
                 "Stage 1 -> Stage 2 bootstrap load",
-                expected_unexpected_prefixes=("moe_layer",) + _unused_stage1_head_prefixes(model),
+                expected_unexpected_prefixes=(
+                    "moe_layer",
+                    # The V2-B soft mapping M belongs to the PhaseBootstrappedMoE
+                    # architecture: stage-1 checkpoints predating its persistence
+                    # lack the key (zeros stay until bootstrap fills it), and
+                    # baseline architectures legitimately drop it.
+                    "soft_mapping",
+                )
+                + _unused_stage1_head_prefixes(model),
             )
 
             model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
@@ -703,7 +750,15 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
     if ckpt_path:
         logger.info(f"Loading checkpoint from {ckpt_path}...")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        _load_state_dict_checked(model, ckpt["model_state_dict"], "Evaluation checkpoint load")
+        # ``soft_mapping`` is allowed to be missing (checkpoints predating
+        # V2-B persistence load with the zero-initialized buffer; its
+        # consumers fail closed on all-zero M rather than route silently).
+        _load_state_dict_checked(
+            model,
+            ckpt["model_state_dict"],
+            "Evaluation checkpoint load",
+            expected_unexpected_prefixes=("soft_mapping",),
+        )
         # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
         # so load_state_dict() leaves it at the __init__ default (1).
         if hasattr(model, "stage") and "stage" in ckpt:

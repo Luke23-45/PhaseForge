@@ -43,6 +43,18 @@ episodes:
   # action counts as policy_invalid_action.
   action_tolerance: 0.0001
   checkpoint_sha256: null
+  # V2-E evaluation-time routing intervention: learned (the trained router)
+  # | sticky (beta-EMA over the learned top-1 choice) | uniform (equal
+  # weight over ALL experts, the A5 uniform counterfactual) | oracle
+  # (M^T softmax(phase_head(z)) through the soft phase->expert mapping).
+  # Only PhaseBootstrappedMoE models honor it; other baselines always
+  # route learned. Evaluation-time only — training is unaffected.
+  router_mode: "learned"
+  # V2-E per-phase success tracking. true -> the run FAILS if the training
+  # cache has no phase_thresholds.json (a cache that predates per-demo
+  # phase calibration); false -> per-phase SR is reported as null when the
+  # artifact is missing. Tracked whenever the artifact exists.
+  require_phase_tracking: false
 
 gates:
   # Gate 4 is the task-independent native-predicate probe: confirms that

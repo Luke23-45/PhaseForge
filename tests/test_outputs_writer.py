@@ -53,6 +53,9 @@ def make_row(
     with_metrics: bool = True,
     tag: str | None = None,
     method: str | None = None,
+    data_config_hash: str | None = None,
+    reset_bank: str | None = None,
+    reset_seed: int | None = None,
 ) -> dict:
     row = {
         "run_id": "a1b2c3d4",
@@ -67,6 +70,9 @@ def make_row(
         "action_mse": action_mse,
         "tag": tag,
         "method": method,
+        "data_config_hash": data_config_hash,
+        "reset_bank": reset_bank,
+        "reset_seed": reset_seed,
     }
     if with_metrics:
         row.update(
@@ -183,6 +189,44 @@ class TestSchema:
         row = make_result_row()
         assert row.tag is None
         assert row.method is None
+
+    def test_provenance_fields_accept_str_or_null(self) -> None:
+        row = make_row()
+        row["data_config_hash"] = "a2da6ba3"
+        row["reset_bank"] = "bank_abc"
+        row["reset_seed"] = 2026
+        validate_row(row)
+        validate_row(make_row(data_config_hash="a2da6ba3"))
+        validate_row(make_row(data_config_hash=None, reset_bank=None, reset_seed=None))
+
+    def test_provenance_fields_reject_bad_types(self) -> None:
+        row = make_row()
+        row["data_config_hash"] = 7
+        with pytest.raises(SchemaError, match="data_config_hash"):
+            validate_row(row)
+        row = make_row()
+        row["reset_bank"] = 3
+        with pytest.raises(SchemaError, match="reset_bank"):
+            validate_row(row)
+        row = make_row()
+        row["reset_seed"] = "2026"
+        with pytest.raises(SchemaError, match="reset_seed"):
+            validate_row(row)
+        row = make_row()
+        row["reset_seed"] = 2026.0
+        with pytest.raises(SchemaError, match="reset_seed"):
+            validate_row(row)
+
+    def test_provenance_fields_roundtrip_via_result_row(self) -> None:
+        row = make_result_row(
+            data_config_hash="a2da6ba3",
+            reset_bank="bank_abc",
+            reset_seed=2026,
+        )
+        validate_row(row.to_dict())
+        assert row.to_dict()["data_config_hash"] == "a2da6ba3"
+        assert row.to_dict()["reset_bank"] == "bank_abc"
+        assert row.to_dict()["reset_seed"] == 2026
 
 
 # ---------------------------------------------------------------------------

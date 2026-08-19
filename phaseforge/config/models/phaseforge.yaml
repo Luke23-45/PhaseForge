@@ -27,12 +27,16 @@ phase_head:
 router:
   _target_: phaseforge.models.components.router.TopKRouter
   latent_dim: 128
-  num_experts: 6
+  num_experts: 8
   top_k: 2
   noise_std: 0.1
   balance_coeff: 0.01
   normalize_input: true   # Unit-norm latents + unit-norm centroid weights
                           # (set by bootstrap_moe) => true cosine routing.
+  # V2-C: add the previous in-trajectory step's top-1 expert as a learned
+  # history bias (two-pass in-batch; needs trajectory_id/position in the
+  # batch). The stickiness loss it enables is scaled by train.sticky_coeff.
+  use_history: false
 
 expert:
   _target_: phaseforge.models.components.expert.ExpertMLP
@@ -43,8 +47,24 @@ expert:
   output_dim: ${data.action_dim}
   activation: "gelu"
 
+# V2-B: soft phase->expert mapping M (P, E), right-stochastic, persisted as
+# a model buffer once bootstrapped. The router is initialized on the same
+# spherical hierarchical phase prototypes the mapping is built from, so M
+# and the gate live in one cosine geometry (normalize_input=true).
+soft_mapping:
+  enabled: true
+
+# V2-D: teacher-distilled routing. The single source of truth for whether
+# the Stage-2 forward emits phase_logits for the teacher path; trainer-side
+# knobs (lambda0, annealing) live under train.teacher_routing.
+teacher_routing:
+  enabled: false
+
 router_init:
-  type: "centroid"
+  type: "soft_mapping"
+  mapping_mode: "prototype_softmax"   # or "hierarchical_uniform" (data-free)
+  temperature: 1.0
+  seed: 42
 
 expert_init:
   type: "warmstart"

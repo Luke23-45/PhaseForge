@@ -50,6 +50,30 @@ def test_phase_consuming_models_are_detected() -> None:
         assert _fsm_for_model(name)._model_uses_phase_labels(), name
 
 
+def test_soft_mapping_init_allows_experts_ne_phases() -> None:
+    """V2-B phaseforge (P=6 phases, 8 experts) passes the phase-count guard.
+
+    The P x E soft mapping bridges phase index to expert index, so
+    num_experts must be decoupled from num_phases for this router init.
+    """
+    fsm = _fsm_for_model("phaseforge")
+    assert int(fsm.cfg.models.router.num_experts) == 8
+    assert int(fsm.cfg.data.phase_labeler.num_phases) == 6
+    # Construction already ran the guard; reach it explicitly for the assert.
+    fsm._check_num_phases_consistency()
+
+
+def test_non_soft_mapping_init_still_requires_match() -> None:
+    """Without soft_mapping/centroid/random init, E != P must fail loudly."""
+    data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+    models_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    models_cfg.router_init.type = "banana"
+    with pytest.raises(PipelineError, match="num_phases inconsistency"):
+        DataPipelineStateMachine(
+            DictConfig({"models": models_cfg, "data": data_cfg})
+        )
+
+
 def test_label_free_models_are_not_phase_consuming() -> None:
     for name in LABEL_FREE_MODELS:
         assert not _fsm_for_model(name)._model_uses_phase_labels(), name

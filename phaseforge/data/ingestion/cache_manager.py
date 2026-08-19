@@ -260,6 +260,7 @@ class CacheManager:
         splits: dict[str, list[int]],
         task_index: dict[str, int] | None = None,
         provenance: dict[str, Any] | None = None,
+        phase_thresholds: dict[str, Any] | None = None,
     ) -> None:
         """Atomically write all processed data to the cache.
 
@@ -275,6 +276,11 @@ class CacheManager:
                 phase-labeler config and split task names (the latter are
                 also written as human-readable ``train_tasks.txt`` /
                 ``validation_tasks.txt``).
+            phase_thresholds: Optional aggregated per-demonstration phase
+                calibration artifact, persisted as ``phase_thresholds.json``
+                (the rollout layer's source of truth for per-phase success
+                tracking; see
+                :func:`phaseforge.data.robomimic.phase_labeler.calibrate`).
         """
         final_dir = self.cache_dir(config_hash)
         tmp_dir = self.cache_root / f"{config_hash}_tmp"
@@ -299,6 +305,12 @@ class CacheManager:
         # Task index (deterministic name -> id; auditable)
         if task_index is not None:
             (tmp_dir / "task_index.json").write_text(json.dumps(task_index, indent=2))
+
+        # Aggregated phase calibration artifacts (per-phase success tracking)
+        if phase_thresholds is not None:
+            (tmp_dir / "phase_thresholds.json").write_text(
+                json.dumps(phase_thresholds, indent=2), encoding="utf-8"
+            )
 
         # Human-readable split task names (Gate 7 audit)
         split_task_names = (provenance or {}).get("split_task_names") if provenance else None
@@ -360,3 +372,20 @@ class CacheManager:
             task_index = {}
 
         return trajectories, norm_stats, splits, task_index
+
+
+def load_phase_thresholds(cache_dir: str | Path) -> dict[str, Any] | None:
+    """Load the aggregated phase-threshold calibration, or None if absent.
+
+    A cache that predates phase-threshold persistence has no
+    ``phase_thresholds.json`` (and its trajectories carry no per-demo
+    artifacts); callers that need the calibration for per-phase tracking
+    must fail closed rather than fabricate thresholds. The returned dict
+    contains ``data_config_hash``, ``n_demos``, the aggregated median
+    ``closed_level``/``open_level`` and ``mirror`` convention, and the
+    full ``per_demo`` artifact list.
+    """
+    path = Path(cache_dir) / "phase_thresholds.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))

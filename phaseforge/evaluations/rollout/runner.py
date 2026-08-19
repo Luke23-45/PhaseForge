@@ -23,6 +23,7 @@ import torch
 from omegaconf import DictConfig
 
 from phaseforge.data.common.normalizer import FrozenNormalizer
+from phaseforge.data.robomimic.phase_labeler import CausalPhaseStepLabeler
 from phaseforge.evaluations.envs.env_metadata import (
     PinnedEnvMetadata,
     env_metadata_from_cache,
@@ -100,6 +101,8 @@ class RolloutEvaluator:
         tag: str | None = None,
         horizon: int | None = None,
         action_tolerance: float = 1e-4,
+        phase_labeler: CausalPhaseStepLabeler | None = None,
+        router_mode: str = "learned",
     ) -> None:
         self.cfg = cfg
         self.policy = policy
@@ -116,6 +119,9 @@ class RolloutEvaluator:
         self.tag = tag
         self.horizon = int(horizon or adapter.horizon)
         self.action_tolerance = float(action_tolerance)
+        self.phase_labeler = phase_labeler
+        self.router_mode = str(router_mode).lower()
+        self.num_phases = phase_labeler.num_phases if phase_labeler is not None else None
 
         # These values are invariant for the whole rollout. Resolving them
         # once avoids a parameter walk, an eval-mode traversal, and repeated
@@ -213,6 +219,9 @@ class RolloutEvaluator:
                     )
 
         steps = 0
+        if self.phase_labeler is not None:
+            self.phase_labeler.reset()
+        max_phase: int | None = None
         while steps < self.horizon:
             try:
                 if self.policy is not None:
@@ -227,7 +236,7 @@ class RolloutEvaluator:
                     failure_category=FAILURE_POLICY_INVALID_ACTION,
                     exception=str(exc),
                 )
-                return self._episode(case, outcome)
+                return self._episode(case, outcome, max_phase=max_phase)
             except Exception as exc:  # noqa: BLE001 — model raised
                 outcome = RolloutOutcome(
                     valid=True,
@@ -236,7 +245,22 @@ class RolloutEvaluator:
                     failure_category=FAILURE_POLICY_EXCEPTION,
                     exception=f"{type(exc).__name__}: {exc}",
                 )
-                return self._episode(case, outcome)
+                return self._episode(case, outcome, max_phase=max_phase)
+
+            # V2-E per-phase success tracking: classify the raw state with the
+            # causal phase labeler (calibrated on the training demonstrations)
+            # as the episode unfolds. Policy failures after at least one state
+            # carry the phase reached so far.
+            if self.phase_labeler is not None:
+                try:
+                    phase = self.phase_labeler.step(state)
+                    if max_phase is None or phase > max_phase:
+                        max_phase = phase
+                except Exception as exc:  # noqa: BLE001 — labeler misuse
+                    raise RuntimeError(
+                        f"Per-phase tracking failed on step {steps}: "
+                        f"{type(exc).__name__}: {exc}"
+                    ) from exc
 
             try:
                 state, _done, success, _info = self.adapter.step(action)
@@ -250,11 +274,20 @@ class RolloutEvaluator:
                         failure_category=FAILURE_POLICY_INVALID_ACTION,
                         exception=str(exc),
                     ),
+                    max_phase=max_phase,
                 )
             except InfrastructureError as exc:
-                return self._episode(case, RolloutOutcome(valid=False, exception=str(exc)))
+                return self._episode(
+                    case,
+                    RolloutOutcome(valid=False, exception=str(exc)),
+                    max_phase=max_phase,
+                )
             except Exception as exc:  # noqa: BLE001 — simulator misuse
-                return self._episode(case, RolloutOutcome(valid=False, exception=str(exc)))
+                return self._episode(
+                    case,
+                    RolloutOutcome(valid=False, exception=str(exc)),
+                    max_phase=max_phase,
+                )
             steps += 1
             if success:
                 return self._episode(
@@ -265,6 +298,7 @@ class RolloutEvaluator:
                         steps=steps,
                         termination_reason="success",
                     ),
+                    max_phase=max_phase,
                 )
 
         return self._episode(
@@ -276,6 +310,7 @@ class RolloutEvaluator:
                 termination_reason=FAILURE_TIMEOUT,
                 failure_category=FAILURE_TIMEOUT,
             ),
+            max_phase=max_phase,
         )
 
     def _policy_action(self, state: np.ndarray) -> np.ndarray:
@@ -303,7 +338,13 @@ class RolloutEvaluator:
     # Recording
     # ------------------------------------------------------------------
 
-    def _episode(self, case, outcome: RolloutOutcome) -> tuple[RolloutOutcome, dict[str, Any]]:
+    def _episode(
+        self,
+        case,
+        outcome: RolloutOutcome,
+        *,
+        max_phase: int | None = None,
+    ) -> tuple[RolloutOutcome, dict[str, Any]]:
         row: dict[str, Any] = {
             "run_id": self.run_id,
             "model": self.model_name,
@@ -317,6 +358,10 @@ class RolloutEvaluator:
         }
         if self.tag is not None:
             row["tag"] = self.tag
+        if self.router_mode != "learned":
+            row["router_mode"] = self.router_mode
+        if max_phase is not None:
+            row["extra"] = {**(row.get("extra") or {}), "max_phase": int(max_phase)}
         if outcome.valid:
             row["success"] = outcome.success
             row["timed_out"] = outcome.timed_out
@@ -329,7 +374,7 @@ class RolloutEvaluator:
             row["termination_reason"] = "infrastructure"
             row["exception"] = outcome.exception or "unknown infrastructure failure"
         if outcome.extra:
-            row["extra"] = outcome.extra
+            row["extra"] = {**(row.get("extra") or {}), **outcome.extra}
         return outcome, row
 
     # ------------------------------------------------------------------
@@ -356,7 +401,15 @@ class RolloutEvaluator:
             "eval/rollout/reset_bank": self.bank.bank_id,
             "eval/rollout/reset_seed": self.bank.seed,
             "eval/rollout/task": self.task,
+            "eval/rollout/router_mode": self.router_mode,
         }
+        if self.num_phases is not None:
+            results["eval/rollout/per_phase_sr"] = _per_phase_success_rates(
+                rows, num_phases=self.num_phases
+            )
+            results["eval/rollout/phase_tracking"] = "aggregated"
+        else:
+            results["eval/rollout/phase_tracking"] = "missing"
         return results
 
     def _write_run_summary(self, results: dict[str, Any], rows: list[dict[str, Any]]) -> None:
@@ -370,6 +423,7 @@ class RolloutEvaluator:
             "reset_bank": self.bank.bank_id,
             "checkpoint_sha256": self.checkpoint_sha256,
             "horizon": self.horizon,
+            "router_mode": self.router_mode,
             "episodes": len(rows),
             "failure_categories": _failure_breakdown(rows),
             "metrics": {
@@ -379,6 +433,58 @@ class RolloutEvaluator:
         (self.output_dir / "rollout_summary.json").write_text(
             json.dumps(payload, indent=2), encoding="utf-8"
         )
+
+
+def _phase_labeler_from_aggregate(thresholds: dict[str, Any]) -> CausalPhaseStepLabeler:
+    """Build the causal step labeler from the aggregated calibration artifact.
+
+    ``phase_thresholds.json`` stores the median hysteresis levels
+    (``closed_level``/``open_level``/``mirror``/``mirror_bounds``) plus the
+    full per-demo artifacts. The labeler needs one complete calibration; the
+    median levels are authoritative, and the labeler parameters that are
+    constant across demos (thresholds, slices, filter size) come from the
+    first per-demo artifact.
+    """
+    demos = thresholds.get("per_demo") or []
+    if not demos:
+        raise ValueError(
+            "Aggregated phase_thresholds artifact has no per_demo entries; "
+            "cannot build a phase labeler."
+        )
+    calibration = dict(demos[0])
+    calibration["closed_level"] = thresholds["closed_level"]
+    calibration["open_level"] = thresholds["open_level"]
+    calibration["mirror"] = bool(thresholds.get("mirror", demos[0]["mirror"]))
+    if calibration["mirror"]:
+        bounds = thresholds.get("mirror_bounds") or demos[0].get("mirror_bounds")
+        calibration["mirror_bounds"] = bounds
+    return CausalPhaseStepLabeler(calibration)
+
+
+def _per_phase_success_rates(
+    rows: list[dict[str, Any]], num_phases: int
+) -> dict[str, float | None]:
+    """Per-phase success rate: P(success | episode reached phase p).
+
+    An episode "reaches" phase p when its recorded max phase is at least p
+    (the causal phase labeler classifies every observed state); only valid
+    episodes count in the denominator (infra failures carry no states).
+    Each entry is a float or null when no valid episode reached the phase.
+    """
+    rates: dict[str, float | None] = {}
+    for phase in range(num_phases):
+        reached: list[dict[str, Any]] = [
+            row
+            for row in rows
+            if row.get("valid_episode")
+            and (row.get("extra") or {}).get("max_phase") is not None
+            and int(row["extra"]["max_phase"]) >= phase
+        ]
+        successes = [row for row in reached if row.get("success")]
+        rates[str(phase)] = (
+            len(successes) / len(reached) if reached else None
+        )
+    return rates
 
 
 def _failure_breakdown(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -680,14 +786,54 @@ def run_rollout_evaluation(
     """
     require_rollout_eval_schema(cfg)
     from phaseforge.data.common.normalizer import FrozenNormalizer
-    from phaseforge.data.ingestion.cache_manager import CacheManager
+    from phaseforge.data.ingestion.cache_manager import CacheManager, load_phase_thresholds
     from phaseforge.data.paths import processed_cache_root
 
     meta = resolve_pinned_metadata(cfg)
     bank = load_or_generate_bank(cfg, meta)
     adapter = _adapter_from_config(cfg, meta)
     hash_val = CacheManager.compute_hash(cfg.data)
-    normalizer = FrozenNormalizer.load(processed_cache_root() / hash_val / "norm_stats.pt")
+    cache_dir = processed_cache_root() / hash_val
+    normalizer = FrozenNormalizer.load(cache_dir / "norm_stats.pt")
+
+    # V2-E: evaluation-time routing intervention (learned/sticky/uniform/
+    # oracle). Baselines that are not PhaseBootstrappedMoE have no eval_mode
+    # and always route learned.
+    router_mode = str(cfg.eval.episodes.get("router_mode", "learned")).lower()
+    from phaseforge.models.phase_moe import EVAL_ROUTER_MODES
+
+    if router_mode not in EVAL_ROUTER_MODES:
+        raise EnvParityError(
+            f"eval.episodes.router_mode={router_mode!r} is not one of "
+            + ", ".join(sorted(EVAL_ROUTER_MODES))
+        )
+    if hasattr(model, "eval_mode"):
+        # setattr because nn.Module.__getattr__ types any unknown attribute
+        # as Tensor | Module and mypy would reject a plain str assignment.
+        setattr(model, "eval_mode", router_mode)
+
+    # V2-E per-phase success tracking: the training cache's aggregated
+    # phase-threshold calibration (median hysteresis + shared labeler
+    # params) classifies the policy's own states causally during rollout.
+    # Caches that predate the artifact fail closed when tracking is
+    # required; otherwise per-phase SR is null.
+    thresholds = load_phase_thresholds(cache_dir)
+    require_tracking = bool(cfg.eval.episodes.get("require_phase_tracking", False))
+    phase_labeler: CausalPhaseStepLabeler | None = None
+    if thresholds is not None:
+        phase_labeler = _phase_labeler_from_aggregate(thresholds)
+        logger.info(
+            "Per-phase success tracking active (aggregated calibration over "
+            "%d demos).",
+            int(thresholds.get("n_demos", 0)),
+        )
+    elif require_tracking:
+        raise EnvParityError(
+            f"eval.episodes.require_phase_tracking=true but cache {hash_val} "
+            "has no phase_thresholds.json (it predates per-demo phase "
+            "calibration). Re-ingest the raw HDF5 before per-phase success "
+            "tracking can run."
+        )
 
     model_name = getattr(cfg.models, "name", cfg.models._target_.split(".")[-1])
     training_seed = cfg.project.get("seed")
@@ -713,6 +859,8 @@ def run_rollout_evaluation(
         tag=cfg.project.get("tag"),
         horizon=cfg.eval.episodes.get("horizon"),
         action_tolerance=float(cfg.eval.episodes.get("action_tolerance", 1e-4)),
+        phase_labeler=phase_labeler,
+        router_mode=router_mode,
     )
     try:
         return evaluator.run()

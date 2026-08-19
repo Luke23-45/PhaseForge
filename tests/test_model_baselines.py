@@ -32,6 +32,7 @@ from phaseforge.models.components.expert import (
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.router import TopKRouter
+from phaseforge.models.components.soft_mapping import build_hierarchical_uniform_mapping
 from phaseforge.models.phase_moe import PhaseBootstrappedMoE
 from phaseforge.utils.config import resolve_checkpoint_source
 from phaseforge.utils.registry import build_model
@@ -575,3 +576,279 @@ def test_get_action_is_bounded_in_both_stages() -> None:
         stage2_action = model.get_action(state)
         assert float(stage2_action.min()) > -1.0
         assert float(stage2_action.max()) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# V2-B: soft phase->expert mapping bootstrap
+# ---------------------------------------------------------------------------
+
+
+def _make_soft_mapping_components(num_experts: int = 8):
+    encoder = StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32)
+    action_head = ActionHead(input_dim=32, output_dim=7, hidden_dim=64)
+    router = TopKRouter(latent_dim=32, num_experts=num_experts, top_k=2)
+    expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
+    phase_head = PhaseClassificationHead(latent_dim=32, num_phases=3)
+    return encoder, action_head, router, expert, phase_head
+
+
+def test_soft_mapping_buffer_is_zero_init_and_persistent() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    assert model.soft_mapping.shape == (3, 8)
+    assert not model.soft_mapping.any()
+    assert "soft_mapping" in model.state_dict()
+
+
+def test_require_soft_mapping_fails_closed_when_zero() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    with pytest.raises(RuntimeError, match="all-zero"):
+        model.require_soft_mapping()
+
+
+def test_bootstrap_hierarchical_uniform_fills_buffer_and_keeps_random_gate() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "hierarchical_uniform",
+            "seed": 42,
+        },
+    )
+    gate_before = model.moe_layer.router.gate_linear.weight.data.clone()
+
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+
+    assert model.stage == 2
+    expected = build_hierarchical_uniform_mapping(3, 8)
+    assert torch.allclose(model.soft_mapping, expected)
+    # Data-free mode must not touch the (random) gate weights.
+    assert torch.allclose(model.moe_layer.router.gate_linear.weight.data, gate_before)
+    # The teacher/oracle paths can now consume the mapping.
+    assert model.require_soft_mapping() is model.soft_mapping
+
+
+def test_bootstrap_prototype_softmax_sets_gate_and_mapping() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "prototype_softmax",
+            "temperature": 1.0,
+            "seed": 42,
+        },
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+
+    assert model.stage == 2
+    mapping = model.soft_mapping
+    assert mapping.shape == (3, 8)
+    assert torch.allclose(mapping.sum(dim=-1), torch.ones(3), atol=1e-5)
+    assert mapping.any()
+    # Gate rows are the unit-norm hierarchical prototypes (cosine geometry).
+    rows = model.moe_layer.router.gate_linear.weight.data
+    assert torch.allclose(rows.norm(dim=-1), torch.ones(8), atol=1e-5)
+
+
+def test_bootstrap_unknown_soft_mapping_mode_raises() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={"type": "soft_mapping", "mapping_mode": "mystery"},
+    )
+    with pytest.raises(ValueError, match="mapping_mode"):
+        model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model.stage == 1
+
+
+# ---------------------------------------------------------------------------
+# V2-D: teacher-routed KL path
+# ---------------------------------------------------------------------------
+
+
+def test_teacher_routing_off_by_default_no_phase_logits() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert not model.teacher_routing_enabled
+    out = model({"state": torch.randn(2, 151)})
+    assert out.phase_logits is None
+
+
+def test_teacher_routing_on_emits_phase_logits_in_stage2() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        teacher_routing={"enabled": True},
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "hierarchical_uniform",
+            "seed": 42,
+        },
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model.teacher_routing_enabled
+    out = model({"state": torch.randn(2, 151)})
+    assert out.phase_logits is not None
+    assert out.phase_logits.shape == (2, 3)
+
+
+def test_teacher_routing_on_fails_closed_on_zero_mapping() -> None:
+    # Stage 2 without bootstrap (or a pre-V2-B checkpoint): M is all zero and
+    # the teacher path must refuse to run rather than distill through zeros.
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        teacher_routing={"enabled": True},
+    )
+    model.stage = 2
+    with pytest.raises(RuntimeError, match="all-zero"):
+        model({"state": torch.randn(2, 151)})
+
+
+# ---------------------------------------------------------------------------
+# V2-E: evaluation-time routing interventions
+# ---------------------------------------------------------------------------
+
+
+def _bootstrapped_model(num_experts: int = 8) -> PhaseBootstrappedMoE:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components(
+        num_experts
+    )
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "hierarchical_uniform",
+            "seed": 42,
+        },
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    return model
+
+
+def test_eval_mode_default_and_validation() -> None:
+    model = _bootstrapped_model()
+    assert model.eval_mode == "learned"
+    with pytest.raises(ValueError, match="Unknown eval_mode"):
+        model.eval_mode = "mystery"
+    for mode in ("learned", "sticky", "uniform", "oracle"):
+        model.eval_mode = mode
+        assert model.eval_mode == mode
+    model.eval_mode = "LEARNED"
+    assert model.eval_mode == "learned"
+
+
+def test_eval_modes_override_dispatch_but_keep_gate_logits() -> None:
+    model = _bootstrapped_model(num_experts=4)
+    state = torch.randn(2, 151)
+    learned = model({"state": state})
+    assert learned.gate_logits is not None
+
+    # Uniform mode: every expert is selected with equal weight.
+    model.eval_mode = "uniform"
+    uniform = model({"state": state})
+    assert uniform.expert_indices.shape == (2, 4)
+    assert torch.allclose(
+        uniform.routing_weights, torch.full((2, 4), 0.25)
+    )
+    # Gate logits stay the learned ones (reported, not used).
+    assert torch.equal(uniform.gate_logits, learned.gate_logits)
+
+    # Oracle mode: M^T softmax(phase_head(z)) selects the phase's experts.
+    model.eval_mode = "oracle"
+    oracle = model({"state": state})
+    assert oracle.expert_indices.shape == (2, 2)
+    mapping = model.require_soft_mapping()
+    phase_probs = torch.softmax(model.phase_head(model.encoder(state)), dim=-1)
+    expected = torch.topk(
+        torch.einsum("pe,bp->be", mapping, phase_probs), 2, dim=-1
+    ).indices
+    assert torch.equal(oracle.expert_indices, expected)
+
+
+def test_sticky_eval_mode_resets_per_episode() -> None:
+    model = _bootstrapped_model(num_experts=4)
+    model.eval_mode = "sticky"
+    router = model.moe_layer.router
+    assert router._sticky_ema is None
+
+    # First step initializes the EMA; later steps keep updating it.
+    model.get_action(torch.randn(1, 151))
+    assert router._sticky_ema is not None
+    ema_after_first = router._sticky_ema.clone()
+    model.get_action(torch.randn(1, 151))
+    assert not torch.equal(router._sticky_ema, ema_after_first)
+
+    # reset() clears the EMA for the next episode (the runner calls it).
+    model.reset()
+    assert router._sticky_ema is None
+
+
+def test_oracle_eval_mode_fails_closed_on_zero_mapping() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    model.stage = 2
+    model.eval_mode = "oracle"
+    with pytest.raises(RuntimeError, match="all-zero"):
+        model.get_action(torch.randn(1, 151))
+
+
+def test_unknown_router_override_rejected_in_moe_layer() -> None:
+    model = _bootstrapped_model()
+    with pytest.raises(ValueError, match="Unknown router_override"):
+        model.moe_layer(
+            torch.randn(2, 32),
+            router_override="mystery",
+        )

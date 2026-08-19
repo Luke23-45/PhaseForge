@@ -9,6 +9,7 @@ import pytest
 import torch
 
 from phaseforge.data.common.normalizer import FrozenNormalizer
+from phaseforge.data.robomimic.phase_labeler import CausalPhaseStepLabeler
 from phaseforge.evaluations.envs.errors import EnvParityError, InfrastructureError
 from phaseforge.evaluations.rollout.runner import (
     FAILURE_POLICY_EXCEPTION,
@@ -237,7 +238,16 @@ class _MarkerPolicy:
         return self._ticker(state)
 
 
-def _evaluator(tmp_path, adapter, model=None, normalizer=None, horizon=500, policy=None):
+def _evaluator(
+    tmp_path,
+    adapter,
+    model=None,
+    normalizer=None,
+    horizon=500,
+    policy=None,
+    phase_labeler=None,
+    router_mode="learned",
+):
     return RolloutEvaluator(
         cfg=None,  # type: ignore[arg-type]
         policy=policy,
@@ -252,7 +262,30 @@ def _evaluator(tmp_path, adapter, model=None, normalizer=None, horizon=500, poli
         task="Lift",
         checkpoint_sha256="deadbeef",
         horizon=horizon,
+        phase_labeler=phase_labeler,
+        router_mode=router_mode,
     )
+
+
+def _phase_calibration() -> dict:
+    """Calibration artifact matching the fake Lift state layout (eef 0-2,
+    quat 3-6, gripper qpos 7-8, object 9-18)."""
+    return {
+        "closed_level": 0.02,
+        "open_level": 0.04,
+        "mirror": False,
+        "mirror_bounds": None,
+        "velocity_threshold": 0.01,
+        "min_duration": 5,
+        "filter_size": 7,
+        "eef_pos_slice": [0, 3],
+        "gripper_qpos_slice": [7, 9],
+        "num_phases": 6,
+    }
+
+
+def _phase_labeler() -> CausalPhaseStepLabeler:
+    return CausalPhaseStepLabeler(_phase_calibration())
 
 
 def _lift_controller():
@@ -448,3 +481,231 @@ class TestEpisodeOutcomes:
         assert row["checkpoint_sha256"] == "cafe"
         assert row["tag"] == "robot_only"
         assert row["reset_seed"] == 2026
+
+
+# ---------------------------------------------------------------------------
+# V2-E: per-phase success tracking + router-mode recording
+# ---------------------------------------------------------------------------
+
+
+class TestPerPhaseTracking:
+    """The causal phase labeler classifies the policy's own states during
+    rollout; per-phase SR = P(success | episode reached phase p)."""
+
+    def test_timeouts_reach_phase_1_and_fail_there(self, tmp_path) -> None:
+        evaluator = _evaluator(
+            tmp_path,
+            FakeAdapter(horizon=500),
+            model=_ZeroModel(),
+            horizon=500,
+            phase_labeler=_phase_labeler(),
+        )
+        results = evaluator.run()
+        per_phase = results["eval/rollout/per_phase_sr"]
+        # The zero policy stays open and motionless: it never grasps, so it
+        # settles in the causal pre-grasp phase (1) and times out there.
+        assert per_phase["0"] == pytest.approx(0.0)
+        assert per_phase["1"] == pytest.approx(0.0)
+        assert per_phase["2"] is None
+        assert results["eval/rollout/phase_tracking"] == "aggregated"
+
+        rows = read_episode_records(tmp_path)
+        assert all(r["extra"]["max_phase"] == 1 for r in rows)
+
+    def test_successful_episodes_count_per_phase(self, tmp_path) -> None:
+        evaluator = _evaluator(
+            tmp_path,
+            _SuccessAdapter(horizon=500),
+            model=_ZeroModel(),
+            horizon=500,
+            phase_labeler=_phase_labeler(),
+        )
+        results = evaluator.run()
+        per_phase = results["eval/rollout/per_phase_sr"]
+        # Success fires on the first step, still in the approach phase (0).
+        assert per_phase["0"] == pytest.approx(1.0)
+        assert per_phase["1"] is None
+
+    def test_missing_labeler_reports_phase_tracking_missing(self, tmp_path) -> None:
+        evaluator = _evaluator(
+            tmp_path, FakeAdapter(horizon=500), model=_ZeroModel(), horizon=500
+        )
+        results = evaluator.run()
+        assert results["eval/rollout/phase_tracking"] == "missing"
+        assert "eval/rollout/per_phase_sr" not in results
+        rows = read_episode_records(tmp_path)
+        assert all("extra" not in r for r in rows)
+
+    def test_router_mode_recorded_in_rows_and_summary(self, tmp_path) -> None:
+        evaluator = _evaluator(
+            tmp_path,
+            FakeAdapter(horizon=500),
+            model=_ZeroModel(),
+            horizon=500,
+            router_mode="sticky",
+        )
+        results = evaluator.run()
+        assert results["eval/rollout/router_mode"] == "sticky"
+        rows = read_episode_records(tmp_path)
+        assert all(r["router_mode"] == "sticky" for r in rows)
+        summary = json.loads((tmp_path / "rollout_summary.json").read_text())
+        assert summary["router_mode"] == "sticky"
+
+    def test_learned_mode_records_no_router_mode(self, tmp_path) -> None:
+        evaluator = _evaluator(
+            tmp_path, FakeAdapter(horizon=500), model=_ZeroModel(), horizon=500
+        )
+        results = evaluator.run()
+        assert results["eval/rollout/router_mode"] == "learned"
+        rows = read_episode_records(tmp_path)
+        assert all("router_mode" not in r for r in rows)
+
+
+class TestPhaseLabelerFromAggregate:
+    def test_aggregate_builds_valid_labeler(self) -> None:
+        from phaseforge.evaluations.rollout.runner import _phase_labeler_from_aggregate
+
+        demo = _phase_calibration()
+        thresholds = {
+            "data_config_hash": "abc",
+            "n_demos": 3,
+            "closed_level": 0.019,
+            "open_level": 0.041,
+            "mirror": False,
+            "per_demo": [demo, demo, demo],
+        }
+        labeler = _phase_labeler_from_aggregate(thresholds)
+        assert labeler.num_phases == 6
+        # The median levels win over the per-demo values.
+        assert labeler.closed_level == pytest.approx(0.019)
+        assert labeler.open_level == pytest.approx(0.041)
+
+    def test_empty_per_demo_raises(self) -> None:
+        from phaseforge.evaluations.rollout.runner import _phase_labeler_from_aggregate
+
+        with pytest.raises(ValueError, match="per_demo"):
+            _phase_labeler_from_aggregate(
+                {"closed_level": 0.02, "open_level": 0.04, "per_demo": []}
+            )
+
+
+class TestRequirePhaseTracking:
+    def test_require_tracking_fails_closed_when_artifact_missing(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """require_phase_tracking=true + a cache without phase_thresholds.json
+        must abort before the simulator runs (a pre-calibration cache cannot
+        be silently evaluated without per-phase SR)."""
+        from omegaconf import DictConfig
+
+        from phaseforge.evaluations.rollout.runner import run_rollout_evaluation
+
+        cfg = DictConfig(
+            {
+                "data": {"source": {"task_name": "Lift"}},
+                "project": {"seed": 42},
+                "models": {
+                    "name": "phaseforge",
+                    "_target_": "phaseforge.models.phase_moe.PhaseBootstrappedMoE",
+                },
+                "eval": {
+                    "mode": "rollout",
+                    "bank": {"seed": 2026, "num_cases": 50},
+                    "env": {"mujoco_requirement": ">=3.2.7"},
+                    "episodes": {
+                        "require_phase_tracking": True,
+                        "router_mode": "learned",
+                    },
+                },
+            }
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner.resolve_pinned_metadata",
+            lambda cfg: object(),
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner.load_or_generate_bank",
+            lambda cfg, meta: make_bank(1),
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner._adapter_from_config",
+            lambda cfg, meta: FakeAdapter(horizon=500),
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner.FrozenNormalizer.load",
+            lambda path: FrozenNormalizer(torch.zeros(19), torch.ones(19)),
+        )
+        monkeypatch.setattr(
+            "phaseforge.data.ingestion.cache_manager.load_phase_thresholds",
+            lambda cache_dir: None,
+        )
+        with pytest.raises(EnvParityError, match="require_phase_tracking"):
+            run_rollout_evaluation(
+                cfg,
+                torch.nn.Module(),
+                output_dir=tmp_path,
+                run_id="test-run",
+            )
+
+    def test_require_tracking_passes_with_artifact(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from omegaconf import DictConfig
+
+        from phaseforge.evaluations.rollout.runner import run_rollout_evaluation
+
+        cfg = DictConfig(
+            {
+                "data": {"source": {"task_name": "Lift"}},
+                "project": {"seed": 42},
+                "models": {
+                    "name": "phaseforge",
+                    "_target_": "phaseforge.models.phase_moe.PhaseBootstrappedMoE",
+                },
+                "eval": {
+                    "mode": "rollout",
+                    "bank": {"seed": 2026, "num_cases": 50},
+                    "env": {"mujoco_requirement": ">=3.2.7"},
+                    "episodes": {
+                        "require_phase_tracking": True,
+                        "router_mode": "learned",
+                    },
+                },
+            }
+        )
+        thresholds = {
+            "data_config_hash": "abc",
+            "n_demos": 1,
+            "closed_level": 0.02,
+            "open_level": 0.04,
+            "mirror": False,
+            "per_demo": [_phase_calibration()],
+        }
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner.resolve_pinned_metadata",
+            lambda cfg: object(),
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner.load_or_generate_bank",
+            lambda cfg, meta: make_bank(1),
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner._adapter_from_config",
+            lambda cfg, meta: FakeAdapter(horizon=500),
+        )
+        monkeypatch.setattr(
+            "phaseforge.evaluations.rollout.runner.FrozenNormalizer.load",
+            lambda path: FrozenNormalizer(torch.zeros(19), torch.ones(19)),
+        )
+        monkeypatch.setattr(
+            "phaseforge.data.ingestion.cache_manager.load_phase_thresholds",
+            lambda cache_dir: thresholds,
+        )
+        results = run_rollout_evaluation(
+            cfg,
+            _ZeroModel(),
+            output_dir=tmp_path,
+            run_id="test-run",
+        )
+        assert results["eval/rollout/phase_tracking"] == "aggregated"
+        assert results["eval/rollout/per_phase_sr"]["0"] == pytest.approx(0.0)
