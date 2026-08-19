@@ -123,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[fail-phase] {d}: {len(recs)} eval runs")
         all_records.extend(recs)
     agg = _aggregate(all_records)
+    if not all_records:
+        print(f"[fail-phase] FAIL: no rollout_summary.json found under any eval dir")
+        return 1
     payload = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "label": args.label,

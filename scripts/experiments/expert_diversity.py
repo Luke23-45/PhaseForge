@@ -122,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
         for epoch, v in summary.items()
     }
 
+    if all(all(isinstance(r, dict) and r.get("missing") for r in per_seed[str(s)].values())
+           for s in seeds):
+        print(f"[div] FAIL: no stage-2 run found for any seed; nothing analyzed")
+        return 1
+
     payload = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "seeds": seeds,

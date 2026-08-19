@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
                 "every variant shares the same trained experts and only the "
                 "router distribution differs.",
     }
+    if all(isinstance(v, dict) and v.get("missing") for v in per_seed.values()):
+        print(f"[counterfact] FAIL: no stage-2 run found for any seed; nothing analyzed")
+        return 1
     FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
     findings_path = PROJECT_ROOT / FINDINGS_DIR / "routing_counterfactuals.json"
     findings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

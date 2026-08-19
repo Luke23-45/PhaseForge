@@ -145,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
         print("[vbank] dry run — no commands executed")
         return 0
 
+    if not any(results[b] for b in BANK_SEEDS):
+        print(f"[vbank] FAIL: no (bank, seed) cell produced results (provider stage-1 missing?)")
+        return 1
+
     FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),

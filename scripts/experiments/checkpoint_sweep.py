@@ -264,6 +264,10 @@ def main(argv: list[str] | None = None) -> int:
         print("[sweep] dry run — no commands executed")
         return 0
 
+    if not any(evals.get(str(s)) for s in seeds):
+        print("[sweep] FAIL: no evals produced for any seed (checkpoints missing?)")
+        return 1
+
     for seed in seeds:
         rows = evals.get(str(seed), {})
         xs = [r["val_loss"] for r in rows.values() if r.get("val_loss") is not None and r.get("sr") is not None]

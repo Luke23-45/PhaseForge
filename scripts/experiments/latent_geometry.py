@@ -138,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
         "seeds": seeds,
         "per_seed": per_seed,
     }
+    if all(isinstance(v, dict) and v.get("missing") for v in per_seed.values()):
+        print(f"[geom] FAIL: no stage-2 run found for any seed; nothing analyzed")
+        return 1
     FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
     findings_path = PROJECT_ROOT / FINDINGS_DIR / "latent_geometry.json"
     findings_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

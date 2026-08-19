@@ -86,7 +86,7 @@ def _run(label: str, script: str, extra: list[str], timeout: int, force: bool, u
         "latent_geometry.py": "latent_geometry.json",
     }[script]
     if not force and findings_path.is_file():
-        print(f"[run-all] {label}: skip ({findings_path.name} present)")
+        print(f"[run-all] {label}: skip ({findings_path.name} present; use --force to rerun)")
         return 0
     cmd = [uv, "run", "python", str(SCRIPTS / script), *extra]
     print(f"[run-all] {label}: {' '.join(cmd)}")
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run_failure_phase(args, label: str, force: bool, uv: str) -> int:
     findings_path = FINDINGS_DIR / f"failure_phase_{args.label}.json"
     if not force and findings_path.is_file():
-        print(f"[run-all] {label}: skip ({findings_path.name} present)")
+        print(f"[run-all] {label}: skip ({findings_path.name} present; use --force to rerun)")
         return 0
     cmd = [uv, "run", "python", str(SCRIPTS / "failure_phase.py"),
            "--eval-dirs", *FAILURE_PHASE_DIRS, "--label", args.label]

@@ -138,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
         print("[grid] dry run — no commands executed")
         return 0
 
+    if not any(vals for axis, _, _ in GRID for vals in results[axis].values()):
+        print(f"[grid] FAIL: no (cell, seed) produced results (provider stage-1 missing?)")
+        return 1
+
     FINDINGS_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
