@@ -122,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     if not queue:
         print("[run-all] no scripts selected")
         return 1
+    print(f"[run-all] queue: {' -> '.join(label for label, _, _ in queue)}")
 
     common_extra = ["--seeds", args.seeds, "--outputs", args.outputs]
     overall_rc = 0
@@ -132,7 +133,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[run-all] FAIL at {label} (rc={rc}); continuing")
                 overall_rc = rc
             continue
-        rc = _run(label, script, common_extra, args.timeout, args.force, args.uv)
+        if label == "A2":
+            extra = ["--findings", f"{args.outputs}/_findings/checkpoint_sweep.json"]
+        else:
+            extra = common_extra
+        rc = _run(label, script, extra, args.timeout, args.force, args.uv)
         if rc != 0:
             print(f"[run-all] FAIL at {label} (rc={rc}); continuing")
             overall_rc = rc
