@@ -2,6 +2,8 @@
 
 **Status:** revised 2026-08-19; every number below was re-verified against the raw findings in
 `phaseforge_studies/part2/outputs/surgical/_findings/` and `outputs/part*/` before being written.
+All SOTA citations in Part 2 were re-verified against primary sources (CVPR 2026 open access,
+arXiv, IEEE Xplore, NeurIPS proceedings) on 2026-08-19.
 
 ---
 
@@ -29,18 +31,23 @@ single seed). It must be re-verified under the V2-B soft scheme (3 seeds) before
 **L2 — Privileged phase supervision is the only structure with an end-to-end edge.**
 Best-known cells (3-seed means; full roster in Part 7): phaseforge 0.640, bc 0.540, bc_large
 0.447, teacher_forced 0.527, pf_kmeans 0.513, pf_spherical_kmeans 0.520. **Caveat verified this
-revision (the sharpest limit on our evidence):** the real-matrix cells span **six different
-waves** — different `data_config_hash` (a2da6ba3 / 6e529fe8 / 89464860 / 09a68c4c / cb69d88f /
-88d7ae5b) across two commits (c09270a, 282947d); bank identity is not recorded in `run_meta`.
-**phaseforge and the dense cells (bc, bc_large) never share a wave**, so "phaseforge beats dense"
-is directional only, pending G3. What *is* same-wave:
+revision (the sharpest limit on our evidence):** the real-matrix cells span **ten distinct
+data-config hashes** (a2da6ba3 / 6e529fe8 / 89464860 / 09a68c4c / cb69d88f / c3d55468 /
+015f7063 / ec41daf6 / 964f070a / 88d7ae5b) across two commits (c09270a, 282947d); bank identity
+is not recorded in `run_meta`. **phaseforge and the dense cells (bc, bc_large) never share a
+wave**, so "phaseforge beats dense" is directional only, pending G3. What *is* same-bank:
 - Group A (a2da6ba3, c09270a): phaseforge 0.640 > scratch_moe 0.587 > warmstart_moe 0.513; teacher_forced 0.527.
 - Group B (6e529fe8, c09270a): plain_encoder_phase_bootstrap 0.600 > bc 0.540 > phase_pretrain_random_router 0.520.
 - Group C (89464860, 282947d): pf_spherical_kmeans 0.520 ≥ pf_kmeans 0.513 ≈ pf_random_random 0.507 > bc_large 0.447.
-- Group E (cb69d88f, 282947d, wave-2 sensitivity cells — cross-group vs phaseforge 0.640, directional):
-  corrupt25 0.600 ≈ corrupt50 0.580 ≈ jitter00 0.593; jitter10 0.380 (drop); shuffle 0.500 (labels matter).
-All four groups agree directionally: the phase-supervised / MoE-structured cells sit at or above
-the dense and random-init cells. The magnitude is not yet established at same-bank resolution.
+- Group D (09a68c4c, 282947d): pf_centroid_random 0.660 (seed43 outlier) ≈ pf_spherical 0.613 ≈ pf_k3 0.607 > pf_k12 0.513.
+- Wave-2 cells (commit 282947d; the same trained phaseforge stage-1 is reused and the bootstrap
+  perturbation is the treatment; hashes differ per perturbation: jitter00/jitter10 cb69d88f,
+  corrupt25 c3d55468, corrupt50 015f7063, shuffle ec41daf6): corrupt25 0.600 ≈ corrupt50 0.580 ≈
+  jitter00 0.593; jitter10 0.380 (drop); shuffle 0.500 (labels matter). Within-wave-2
+  comparisons are valid; versus phaseforge 0.640 they are cross-bank/directional.
+All same-bank groups agree directionally: the phase-supervised / MoE-structured cells sit at or
+above the dense and random-init cells. The magnitude of the phaseforge-vs-dense edge itself is
+not yet established at same-bank resolution.
 
 **L3 — The per-step learned router is net-harmful, not merely suboptimal.**
 From `routing_counterfactuals.json` (val-best stage-2 checkpoint — `checkpoint_best.pt`,
@@ -58,7 +65,7 @@ Pinned scales (the two ambiguous numbers, resolved):
   research_definition §7.3): off-diag mean e10 0.297 → **e30 0.139** → e100 0.214 → e200 0.231,
   coinciding with the e30 SR dip (0.62).
 
-Consequence: **the success criterion for the V2 router is to beat uniform (0.0367 offline; the
+Consequence: **the success criterion for the V2 router is to beat uniform (0.0366 offline; the
 uniform mode at rollout), not merely to beat the old learned router.** (Observation, hypothesis-
 generating only: learned-routing damage concentrates in phase 0 — per-phase MSE 0.159 vs uniform
 0.047 — the well-sampled phase with 161 samples; not yet explained.)
@@ -107,9 +114,10 @@ A1 sweep: 0.72/0.74/0.62/0.78/0.78 (e3/e10/e30/e100/e200, all CIs overlap). Grid
 4. **CoRDE (arXiv 2606.21935)** — router trained by KL to a responsibility posterior, decoupled
    from the generative gradient; EM-updated soft concept→expert mapping. V2-B's M matrix and
    V2-D's decoupled router objective follow this design.
-5. **FiLM phase-conditioning (Chen et al., IEEE/ASME T-Mech 2026)** — verified accepted; the
-   "FiLM beats token-level conditioning" ablation could not be independently confirmed from the
-   pulled text — treat that specific claim as plausible, not double-checked.
+5. **FiLM phase-conditioning (Chen et al., IEEE/ASME T-Mech 2026)** — verified accepted (DOI
+   10.1109/TMECH.2026.3698472); the "FiLM beats token-level conditioning" claim is confirmed by
+   the paper's abstract: "Ablation studies show that FiLM-based modulation significantly
+   outperforms both unconditioned and token-level conditioned baselines."
 6. **Zang et al. (NeurIPS 2023)** — verified; no transition/bisimulation machinery anywhere in
    v2. Reason stands.
 
@@ -204,14 +212,14 @@ mode must beat the uniform mode** (L3), not just the old router.
 Every cell/number below was re-read from the raw JSONs on 2026-08-19. Real-matrix means are
 3-seed means (seeds 42/43/44) of rollout SR; surgical cells are seed 42.
 
-### 7.1 Real-matrix cells (the `experiments/lift_ablation.json` 23-method manifest)
+### 7.1 Real-matrix cells (the `experiments/lift_ablation.json` 24-method manifest)
 
 | Wave (data_config_hash / commit) | Cell | SR per seed | Mean | Status |
 |---|---|---|---|---|
 | a2da6ba3 / c09270a | phaseforge | 0.68 / 0.74 / 0.50 | **0.640** | evaluated |
 | a2da6ba3 / c09270a | scratch_moe | 0.58 / 0.66 / 0.52 | 0.587 | evaluated |
 | a2da6ba3 / c09270a | warmstart_moe | 0.58 / 0.56 / 0.40 | 0.513 | evaluated |
-| a2da6ba3 / c09270a | bc (part3) | 0.02 / 0.00 / 0.02 | **broken — do not cite** | evaluated, invalid |
+| 964f070a / c09270a | bc (part3) | 0.02 / 0.00 / 0.02 | **broken — do not cite** | evaluated, invalid |
 | a2da6ba3 / c09270a | teacher_forced | 0.52 / 0.66 / 0.40 | 0.527 | evaluated |
 | 6e529fe8 / c09270a | bc | 0.60 / 0.48 / 0.54 | 0.540 | evaluated |
 | 6e529fe8 / c09270a | phase_pretrain_random_router | 0.56 / 0.52 / 0.48 | 0.520 | evaluated |
@@ -224,20 +232,23 @@ Every cell/number below was re-read from the raw JSONs on 2026-08-19. Real-matri
 | 09a68c4c / 282947d | pf_spherical | 0.54 / 0.76 / 0.54 | 0.613 | evaluated |
 | 09a68c4c / 282947d | pf_k3 | 0.56 / 0.72 / 0.54 | 0.607 | evaluated (K sweep) |
 | 09a68c4c / 282947d | pf_k12 | 0.54 / 0.64 / 0.36 | 0.513 | evaluated (K sweep) |
+| — (surgical four-way only) | pf_random_warm | — | — | evaluated on the surgical bank only — = four-way `rand_warm` cell, 0.44 [0.312, 0.577], seed 42; no Lift-bank eval |
 | cb69d88f / 282947d | jitter00 | 0.70 / 0.62 / 0.46 | 0.593 | evaluated (wave-2) |
 | cb69d88f / 282947d | jitter10 | 0.52 / 0.40 / 0.22 | 0.380 | evaluated (wave-2) |
-| cb69d88f / 282947d | corrupt25 | 0.52 / 0.76 / 0.52 | 0.600 | evaluated (wave-2) |
-| cb69d88f / 282947d | corrupt50 | 0.54 / 0.74 / 0.46 | 0.580 | evaluated (wave-2) |
-| cb69d88f / 282947d | shuffle | 0.36 / 0.72 / 0.42 | 0.500 | evaluated (wave-2) |
+| c3d55468 / 282947d | corrupt25 | 0.52 / 0.76 / 0.52 | 0.600 | evaluated (wave-2) |
+| 015f7063 / 282947d | corrupt50 | 0.54 / 0.74 / 0.46 | 0.580 | evaluated (wave-2) |
+| ec41daf6 / 282947d | shuffle | 0.36 / 0.72 / 0.42 | 0.500 | evaluated (wave-2) |
 | 88d7ae5b / 282947d | bc_large (part5) | 0.46 / 0.52 / 0.36 | 0.447 | evaluated — identical to part4/1 (determinism check) |
 | 89464860 / 282947d | pf_phase_head | — | — | **incomplete** — stage2 dir exists, no `checkpoint_best.pt`, no summary |
 | 09a68c4c / 282947d | pf_ft | — | — | **incomplete** — stage2 dir exists, no `checkpoint_best.pt`, no summary |
 | — | bc_robot_only | — | — | **never run** — no outputs at all |
 
-Manifest = 23 methods; 20 have valid eval means, 1 evaluated-but-invalid (part3 bc), 2 incomplete,
-1 never run. Note: the wave-2 cells (jitter/corrupt/shuffle) reuse the clean phaseforge Stage-1
-encoder with bootstrap overrides, per `research_definition.md`; jitter10 is the only wave-2 cell
-below the group's dense-ish level (0.380), consistent with L1's init sensitivity.
+Manifest = 24 methods: 20 with valid Lift-bank means, 1 with surgical-bank eval only
+(pf_random_warm), 2 incomplete (pf_phase_head, pf_ft), 1 never run (bc_robot_only); the part3
+`bc` run (0.02/0.00/0.02) is a second, invalid run of the already-counted `bc` method. Note: the
+wave-2 cells (jitter/corrupt/shuffle) reuse the clean phaseforge Stage-1 encoder with bootstrap
+overrides, per `research_definition.md`; jitter10 is the only wave-2 cell below the group's
+dense-ish level (0.380), consistent with L1's init sensitivity.
 
 ### 7.2 Surgical study (seed 42, own frozen bank, all internally same-bank)
 
@@ -259,7 +270,12 @@ below the group's dense-ish level (0.380), consistent with L1's init sensitivity
 ### 7.3 Integrity notes
 
 - **Determinism holds**: part1 vs part2 surgical findings bit-identical; part4/1 vs part5 bc_large SR identical (0.46/0.52/0.36).
-- **Cross-wave comparisons**: 6 distinct data-config hashes across 2 commits; bank identity not recorded in run_meta → only same-wave deltas are established (see L2).
+- **Cross-wave comparisons**: 10 distinct data-config hashes across 2 commits; bank identity not
+  recorded in run_meta → only same-hash groups A–D are established; the wave-2 cells share the
+  same trained phaseforge stage-1 and commit (perturbation is the treatment) but hash
+  differently per perturbation; part5 bc_large's hash (88d7ae5b) differs from part4/1's
+  (89464860) despite identical SR on all 3 seeds — same bank is inferred (deterministic re-eval),
+  not recorded.
 - **Invalid cells**: part3 `bc` (0.02/0.00/0.02 — broken run; do not cite); `pf_centroid_random` seed43 0.92 (outlier, single-run flag).
 - **Incomplete cells**: `pf_phase_head` (part4/1), `pf_ft` (part4/2) — stage2 training dirs without checkpoints; `bc_robot_only` never run.
 - **A2's `checkpoint_sweep.json`** is referenced by `sr_val_corr.json` but was not copied from the VM; A1 numbers reconstructed from the 5 per-epoch eval summaries (identical values).
@@ -273,8 +289,10 @@ fixes are adopted (interaction restated with CIs, class-balanced reweighting, ri
 capacity re-baselining, TGR-MoE-shaped schedule, teacher_forced as the first check). Two of its
 inferences were corrected against the data: the 2↔3 confusability is well-sampled (not thin ice),
 and the "rn=0.5" / "B2" numbers are now pinned to their exact scales. Two findings added this
-revision: the real-matrix cells span six waves (phaseforge vs dense is directional only — G1/G3
-must run before L1/L2 become load-bearing, G2 is free), and the full 23-method manifest is
-inventoried in Part 7 — 20 evaluated cells, 1 invalid (part3 bc), 2 incomplete (pf_phase_head,
-pf_ft), 1 never run (bc_robot_only), with the surgical study A1–A5/B1–B4/C1 complete except A3
-(VOID, fix not rerun) and C2 (not produced).
+revision: the real-matrix cells span ten distinct data-config hashes (same-commit groups A–D
+plus the wave-2 perturbation cells; phaseforge vs dense is directional only — G1/G3 must run
+before L1/L2 become load-bearing, G2 is free), and the full 24-method manifest is
+inventoried in Part 7 — 20 methods with valid Lift-bank means, pf_random_warm evaluated on the
+surgical bank only, part3's bc invalid (duplicate run), pf_phase_head/pf_ft incomplete,
+bc_robot_only never run, with the surgical study A1–A5/B1–B4/C1 complete except A3 (VOID, fix
+not rerun) and C2 (not produced).
