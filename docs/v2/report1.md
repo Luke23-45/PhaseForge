@@ -27,13 +27,20 @@ single seed). It must be re-verified under the V2-B soft scheme (3 seeds) before
 (gating experiment G4).
 
 **L2 — Privileged phase supervision is the only structure with an end-to-end edge.**
-phaseforge 0.640 (part1, seeds 42/43/44) vs bc_large 0.447 (part4/1, 0.46/0.52/0.36) vs
-pf_kmeans 0.507 (part4/1) vs pf_spherical_kmeans 0.520 (part4/1). **Caveat verified this revision:**
-these cells live in different waves — different git commits (c09270a vs 282947d) and different
-`data_config_hash` (a2da6ba3 / 89464860 / 09a68c4c); bank identity is not recorded in `run_meta`.
-Cross-part SR deltas are therefore **directional, not established** until a same-wave, same-bank
-re-evaluation exists (gating experiment G3). What is *not* directional: within-wave, within-bank
-deltas (the surgical study, A1/B1/grid/vbank — all internally valid).
+Best-known cells (3-seed means; full roster in Part 7): phaseforge 0.640, bc 0.540, bc_large
+0.447, teacher_forced 0.527, pf_kmeans 0.513, pf_spherical_kmeans 0.520. **Caveat verified this
+revision (the sharpest limit on our evidence):** the real-matrix cells span **six different
+waves** — different `data_config_hash` (a2da6ba3 / 6e529fe8 / 89464860 / 09a68c4c / cb69d88f /
+88d7ae5b) across two commits (c09270a, 282947d); bank identity is not recorded in `run_meta`.
+**phaseforge and the dense cells (bc, bc_large) never share a wave**, so "phaseforge beats dense"
+is directional only, pending G3. What *is* same-wave:
+- Group A (a2da6ba3, c09270a): phaseforge 0.640 > scratch_moe 0.587 > warmstart_moe 0.513; teacher_forced 0.527.
+- Group B (6e529fe8, c09270a): plain_encoder_phase_bootstrap 0.600 > bc 0.540 > phase_pretrain_random_router 0.520.
+- Group C (89464860, 282947d): pf_spherical_kmeans 0.520 ≥ pf_kmeans 0.513 ≈ pf_random_random 0.507 > bc_large 0.447.
+- Group E (cb69d88f, 282947d, wave-2 sensitivity cells — cross-group vs phaseforge 0.640, directional):
+  corrupt25 0.600 ≈ corrupt50 0.580 ≈ jitter00 0.593; jitter10 0.380 (drop); shuffle 0.500 (labels matter).
+All four groups agree directionally: the phase-supervised / MoE-structured cells sit at or above
+the dense and random-init cells. The magnitude is not yet established at same-bank resolution.
 
 **L3 — The per-step learned router is net-harmful, not merely suboptimal.**
 From `routing_counterfactuals.json` (val-best stage-2 checkpoint — `checkpoint_best.pt`,
@@ -192,12 +199,82 @@ mode must beat the uniform mode** (L3), not just the old router.
 
 ---
 
+## Part 7: Complete experiment inventory (verified this revision)
+
+Every cell/number below was re-read from the raw JSONs on 2026-08-19. Real-matrix means are
+3-seed means (seeds 42/43/44) of rollout SR; surgical cells are seed 42.
+
+### 7.1 Real-matrix cells (the `experiments/lift_ablation.json` 23-method manifest)
+
+| Wave (data_config_hash / commit) | Cell | SR per seed | Mean | Status |
+|---|---|---|---|---|
+| a2da6ba3 / c09270a | phaseforge | 0.68 / 0.74 / 0.50 | **0.640** | evaluated |
+| a2da6ba3 / c09270a | scratch_moe | 0.58 / 0.66 / 0.52 | 0.587 | evaluated |
+| a2da6ba3 / c09270a | warmstart_moe | 0.58 / 0.56 / 0.40 | 0.513 | evaluated |
+| a2da6ba3 / c09270a | bc (part3) | 0.02 / 0.00 / 0.02 | **broken — do not cite** | evaluated, invalid |
+| a2da6ba3 / c09270a | teacher_forced | 0.52 / 0.66 / 0.40 | 0.527 | evaluated |
+| 6e529fe8 / c09270a | bc | 0.60 / 0.48 / 0.54 | 0.540 | evaluated |
+| 6e529fe8 / c09270a | phase_pretrain_random_router | 0.56 / 0.52 / 0.48 | 0.520 | evaluated |
+| 6e529fe8 / c09270a | plain_encoder_phase_bootstrap | 0.58 / 0.62 / 0.60 | 0.600 | evaluated |
+| 89464860 / 282947d | bc_large | 0.46 / 0.52 / 0.36 | 0.447 | evaluated (EXP-103, param-matched +0.8%) |
+| 89464860 / 282947d | pf_kmeans | 0.50 / 0.64 / 0.40 | 0.513 | evaluated |
+| 89464860 / 282947d | pf_random_random | 0.56 / 0.58 / 0.38 | 0.507 | evaluated |
+| 89464860 / 282947d | pf_spherical_kmeans | 0.60 / 0.58 / 0.38 | 0.520 | evaluated |
+| 09a68c4c / 282947d | pf_centroid_random | 0.46 / 0.92 / 0.60 | 0.660 | evaluated — seed43 = 0.92 is a flagged outlier |
+| 09a68c4c / 282947d | pf_spherical | 0.54 / 0.76 / 0.54 | 0.613 | evaluated |
+| 09a68c4c / 282947d | pf_k3 | 0.56 / 0.72 / 0.54 | 0.607 | evaluated (K sweep) |
+| 09a68c4c / 282947d | pf_k12 | 0.54 / 0.64 / 0.36 | 0.513 | evaluated (K sweep) |
+| cb69d88f / 282947d | jitter00 | 0.70 / 0.62 / 0.46 | 0.593 | evaluated (wave-2) |
+| cb69d88f / 282947d | jitter10 | 0.52 / 0.40 / 0.22 | 0.380 | evaluated (wave-2) |
+| cb69d88f / 282947d | corrupt25 | 0.52 / 0.76 / 0.52 | 0.600 | evaluated (wave-2) |
+| cb69d88f / 282947d | corrupt50 | 0.54 / 0.74 / 0.46 | 0.580 | evaluated (wave-2) |
+| cb69d88f / 282947d | shuffle | 0.36 / 0.72 / 0.42 | 0.500 | evaluated (wave-2) |
+| 88d7ae5b / 282947d | bc_large (part5) | 0.46 / 0.52 / 0.36 | 0.447 | evaluated — identical to part4/1 (determinism check) |
+| 89464860 / 282947d | pf_phase_head | — | — | **incomplete** — stage2 dir exists, no `checkpoint_best.pt`, no summary |
+| 09a68c4c / 282947d | pf_ft | — | — | **incomplete** — stage2 dir exists, no `checkpoint_best.pt`, no summary |
+| — | bc_robot_only | — | — | **never run** — no outputs at all |
+
+Manifest = 23 methods; 20 have valid eval means, 1 evaluated-but-invalid (part3 bc), 2 incomplete,
+1 never run. Note: the wave-2 cells (jitter/corrupt/shuffle) reuse the clean phaseforge Stage-1
+encoder with bootstrap overrides, per `research_definition.md`; jitter10 is the only wave-2 cell
+below the group's dense-ish level (0.380), consistent with L1's init sensitivity.
+
+### 7.2 Surgical study (seed 42, own frozen bank, all internally same-bank)
+
+| Experiment | Key result | Status |
+|---|---|---|
+| A1 checkpoint sweep | e3/e10/e30/e100/e200 → 0.72 / 0.74 / 0.62 / 0.78 / 0.78; best_epoch=3; all CIs overlap; peak 0.78 | done (reconstructed from 5 eval summaries; `checkpoint_sweep.json` existed on VM, not copied) |
+| A2 val-SR correlation | corr_all **+0.380** (5 pts); corr_early −1.0 (2 pts, degenerate); corr_late null (2 pts); sr_at_selected 0.72, peak 0.78 | done (`sr_val_corr.json`) |
+| A3 validation banks | 4 banks, all SR 0.72 [0.583, 0.825], bit-identical val curves | **VOID** — HDF5 dataset filters short-circuit split RNG (`state_machine.py:654-677`); fix committed 41fc3bc, not rerun |
+| A4 specialization matrix | diag_true **0.698**, diag_pred 0.776 (n=1026); dominant expert per phase = [0, 1, 3, 3, 4, 5]; phases 2/3 share expert 3 (0.502 / 0.600) — corroborates C1 | done (`specialization_matrix.json`) |
+| A5 routing counterfactuals | learned 0.06003 > uniform 0.03664 > random 0.03568; oracle_true 0.07250, oracle_pred 0.07391 | done (L3) |
+| B1 router-init × expert-init | 2×2 with CIs — interaction, not a single lever (L1) | done (four_way_init.json) |
+| B2 expert diversity | off-diag D(e_i,e_j): e10 0.297 → e30 0.139 → e100 0.214 → e200 0.231 | done (L3 pinned scale) |
+| B3/B4 grid | balance_coeff flat 0.74/0.72/0.78; rn 0.0→0.76, 0.1→0.72, 0.5→0.40 [0.276,0.538] | done (ablation_grid.json) |
+| C1 latent geometry | phases 2↔3 confusable (inter 3.410 vs intra 7.329/7.210); n_per = {0:161, 1:15, 2:385, 3:352, 4:108, 5:5} | done (latent_geometry.json) |
+| C2 failure-phase attribution | not produced — per-phase failure attribution unavailable | not done |
+| Stage-2 training curves | balance → 0.985, entropy 0.93–0.95, collapse 0 after e10, NMI ~0.44–0.47, val loss 0.0270→0.0342 | done |
+| Seed expansion | seed43 stage1 died at 43/100 (no checkpoints); seed44 never started; all surgical results are seed 42 | incomplete |
+
+### 7.3 Integrity notes
+
+- **Determinism holds**: part1 vs part2 surgical findings bit-identical; part4/1 vs part5 bc_large SR identical (0.46/0.52/0.36).
+- **Cross-wave comparisons**: 6 distinct data-config hashes across 2 commits; bank identity not recorded in run_meta → only same-wave deltas are established (see L2).
+- **Invalid cells**: part3 `bc` (0.02/0.00/0.02 — broken run; do not cite); `pf_centroid_random` seed43 0.92 (outlier, single-run flag).
+- **Incomplete cells**: `pf_phase_head` (part4/1), `pf_ft` (part4/2) — stage2 training dirs without checkpoints; `bc_robot_only` never run.
+- **A2's `checkpoint_sweep.json`** is referenced by `sr_val_corr.json` but was not copied from the VM; A1 numbers reconstructed from the 5 per-epoch eval summaries (identical values).
+
+---
+
 ## Bottom line
 
 The review's structural verdict stands: every block is tied to a measured failure. Its concrete
 fixes are adopted (interaction restated with CIs, class-balanced reweighting, right-stochastic M,
 capacity re-baselining, TGR-MoE-shaped schedule, teacher_forced as the first check). Two of its
 inferences were corrected against the data: the 2↔3 confusability is well-sampled (not thin ice),
-and the "rn=0.5" / "B2" numbers are now pinned to their exact scales. The one substantive new
-finding this revision: cross-part SR comparisons are not apples-to-apples — G1 and G3 must run
-before L1/L2 become load-bearing, and G2 is free.
+and the "rn=0.5" / "B2" numbers are now pinned to their exact scales. Two findings added this
+revision: the real-matrix cells span six waves (phaseforge vs dense is directional only — G1/G3
+must run before L1/L2 become load-bearing, G2 is free), and the full 23-method manifest is
+inventoried in Part 7 — 20 evaluated cells, 1 invalid (part3 bc), 2 incomplete (pf_phase_head,
+pf_ft), 1 never run (bc_robot_only), with the surgical study A1–A5/B1–B4/C1 complete except A3
+(VOID, fix not rerun) and C2 (not produced).
