@@ -169,7 +169,13 @@ def _merge(groups: dict[int, np.ndarray], members: tuple[int, ...]) -> dict[int,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", default="lift")
+    parser.add_argument(
+        "--data",
+        default="common",
+        help="Data config group whose processed cache is analyzed. Default "
+        "'common' matches the lift_ablation manifest cells (data=common); "
+        "use --cache-dir to point at any specific cache.",
+    )
     parser.add_argument(
         "--cache-dir",
         type=Path,
