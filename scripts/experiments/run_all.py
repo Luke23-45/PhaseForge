@@ -124,6 +124,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"[run-all] queue: {' -> '.join(label for label, _, _ in queue)}")
 
+    needs_sweep = {"A2", "A4", "A5", "B2", "C1", "A3", "B1", "B3_B4"}
+    if any(label in needs_sweep for label, _, _ in queue) \
+            and not (FINDINGS_DIR / "checkpoint_sweep.json").is_file():
+        print(f"[run-all] WARNING: checkpoint_sweep.json missing — run A1 (probe) first; "
+              f"the offline/gated scripts will fail without the sweep artifacts")
+
     common_extra = ["--seeds", args.seeds, "--outputs", args.outputs]
     overall_rc = 0
     for label, script, _findings in queue:
