@@ -72,7 +72,8 @@ class Stage2Trainer(BaseTrainer):
         elif hasattr(self.model, "unfreeze_encoder"):
             self.model.unfreeze_encoder()
 
-        # Precedence: models.encoder_lr_scale wins if present, else train.encoder_lr_scale, else 1.0.
+        # Precedence: models.encoder_lr_scale wins if present, else
+        # train.encoder_lr_scale, else 1.0.
         if (
             models_cfg is not None
             and "encoder_lr_scale" in models_cfg
@@ -94,7 +95,9 @@ class Stage2Trainer(BaseTrainer):
                 {"params": other_params, "lr": base_lr},
                 {"params": encoder_params, "lr": base_lr * encoder_lr_scale},
             ]
-            self.optimizer = instantiate(self.train_cfg.optimizer, params=param_groups, _convert_="all")
+            self.optimizer = instantiate(
+                self.train_cfg.optimizer, params=param_groups, _convert_="all"
+            )
             logger.info(
                 f"Stage 2 Fine-Tuning: Encoder trained with scaled LR "
                 f"{base_lr * encoder_lr_scale:.2e} (scale={encoder_lr_scale}), "
@@ -111,6 +114,23 @@ class Stage2Trainer(BaseTrainer):
         logger.info(f"Stage 2 initialized. Trainable parameters: {n_params}")
 
         super().fit()
+
+    def _teacher_kl_coeff(self) -> float:
+        """V2-D TGR schedule: λ0 for the first half, then linear anneal to 0.
+
+        The teacher signal shapes the router early and is faded out so the
+        learned gate takes over in the second half. ``lambda0 <= 0`` (the
+        default) disables the schedule entirely.
+        """
+        tcfg = self.train_cfg.get("teacher_routing") or {}
+        lambda0 = float(tcfg.get("lambda0", 0.0))
+        if lambda0 <= 0.0:
+            return 0.0
+        total = max(1, int(self.train_cfg.get("epochs", 1)))
+        t = min(max(float(self.current_epoch), 0.0), float(total)) / total
+        if t <= 0.5:
+            return lambda0
+        return lambda0 * 2.0 * (1.0 - t)
 
     def _compute_loss(
         self, batch: dict[str, torch.Tensor], out: ModelOutput | None = None
@@ -134,8 +154,54 @@ class Stage2Trainer(BaseTrainer):
         # Balance Loss
         balance_loss = out.aux_losses.get("balance", torch.tensor(0.0, device=self.device))
 
+        # V2-C stickiness loss: -log p_t[top1_{t-1}], emitted by the router
+        # when use_history=True. train.sticky_coeff scales it; 0.0 keeps the
+        # loss bit-identical to the protocol (0.0 * x == 0.0).
+        sticky_loss = out.aux_losses.get("sticky", torch.tensor(0.0, device=self.device))
+        sticky_coeff = float(self.train_cfg.get("sticky_coeff", 0.0))
+
+        # V2-D teacher KL routing. Single source of truth is
+        # models.teacher_routing.enabled (the same block the model's forward
+        # reads to emit phase_logits in Stage 2); the trainer additionally
+        # requires phase_logits present, so the teacher_forced cell (which
+        # emits them through its own label-free eval path) never receives the
+        # teacher KL. T = M^T softmax(phase_logits), detached; λ(t) = λ0 for
+        # the first half of training, then linear anneal to 0.
+        teacher_kl = torch.tensor(0.0, device=self.device)
+        teacher_lambda = 0.0
+        models_cfg = self.cfg.get("models") or {}
+        teacher_enabled = bool(
+            (models_cfg.get("teacher_routing") or {}).get("enabled", False)
+        )
+        if (
+            teacher_enabled
+            and out.phase_logits is not None
+            and out.gate_logits is not None
+        ):
+            require_soft_mapping = getattr(self.model, "require_soft_mapping", None)
+            if require_soft_mapping is None:
+                raise RuntimeError(
+                    "models.teacher_routing.enabled=true but the model has no "
+                    "require_soft_mapping() accessor — teacher KL needs the "
+                    "soft phase->expert mapping M."
+                )
+            mapping = require_soft_mapping().detach()
+            phase_probs = F.softmax(out.phase_logits, dim=-1)
+            teacher_target = torch.einsum("pe,bp->be", mapping, phase_probs).detach()
+            teacher_kl = F.kl_div(
+                F.log_softmax(out.gate_logits, dim=-1),
+                teacher_target,
+                reduction="batchmean",
+            )
+            teacher_lambda = self._teacher_kl_coeff()
+
         # Total Loss
-        total_loss = action_loss + balance_loss
+        total_loss = (
+            action_loss
+            + balance_loss
+            + sticky_coeff * sticky_loss
+            + teacher_lambda * teacher_kl
+        )
 
         metrics = {
             # Defer .item() until the trainer logs/aggregates the metric so
@@ -143,6 +209,9 @@ class Stage2Trainer(BaseTrainer):
             "loss_total": total_loss.detach(),
             "loss_action": action_loss.detach(),
             "loss_balance": balance_loss.detach(),
+            "loss_sticky": (sticky_coeff * sticky_loss).detach(),
+            "loss_teacher_kl": (teacher_lambda * teacher_kl).detach(),
+            "teacher_lambda": teacher_lambda,
         }
 
         return total_loss, metrics
@@ -169,6 +238,8 @@ class Stage2Trainer(BaseTrainer):
         expert_indices_all: list[torch.Tensor] = []
         phases_all: list[torch.Tensor] = []
         gate_logits_all: list[torch.Tensor] = []
+        traj_id_all: list[torch.Tensor] = []
+        traj_pos_all: list[torch.Tensor] = []
 
         for batch in self.val_loader:
             batch = self._move_batch(batch)
@@ -176,8 +247,9 @@ class Stage2Trainer(BaseTrainer):
             out = self.model(batch)
             _, metrics = self._compute_loss(batch, out=out)
 
-            # teacher_forced only: ``phase_logits`` are emitted in the
-            # label-free eval path (frozen phase head selects the expert).
+            # Routing accuracy against GT phases when the model emits phase_logits
+            # in Stage 2: the teacher_forced cell (label-free eval path) and
+            # the V2-D teacher path both qualify.
             if out.phase_logits is not None:
                 self._val_routing_acc.update(
                     out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
@@ -193,6 +265,9 @@ class Stage2Trainer(BaseTrainer):
             if out.expert_indices is not None:
                 expert_indices_all.append(out.expert_indices.detach().cpu())
                 phases_all.append(batch["phase"].cpu())
+                if "trajectory_id" in batch:
+                    traj_id_all.append(batch["trajectory_id"].cpu())
+                    traj_pos_all.append(batch["trajectory_position"].cpu())
             if out.gate_logits is not None:
                 gate_logits_all.append(out.gate_logits.detach().cpu())
 
@@ -236,6 +311,18 @@ class Stage2Trainer(BaseTrainer):
                 gate_logits, normalize=True
             ).item()
 
+        # V2-C: how often the top-1 expert changes between adjacent
+        # in-trajectory steps (0.0 = perfectly sticky, 1.0 = flips every
+        # step). Absent when the validation batches carry no trajectory keys.
+        if traj_id_all:
+            agg_metrics["val/routing_switch_rate"] = (
+                routing_stability.routing_switch_rate(
+                    expert_indices[:, 0],
+                    torch.cat(traj_id_all, dim=0),
+                    torch.cat(traj_pos_all, dim=0),
+                )
+            )
+
         if self._val_routing_acc.has_data:
             acc, balanced = self._val_routing_acc.compute()
             agg_metrics["val/routing_accuracy"] = acc
@@ -243,7 +330,8 @@ class Stage2Trainer(BaseTrainer):
 
         logger.info(
             "Epoch %d routing diagnostics: NMI=%.4f topk_balance=%.4f "
-            "top1_balance=%.4f topk_collapse=%.4f top1_collapse=%.4f entropy=%.4f",
+            "top1_balance=%.4f topk_collapse=%.4f top1_collapse=%.4f entropy=%.4f "
+            "switch_rate=%.4f",
             self.current_epoch,
             agg_metrics.get("val/phase_expert_nmi", float("nan")),
             agg_metrics.get("val/topk_balance_score", float("nan")),
@@ -251,6 +339,7 @@ class Stage2Trainer(BaseTrainer):
             agg_metrics.get("val/topk_collapse_rate", float("nan")),
             agg_metrics.get("val/top1_collapse_rate", float("nan")),
             agg_metrics.get("val/routing_entropy", float("nan")),
+            agg_metrics.get("val/routing_switch_rate", float("nan")),
         )
 
         return agg_metrics

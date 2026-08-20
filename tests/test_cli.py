@@ -217,7 +217,7 @@ def test_stage1_bootstrap_load_matrix_all_cells() -> None:
             model,
             pf_sd,
             f"{name} <- phaseforge bootstrap load",
-            expected_unexpected_prefixes=("moe_layer",),
+            expected_unexpected_prefixes=("moe_layer", "soft_mapping"),
         )
 
     # phase_pretrain_random_router <- phaseforge: no phase_head module in
@@ -229,7 +229,7 @@ def test_stage1_bootstrap_load_matrix_all_cells() -> None:
         model,
         pf_sd,
         "phase_pretrain_random_router <- phaseforge bootstrap load",
-        expected_unexpected_prefixes=("moe_layer", "phase_head"),
+        expected_unexpected_prefixes=("moe_layer", "soft_mapping", "phase_head"),
     )
 
 

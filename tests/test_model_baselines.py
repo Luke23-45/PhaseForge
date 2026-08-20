@@ -27,11 +27,14 @@ from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
+    one_warm_experts_from_action_head,
+    partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.router import TopKRouter
+from phaseforge.models.components.soft_mapping import build_hierarchical_uniform_mapping
 from phaseforge.models.phase_moe import PhaseBootstrappedMoE
 from phaseforge.utils.config import resolve_checkpoint_source
 from phaseforge.utils.registry import build_model
@@ -412,6 +415,627 @@ def test_warm_started_experts_are_independent_copies() -> None:
     assert torch.allclose(model.moe_layer.experts[1].output_proj.weight, before)
 
 
+def test_partial_reinit_keeps_and_reinit_split() -> None:
+    _, action_head, _, _, _ = _make_components()
+    hidden_dim = 64
+    experts = nn.ModuleList(
+        [ExpertMLP(input_dim=32, hidden_dims=[hidden_dim], output_dim=7) for _ in range(2)]
+    )
+
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.trunk[0].bias.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+    action_head.mean_head.bias.data.normal_()
+
+    drop_rate = 0.5
+    partial_reinit_experts_from_action_head(
+        experts, action_head, drop_rate=drop_rate, seed=42
+    )
+
+    k = int(round(drop_rate * hidden_dim))
+    expected_dropped = sorted(
+        torch.randperm(
+            hidden_dim, generator=torch.Generator().manual_seed(42)
+        )[:k].tolist()
+    )
+    expected_kept = sorted(set(range(hidden_dim)) - set(expected_dropped))
+
+    for expert in experts:
+        for i in expected_dropped:
+            assert not torch.equal(
+                expert.hidden[0].weight.data[i, :],
+                action_head.trunk[0].weight.data[i, :],
+            ), f"dropped neuron {i} must be reinitialized (not equal to ActionHead)"
+            assert expert.hidden[0].bias.data[i].item() == 0.0
+            assert not torch.equal(
+                expert.output_proj.weight.data[:, i],
+                action_head.mean_head.weight.data[:, i],
+            )
+        for i in expected_kept:
+            assert torch.equal(
+                expert.hidden[0].weight.data[i, :],
+                action_head.trunk[0].weight.data[i, :],
+            ), f"kept neuron {i} must equal ActionHead bit-exactly"
+            assert torch.equal(
+                expert.hidden[0].bias.data[i],
+                action_head.trunk[0].bias.data[i],
+            )
+            assert torch.equal(
+                expert.output_proj.weight.data[:, i],
+                action_head.mean_head.weight.data[:, i],
+            )
+
+    rows_e0 = experts[0].hidden[0].weight.data[expected_dropped, :].clone()
+    rows_e1 = experts[1].hidden[0].weight.data[expected_dropped, :].clone()
+    assert not torch.equal(rows_e0, rows_e1), (
+        "reinitialized neurons must differ across experts (per-expert draws)"
+    )
+
+
+def test_partial_reinit_is_seed_deterministic() -> None:
+    _, action_head, _, _, _ = _make_components()
+
+    def make_pair() -> nn.ModuleList:
+        return nn.ModuleList(
+            [ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7) for _ in range(2)]
+        )
+
+    experts_a = make_pair()
+    experts_b = make_pair()
+    experts_c = make_pair()
+
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.trunk[0].bias.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+    action_head.mean_head.bias.data.normal_()
+
+    partial_reinit_experts_from_action_head(experts_a, action_head, drop_rate=0.5, seed=123)
+    partial_reinit_experts_from_action_head(experts_b, action_head, drop_rate=0.5, seed=123)
+    partial_reinit_experts_from_action_head(experts_c, action_head, drop_rate=0.5, seed=999)
+
+    for idx in range(2):
+        assert torch.equal(
+            experts_a[idx].hidden[0].weight.data,
+            experts_b[idx].hidden[0].weight.data,
+        ), "same seed must yield bit-identical experts"
+        assert not torch.equal(
+            experts_a[idx].hidden[0].weight.data,
+            experts_c[idx].hidden[0].weight.data,
+        ), "different seeds must differ"
+
+
+def test_partial_reinit_drop_rate_bounds() -> None:
+    _, action_head, _, _, _ = _make_components()
+    experts = nn.ModuleList(
+        [ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7) for _ in range(2)]
+    )
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.trunk[0].bias.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+
+    partial_reinit_experts_from_action_head(experts, action_head, drop_rate=0.0, seed=42)
+    for expert in experts:
+        assert torch.equal(expert.hidden[0].weight.data, action_head.trunk[0].weight.data)
+        assert torch.equal(expert.output_proj.weight.data, action_head.mean_head.weight.data)
+
+    partial_reinit_experts_from_action_head(experts, action_head, drop_rate=1.0, seed=42)
+    for expert in experts:
+        assert not torch.equal(expert.hidden[0].weight.data, action_head.trunk[0].weight.data)
+        assert not torch.equal(expert.output_proj.weight.data, action_head.mean_head.weight.data)
+
+    with pytest.raises(ValueError, match="drop_rate"):
+        partial_reinit_experts_from_action_head(experts, action_head, drop_rate=-0.1, seed=42)
+    with pytest.raises(ValueError, match="drop_rate"):
+        partial_reinit_experts_from_action_head(experts, action_head, drop_rate=1.5, seed=42)
+
+
+def test_one_warm_isolates_warm_expert() -> None:
+    _, action_head, _, _, _ = _make_components()
+    experts = nn.ModuleList(
+        [ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7) for _ in range(3)]
+    )
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.trunk[0].bias.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+    action_head.mean_head.bias.data.normal_()
+
+    one_warm_experts_from_action_head(
+        experts, action_head, jitter_std=0.0, warm_idx=1
+    )
+
+    assert torch.equal(experts[1].hidden[0].weight.data, action_head.trunk[0].weight.data)
+    assert torch.equal(experts[1].hidden[0].bias.data, action_head.trunk[0].bias.data)
+    assert torch.equal(experts[1].output_proj.weight.data, action_head.mean_head.weight.data)
+    assert torch.equal(experts[1].output_proj.bias.data, action_head.mean_head.bias.data)
+
+    assert not torch.equal(experts[0].hidden[0].weight.data, action_head.trunk[0].weight.data)
+    assert not torch.equal(experts[2].hidden[0].weight.data, action_head.trunk[0].weight.data)
+    assert not torch.equal(experts[0].hidden[0].weight.data, experts[2].hidden[0].weight.data)
+
+
+def test_one_warm_rejects_out_of_bounds_idx() -> None:
+    _, action_head, _, _, _ = _make_components()
+    experts = nn.ModuleList(
+        [ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7) for _ in range(3)]
+    )
+    with pytest.raises(ValueError, match="warm_idx"):
+        one_warm_experts_from_action_head(experts, action_head, warm_idx=3)
+    with pytest.raises(ValueError, match="warm_idx"):
+        one_warm_experts_from_action_head(experts, action_head, warm_idx=-1)
+    # Empty expert list is also invalid (silent no-op would hide misconfig).
+    with pytest.raises(ValueError, match="warm_idx"):
+        one_warm_experts_from_action_head(
+            nn.ModuleList([]), action_head, warm_idx=0
+        )
+
+
+def test_bootstrap_dispatches_partial_warm_and_one_warm() -> None:
+    for cfg in (
+        {"type": "partial_warm", "drop_rate": 0.5, "seed": 42},
+        {"type": "one_warm", "warm_idx": 0, "jitter_std": 0.0},
+        {"type": "warmstart", "jitter_std": 0.02},
+        {"type": "random"},
+    ):
+        encoder, action_head, router, expert, phase_head = _make_components()
+        model = PhaseBootstrappedMoE(
+            encoder=encoder,
+            action_head=action_head,
+            phase_head=phase_head,
+            router=router,
+            expert=expert,
+            expert_init=cfg,
+        )
+        model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+        assert model.stage == 2
+        # Audit metadata must be populated for every dispatched init type.
+        info = getattr(model, "_expert_init_info", None)
+        assert info is not None, f"_expert_init_info missing for cfg={cfg}"
+        assert info["expert_init"]["type"] == cfg["type"]
+        assert info["router"]["num_experts"] == 4
+        assert info["router"]["top_k"] == 2
+        assert info["router"]["init_type"] == "centroid"
+
+
+def test_bootstrap_rejects_unknown_expert_init_type() -> None:
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        expert_init={"type": "not_a_real_type"},
+    )
+    with pytest.raises(ValueError, match="Unknown expert_init type"):
+        model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model.stage == 1
+
+
+def test_expert_init_info_is_none_before_bootstrap() -> None:
+    """The audit-metadata attribute is declared in __init__ as None.
+
+    Bootstrap populates it; until then consumers (the cli metadata writer,
+    tests, analysis scripts) should see ``None``, not a missing attribute.
+    """
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        expert_init={"type": "warmstart"},
+    )
+    assert hasattr(model, "_expert_init_info")
+    assert model._expert_init_info is None
+
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model._expert_init_info is not None
+
+
+def test_bootstrap_metadata_uses_resolved_router_override() -> None:
+    """The recorded router init must reflect the bootstrap override, not the
+    constructor default — otherwise direct ``bootstrap_moe(router_init=...)``
+    calls (outside the manifest path) silently disagree with what was actually
+    used.
+    """
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        expert_init={"type": "warmstart"},
+    )
+    model.bootstrap_moe(
+        dataloader=_make_dataloader(),
+        device="cpu",
+        router_init={"type": "random", "seed": 7},
+    )
+    assert model._expert_init_info["router"]["init_type"] == "random"
+    assert model._expert_init_info["router"]["init_seed"] == 7
+
+
+def test_verify_bank_against_baseline_passes_on_match() -> None:
+    """The g8 bank check passes when reset_bank matches the g6 baseline."""
+    import json
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from experiments import v2_gates
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        findings_dir = Path(tmpdir) / "_findings"
+        findings_dir.mkdir()
+        # Baseline: g6 phaseforge_e6 on bank aaa / bbb / ccc per seed.
+        (findings_dir / "v2_gates_g6.json").write_text(
+            json.dumps(
+                {
+                    "gate": "g6",
+                    "results": {
+                        "phaseforge_e6:42": {"reset_bank": "aaa"},
+                        "phaseforge_e6:43": {"reset_bank": "bbb"},
+                        "phaseforge_e6:44": {"reset_bank": "ccc"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        original = v2_gates.FINDINGS_DIR
+        v2_gates.FINDINGS_DIR = findings_dir
+        try:
+            spec = {
+                "methods": ["warmstart_r50"],
+                "baseline_gate": "g6",
+                "baseline_method": "phaseforge_e6",
+            }
+            results = {
+                "warmstart_r50:42": {"reset_bank": "aaa"},
+                "warmstart_r50:43": {"reset_bank": "bbb"},
+                "warmstart_r50:44": {"reset_bank": "ccc"},
+            }
+            ok, msg = v2_gates._verify_bank_against_baseline(
+                "g8", [42, 43, 44], results, spec
+            )
+            assert ok, f"expected match, got error: {msg}"
+            assert msg == ""
+        finally:
+            v2_gates.FINDINGS_DIR = original
+
+
+def test_verify_bank_against_baseline_fails_on_mismatch() -> None:
+    """The g8 bank check fails when a cell's reset_bank differs from g6."""
+    import json
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from experiments import v2_gates
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        findings_dir = Path(tmpdir) / "_findings"
+        findings_dir.mkdir()
+        (findings_dir / "v2_gates_g6.json").write_text(
+            json.dumps(
+                {
+                    "gate": "g6",
+                    "results": {
+                        "phaseforge_e6:42": {"reset_bank": "aaa"},
+                        "phaseforge_e6:43": {"reset_bank": "bbb"},
+                        "phaseforge_e6:44": {"reset_bank": "ccc"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        original = v2_gates.FINDINGS_DIR
+        v2_gates.FINDINGS_DIR = findings_dir
+        try:
+            spec = {
+                "methods": ["warmstart_r50"],
+                "baseline_gate": "g6",
+                "baseline_method": "phaseforge_e6",
+            }
+            results = {
+                # seed 43 mismatch: cell on bank xxx, baseline on bbb.
+                "warmstart_r50:42": {"reset_bank": "aaa"},
+                "warmstart_r50:43": {"reset_bank": "xxx"},
+                "warmstart_r50:44": {"reset_bank": "ccc"},
+            }
+            ok, msg = v2_gates._verify_bank_against_baseline(
+                "g8", [42, 43, 44], results, spec
+            )
+            assert not ok
+            assert "bank mismatch" in msg
+            assert "warmstart_r50:43" in msg
+            assert "'xxx'" in msg
+            assert "'bbb'" in msg
+        finally:
+            v2_gates.FINDINGS_DIR = original
+
+
+def test_verify_bank_against_baseline_skips_when_baseline_missing() -> None:
+    """No g6 findings → skip the check with a warning, do not fail."""
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from experiments import v2_gates
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        findings_dir = Path(tmpdir) / "_findings"
+        findings_dir.mkdir()
+        original = v2_gates.FINDINGS_DIR
+        v2_gates.FINDINGS_DIR = findings_dir
+        try:
+            spec = {
+                "methods": ["warmstart_r50"],
+                "baseline_gate": "g6",
+                "baseline_method": "phaseforge_e6",
+            }
+            results = {
+                "warmstart_r50:42": {"reset_bank": "aaa"},
+            }
+            ok, msg = v2_gates._verify_bank_against_baseline(
+                "g8", [42], results, spec
+            )
+            assert ok, "missing baseline should not fail"
+            assert msg == ""
+        finally:
+            v2_gates.FINDINGS_DIR = original
+
+
+def test_partial_reinit_drop_rate_one_is_deterministic() -> None:
+    _, action_head, _, _, _ = _make_components()
+
+    def make() -> nn.ModuleList:
+        return nn.ModuleList(
+            [ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7) for _ in range(2)]
+        )
+
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.trunk[0].bias.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+    action_head.mean_head.bias.data.normal_()
+
+    a = make()
+    b = make()
+    c = make()
+    partial_reinit_experts_from_action_head(a, action_head, drop_rate=1.0, seed=7)
+    partial_reinit_experts_from_action_head(b, action_head, drop_rate=1.0, seed=7)
+    partial_reinit_experts_from_action_head(c, action_head, drop_rate=1.0, seed=8)
+
+    for idx in range(2):
+        assert torch.equal(
+            a[idx].hidden[0].weight.data, b[idx].hidden[0].weight.data
+        ), "drop_rate=1.0 with same seed must be bit-identical"
+        assert torch.equal(
+            a[idx].output_proj.weight.data, b[idx].output_proj.weight.data
+        )
+        assert not torch.equal(
+            a[idx].hidden[0].weight.data, c[idx].hidden[0].weight.data
+        ), "drop_rate=1.0 with different seed must differ"
+
+    dropped = partial_reinit_experts_from_action_head(
+        make(), action_head, drop_rate=1.0, seed=7
+    )
+    assert dropped == list(range(64)), (
+        "drop_rate=1.0 must drop every neuron and return all indices"
+    )
+
+
+def test_partial_reinit_returned_indices_match_dropped_set() -> None:
+    _, action_head, _, _, _ = _make_components()
+    experts = nn.ModuleList(
+        [ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7) for _ in range(2)]
+    )
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+
+    dropped = partial_reinit_experts_from_action_head(
+        experts, action_head, drop_rate=0.3, seed=2026
+    )
+    expected = sorted(
+        torch.randperm(64, generator=torch.Generator().manual_seed(2026))[
+            : int(round(0.3 * 64))
+        ].tolist()
+    )
+    assert dropped == expected
+    assert len(dropped) == 19
+    assert len(set(dropped)) == 19
+
+
+def test_bootstrap_persists_partial_warm_metadata() -> None:
+    import hashlib
+
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        expert_init={"type": "partial_warm", "drop_rate": 0.5, "seed": 42},
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+
+    info = model._expert_init_info
+    assert info["expert_init"]["type"] == "partial_warm"
+    assert info["expert_init"]["drop_rate"] == 0.5
+    assert info["expert_init"]["init_seed"] == 42
+    assert info["expert_init"]["hidden_dim"] == 64
+    assert info["expert_init"]["num_dropped_neurons"] == 32
+    assert len(info["expert_init"]["dropped_neuron_indices"]) == 32
+    # Verify hash consistency: sha256 of sorted indices as 8-byte little-endian.
+    h = hashlib.sha256()
+    for i in sorted(info["expert_init"]["dropped_neuron_indices"]):
+        h.update(int(i).to_bytes(8, "little", signed=False))
+    assert info["expert_init"]["dropped_indices_sha256"] == h.hexdigest()
+    assert info["router"]["init_type"] == "centroid"
+    assert info["router"]["num_experts"] == 4
+
+
+def test_bootstrap_rotates_one_warm_by_training_seed() -> None:
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        expert_init={
+            "type": "one_warm",
+            "warm_idx": 0,
+            "jitter_std": 0.0,
+            "rotate_warm_idx_by_seed": True,
+        },
+    )
+    torch.manual_seed(0)
+    action_head.trunk[0].weight.data.normal_()
+    action_head.trunk[0].bias.data.normal_()
+    action_head.mean_head.weight.data.normal_()
+    action_head.mean_head.bias.data.normal_()
+
+    model.bootstrap_moe(
+        dataloader=_make_dataloader(),
+        device="cpu",
+        training_seed=2,
+    )
+    info = model._expert_init_info
+    # 4 experts, requested warm_idx=0, training_seed=2 -> effective (0+2)%4 = 2.
+    assert info["expert_init"]["warm_idx"] == 2
+    assert info["expert_init"]["requested_warm_idx"] == 0
+    assert info["expert_init"]["rotate_warm_idx_by_seed"] is True
+    assert info["expert_init"]["training_seed"] == 2
+    # Expert 2 should equal ActionHead bit-exactly (jitter_std=0.0).
+    assert torch.equal(
+        model.moe_layer.experts[2].hidden[0].weight.data,
+        action_head.trunk[0].weight.data,
+    )
+    # Other experts are reset (different from ActionHead).
+    assert not torch.equal(
+        model.moe_layer.experts[0].hidden[0].weight.data,
+        action_head.trunk[0].weight.data,
+    )
+
+
+def test_bootstrap_rejects_one_warm_seed_rotation_without_seed() -> None:
+    encoder, action_head, router, expert, phase_head = _make_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        expert_init={
+            "type": "one_warm",
+            "rotate_warm_idx_by_seed": True,
+        },
+    )
+    with pytest.raises(ValueError, match="training_seed"):
+        model.bootstrap_moe(
+            dataloader=_make_dataloader(),
+            device="cpu",
+            training_seed=None,
+        )
+    assert model.stage == 1
+
+
+def test_manifest_has_wave3_cells_with_correct_overrides() -> None:
+    """The Wave-3 cells must override the 8-expert / soft_mapping defaults.
+
+    Without these overrides the comparison against ``pf_centroid_random`` (6
+    experts, centroid) would confound expert initialization with the V2-B
+    config change. See the reviewer's P0 note.
+    """
+    import json
+    from pathlib import Path
+
+    manifest_path = Path(__file__).resolve().parents[1] / "experiments" / "lift_ablation.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_name = {m["name"]: m for m in manifest["methods"]}
+
+    r50 = by_name["warmstart_r50"]
+    assert r50["model"] == "phaseforge", "warmstart_r50 should build on phaseforge"
+    r50_overrides = " ".join(r50["overrides"])
+    assert "models.router.num_experts=6" in r50_overrides, (
+        "warmstart_r50 must pin num_experts=6 to match pf_centroid_random"
+    )
+    assert "models.router_init.type=centroid" in r50_overrides, (
+        "warmstart_r50 must pin router_init.type=centroid (NOT the "
+        "soft_mapping default in phaseforge.yaml)"
+    )
+    assert "models.expert_init.type=partial_warm" in r50_overrides
+    assert "+models.expert_init.drop_rate=0.5" in r50_overrides
+    assert "+models.expert_init.seed=${project.seed}" in r50_overrides, (
+        "warmstart_r50 should tie init seed to training seed for "
+        "seed-robustness studies"
+    )
+
+    onewarm = by_name["pf_one_warm_plus_random"]
+    onewarm_overrides = " ".join(onewarm["overrides"])
+    assert "models.router.num_experts=6" in onewarm_overrides
+    assert "models.router_init.type=centroid" in onewarm_overrides
+    assert "models.expert_init.type=one_warm" in onewarm_overrides
+    assert "+models.expert_init.rotate_warm_idx_by_seed=true" in onewarm_overrides, (
+        "pf_one_warm_plus_random must rotate warm_idx by training seed "
+        "to avoid the phase-0 confound the reviewer flagged"
+    )
+
+
+def test_phaseforge_r50_canonical_config_resolves_to_intended() -> None:
+    """The canonical phaseforge_r50 config must resolve exactly as intended.
+
+    Guards the reviewer's P0 concern in its permanent form: the dedicated
+    config file must not silently inherit the old phaseforge defaults
+    (num_experts=8, soft_mapping router init, warmstart-with-jitter).
+    """
+    from hydra import compose, initialize
+
+    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+        cfg = compose(
+            config_name="main",
+            overrides=[
+                "models=phaseforge_r50",
+                "train=stage2",
+                "data=common",
+                "project.seed=42",
+            ],
+        )
+        phaseforge = compose(
+            config_name="main",
+            overrides=[
+                "models=phaseforge",
+                "train=stage2",
+                "data=common",
+                "project.seed=42",
+            ],
+        )
+    m = cfg.models
+    assert m.name == "phaseforge_r50"
+    assert m.router.num_experts == 6, "must not inherit num_experts=8"
+    assert m.router_init.type == "centroid", "must not inherit soft_mapping"
+    assert m.expert_init.type == "partial_warm", "must not be plain warmstart"
+    assert m.expert_init.drop_rate == 0.5
+    assert m.expert_init.jitter_std == 0.0
+    assert m.soft_mapping.enabled is False, "soft-mapping machinery must be off"
+
+    assert phaseforge.models.router.num_experts == 8
+    assert phaseforge.models.router_init.type == "soft_mapping"
+    assert phaseforge.models.expert_init.type == "warmstart"
+
+
 def test_moe_layer_clones_have_independent_storage() -> None:
     router = TopKRouter(latent_dim=32, num_experts=4, top_k=2)
     expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
@@ -575,3 +1199,279 @@ def test_get_action_is_bounded_in_both_stages() -> None:
         stage2_action = model.get_action(state)
         assert float(stage2_action.min()) > -1.0
         assert float(stage2_action.max()) < 1.0
+
+
+# ---------------------------------------------------------------------------
+# V2-B: soft phase->expert mapping bootstrap
+# ---------------------------------------------------------------------------
+
+
+def _make_soft_mapping_components(num_experts: int = 8):
+    encoder = StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32)
+    action_head = ActionHead(input_dim=32, output_dim=7, hidden_dim=64)
+    router = TopKRouter(latent_dim=32, num_experts=num_experts, top_k=2)
+    expert = ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7)
+    phase_head = PhaseClassificationHead(latent_dim=32, num_phases=3)
+    return encoder, action_head, router, expert, phase_head
+
+
+def test_soft_mapping_buffer_is_zero_init_and_persistent() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    assert model.soft_mapping.shape == (3, 8)
+    assert not model.soft_mapping.any()
+    assert "soft_mapping" in model.state_dict()
+
+
+def test_require_soft_mapping_fails_closed_when_zero() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    with pytest.raises(RuntimeError, match="all-zero"):
+        model.require_soft_mapping()
+
+
+def test_bootstrap_hierarchical_uniform_fills_buffer_and_keeps_random_gate() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "hierarchical_uniform",
+            "seed": 42,
+        },
+    )
+    gate_before = model.moe_layer.router.gate_linear.weight.data.clone()
+
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+
+    assert model.stage == 2
+    expected = build_hierarchical_uniform_mapping(3, 8)
+    assert torch.allclose(model.soft_mapping, expected)
+    # Data-free mode must not touch the (random) gate weights.
+    assert torch.allclose(model.moe_layer.router.gate_linear.weight.data, gate_before)
+    # The teacher/oracle paths can now consume the mapping.
+    assert model.require_soft_mapping() is model.soft_mapping
+
+
+def test_bootstrap_prototype_softmax_sets_gate_and_mapping() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "prototype_softmax",
+            "temperature": 1.0,
+            "seed": 42,
+        },
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+
+    assert model.stage == 2
+    mapping = model.soft_mapping
+    assert mapping.shape == (3, 8)
+    assert torch.allclose(mapping.sum(dim=-1), torch.ones(3), atol=1e-5)
+    assert mapping.any()
+    # Gate rows are the unit-norm hierarchical prototypes (cosine geometry).
+    rows = model.moe_layer.router.gate_linear.weight.data
+    assert torch.allclose(rows.norm(dim=-1), torch.ones(8), atol=1e-5)
+
+
+def test_bootstrap_unknown_soft_mapping_mode_raises() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={"type": "soft_mapping", "mapping_mode": "mystery"},
+    )
+    with pytest.raises(ValueError, match="mapping_mode"):
+        model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model.stage == 1
+
+
+# ---------------------------------------------------------------------------
+# V2-D: teacher-routed KL path
+# ---------------------------------------------------------------------------
+
+
+def test_teacher_routing_off_by_default_no_phase_logits() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert not model.teacher_routing_enabled
+    out = model({"state": torch.randn(2, 151)})
+    assert out.phase_logits is None
+
+
+def test_teacher_routing_on_emits_phase_logits_in_stage2() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        teacher_routing={"enabled": True},
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "hierarchical_uniform",
+            "seed": 42,
+        },
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    assert model.teacher_routing_enabled
+    out = model({"state": torch.randn(2, 151)})
+    assert out.phase_logits is not None
+    assert out.phase_logits.shape == (2, 3)
+
+
+def test_teacher_routing_on_fails_closed_on_zero_mapping() -> None:
+    # Stage 2 without bootstrap (or a pre-V2-B checkpoint): M is all zero and
+    # the teacher path must refuse to run rather than distill through zeros.
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        teacher_routing={"enabled": True},
+    )
+    model.stage = 2
+    with pytest.raises(RuntimeError, match="all-zero"):
+        model({"state": torch.randn(2, 151)})
+
+
+# ---------------------------------------------------------------------------
+# V2-E: evaluation-time routing interventions
+# ---------------------------------------------------------------------------
+
+
+def _bootstrapped_model(num_experts: int = 8) -> PhaseBootstrappedMoE:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components(
+        num_experts
+    )
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+        router_init={
+            "type": "soft_mapping",
+            "mapping_mode": "hierarchical_uniform",
+            "seed": 42,
+        },
+    )
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    return model
+
+
+def test_eval_mode_default_and_validation() -> None:
+    model = _bootstrapped_model()
+    assert model.eval_mode == "learned"
+    with pytest.raises(ValueError, match="Unknown eval_mode"):
+        model.eval_mode = "mystery"
+    for mode in ("learned", "sticky", "uniform", "oracle"):
+        model.eval_mode = mode
+        assert model.eval_mode == mode
+    model.eval_mode = "LEARNED"
+    assert model.eval_mode == "learned"
+
+
+def test_eval_modes_override_dispatch_but_keep_gate_logits() -> None:
+    model = _bootstrapped_model(num_experts=4)
+    state = torch.randn(2, 151)
+    learned = model({"state": state})
+    assert learned.gate_logits is not None
+
+    # Uniform mode: every expert is selected with equal weight.
+    model.eval_mode = "uniform"
+    uniform = model({"state": state})
+    assert uniform.expert_indices.shape == (2, 4)
+    assert torch.allclose(
+        uniform.routing_weights, torch.full((2, 4), 0.25)
+    )
+    # Gate logits stay the learned ones (reported, not used).
+    assert torch.equal(uniform.gate_logits, learned.gate_logits)
+
+    # Oracle mode: M^T softmax(phase_head(z)) selects the phase's experts.
+    model.eval_mode = "oracle"
+    oracle = model({"state": state})
+    assert oracle.expert_indices.shape == (2, 2)
+    mapping = model.require_soft_mapping()
+    phase_probs = torch.softmax(model.phase_head(model.encoder(state)), dim=-1)
+    expected = torch.topk(
+        torch.einsum("pe,bp->be", mapping, phase_probs), 2, dim=-1
+    ).indices
+    assert torch.equal(oracle.expert_indices, expected)
+
+
+def test_sticky_eval_mode_resets_per_episode() -> None:
+    model = _bootstrapped_model(num_experts=4)
+    model.eval_mode = "sticky"
+    router = model.moe_layer.router
+    assert router._sticky_ema is None
+
+    # First step initializes the EMA; later steps keep updating it.
+    model.get_action(torch.randn(1, 151))
+    assert router._sticky_ema is not None
+    ema_after_first = router._sticky_ema.clone()
+    model.get_action(torch.randn(1, 151))
+    assert not torch.equal(router._sticky_ema, ema_after_first)
+
+    # reset() clears the EMA for the next episode (the runner calls it).
+    model.reset()
+    assert router._sticky_ema is None
+
+
+def test_oracle_eval_mode_fails_closed_on_zero_mapping() -> None:
+    encoder, action_head, router, expert, phase_head = _make_soft_mapping_components()
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=action_head,
+        phase_head=phase_head,
+        router=router,
+        expert=expert,
+    )
+    model.stage = 2
+    model.eval_mode = "oracle"
+    with pytest.raises(RuntimeError, match="all-zero"):
+        model.get_action(torch.randn(1, 151))
+
+
+def test_unknown_router_override_rejected_in_moe_layer() -> None:
+    model = _bootstrapped_model()
+    with pytest.raises(ValueError, match="Unknown router_override"):
+        model.moe_layer(
+            torch.randn(2, 32),
+            router_override="mystery",
+        )

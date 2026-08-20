@@ -301,6 +301,9 @@ def resolve_checkpoint_source(model_name: str) -> str:
         "pf_corrupt_25": "phaseforge",
         "pf_corrupt_50": "phaseforge",
         "pf_shuffle_control": "phaseforge",
+        # R50 (50% partial warm-start) shares the phase-supervised Stage 1
+        # checkpoint with phaseforge; only the expert init differs.
+        "phaseforge_r50": "phaseforge",
     }
     return alias_map.get(model_name, model_name)
 

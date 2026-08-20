@@ -18,6 +18,7 @@ from phaseforge.outputs_writer.backfill import (
     backfill_training_summary,
     collect_run_meta,
 )
+from phaseforge.outputs_writer.curves import validate_curve_row
 from phaseforge.outputs_writer.ledger import LedgerRow, RunLedger
 from phaseforge.outputs_writer.metadata import collect_environment
 from phaseforge.outputs_writer.results import append_result_row, read_result_rows
@@ -53,6 +54,9 @@ def make_row(
     with_metrics: bool = True,
     tag: str | None = None,
     method: str | None = None,
+    data_config_hash: str | None = None,
+    reset_bank: str | None = None,
+    reset_seed: int | None = None,
 ) -> dict:
     row = {
         "run_id": "a1b2c3d4",
@@ -67,6 +71,9 @@ def make_row(
         "action_mse": action_mse,
         "tag": tag,
         "method": method,
+        "data_config_hash": data_config_hash,
+        "reset_bank": reset_bank,
+        "reset_seed": reset_seed,
     }
     if with_metrics:
         row.update(
@@ -184,10 +191,126 @@ class TestSchema:
         assert row.tag is None
         assert row.method is None
 
+    def test_provenance_fields_accept_str_or_null(self) -> None:
+        row = make_row()
+        row["data_config_hash"] = "a2da6ba3"
+        row["reset_bank"] = "bank_abc"
+        row["reset_seed"] = 2026
+        validate_row(row)
+        validate_row(make_row(data_config_hash="a2da6ba3"))
+        validate_row(make_row(data_config_hash=None, reset_bank=None, reset_seed=None))
+
+    def test_provenance_fields_reject_bad_types(self) -> None:
+        row = make_row()
+        row["data_config_hash"] = 7
+        with pytest.raises(SchemaError, match="data_config_hash"):
+            validate_row(row)
+        row = make_row()
+        row["reset_bank"] = 3
+        with pytest.raises(SchemaError, match="reset_bank"):
+            validate_row(row)
+        row = make_row()
+        row["reset_seed"] = "2026"
+        with pytest.raises(SchemaError, match="reset_seed"):
+            validate_row(row)
+        row = make_row()
+        row["reset_seed"] = 2026.0
+        with pytest.raises(SchemaError, match="reset_seed"):
+            validate_row(row)
+
+    def test_provenance_fields_roundtrip_via_result_row(self) -> None:
+        row = make_result_row(
+            data_config_hash="a2da6ba3",
+            reset_bank="bank_abc",
+            reset_seed=2026,
+        )
+        validate_row(row.to_dict())
+        assert row.to_dict()["data_config_hash"] == "a2da6ba3"
+        assert row.to_dict()["reset_bank"] == "bank_abc"
+        assert row.to_dict()["reset_seed"] == 2026
+
 
 # ---------------------------------------------------------------------------
 # Results ledger
 # ---------------------------------------------------------------------------
+
+
+class TestCurveSchema:
+    """Curve-row schema (phaseforge.outputs_writer.curves.validate_curve_row).
+
+    The persistence callback builds one row per epoch and appends it only
+    after strict validation; a stage-2 run that emits a metric the schema
+    does not know aborts the whole sweep (regression: V2-C/D train scalars
+    and the V2-C validation switch rate were added to the trainer without
+    extending this allowlist).
+    """
+
+    def _core(self) -> dict:
+        return {
+            "run_id": "r1",
+            "epoch": 0,
+            "global_step": 0,
+            "train/lr": 1e-3,
+            "epoch_wall_seconds": 1.5,
+            "train_steps_per_second": 40.0,
+            "train/loss_total": 0.05,
+            "train/loss_action": 0.04,
+            "val/loss_total": 0.06,
+            "val/loss_action": 0.05,
+        }
+
+    def test_core_row_passes(self) -> None:
+        validate_curve_row(self._core())
+
+    def test_v2_train_scalars_pass(self) -> None:
+        row = self._core()
+        row.update(
+            {
+                "train/loss_sticky": 0.0,
+                "train/loss_teacher_kl": 0.0,
+                "train/teacher_lambda": 0.5,
+                "val/routing_switch_rate": 0.35,
+            }
+        )
+        validate_curve_row(row)
+
+    def test_stage1_phase_fields_pass(self) -> None:
+        row = self._core()
+        row.update(
+            {
+                "train/loss_phase": 1.2,
+                "train/grad_cos_action_phase": 0.3,
+                "train/lambda_phase": 1.0,
+                "val/loss_phase": 1.3,
+                "train/phase_acc": 0.9,
+                "val/phase_acc": 0.88,
+            }
+        )
+        validate_curve_row(row)
+
+    def test_missing_required_key_fails(self) -> None:
+        row = self._core()
+        del row["val/loss_action"]
+        with pytest.raises(SchemaError, match="missing required keys"):
+            validate_curve_row(row)
+
+    def test_unknown_top_level_key_fails(self) -> None:
+        row = self._core()
+        row["train/surprise"] = 1.0
+        with pytest.raises(SchemaError, match="unknown top-level keys"):
+            validate_curve_row(row)
+
+    def test_bool_epoch_rejected(self) -> None:
+        row = self._core()
+        row["epoch"] = True
+        with pytest.raises(SchemaError, match="epoch"):
+            validate_curve_row(row)
+
+    def test_optional_numeric_rejects_bool(self) -> None:
+        row = self._core()
+        row["train/teacher_lambda"] = True
+        with pytest.raises(SchemaError, match="train/teacher_lambda"):
+            validate_curve_row(row)
 
 
 class TestResults:

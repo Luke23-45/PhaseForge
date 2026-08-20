@@ -21,6 +21,7 @@ class MoEOutput(NamedTuple):
     expert_indices: Tensor  # (B, K)
     balance_loss: Tensor  # scalar
     gate_logits: Tensor  # (B, E)
+    sticky_loss: Tensor  # scalar, raw history-stickiness loss (V2-C)
 
 
 class MoELayer(nn.Module):
@@ -73,11 +74,36 @@ class MoELayer(nn.Module):
                 f"router.num_experts ({router.num_experts})"
             )
 
-    def forward(self, latent: Tensor) -> MoEOutput:
+    def forward(
+        self,
+        latent: Tensor,
+        trajectory_id: Tensor | None = None,
+        trajectory_position: Tensor | None = None,
+        *,
+        router_override: str | None = None,
+        phase_logits: Tensor | None = None,
+        mapping: Tensor | None = None,
+    ) -> MoEOutput:
         """Route latents to experts and combine their outputs.
 
         Args:
             latent: Tensor of shape (B, latent_dim).
+            trajectory_id: Optional (B,) long tensor passed through to the
+                router (V2-C history routing).
+            trajectory_position: Optional (B,) long tensor passed through to
+                the router (V2-C history routing).
+            router_override: V2-E evaluation-time routing intervention, one
+                of ``"sticky"`` / ``"uniform"`` / ``"oracle"`` (or ``None``
+                for the learned router). The learned gate logits are still
+                computed and reported; only the dispatch selection is
+                replaced. Evaluation-time only — training always routes
+                through the learned router.
+            phase_logits: Optional (B, P) phase-head logits; required by
+                ``router_override="oracle"``.
+            mapping: Optional right-stochastic (P, E) soft phase->expert
+                mapping M; required by ``router_override="oracle"`` (the
+                caller must validate it — see
+                ``PhaseBootstrappedMoE.require_soft_mapping``).
 
         Returns:
             MoEOutput containing the combined predictions and routing metadata.
@@ -92,9 +118,32 @@ class MoELayer(nn.Module):
         B, D = latent.shape
 
         # 1. Route inputs
-        router_out: RouterOutput = self.router(latent)
+        router_out: RouterOutput = self.router(
+            latent,
+            trajectory_id=trajectory_id,
+            trajectory_position=trajectory_position,
+        )
         weights = router_out.weights  # (B, K)
         indices = router_out.indices  # (B, K)
+
+        # V2-E: replace the dispatch selection for evaluation-time
+        # interventions; the reported gate logits stay the learned ones.
+        if router_override == "uniform":
+            weights, indices = self.router.uniform_selection(latent)
+        elif router_override == "sticky":
+            weights, indices = self.router.sticky_selection(router_out.gate_logits)
+        elif router_override == "oracle":
+            if phase_logits is None or mapping is None:
+                raise ValueError(
+                    "router_override='oracle' requires phase_logits and the "
+                    "soft phase->expert mapping M"
+                )
+            weights, indices = self.router.oracle_selection(phase_logits, mapping)
+        elif router_override is not None:
+            raise ValueError(
+                f"Unknown router_override {router_override!r}. Supported: "
+                "sticky, uniform, oracle."
+            )
 
         # Retrieve the output dimension from the first expert to preallocate
         out_dim = cast(ExpertMLP, self.experts[0]).output_dim
@@ -150,4 +199,5 @@ class MoELayer(nn.Module):
             expert_indices=indices,
             balance_loss=router_out.balance_loss,
             gate_logits=router_out.gate_logits,
+            sticky_loss=router_out.sticky_loss,
         )

@@ -16,6 +16,34 @@ from phaseforge.trains.loops.base import (
 )
 
 
+def _phase_ce(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    phase_weights: torch.Tensor | None,
+    soft_target_eps: float,
+) -> torch.Tensor:
+    """Phase cross-entropy with optional label smoothing (V2-A).
+
+    ``soft_target_eps == 0`` delegates to ``F.cross_entropy`` so the frozen
+    protocol is bit-identical. For ``eps > 0`` each sample mixes its NLL with
+    the uniform-NLL (label smoothing)::
+
+        L_i = (1 - eps) * nll_i + eps * mean_c(-log p_i,c)
+
+    Class weights (when set) are applied once per sample on the mixed loss,
+    matching ``F.cross_entropy``'s ``weight`` semantics.
+    """
+    if soft_target_eps == 0.0:
+        return F.cross_entropy(logits, targets, weight=phase_weights)
+    log_probs = F.log_softmax(logits, dim=-1)
+    nll = -log_probs.gather(1, targets.unsqueeze(-1)).squeeze(-1)
+    uniform_nll = -log_probs.mean(dim=-1)
+    per_sample = (1.0 - soft_target_eps) * nll + soft_target_eps * uniform_nll
+    if phase_weights is not None:
+        per_sample = per_sample * phase_weights[targets]
+    return per_sample.mean()
+
+
 def _grad_cosine_similarity(
     loss_action: torch.Tensor,
     loss_phase: torch.Tensor,
@@ -143,8 +171,8 @@ class Stage1Trainer(BaseTrainer):
         base_lambda_positive = float(self.train_cfg.get("lambda_phase", 1.0)) > 0.0
 
         # Optional inverse-frequency class weights for the phase CE
-        # (train.phase_class_weight="balanced", injected by cli.py as
-        # train.phase_weights). None preserves the protocol's plain CE.
+        # (train.phase_class_weight="balanced" or "cui", injected by cli.py
+        # as train.phase_weights). None preserves the protocol's plain CE.
         phase_weights: torch.Tensor | None = None
         pw = self.train_cfg.get("phase_weights")
         if out.phase_logits is not None and pw:
@@ -157,6 +185,17 @@ class Stage1Trainer(BaseTrainer):
                 )
             phase_weights = torch.tensor(
                 list(pw), dtype=torch.float32, device=self.device
+            )
+
+        # Optional label smoothing on the phase targets (V2-A): the head is
+        # discouraged from saturating, which keeps the phase logits soft for
+        # the downstream phase_pretrain_random_router / teacher_forced cells
+        # that route on them. 0.0 (default) preserves plain CE bit-for-bit.
+        soft_target_eps = float(self.train_cfg.get("soft_target_eps", 0.0))
+        if not 0.0 <= soft_target_eps <= 1.0:
+            raise ValueError(
+                "train.soft_target_eps must be in [0, 1], "
+                f"got {soft_target_eps}"
             )
 
         # Action Loss (MSE)
@@ -183,12 +222,15 @@ class Stage1Trainer(BaseTrainer):
                 targets_valid = targets_flat[mask_flat]
 
                 if len(targets_valid) > 0:
-                    phase_loss = F.cross_entropy(
-                        logits_valid, targets_valid, weight=phase_weights
+                    phase_loss = _phase_ce(
+                        logits_valid,
+                        targets_valid,
+                        phase_weights,
+                        soft_target_eps,
                     )
             else:
-                phase_loss = F.cross_entropy(
-                    logits, target_phase, weight=phase_weights
+                phase_loss = _phase_ce(
+                    logits, target_phase, phase_weights, soft_target_eps
                 )
 
         # Total Loss

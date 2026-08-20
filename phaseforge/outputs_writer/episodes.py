@@ -54,6 +54,10 @@ _EPISODE_STR_NULLABLE = (
     "tag",
 )
 
+#: Optional top-level string field: the V2-E evaluation-time routing
+#: intervention (learned/sticky/uniform/oracle). Absent on legacy rows.
+_EPISODE_STR_OPTIONAL = ("router_mode",)
+
 #: Frozen taxonomy of valid-episode failure categories. ``task_timeout`` is
 #: an honest task outcome (the horizon expired without success);
 #: ``policy_invalid_action`` and ``policy_exception`` are policy failures
@@ -89,6 +93,7 @@ def validate_episode_record(row: dict[str, Any]) -> None:
         | set(_EPISODE_BOOL)
         | set(_EPISODE_INT)
         | set(_EPISODE_STR_NULLABLE)
+        | set(_EPISODE_STR_OPTIONAL)
         | {"extra"}
     )
     unknown = sorted(set(row) - known)
@@ -116,6 +121,11 @@ def validate_episode_record(row: dict[str, Any]) -> None:
         if not isinstance(row[key], str):
             raise SchemaError(
                 f"Episode record[{key!r}] must be str or null, got {type(row[key]).__name__}"
+            )
+    for key in _EPISODE_STR_OPTIONAL:
+        if key in row and not isinstance(row[key], str):
+            raise SchemaError(
+                f"Episode record[{key!r}] must be str, got {type(row[key]).__name__}"
             )
 
     valid = row["valid_episode"]

@@ -159,6 +159,11 @@ class DataPipelineStateMachine:
             candidates.append(("models.phase_head.num_phases", int(phase_head.num_phases)))
 
         router = models_cfg.get("router")
+        # Routers whose initial expert layout is derived from the phase
+        # distribution (centroid/kmeans/random) or from an explicit P x E
+        # soft mapping (V2-B) legitimately decouple expert count from phase
+        # count — the mapping bridges the two spaces, so the strict
+        # num_experts == num_phases equality does not apply.
         e_ne_p_capable = router_init_type in (
             "centroid",
             "phase_centroid",
@@ -166,6 +171,7 @@ class DataPipelineStateMachine:
             "spherical_kmeans",
             "kmeans",
             "random",
+            "soft_mapping",
         )
         if router is not None and router.get("num_experts") is not None and not e_ne_p_capable:
             candidates.append(("models.router.num_experts", int(router.num_experts)))
@@ -256,6 +262,7 @@ class DataPipelineStateMachine:
                 self._splits,
                 self._task_index,
             ) = self.cache_manager.load(found_hash)
+            self._backfill_phase_thresholds(found_hash)
 
             # Use the loaded hash so it doesn't mismatch later if we need it
             self.config_hash = found_hash
@@ -600,10 +607,93 @@ class DataPipelineStateMachine:
             splits=splits,
             task_index=self._task_index,
             provenance=self._provenance(splits),
+            phase_thresholds=self._aggregate_phase_thresholds(),
         )
         self._norm_stats = norm_stats
         self._splits = splits
         self._state = PipelineState.READY
+
+    # ------------------------------------------------------------------
+    # Phase calibration persistence (per-phase success tracking)
+    # ------------------------------------------------------------------
+
+    def _aggregate_phase_thresholds(self) -> dict[str, Any] | None:
+        """Aggregate per-demonstration phase calibrations into one artifact.
+
+        The rollout layer must classify the policy's own states into phases
+        without re-deriving thresholds from the policy's trajectories. The
+        per-demo artifacts persisted by the ingester are aggregated here:
+        median hysteresis levels, the majority mirror convention (with its
+        median bounds), and the full per-demo list for audit. Returns None
+        when no trajectory carries a calibration artifact (e.g. a custom
+        ingester without adaptive calibration) — per-phase tracking then
+        fails closed downstream.
+        """
+        artifacts = [
+            traj["phase_thresholds"]
+            for traj in self._trajectories
+            if isinstance(traj.get("phase_thresholds"), dict)
+        ]
+        if not artifacts:
+            return None
+        closed_levels = [float(a["closed_level"]) for a in artifacts]
+        open_levels = [float(a["open_level"]) for a in artifacts]
+        mirrors = [bool(a["mirror"]) for a in artifacts]
+        mirror = max(set(mirrors), key=mirrors.count) if mirrors else False
+        aggregated: dict[str, Any] = {
+            "data_config_hash": self.config_hash,
+            "n_demos": len(artifacts),
+            "closed_level": float(np.median(closed_levels)),
+            "open_level": float(np.median(open_levels)),
+            "mirror": mirror,
+            "per_demo": artifacts,
+        }
+        if mirror:
+            bounds = [
+                (float(a["mirror_bounds"][0]), float(a["mirror_bounds"][1]))
+                for a in artifacts
+                if a.get("mirror") and isinstance(a.get("mirror_bounds"), (list, tuple))
+            ]
+            if bounds:
+                lo = float(np.median([b[0] for b in bounds]))
+                hi = float(np.median([b[1] for b in bounds]))
+                aggregated["mirror_bounds"] = [lo, hi]
+        return aggregated
+
+    def _backfill_phase_thresholds(self, found_hash: str) -> None:
+        """Persist the aggregated calibration on cache hits when missing.
+
+        Caches produced by this code carry per-demo artifacts in their
+        trajectories, so a cache hit can backfill ``phase_thresholds.json``
+        without re-ingesting. Caches that predate the persistence carry no
+        artifacts: warn loudly (the rollout layer fails closed on the
+        missing file) so the operator knows a re-ingest is required before
+        per-phase success tracking can run.
+        """
+        cache_dir = self.cache_manager.cache_dir(found_hash)
+        if (cache_dir / "phase_thresholds.json").exists():
+            return
+        aggregated = self._aggregate_phase_thresholds()
+        if aggregated is None:
+            logger.warning(
+                "Cache %s predates per-demonstration phase-threshold "
+                "persistence (no calibration artifacts in its trajectories). "
+                "Per-phase success tracking will fail closed until the cache "
+                "is re-ingested (delete %s and re-run).",
+                found_hash,
+                cache_dir,
+            )
+            return
+        self.config_hash = found_hash
+        (cache_dir / "phase_thresholds.json").write_text(
+            json.dumps(aggregated, indent=2), encoding="utf-8"
+        )
+        logger.info(
+            "Backfilled phase_thresholds.json from per-demo artifacts "
+            "for cache %s (%d demos).",
+            found_hash,
+            aggregated["n_demos"],
+        )
 
     # ------------------------------------------------------------------
     # Splitting

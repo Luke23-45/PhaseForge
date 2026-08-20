@@ -45,6 +45,8 @@ NEW_ABLATION = {
     "pf_corrupt_25",  # EXP-205
     "pf_corrupt_50",  # EXP-206
     "pf_shuffle_control",  # EXP-207
+    "warmstart_r50",  # EXP-210 (Wave 3 expert-init)
+    "pf_one_warm_plus_random",  # EXP-211 (Wave 3 expert-init)
 }
 
 NEW_BC_RNN = {"bc_rnn"}
@@ -105,6 +107,17 @@ def _find_run_by_meta(base: Path, method_name: str, seed: int, tag: str | None) 
             f"seed={seed} tag={tag}"
         )
     return sorted(matches)[-1]
+
+
+def _find_provider_ckpt(outputs: Path, provider, seed: int) -> Path:
+    """Stage-1 best checkpoint, refusing incomplete runs (no checkpoint files)."""
+    prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
+    ckpt = prov_dir / "checkpoints" / "checkpoint_best.pt"
+    if not ckpt.is_file():
+        raise RuntimeError(
+            f"stage-1 run {prov_dir.name} is incomplete (missing checkpoints/checkpoint_best.pt)"
+        )
+    return ckpt
 
 
 def _execute(argv: list[str], log_path: Path, timeout: int) -> None:

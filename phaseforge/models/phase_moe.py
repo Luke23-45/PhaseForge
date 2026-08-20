@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F
@@ -12,22 +13,48 @@ from phaseforge.models.base import BaseManipulationModel, ModelOutput
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.clustering import (
     compute_hierarchical_phase_prototypes,
+    compute_phase_centroids,
     compute_phase_head_router_weights,
     spherical_kmeans,
 )
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
+    one_warm_experts_from_action_head,
+    partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.router import TopKRouter
+from phaseforge.models.components.soft_mapping import (
+    build_hierarchical_uniform_mapping,
+    build_prototype_softmax_mapping,
+    validate_soft_mapping,
+)
 
 logger = logging.getLogger(__name__)
 
+#: V2-E evaluation-time routing interventions (report1.md §V2-E).
+EVAL_ROUTER_MODES: frozenset[str] = frozenset(
+    {"learned", "sticky", "uniform", "oracle"}
+)
+
+
+def _hash_dropped_indices(indices: list[int]) -> str:
+    """Stable sha256 of the dropped-neuron index set for audit metadata."""
+    h = hashlib.sha256()
+    for i in sorted(indices):
+        h.update(int(i).to_bytes(8, "little", signed=False))
+    return h.hexdigest()
+
 
 class PhaseBootstrappedMoE(BaseManipulationModel):
+    # Static annotation for the registered buffer so mypy resolves
+    # ``self.soft_mapping`` as a Tensor instead of nn.Module.__getattr__'s
+    # ``Tensor | Module`` fallback.
+    soft_mapping: Tensor
+
     """Phase-Bootstrapped Mixture-of-Experts.
 
     This model operates in two distinct stages:
@@ -49,9 +76,24 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         expert: A single ExpertMLP template to be cloned for Stage 2.
         router_init: Optional configuration dictionary for router initialization.
             Keys: 'type' ('centroid' | 'spherical_centroid' | 'spherical_kmeans' |
-                  'kmeans' | 'phase_head' | 'random'), 'seed' (int).
+                  'kmeans' | 'phase_head' | 'soft_mapping' | 'random'), 'seed' (int),
+                  'mapping_mode'/'temperature' (soft_mapping only).
         expert_init: Optional configuration dictionary for expert initialization.
-            Keys: 'type' ('warmstart' | 'random'), 'jitter_std' (float).
+            Keys: 'type' ('warmstart' | 'partial_warm' | 'one_warm' | 'random'),
+            'jitter_std' (float; warmstart/one_warm), 'drop_rate' (float;
+            partial_warm, default 0.5), 'warm_idx' (int; one_warm, default 0),
+            'rotate_warm_idx_by_seed' (bool; one_warm, default false),
+            'seed' (int; partial_warm, default 42).
+        soft_mapping: Optional configuration dictionary for the soft
+            phase-to-expert mapping M (V2-B; see
+            phaseforge.models.components.soft_mapping). The (P, E) matrix
+            is a persistent zero-initialized buffer, built during
+            ``bootstrap_moe()`` when ``router_init.type='soft_mapping'``,
+            and carried in checkpoints from then on.
+        teacher_routing: Optional configuration dictionary for V2-D
+            teacher-distilled routing. Only ``enabled`` is read here; the
+            trainer-side knobs (lambda0, annealing) live under
+            ``train.teacher_routing``.
     """
 
     def __init__(
@@ -63,6 +105,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         expert: ExpertMLP,
         router_init: dict[str, Any] | None = None,
         expert_init: dict[str, Any] | None = None,
+        soft_mapping: dict[str, Any] | None = None,
+        teacher_routing: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.encoder = encoder
@@ -83,13 +127,78 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             if expert_init is not None
             else {"type": "warmstart", "jitter_std": 0.02}
         )
+        self.soft_mapping_cfg = dict(soft_mapping) if soft_mapping is not None else {}
+        self.teacher_routing_cfg = dict(teacher_routing) if teacher_routing is not None else {}
+
+        # Audit metadata populated by ``bootstrap_moe`` after a successful
+        # Stage 1 -> Stage 2 transition. Initialized to ``None`` so the model
+        # state is well-defined before Stage 2 and consumers (cli metadata
+        # writer, tests) can rely on attribute existence rather than relying
+        # on dynamic attribute creation.
+        self._expert_init_info: dict[str, Any] | None = None
+
+        # Persistent soft phase->expert mapping M (P, E). Zero-initialized:
+        # a checkpoint that predates M (or a stage-1 checkpoint) loads into
+        # this model leaving M zeroed, and the teacher/oracle paths fail
+        # closed on the all-zero matrix instead of silently routing with it.
+        self.register_buffer(
+            "soft_mapping",
+            torch.zeros(
+                int(self.phase_head.num_phases),
+                int(self.moe_layer.router.num_experts),
+            ),
+        )
 
         # Internal state to track which stage the model is currently configured for
         self._stage = 1
         self._encoder_frozen = False
 
+        # V2-E: evaluation-time routing intervention ("learned" = the trained
+        # router; the others are evaluation-only baselines, report1.md §V2-E).
+        self._eval_mode = "learned"
+
         # Storage for the most recent routing information for metrics tracking
         self._last_gate_logits: Tensor | None = None
+
+    @property
+    def eval_mode(self) -> str:
+        """The active V2-E evaluation-time routing intervention.
+
+        One of ``learned`` / ``sticky`` / ``uniform`` / ``oracle`` (default
+        ``learned``). The interventions are evaluation-time only: they
+        replace the dispatch selection, never the trained gate weights.
+        """
+        return self._eval_mode
+
+    @eval_mode.setter
+    def eval_mode(self, mode: str) -> None:
+        mode = str(mode).lower()
+        if mode not in EVAL_ROUTER_MODES:
+            raise ValueError(
+                f"Unknown eval_mode {mode!r}. Supported: "
+                + ", ".join(sorted(EVAL_ROUTER_MODES))
+                + "."
+            )
+        self._eval_mode = mode
+
+    def reset(self) -> None:
+        """Clear per-episode evaluation state (start of a new rollout episode).
+
+        The rollout runner calls ``reset()`` on the model before every
+        episode when the callable exists; the sticky-EMA eval mode must
+        start each episode from a clean EMA.
+        """
+        self.moe_layer.router.reset_sticky_ema()
+
+    @property
+    def teacher_routing_enabled(self) -> bool:
+        """Whether the V2-D teacher path is active for this model.
+
+        Single source of truth is ``models.teacher_routing.enabled`` (the
+        same config block the trainer reads), mirrored here so the forward
+        pass and the trainer cannot disagree.
+        """
+        return bool(self.teacher_routing_cfg.get("enabled", False))
 
     @property
     def stage(self) -> int:
@@ -161,18 +270,47 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
         elif self._stage == 2:
             # Stage 2: MoE routing
-            moe_out = self.moe_layer(latent)
+            override = None if self._eval_mode == "learned" else self._eval_mode
+            oracle_phase_logits: Tensor | None = None
+            oracle_mapping: Tensor | None = None
+            if self._eval_mode == "oracle":
+                # The phase-head oracle routes by M^T softmax(phase_head(z));
+                # fails closed when M is all-zero (checkpoint predates
+                # soft-mapping persistence).
+                oracle_phase_logits = self.phase_head(latent)
+                oracle_mapping = self.require_soft_mapping()
+            moe_out = self.moe_layer(
+                latent,
+                trajectory_id=batch.get("trajectory_id"),
+                trajectory_position=batch.get("trajectory_position"),
+                router_override=override,
+                phase_logits=oracle_phase_logits,
+                mapping=oracle_mapping,
+            )
+
+            # V2-D teacher path: when teacher routing is enabled the phase
+            # head also runs in Stage 2, emitting phase_logits for the
+            # trainer's KL target T = M^T softmax(phase_logits). Fails closed
+            # when M is all-zero (checkpoint predates soft-mapping).
+            if self.teacher_routing_enabled:
+                self.require_soft_mapping()
+                teacher_phase_logits: Tensor | None = self.phase_head(latent)
+            else:
+                teacher_phase_logits = None
 
             # Store gate logits for metric callbacks
             self._last_gate_logits = moe_out.gate_logits.detach()
 
             return ModelOutput(
                 action_pred=moe_out.combined_output,
-                phase_logits=None,  # Phase head is ignored in Stage 2
+                phase_logits=teacher_phase_logits,
                 routing_weights=moe_out.routing_weights,
                 expert_indices=moe_out.expert_indices,
                 gate_logits=moe_out.gate_logits,
-                aux_losses={"balance": moe_out.balance_loss},
+                aux_losses={
+                    "balance": moe_out.balance_loss,
+                    "sticky": moe_out.sticky_loss,
+                },
             )
         else:
             raise RuntimeError(f"Invalid stage {self._stage}")
@@ -184,7 +322,18 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         if self._stage == 1:
             return self.action_head(latent)
         else:
-            moe_out = self.moe_layer(latent)
+            override = None if self._eval_mode == "learned" else self._eval_mode
+            oracle_phase_logits: Tensor | None = None
+            oracle_mapping: Tensor | None = None
+            if self._eval_mode == "oracle":
+                oracle_phase_logits = self.phase_head(latent)
+                oracle_mapping = self.require_soft_mapping()
+            moe_out = self.moe_layer(
+                latent,
+                router_override=override,
+                phase_logits=oracle_phase_logits,
+                mapping=oracle_mapping,
+            )
             return moe_out.combined_output
 
     def num_parameters(self) -> int:
@@ -199,6 +348,25 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             return None
         return {"gate_logits": self._last_gate_logits}
 
+    def require_soft_mapping(self) -> Tensor:
+        """Return the soft phase->expert mapping M, failing closed when absent.
+
+        A zero-initialized buffer means the checkpoint predates M (or was
+        loaded from a stage-1 checkpoint); routing with an all-zero matrix
+        would silently produce NaN weights. Every consumer of M (teacher
+        distillation, oracle evaluation) must go through this accessor so
+        the failure is loud instead.
+        """
+        if not bool(self.soft_mapping.any()):
+            raise RuntimeError(
+                "The soft phase->expert mapping M is all-zero: this model was "
+                "loaded from a checkpoint that predates soft-mapping "
+                "persistence (or from a stage-1 checkpoint). Re-train/re-bootstrap "
+                "with router_init.type='soft_mapping' before using a consumer "
+                "of M (teacher routing, oracle evaluation)."
+            )
+        return self.soft_mapping
+
     @torch.no_grad()
     def bootstrap_moe(
         self,
@@ -206,6 +374,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         device: torch.device | str = "cuda",
         router_init: dict[str, Any] | None = None,
         expert_init: dict[str, Any] | None = None,
+        training_seed: int | None = None,
     ) -> None:
         """Bootstrapping the MoE from Stage 1 knowledge.
 
@@ -219,20 +388,35 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             * 'random': keeps random router initialization.
         - Expert initialization:
             * 'warmstart': ActionHead weights copied with configurable jitter_std.
-            * 'random': independent Kaiming draws.
+            * 'partial_warm': ActionHead copied (exact, no jitter) and a
+              fraction ``drop_rate`` of intermediate neurons reinitialized
+              per expert using the standard Kaiming-uniform draw (Drop-
+              Upcycling-style; shared index set across experts; see
+              ``partial_reinit_experts_from_action_head``).
+            * 'one_warm': expert ``warm_idx`` receives the standard warm
+              start; all other experts are reset via Kaiming-uniform draws.
+            * 'random': independent Kaiming draws for every expert.
 
         Args:
             dataloader: Training dataloader to compute centroids/clusters over.
             device: Compute device.
             router_init: Optional override for router initialization config.
             expert_init: Optional override for expert initialization config.
+            training_seed: Optional training seed used to deterministically
+                rotate ``warm_idx`` for ``one_warm`` when
+                ``expert_init.rotate_warm_idx_by_seed`` is true. Ignored
+                otherwise.
         """
         r_cfg = router_init or self.router_init_cfg
         e_cfg = expert_init or self.expert_init_cfg
 
         r_type = str(r_cfg.get("type", "centroid")).lower()
         e_type = str(e_cfg.get("type", "warmstart")).lower()
-        jitter_std = float(e_cfg.get("jitter_std", 0.02))
+        jitter_std = float(e_cfg.get("jitter_std", 0.02))  # type: ignore[arg-type]
+        drop_rate = float(e_cfg.get("drop_rate", 0.5))  # type: ignore[arg-type]
+        init_seed = int(e_cfg.get("seed", 42))  # type: ignore[arg-type]
+        warm_idx = int(e_cfg.get("warm_idx", 0))  # type: ignore[arg-type]
+        rotate_warm_idx_by_seed = bool(e_cfg.get("rotate_warm_idx_by_seed", False))  # type: ignore[arg-type]
         cluster_seed = int(r_cfg.get("seed", 42))
 
         logger.info(
@@ -249,7 +433,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
         # 1. Collect training latents and phase labels if needed for data-driven router inits
         needs_latents = r_type in (
-            "centroid", "phase_centroid", "spherical_centroid", "spherical_kmeans", "kmeans"
+            "centroid", "phase_centroid", "spherical_centroid", "spherical_kmeans", "kmeans",
+            "soft_mapping",
         )
         latents_list: list[Tensor] = []
         phases_list: list[Tensor] = []
@@ -343,15 +528,71 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 f"({num_experts} rows)."
             )
 
+        elif r_type == "soft_mapping":
+            mapping_mode = str(r_cfg.get("mapping_mode", "prototype_softmax")).lower()
+            temperature = float(r_cfg.get("temperature", 1.0))
+            if mapping_mode == "prototype_softmax":
+                prototypes = compute_hierarchical_phase_prototypes(
+                    all_latents,
+                    all_phases,
+                    num_phases,
+                    num_experts,
+                    seed=cluster_seed,
+                    spherical=True,
+                )
+                phase_centroids = compute_phase_centroids(
+                    all_latents, all_phases, num_phases, spherical=True
+                )
+                mapping = build_prototype_softmax_mapping(
+                    phase_centroids, prototypes, temperature=temperature
+                )
+                self.moe_layer.router.gate_linear.weight.data.copy_(prototypes)
+                self.moe_layer.router.gate_linear.bias.data.zero_()
+                logger.info(
+                    "Initialized router weights with %d spherical hierarchical "
+                    "phase prototypes (soft_mapping=%s, temperature=%s).",
+                    num_experts,
+                    mapping_mode,
+                    temperature,
+                )
+            elif mapping_mode == "hierarchical_uniform":
+                mapping = build_hierarchical_uniform_mapping(num_phases, num_experts)
+                logger.info(
+                    "Soft mapping built data-free as hierarchical uniform rows "
+                    "(%d phases, %d experts); router gate weights keep random "
+                    "initialization.",
+                    num_phases,
+                    num_experts,
+                )
+            else:
+                raise ValueError(
+                    f"Unknown soft_mapping mapping_mode '{mapping_mode}'. Supported: "
+                    "prototype_softmax, hierarchical_uniform."
+                )
+            validate_soft_mapping(mapping)
+            self.soft_mapping.copy_(
+                mapping.to(device=self.soft_mapping.device, dtype=self.soft_mapping.dtype)
+            )
+            logger.info(
+                "Persisted soft phase->expert mapping M of shape %s "
+                "(rows right-stochastic, validated).",
+                tuple(self.soft_mapping.shape),
+            )
+
         elif r_type == "random":
             logger.info("Router initialization: keeping random router weights (standard init).")
         else:
             raise ValueError(
                 f"Unknown router_init type '{r_type}'. Supported: "
-                "centroid, spherical_centroid, spherical_kmeans, kmeans, phase_head, random."
+                "centroid, spherical_centroid, spherical_kmeans, kmeans, "
+                "phase_head, soft_mapping, random."
             )
 
         # 3. Expert Initialization
+        expert_init_info: dict[str, Any] = {
+            "type": e_type,
+            "jitter_std": jitter_std,
+        }
         if e_type == "warmstart":
             warm_start_experts_from_action_head(
                 self.moe_layer.experts, self.action_head, jitter_std=jitter_std
@@ -359,15 +600,98 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             logger.info(
                 f"Warm-started all {num_experts} experts from ActionHead (jitter_std={jitter_std})."
             )
+        elif e_type == "partial_warm":
+            first_typed = cast(ExpertMLP, self.moe_layer.experts[0]) if num_experts > 0 else None
+            hidden_dim = (
+                int(first_typed.hidden[0].weight.size(0))  # type: ignore[union-attr,operator]
+                if first_typed is not None
+                else 0
+            )
+            dropped_indices = partial_reinit_experts_from_action_head(
+                self.moe_layer.experts,
+                self.action_head,
+                drop_rate=drop_rate,
+                seed=init_seed,
+            )
+            logger.info(
+                f"Partial-warm-started all {num_experts} experts from ActionHead "
+                f"(drop_rate={drop_rate}, seed={init_seed}, "
+                f"dropped={len(dropped_indices)}/{hidden_dim}, jitter_std=0.0)."
+            )
+            expert_init_info.update(
+                {
+                    "drop_rate": drop_rate,
+                    "init_seed": init_seed,
+                    "hidden_dim": hidden_dim,
+                    "num_dropped_neurons": len(dropped_indices),
+                    "dropped_neuron_indices": dropped_indices,
+                    "dropped_indices_sha256": _hash_dropped_indices(dropped_indices),
+                }
+            )
+        elif e_type == "one_warm":
+            effective_warm_idx = warm_idx
+            if rotate_warm_idx_by_seed:
+                if training_seed is None:
+                    raise ValueError(
+                        "expert_init.rotate_warm_idx_by_seed=true but no "
+                        "training_seed was passed to bootstrap_moe"
+                    )
+                effective_warm_idx = (warm_idx + int(training_seed)) % num_experts
+            one_warm_experts_from_action_head(
+                self.moe_layer.experts,
+                self.action_head,
+                jitter_std=jitter_std,
+                warm_idx=effective_warm_idx,
+            )
+            logger.info(
+                f"Warm-started expert {effective_warm_idx}/{num_experts} from ActionHead "
+                f"(jitter_std={jitter_std}, requested_warm_idx={warm_idx}, "
+                f"rotate_warm_idx_by_seed={rotate_warm_idx_by_seed}, "
+                f"training_seed={training_seed}); reset the other {num_experts - 1} "
+                "experts to independent random draws."
+            )
+            expert_init_info.update(
+                {
+                    "warm_idx": int(effective_warm_idx),
+                    "requested_warm_idx": int(warm_idx),
+                    "rotate_warm_idx_by_seed": rotate_warm_idx_by_seed,
+                    "training_seed": int(training_seed) if training_seed is not None else None,
+                }
+            )
         elif e_type == "random":
             for expert in self.moe_layer.experts:
-                expert.reset_parameters()
+                expert.reset_parameters()  # type: ignore[union-attr,operator]
             logger.info(
                 f"Reset all {num_experts} experts to independent random draws "
                 "(scratch distribution)."
             )
         else:
-            raise ValueError(f"Unknown expert_init type '{e_type}'. Supported: warmstart, random.")
+            raise ValueError(
+                f"Unknown expert_init type '{e_type}'. Supported: "
+                "warmstart, partial_warm, one_warm, random."
+            )
+
+        router_cfg = r_cfg
+        self._expert_init_info = {
+            "expert_init": expert_init_info,
+            "router": {
+                "num_experts": int(num_experts),
+                "top_k": int(self.moe_layer.router.top_k),
+                "init_type": r_type,
+                "init_seed": int(cluster_seed),
+                "init_mapping_mode": (
+                    str(router_cfg.get("mapping_mode"))
+                    if "mapping_mode" in router_cfg
+                    else None
+                ),
+                "init_temperature": (
+                    float(router_cfg.get("temperature"))  # type: ignore[arg-type]
+                    if "temperature" in router_cfg
+                    else None
+                ),
+            },
+            "training_seed": int(training_seed) if training_seed is not None else None,
+        }
 
         # Exclude Stage 1 heads from the optimizer in Stage 2
         for param in self.action_head.parameters():
