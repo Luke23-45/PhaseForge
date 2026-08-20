@@ -1,6 +1,6 @@
 # PhaseForge — Research Data Provenance and Metrics Design (Final Specification)
 
-**Status:** finalized design; implementation pending
+**Status:** finalized design; schema implemented (`_ledger/`, `_results/`, `_summaries/` write paths and validators live); behavioral-evaluation parameters updated in the schema as rollout landed.
 
 **Related plans:** [final_evaluation_plan.md](final_evaluation_plan.md), [research_definition.md](research_definition.md)
 

@@ -28,7 +28,7 @@ from pathlib import Path
 
 # ── ensure the project is on sys.path ──────────────────────────────────────
 _HERE = Path(__file__).resolve().parent
-_PROJECT_ROOT = _HERE.parent
+_PROJECT_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 from phaseforge.utils.config import (  # noqa: E402

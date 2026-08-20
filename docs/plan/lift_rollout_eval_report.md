@@ -283,12 +283,30 @@ independent measurements, fixed, and the fix was locally validated before any GP
 
 ---
 
-## 10. References
+## 10. Post-merge reproduction confirmation (2026-08-20)
+
+The canonical `phaseforge_r50` (50% partial warm-start) direction was merged to `master`
+(`533d4b2`, `--no-ff` of `0a7e415`) after the Phase 1 fix. Two independent post-merge runs
+reproduce the corrected g8 results exactly:
+
+| Run | Commit | Output | per-seed success | Mean |
+|---|---|---|---|---|
+| Confirmation 1 | `0a7e415` | `epo_output/outputs/fiap/outputs` | 0.56 / 0.82 / 0.72 | 0.700 |
+| Confirmation 2 | `533d4b2` (master) | `epo_output/outputs/large_bjlkkllgc/outputs` | 0.56 / 0.84 / 0.72 | **0.707** |
+
+Protocol facts for both runs: bank `a7d3953c0afcf560`, `reset_seed` 2026, 50 eval episodes
+per training seed, Lift only, learned router. Verified three-way against the g8 reference
+(`epo_output/outputs/v2_g8`): per-seed init hashes identical to g8 (`9113226c…` / `3bd32a24…` /
+`e3c5a576…`), stage-1 `best_val_monitor` bit-identical to 17 digits across all three runs, and
+stage-2 best epochs (30 / 41 / 49) consistent (monitor agreement to ~7 digits — the residual
+is GPU nondeterminism). **Conclusion: the reported numbers are exactly reproducible at master.**
+
+## 11. References
 
 - `docs/plan/research_definition.md` — hypotheses H0–H4, required matrix, interpretation rules.
 - `docs/plan/state_only_rollout_implementation_plan.md` — rollout/reset/checkpoint protocol.
 - `docs/op/implementation_plan.md` — the professor's plan, gates, and Phase 1 fix results.
-- `docs/op/professor_reponse.txt` — the audit this revision answers (§2 statistical posture).
+- the professor's statistical audit (2026-08-18) that this revision answers — summarized in §7 (§2 statistical posture).
 - `docs/dev/legacy/lift_pilot_offline_report.md` — offline action-MSE/NMI pilot (pre-fix commit).
 - `scripts/analysis/stratified_stats.py` + `tests/test_stratified_stats.py` — seed-stratified bootstrap
   and PoI; deterministic (rng seed 12345).

@@ -37,7 +37,7 @@ from pathlib import Path
 from omegaconf import DictConfig
 from omegaconf.errors import OmegaConfBaseException
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = PROJECT_ROOT / "experiments" / "five_task.json"
 
 MONITOR_BY_STAGE = {1: "val/loss_action", 2: "val/loss_action"}
