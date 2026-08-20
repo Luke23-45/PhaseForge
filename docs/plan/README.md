@@ -8,10 +8,10 @@ so renames here require updating references.
 
 | File | Role |
 |---|---|
-| `research_definition.md` | Finalized research specification: hypotheses H0–H4, required experiment matrix, interpretation rules. |
+| `research_definition.md` | Finalized research specification: hypotheses H1–H6, required experiment matrix, interpretation rules. |
 | `state_only_rollout_implementation_plan.md` | Authoritative protocol for the five-task state-only paper (rollout/reset/checkpoint rules, claim boundaries). Supersedes the required/optional classifications in `design/final_evaluation_plan.md`. |
-| `experiment_runner.md` | Design of the commit-gated subprocess runner (`phaseforge-sweep`, `python -m phaseforge.runner`). Implemented. |
-| `gpu_rerun_runbook.md` | Commit-pinned runbook for the Lift protocol rerun with the monitor-restoration fix; the procedure used to produce the confirmed numbers. |
+| `experiment_runner.md` | Design of the commit-gated subprocess runner (`phaseforge-sweep`, `python -m phaseforge.runner`). Implemented; describes the frozen 45-cell five-task manifest. |
+| `gpu_rerun_runbook.md` | Commit-pinned runbook for the post-fix rerun. Lift phase complete and reproduced at `master` (see `reports/lift_rollout_eval_report.md` §10); the five-task sweep (§1c) is pending. |
 
 ## reports/ — Results & decision records
 
@@ -25,6 +25,6 @@ so renames here require updating references.
 
 | File | Role |
 |---|---|
-| `data_provenance_design.md` | Final metrics/provenance schema specification (ledger, results, summaries). Schema is implemented; referenced by `phaseforge/outputs_writer/curves.py`. |
+| `data_provenance_design.md` | Final metrics/provenance schema specification (ledger, results, summaries, curves, episode records). **Fully implemented** — compliance matrix (§3) reflects the current tree. |
 | `evaluation_literature_review.md` | Literature review of evaluation techniques for state-based policy learning; basis for the eval methodology and paper related work. |
 | `final_evaluation_plan.md` | Earlier evaluation plan. **Superseded** by `specs/state_only_rollout_implementation_plan.md`; retained because the Gate-0 dataset/simulator contract is cited by `phaseforge/data/ingestion/state_machine.py`. |

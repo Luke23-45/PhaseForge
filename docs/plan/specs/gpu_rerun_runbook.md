@@ -1,6 +1,10 @@
 # GPU Re-Run Runbook (post-fix, commit-pinned)
 
-**Status:** ready to execute on the GPU machine.
+**Status:** the Lift protocol from this runbook is **complete and reproduced at
+`master`** — see `../reports/lift_rollout_eval_report.md` §10 (confirmation 1 at
+`0a7e415` = 0.700; confirmation 2 at `533d4b2` = **0.707, exact match** to the
+g8 pilot). The five-task sweep (§1c) is still pending; the commands below are
+the reference procedure for it.
 
 **Why a re-run is required:** the cloud part-3 sweep (git `a07dd2c`) trained
 stage-1 with the buggy monitor `val/loss_total`. Because `loss_phase`
@@ -48,12 +52,13 @@ the Gate 2 spread criterion fails.
 
 1. `git checkout 3cd510f` (or a descendant); `git status` clean.
 2. `uv run python scripts/protocol/preflight_configs.py` → must print
-   `all 165 train cell(s) and 150 eval cell(s) passed.` (315 cells).
+   `all 150 train cell(s) and 135 eval cell(s) passed.` (285 cells).
    - This composes every (method, task, stage, seed) + every eval cell via
      Hydra and validates: data task match, `models.name` resolution alias,
      `num_phases` consistency, checkpoint monitor rule, `freeze_encoder`,
      scheduler `T_max`, `eval` group/mode consistency.
-3. `uv run pytest -q` → 547 passed (baseline at this revision).
+3. `uv run pytest -q` → 655 passed (current `master` baseline; 547 at the
+   original `3cd510f` pin).
 4. Verify the dataset/cache is present:
    - Processed cache under the shared data root (hash `4b06f5c2b28ebc9f` for
      Lift) OR the raw HDF5 files per task. The pipeline auto-builds from raw
@@ -98,7 +103,13 @@ is the full activation, and is the documented fallback if the Gate 2 spread crit
 fails. Protocol-compliance check on final runs: `train/lambda_phase` must be pinned at 1.0
 on every stage-1 curve.
 
-### 1b. Phase-2 subset first (professor §7): Lift, the two stage-1-affecting methods
+### 1b. Phase-2 subset first: Lift, the two stage-1-affecting methods
+*(executed 2026-08-19/20 — see `../reports/lift_rollout_eval_report.md` §10)*
+
+**Outcome:** the fix lifted the mean (0.640 → **0.707**, reproduced exactly at `master`), but
+the per-seed rollout spread did **not** shrink — 0.56 / 0.84 / 0.72, spread ≈ 0.28. The
+"highest mean, low variance" upgrade was therefore not attained on Lift; the spread criterion
+below remains open for the five-task sweep.
 
 ```bash
 # From the repo root, with the venv active:
@@ -111,7 +122,7 @@ phaseforge-sweep \
   --continue-on-error
 ```
 
-Success criteria (professor §7 Phase 2): per-seed rollout spread drops while
+Success criteria (Lift Phase 2): per-seed rollout spread drops while
 `val/loss_action` stays on its plateau; target PhaseForge spread 0.24 →
 ≈0.04–0.10 (plain-encoder control ≈0.04). Local CPU proxy already achieved
 with the official pipeline: stage-2 NMI spread 0.021 (λ-decay refinement:
@@ -146,7 +157,10 @@ phaseforge-sweep \
   fix, so per-epoch snapshots are unnecessary disk. Re-selection scripts
   (`scripts/analysis/tie_break_selector.py`) remain available for post-hoc audits.
 
-## 2. What will run (50 method rows × 3 seeds)
+## 2. What will run (45 method rows × 3 seeds)
+
+Per task, rows 1–9 repeat for Lift, Can, Square, ToolHang, Transport
+(indices in the manifest):
 
 | Rows | Method | Stages | Stage-1 source |
 |---|---|---|---|
@@ -158,10 +172,12 @@ phaseforge-sweep \
 | 6,15,24,33,42 | phase_pretrain_random_router | 2→eval | phaseforge stage-1 |
 | 7,16,25,34,43 | plain_encoder_phase_bootstrap | 2→eval | bc stage-1 |
 | 8,17,26,35,44 | teacher_forced | 2→eval | phaseforge stage-1 |
-| 9,18,27,36,45 | oracle_moe | 2→eval | — (offline-only) |
-| 46–50 | bc_rnn | 1→eval | — |
+| 9,18,27,36,45 | bc_rnn | 1→eval | — |
 
-Eval mode: rollout for all except `oracle_moe` (offline metrics).
+Eval mode: rollout for all cells. Oracle ground-truth routing is not a
+training cell in the manifest — it is an eval-time diagnostic on
+phaseforge's trained expert set (`phaseforge/models/phase_moe.py`,
+`eval_mode="oracle"`; see `research_definition.md` §3 H5).
 
 ## 3. Monitoring
 
@@ -185,7 +201,8 @@ Eval mode: rollout for all except `oracle_moe` (offline metrics).
 3. Spot-check `git_commit` in a sample of `run_meta.json` files = fix revision.
 4. `phaseforge-sweep --outputs outputs_rerun --dry-run` prints all steps as
    `skip (already completed)` — nothing to re-run.
-5. Re-run `uv run python scripts/protocol/preflight_configs.py` (still 315 passed).
+5. Re-run `uv run python scripts/protocol/preflight_configs.py` (still
+   `150 train + 135 eval cell(s) passed`).
 
 ## 5. Local validation reference (CPU, for comparison)
 

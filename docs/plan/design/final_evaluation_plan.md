@@ -147,7 +147,7 @@ The current single-step MLP is insufficient for a claim about long-horizon or hi
 
 All main models must receive the same fixed history window, or the project must explicitly narrow its claim to instantaneous control. The initial choice should be a short fixed window, such as 5–10 observations, with the same window and padding rules for BC, MoE, and PhaseForge.
 
-A recurrent BC baseline is required because robomimic reports strong benefits from history-dependent policies.
+A recurrent BC baseline is required because robomimic reports strong benefits from history-dependent policies. *(Implemented: `phaseforge/models/baselines/bc_rnn.py` — LSTM, declared ten-step history window on the `{task}_rnn` data variants; the five-task manifest includes it as the temporal comparator.)*
 
 ### 3.4 Negative-control observation
 
@@ -186,8 +186,9 @@ and explicitly warns that the older `offline_study` and v1.4.1 dataset tracks
 may not reproduce the same results. The repository's optional rollout extra
 pins the v1.5.1 environment for Lift, Can, Square, and Transport; it is not
 approval to mix that environment with Tool Hang, whose embedded metadata
-requires v1.5.0. Before rollout work, select the matching per-task
-environment and record it in `MANIFEST.json`.
+requires v1.5.0. The chosen pair is recorded in the protocol manifest
+(`experiments/five_task.json`), in each `data/<task>.yaml`, and in the
+per-run resolved-config and provenance artifacts.
 
 ### 4.2 Splits
 
@@ -262,6 +263,19 @@ An official low-dimensional Diffusion Policy reproduction may be added after the
 
 For the central PhaseForge comparison, hold constant:
 
+- parameter budget, as closely as practical;
+- history length;
+- encoder width and depth;
+- optimizer and learning-rate schedule;
+- number of training updates;
+- normalization;
+- batch construction;
+- task split;
+- checkpoint selection rule;
+- evaluation initial states.
+
+Only the routing initialization and phase-supervision strategy should change in the primary factorial comparison.
+
 ### Reproducibility and seeding policy
 
 Three orthogonal seed sources are used in a single training run, and they
@@ -294,18 +308,6 @@ This three-source decomposition is enforced in code (the
 `data.split.seed` only) and verified by regression tests
 (`tests/test_state_machine.py::TestTrainSamplerGenerator`,
 `::TestSplitSeedIndependence`).
-- parameter budget, as closely as practical;
-- history length;
-- encoder width and depth;
-- optimizer and learning-rate schedule;
-- number of training updates;
-- normalization;
-- batch construction;
-- task split;
-- checkpoint selection rule;
-- evaluation initial states.
-
-Only the routing initialization and phase-supervision strategy should change in the primary factorial comparison.
 
 ---
 
@@ -612,11 +614,12 @@ Before the final matrix, the codebase must implement and test:
 16. Wilson episode intervals and paired cross-seed summary statistics;
 17. complete provenance in every result file.
 
-The current repository does not yet satisfy this list: it has the Lift HDF5
-ingestion pilot, offline single-step data path, simulator rollout adapter,
-and task-independent gates (parity + state restore + action contract +
-native success-predicate probe), but not the history-aware dataset/model
-path or the complete three-seed × five-task configuration matrix. No final
+The current repository satisfies this list with the exceptions noted: it has
+the Lift HDF5 ingestion pipeline, the offline single-step data path, the
+history-aware dataset/model path (`{task}_rnn` variants + `bc_rnn`), the
+simulator rollout adapter, and the task-independent gates (parity + state
+restore + action contract + native success-predicate probe). What remains is
+the complete three-seed × five-task configuration matrix execution. No final
 success-rate claim is valid until the three-seed matrix finishes
 successfully across all five tasks.
 

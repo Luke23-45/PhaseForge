@@ -81,7 +81,7 @@ PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and
 | PhaseForge SR ≈ BC SR | Report MSE advantage only, if any | "PhaseForge improves control" |
 | All SR = 0 | MSE comparisons, specialization metrics, routing quality | Any rollout-success claim |
 | PhaseForge MSE > BC MSE | "The transfer mechanism did not improve action prediction" | "PhaseForge is better" |
-| current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage | Report point estimates with CIs; note directional evidence | "PhaseForge significantly outperforms" |
+| PhaseForge top seed mean but 95% CIs overlap (n = 3 seeds) | Report point estimates with CIs; note directional evidence | "PhaseForge significantly outperforms" |
 
 ---
 
@@ -91,7 +91,7 @@ PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and
 |---|---|---|---|---|---|
 | EXP-101 | `phaseforge` | Phase-supervised | Phase Centroid | Warmstart (0.02) | **Proposed Method (Privileged Geometry Transfer)** |
 | EXP-102 | `bc` | Plain (BC) | — | — | Behavior floor |
-| EXP-103 | `bc_large` | Plain (BC-Large) | — | — | Capacity control (385,855 params, +0.8%) |
+| EXP-103 | `bc_large` | Plain (BC-Large) | — | — | Capacity control (385,855 params, 1.86× bc) |
 | EXP-104 | `bc_robot_only` | Plain (BC) | — | — | Negative control (no object state) |
 | EXP-105 | `scratch_moe` | Random | Random | Random | No-pretraining baseline |
 | EXP-106 | `warmstart_moe` | Plain (BC) | Random | Warmstart (0.02) | Warm-start MoE (BC encoder × random router) |
@@ -106,7 +106,7 @@ PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and
 | EXP-115 | `pf_ft` | Phase-supervised | Phase Centroid | Warmstart (0.02) | PhaseForge-FT: encoder unfrozen (LR scale 0.1) |
 | EXP-116 | `teacher_forced` | Phase-supervised | GT (train) / PhaseHead (eval) | Warmstart (0.02) | Privileged routing diagnostic & gap decomposition |
 
-> **Oracle MoE** (EXP-117) is not listed as a training cell. It is an eval-time routing intervention on PhaseForge's trained expert set (see §3 H5). Implemented in `scripts/oracle_routing_diagnostic.py`.
+> **Oracle MoE** (EXP-117) is not listed as a training cell. It is an eval-time routing intervention on PhaseForge's trained expert set (see §3 H5), implemented as the `oracle_moe` baseline: phase-directed dispatch via `eval_mode="oracle"` in `phaseforge/models/phase_moe.py` (routes by $M^T \operatorname{softmax}(\text{phase\_head}(z))$ on the trained experts).
 
 ## 6. Wave 2 — Sensitivity & Scaling Ablations
 

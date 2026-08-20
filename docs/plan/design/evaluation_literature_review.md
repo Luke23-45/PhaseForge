@@ -1,7 +1,7 @@
 # Evaluation Techniques for State-Only (Non-Vision) Policy Learning — Literature Review
 
 **Date:** 2026-08-15 (expanded after second, deeper research pass)
-**Purpose:** literature review of evaluation techniques for state-based (non-vision) robot manipulation policies. Companion to `state_only_rollout_implementation_plan.md`.
+**Purpose:** literature review of evaluation techniques for state-based (non-vision) robot manipulation policies. Companion to [`../specs/state_only_rollout_implementation_plan.md`](../specs/state_only_rollout_implementation_plan.md).
 **Scope:** policies consuming structured low-dimensional state (no RGB, no embeddings), single-step or short-horizon, evaluated in closed-loop simulation (robosuite/MuJoCo) and — where noted — real robots.
 
 ---
@@ -334,8 +334,8 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 16. McNemar (1947); Dietterich (1998); Demšar (2006); Newcombe (1998). https://www.statstest.com/paired-evaluation-mcnemar-test-before-after-classification · https://stresearch-dev.github.io/eval-stats-toolkit · Raschka STAT 479 slides: https://sebastianraschka.com/pdf/lecture-notes/stat479fs18/11_eval-algo_slides.pdf · multiple McNemar / Bonferroni-Holm: https://pmc.ncbi.nlm.nih.gov/articles/PMC2902578/ · McNemar paired-binary reference: https://pmc.ncbi.nlm.nih.gov/articles/PMC3716987/
 17. OPS/OPE: FQE model selection (PMC 9190764); repeated data splitting (NeurIPS 2022, https://proceedings.neurips.cc/paper_files/paper/2022/file/5ee7ed60a7e8169012224dec5fe0d27f-Paper-Conference.pdf); OPS hardness (https://arxiv.org/html/2312.02355v2); offline-RL workflow (https://huggingface.co/papers/2109.10813)
 18. Cheng et al., *MoE-DP* (2025; preprint, venue not verified). https://www.alphaxiv.org/overview/2511.05007v1
-20. Li et al., *DiTEA* (AAAI 2026). https://ojs.aaai.org/index.php/AAAI/article/view/38902/42864
-21. Guo et al., *Advancing Expert Specialization for Better MoE*. https://openreview.net/forum?id=iydmH9boLb
-22. MoE lineage: Switch Transformers https://arxiv.org/abs/2101.03961 · GShard https://arxiv.org/abs/2006.16668 · load-balancing review incl. DeepSeek-V3: https://huggingface.co/blog/NormalUhr/moe-balance · https://huggingface.co/blog/moe
-23. TacUMI — phase segmentation evaluation. https://api.emergentmind.com/topics/tacumi
-24. Consistency Policy (RSS 2024), 200-rollout eval. https://www.roboticsproceedings.org/rss20/p071.pdf
+19. Li et al., *DiTEA* (AAAI 2026). https://ojs.aaai.org/index.php/AAAI/article/view/38902/42864
+20. Guo et al., *Advancing Expert Specialization for Better MoE*. https://openreview.net/forum?id=iydmH9boLb
+21. MoE lineage: Switch Transformers https://arxiv.org/abs/2101.03961 · GShard https://arxiv.org/abs/2006.16668 · load-balancing review incl. DeepSeek-V3: https://huggingface.co/blog/NormalUhr/moe-balance · https://huggingface.co/blog/moe
+22. TacUMI — phase segmentation evaluation. https://api.emergentmind.com/topics/tacumi
+23. Consistency Policy (RSS 2024), 200-rollout eval. https://www.roboticsproceedings.org/rss20/p071.pdf

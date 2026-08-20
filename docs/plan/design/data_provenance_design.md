@@ -1,6 +1,11 @@
 # PhaseForge — Research Data Provenance and Metrics Design (Final Specification)
 
-**Status:** finalized design; schema implemented (`_ledger/`, `_results/`, `_summaries/` write paths and validators live); behavioral-evaluation parameters updated in the schema as rollout landed.
+**Status:** finalized design — **fully implemented** (2026-08-20). Per-run
+`metrics/training_curves.jsonl` + `metrics/summary.json`, the global
+`_results/training_summary.jsonl` ledger, `metadata/data_provenance.json` +
+`metadata/artifact_manifest.json`, `run_meta.json` `kind`, rollout
+`episodes.jsonl`, and the training/rollout aggregate tables are all live and
+tested. Compliance markers in §3 reflect the current tree.
 
 **Related plans:** [final_evaluation_plan.md](final_evaluation_plan.md), [research_definition.md](../specs/research_definition.md)
 
@@ -11,13 +16,13 @@ is missing, and the proposed schemas and layout. It does not modify any code.
 
 ---
 
-**Review outcome:** this is the corrected provenance specification. Its
-implementation remains pending. The behavioral evaluation parameters remain
-authoritative in [final_evaluation_plan.md](final_evaluation_plan.md).
+**Review outcome:** this is the corrected provenance specification. The
+behavioral evaluation parameters remain authoritative in
+[final_evaluation_plan.md](final_evaluation_plan.md).
 
-**Final status:** the design is finalized for implementation. The artifacts
-marked `PROPOSED` are required implementation work, not unresolved design
-questions.
+**Final status:** the design is finalized and **fully implemented** (see the
+compliance matrix, §3); the `PROPOSED` markers below are retained from the
+review stage for traceability and reflect the implemented status.
 
 ## 0. Purpose
 
@@ -35,18 +40,18 @@ Everything below is designed so that **the paper can be assembled from the
 persisted artifacts alone** — no dependence on wandb, console logs, or memory
 state that is lost when a cloud session ends.
 
-The current implementation is directionally correct (the eval side matches the
-target layout) but the **training side does not yet persist the information the
-paper needs**. Section 3 is the compliance gap; Sections 4–8 are the
-implementation specification.
+The implementation now matches the target layout on both the eval and training
+sides: training curves, per-run summaries, data-provenance manifests, the
+global training ledger, and rollout episode records are persisted and
+schema-validated. Section 3 is the compliance matrix; Sections 4–8 are the
+specification that was implemented.
 
 ---
 
-The current implementation has a usable offline evaluation ledger and cache
-manifest, but it does not yet persist training curves, a full data-provenance
-snapshot inside each run, or rollout-level episode records. The compliance
-matrix below is therefore intentionally explicit about implemented versus
-required artifacts.
+The implementation persists training curves, a full data-provenance snapshot
+inside each run, rollout-level episode records, and the training and rollout
+aggregate summaries. The compliance matrix below records the implemented
+status of every artifact.
 
 ## 1. Target outputs layout (the contract)
 
@@ -54,29 +59,31 @@ required artifacts.
 outputs/
   _ledger/runs.jsonl + index.json        # every train AND eval run, one row   [implemented]
   _results/results.jsonl                 # global append-only EVAL rows (aggregation source) [implemented]
-  _results/training_summary.jsonl        # global append-only TRAIN summary rows (PROPOSED)
+  _results/training_summary.jsonl        # global append-only TRAIN summary rows [implemented]
+  _results/rollout_success.csv           # per (task, model, tag, seed) + Wilson CI [implemented]
+  _results/rollout_comparisons.csv       # paired PhaseForge-minus-baseline diffs [implemented]
   {model}/stage{N}/seed{S}/{ts}_{runid}/   # multi-seed runs grouped by seed;
       resolved_config.yaml               #   [implemented]
-      metadata/data_provenance.json      #   PROPOSED: copy of cache provenance
-      metadata/artifact_manifest.json    #   PROPOSED: SHA-256 of paper inputs
-      run_meta.json                      #   [implemented — MUST add kind]
+      metadata/data_provenance.json      #   copy of cache provenance [implemented]
+      metadata/artifact_manifest.json    #   SHA-256 of paper inputs [implemented]
+      run_meta.json                      #   [implemented — kind + data_config_hash present]
       metadata/environment.json          #   [implemented]
-      timings.json                       #   [implemented — total only; PROPOSE per-epoch]
-      metrics/training_curves.jsonl      #   PROPOSED: one validated row per epoch
-      metrics/summary.json               #   PROPOSED: per-run final scalars at on_train_end
+      timings.json                       #   [implemented — total only; per-epoch timing in curves]
+      metrics/training_curves.jsonl      #   one validated row per epoch [implemented]
+      metrics/summary.json               #   per-run final scalars at on_train_end [implemented]
       checkpoints/                       #   [implemented]
   eval/{model}/seed{S}/{ts}_{runid}/     # seed level mirrors training; legacy
       eval_results.json                  #   runs (no seed{S}/ level) stay readable
-      episodes.jsonl                     #   PROPOSED: one row per rollout episode
+      episodes.jsonl                     #   one row per rollout episode [implemented]
       metadata/environment.json, timings.json
   _summaries/                            # PRODUCED by summarize tooling:
       aggregates.csv                     #   eval side      [implemented]
       bootstrap_ci.csv                   #   eval side      [implemented]
       paired_wilcoxon.csv                #   eval side      [implemented]
       metrics.json                       #   eval side      [implemented]
-      training_aggregates.csv            #   PROPOSED
-      training_cost.csv                  #   PROPOSED
-      training_curves.csv                #   PROPOSED
+      training_aggregates.csv            #   [implemented] (summarize_train.py)
+      training_cost.csv                  #   [implemented] (summarize_train.py)
+      training_curves.csv                #   [implemented] (summarize_train.py)
 ```
 
 ---
@@ -125,19 +132,24 @@ proposed training counterpart), exactly as the eval side already works.
 |---|---|---|
 | `_ledger/runs.jsonl` + `index.json` | ✅ implemented | one row per train and eval run; `pending→completed/failed` lifecycle |
 | `_results/results.jsonl` | ✅ implemented | schema-validated eval rows; the eval aggregation source |
-| `run_meta.json` | ⚠️ partial | has `model_name`, `stage`, `seed`, `device`, git, `config_hash`, `tag`; **missing `kind`** |
+| `_results/training_summary.jsonl` | ✅ implemented | schema-validated train rows; `phaseforge/outputs_writer/backfill.py` reconciles the ledger from run-local summaries |
+| `run_meta.json` | ✅ implemented | `model_name`, `stage`, `seed`, `device`, git, `config_hash`, `tag`, plus `kind` and `data_config_hash` (§5.5) |
 | `metadata/environment.json` | ✅ implemented | deps, git, host, data-config hash, config hash |
-| `timings.json` | ⚠️ partial | total start/end/wall seconds; **no per-epoch timing** |
+| `metadata/data_provenance.json` | ✅ implemented | copy of the cache manifest's `provenance` block + cache identity (`phaseforge/outputs_writer/provenance.py`) |
+| `metadata/artifact_manifest.json` | ✅ implemented | relative path, byte size, SHA-256 per paper input; `complete` flag only when every required input was hashed |
+| `timings.json` | ✅ implemented | total start/end/wall seconds; per-epoch timing lives in the curves file (`epoch_wall_seconds`, `train_steps_per_second`) |
 | `checkpoints/` | ✅ implemented | full trainer state (model/opt/scheduler/RNG/callbacks) |
 | eval run dir + `eval_results.json` | ✅ implemented | per-run snapshot; result row also carries `ckpt_path` for traceability |
+| `episodes.jsonl` | ✅ implemented | one schema-validated row per rollout episode (§5.4) |
+| **Training curves (loss components vs epoch)** | ✅ implemented | `metrics/training_curves.jsonl`; one validated row per epoch, idempotent across resume |
+| **MoE routing dynamics vs epoch (NMI, balance, collapse, entropy)** | ✅ implemented | persisted per epoch for Stage 2 cells |
+| **Phase-classification accuracy** | ✅ implemented | `train/phase_acc`, `val/phase_acc`, plus balanced (macro-recall) variants |
+| **Teacher-forced routing accuracy (predicted vs GT phase at inference)** | ✅ implemented | `val/routing_accuracy` + `val/routing_balanced_accuracy` |
+| **Per-epoch / per-step timing, steps-per-second** | ✅ implemented | per-epoch in curves; total in `timings.json` |
+| **Trainable-parameter counts** | ✅ implemented | `trainable_params` / `total_params` in `metrics/summary.json` (after freeze logic) |
 | `_summaries/` eval artifacts | ✅ implemented | aggregates / bootstrap CI / paired Wilcoxon / metrics JSON |
-| **Training curves (loss components vs epoch)** | ❌ **missing** | only in `MetricTrackerCallback` memory or wandb (disabled by default) — **lost after the run** |
-| **MoE routing dynamics vs epoch (NMI, balance, collapse, entropy)** | ❌ **missing on disk** | computed every epoch in `Stage2Trainer._validate` but only logged to console |
-| **Phase-classification accuracy** | ❌ **missing** | Stage 1 logs only `loss_phase`; the accuracy the plan requires (§8, Gate 3) is never computed |
-| **Teacher-forced routing accuracy (predicted vs GT phase at inference)** | ❌ **missing** | the core diagnostic for the `teacher_forced` cell |
-| **Per-epoch / per-step timing, steps-per-second** | ❌ **missing** | only total run wall time exists |
-| **Trainable-parameter counts** | ⚠️ partial | logged at Stage 2 init (console only), never persisted |
-| **Training-side aggregate tables** | ❌ **missing** | no `training_aggregates.csv` / cost table |
+| **Training-side aggregate tables** | ✅ implemented | `training_aggregates.csv`, `training_cost.csv`, `training_curves.csv` via `scripts/analysis/summarize_train.py` |
+| **Rollout aggregate tables** | ✅ implemented | `_results/rollout_success.csv` (Wilson CI) + `_results/rollout_comparisons.csv` (paired diffs) via `phaseforge/evaluations/rollout/report.py` |
 
 **Additional provenance requirement:** the existing cache manifest already
 records raw-file SHA-256 values, split demo keys, schema, normalization,
@@ -153,18 +165,19 @@ curves, summary, selected checkpoint, and evaluation/episode records. It must
 exclude itself and volatile lock files, be written only after those inputs are
 closed, and be treated as incomplete if any required input is absent.
 
-**Headline gap:** today, a completed training run leaves on disk its config,
-checkpoints, and a wall-clock timestamp — but **none of its training curves**.
-Every curve the paper would plot must be re-derived or is lost. This is the
-single most important missing piece.
+**Headline gap (resolved):** previously a completed training run left on disk its config,
+checkpoints, and a wall-clock timestamp — but **none of its training curves**. Every curve
+the paper would plot had to be re-derived or was lost. This was the single most important
+missing piece; it is now closed by `metrics/training_curves.jsonl`.
 
 ---
 
 ## 4. Data inventory by model and stage
 
-The matrix (driven by `experiments/lift_pilot.json`) has eight cells and two
-training stages. The inventory is organized as: **core** (every run), **Stage 1
-extras**, **Stage 2 extras**, and **cell-specific diagnostics**.
+The matrix (driven by `experiments/five_task.json`, 9 cells per task across
+five tasks, with the ablation cells of `experiments/lift_ablation.json`) has
+two training stages. The inventory is organized as: **core** (every run),
+**Stage 1 extras**, **Stage 2 extras**, and **cell-specific diagnostics**.
 
 ### 4.1 Core — every run, every stage
 
@@ -199,9 +212,11 @@ omitted in `bc` rows (the loop would otherwise emit a constant `loss_phase` of
 
 ### 4.3 Stage 2 extras (bootstrapped MoE)
 
-Applies to every MoE cell: `phaseforge`, `scratch_moe`, `warmstart_moe`,
-`oracle_moe`, `phase_pretrain_random_router`,
-`plain_encoder_phase_bootstrap`, `teacher_forced`.
+Applies to every MoE training cell: `phaseforge`, `scratch_moe`,
+`warmstart_moe`, `phase_pretrain_random_router`,
+`plain_encoder_phase_bootstrap`, `teacher_forced`. (`oracle_moe` is not a
+training cell — it is an eval-time routing intervention on PhaseForge's
+trained expert set; research_definition §3 H5.)
 
 | Field | Source | Notes |
 |---|---|---|
@@ -221,7 +236,7 @@ These are exactly the "balance-vs-NMI trajectory" diagnostics the plan calls out
 | Cell | Diagnostic | Why it is needed |
 |---|---|---|
 | `teacher_forced` | **routing accuracy**: fraction of inference steps where the learned phase predictor agrees with the GT phase used to partition experts | the plan requires it to be labeled privileged-training and to measure the predictor, not emergent specialization |
-| `oracle_moe` | none beyond §4.3 — its routing is by GT labels | NMI is a sanity check (≈1.0), never presented as a learned result |
+| `oracle_moe` (diagnostic only) | none beyond §4.3 — its routing is by GT labels | NMI is a sanity check (≈1.0), never presented as a learned result |
 | `bc` | none beyond §4.1 | the action-only floor |
 | `phaseforge` | none beyond §4.2/§4.3 | its mechanism claim is read from NMI + stability + success |
 
@@ -237,13 +252,13 @@ offline metric set and definitions, and schema-validated `results.jsonl` rows
 carry `ckpt_path`, `stage`, `seed`, `config_hash`, device, and git metadata.
 The existing summaries are seed-level offline summaries; their bootstrap file
 is exploratory, not the final rollout confidence analysis. The rollout
-adapter, per-episode records, success predicate output, reset-seed bank, and
-rollout-level confidence summaries remain required by the final evaluation
-plan.
+adapter, per-episode records (`episodes.jsonl`), success-predicate output,
+reset-seed bank, and rollout-level confidence summaries are implemented and
+tested per the final evaluation plan.
 
 ---
 
-## 5. Proposed artifacts and schemas
+## 5. Artifacts and schemas (specification)
 
 ### 5.1 Per-run training curve file — `metrics/training_curves.jsonl`
 
@@ -327,10 +342,11 @@ not be marked complete until this row is either durably appended or a
 reconciliation record is written. The ledger keeps `results.jsonl` eval-only
 so the eval aggregation contract is untouched.
 
-### 5.4 Proposed summary artifacts — `_summaries/`
+### 5.4 Summary artifacts — `_summaries/` and `_results/`
 
-Extends the existing summarize tooling (e.g. `scripts/analysis/summarize_eval.py` gains a
-training mode or a sibling `summarize_train.py`):
+Extends the existing summarize tooling (`scripts/analysis/summarize_eval.py` for
+the eval side, `scripts/analysis/summarize_train.py` for the training and
+rollout sides):
 
 The append must be schema-validated and idempotent. If the global append fails,
 the run-local summary remains authoritative for recovery and a reconciliation
@@ -376,8 +392,8 @@ seed and checkpoint hash so paired comparisons can be reconstructed.
 | `training_cost.csv` | per `(model, stage)`: `wall_seconds` (mean ± std), `epochs_run`, total `global_step`, params — the appendix cost table |
 | `training_curves.csv` | per `(model, stage, epoch)`: mean ± std over seeds of every curve metric — the plot source |
 
-| `rollout_success.csv` | per `(task, model, training_seed)`: valid episodes, successes, success rate, Wilson interval, invalid attempts |
-| `rollout_comparisons.csv` | paired PhaseForge-minus-baseline differences by task and training seed |
+| `rollout_success.csv` | per `(task, model, training_seed)`: valid episodes, successes, success rate, Wilson interval, invalid attempts — written to `_results/` |
+| `rollout_comparisons.csv` | paired PhaseForge-minus-baseline differences by task and training seed — written to `_results/` |
 
 ### 5.5 Small consistency fix
 
@@ -391,15 +407,17 @@ live in the two metadata manifests rather than being duplicated into
 
 ## 6. Storage and cost estimate
 
-Training runs in the matrix: 9 runs per seed (bc=1, phaseforge=2, and six
-Stage-2-only cells) × 3 seeds ≈ **27 training runs**. At ~100–200 epochs each
-and ~25 fields per full Stage 2 row:
+Training runs in the matrix: 10 runs per (task, seed) — `phaseforge` 2
+(stage 1 + 2), one each for `bc`, `bc_robot_only`, `scratch_moe`,
+`warmstart_moe`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`,
+`teacher_forced`, `bc_rnn` — × 5 tasks × 3 seeds ≈ **150 training runs**. At
+~100–200 epochs each and ~25 fields per full Stage 2 row:
 
 - `training_curves.jsonl`: ≈ 25–90 KB per run (a 9-field `bc` row is ~250 B;
-  a 16-field Stage 2 row is ~450 B) → **≈ 1–2 MB total** across all runs;
+  a 16-field Stage 2 row is ~450 B) → **≈ 4–14 MB total** across all runs;
 - summary files + training ledger + aggregates: negligible (< 100 KB).
 
-Rollout episode records add approximately 6,000 rows for eight model cells,
+Rollout episode records add approximately 6,750 rows for nine model cells,
 five tasks, three training seeds, and 50 episodes; expect a few megabytes,
 excluding optional videos or full state traces.
 
@@ -493,9 +511,17 @@ decisions above are authoritative.
    behavior, ledger append/read, and aggregate correctness on synthetic
    multi-seed data. All CPU-only.
 
-No implementation step has been executed in this review; this document now
-defines the implementation contract. The historical review-draft sentence that
-follows is retained only for traceability and does not reopen approval.
+All implementation steps 1–7 have been executed and are covered by unit
+tests (CPU-only): `TrainingCurveWriter` + validators
+(`phaseforge/outputs_writer/curves.py`), the training ledger
+(`phaseforge/outputs_writer/training_summary.py`), provenance manifests
+(`phaseforge/outputs_writer/provenance.py`), episode records
+(`phaseforge/outputs_writer/episodes.py`), the rollout report
+(`phaseforge/evaluations/rollout/report.py`), and the training/rollout
+aggregate tooling (`scripts/analysis/summarize_train.py`).
+
+The historical review-draft sentence that follows is retained only for
+traceability and does not reopen approval.
 
 The implementation sequence is ready to begin against the locked decisions;
 The historical review questions are retained only for traceability and do not

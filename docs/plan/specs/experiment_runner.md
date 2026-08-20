@@ -20,7 +20,8 @@ evaluations.
 ## 1. The protocol manifest (`experiments/five_task.json`)
 
 The five-task manifest is the single source of truth for the final paper
-matrix. The older Lift pilot remains available for debugging. The manifest
+matrix. The older Lift pilots (`experiments/lift_pilot.json`,
+`experiments/lift_ablation.json`) remain available for debugging. The manifest
 is frozen:
 changing the method matrix is a deliberate, reviewed edit to this file, not a
 code change.
@@ -29,25 +30,30 @@ Top level:
 
 | key          | value                                  |
 |--------------|----------------------------------------|
-| `name`       | `lift_pilot`                           |
-| `task`       | `Lift`                                 |
+| `name`       | `five_task`                            |
+| `task`       | `all` (`Lift`, `Can`, `Square`, `ToolHang`, `Transport`) |
 | `seeds`      | `[42, 43, 44]` (protocol order)        |
 | `defaults`   | per-run hydra overrides, e.g. `["train.early_stopping.enabled=false"]` |
-| `methods`    | the 9-cell matrix, indexed 1–9         |
+| `methods`    | 45 cells — the 9-method matrix replicated per task, indexed 1–45 |
 
-### Method matrix (notebook methods 1–9)
+### Method matrix (9 cells, replicated per task)
 
 | idx | name                       | model                          | data       | tag         | stages | stage2_source |
 |----:|----------------------------|--------------------------------|------------|-------------|--------|---------------|
-|   1 | `phaseforge`               | `phaseforge`                   | common     | —           | 1, 2   | `self`        |
-|   2 | `bc`                       | `baselines/bc`                 | common     | —           | 1      | —             |
-|   3 | `bc_robot_only`            | `baselines/bc`                 | robot_only | `robot_only`| 1      | —             |
-|   4 | `scratch_moe`              | `baselines/scratch_moe`        | common     | —           | 2      | —             |
-|   5 | `warmstart_moe`            | `baselines/warmstart_moe`      | common     | —           | 2      | `bc`          |
-|   6 | `phase_pretrain_random_router` | `baselines/phase_pretrain_random_router` | common | — | 2 | `phaseforge` |
-|   7 | `plain_encoder_phase_bootstrap` | `baselines/plain_encoder_phase_bootstrap` | common | — | 2 | `bc` |
-|   8 | `teacher_forced`           | `baselines/teacher_forced`     | common     | —           | 2      | `phaseforge`  |
-|   9 | `oracle_moe`               | `baselines/oracle_moe`         | common     | —           | 2      | —             |
+|   1 | `phaseforge`               | `phaseforge`                   | `{task}`   | —           | 1, 2   | `self`        |
+|   2 | `bc`                       | `baselines/bc`                 | `{task}`   | —           | 1      | —             |
+|   3 | `bc_robot_only`            | `baselines/bc`                 | `robot_only_{task}` | `robot_only`| 1  | —             |
+|   4 | `scratch_moe`              | `baselines/scratch_moe`        | `{task}`   | —           | 2      | —             |
+|   5 | `warmstart_moe`            | `baselines/warmstart_moe`      | `{task}`   | —           | 2      | `bc`          |
+|   6 | `phase_pretrain_random_router` | `baselines/phase_pretrain_random_router` | `{task}` | — | 2 | `phaseforge` |
+|   7 | `plain_encoder_phase_bootstrap` | `baselines/plain_encoder_phase_bootstrap` | `{task}` | — | 2 | `bc` |
+|   8 | `teacher_forced`           | `baselines/teacher_forced`     | `{task}`   | —           | 2      | `phaseforge`  |
+|   9 | `bc_rnn`                   | `baselines/bc_rnn`             | `{task}_rnn` | —         | 1      | —             |
+
+`Oracle MoE` is **not** a manifest cell: it is an eval-time routing
+intervention on PhaseForge's trained expert set (`phaseforge/models/phase_moe.py`,
+`eval_mode="oracle"`), exactly as specified in
+[research_definition.md](research_definition.md) §3 H5.
 
 Semantics:
 
@@ -58,9 +64,11 @@ Semantics:
 - `stage2_source: null` — random init, no Stage 1 needed (`scratch_moe`,
   `oracle_moe`).
 - `data` + `tag` — `bc_robot_only` is the negative control: same
-  `baselines/bc` output tree, but `data=robot_only` and every run recorded
-  with `project.tag=robot_only` so it can never be confused with the default
-  BC cell.
+  `baselines/bc` output tree, but `data=robot_only_{task}` and every run
+  recorded with `project.tag=robot_only` so it can never be confused with the
+  default BC cell.
+- `bc_rnn` is the matched temporal comparator (declared ten-step history
+  window, same state/action schema) on its own `{task}_rnn` data variant.
 - `evaluate: true` everywhere — one row = a complete run (train → eval).
 
 ### Validation (enforced at load time)
@@ -249,10 +257,10 @@ phaseforge-sweep --stage 1                            # providers only (BC + Pha
 phaseforge-sweep --continue-on-error                  # sweep that survives one bad cell
 ```
 
-The full matrix is 9 methods × 3 seeds with 19 steps per seed
-(`phaseforge` has 3: stage1, stage2, eval; the eight single-stage methods have
-2 each) — 57 steps in total, `--with-dependencies` not required for a full
-selection.
+The full matrix is 45 methods × 3 seeds (9 per task × 5 tasks). Per task and
+seed the plan has 19 steps (`phaseforge` has 3: stage1, stage2, eval; the
+eight single-stage methods have 2 each) — 57 steps per task and 285 steps in
+total, `--with-dependencies` not required for a full selection.
 
 ## 8. Testing
 

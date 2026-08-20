@@ -5,6 +5,17 @@
 **Date:** 2026-08-18
 **Purpose:** Provide full context on the PhaseForge method, the evaluation protocol, a discovered-and-fixed evaluation bug, the corrected GPU re-run results, and an open statistical/design question (per-seed variance). The supervisor decides the path forward; the team will execute it.
 
+**Outcome (2026-08-20):** decisions resolved as follows —
+D1 → report as *directional, not significant* (Agarwal-style; `lift_rollout_eval_report.md` §7/§9).
+D2 → **monitor restoration adopted** (commit `3cd510f`; the predeclared λ = 1.0 is kept; λ-decay
+and tie-break were rejected, both documented in `../specs/gpu_rerun_runbook.md` §5). Post-fix
+reproduction at `master` is exact (`lift_rollout_eval_report.md` §10: 0.700 / **0.707**,
+per-seed 0.56 / 0.84 / 0.72) — but the seed-to-seed spread persists at ~0.28 despite the fix,
+so the D2 variance question is **not** closed and is carried into the five-task sweep and the
+Colas et al. seed-budget analysis (Phase 5).
+D3 → the five-task manifest now includes the missing cells (Teacher-Forced, BC-RNN).
+D4 → `lift_rollout_eval_report.md` §10 supersedes the §3 numbers in this report.
+
 ---
 
 ## 1. What PhaseForge is
@@ -63,7 +74,7 @@ The research definition predeclares checkpoint selection on **`best val/loss_act
 - low means for the two affected methods, and
 - the large per-seed rollout spread (stage-1 best-checkpoint action loss 0.0451/0.0404/0.0659 at epochs 2/2/1).
 
-### The fixes (commit `c09270a`, pushed to `origin/master`)
+### The fixes (`3cd510f` monitor fix, `c09270a` commit gate — pushed to `origin/master`)
 
 1. **Monitor corrected** to `val/loss_action` in stage-1 configs (matches the predeclared rule and stage-2).
 2. **Commit-gating** on the GPU runner — every run records and verifies the exact git commit; stale/mismatched pipelines are refused. All rerun cells carry `c09270a`.
@@ -185,8 +196,13 @@ The previous report (§8) should be superseded by this document's §3 numbers wi
 ## 7. Artifacts (all in-repo)
 
 - This analysis's evidence: `outputs/part1/outputs/`, `outputs/part2/outputs/` (runner state `_runner/state.json` — all cells `completed` at `c09270a`; per-episode logs, `rollout_summary.json`, `training_curves.jsonl`).
-- Analysis scripts: `scripts/compare_rerun_report.py`, `scripts/seed_dependence_deepdive.py`, `scripts/episode_crosscheck.py`, `scripts/phase_head_at_selection.py`, `scripts/collect_rerun_results.py`.
-- Previous report (superseded numbers): `docs/plan/reports/lift_rollout_eval_report.md`.
+- Analysis: the one-shot diagnostics behind §4 (`compare_rerun_report.py`,
+  `seed_dependence_deepdive.py`, `episode_crosscheck.py`, `phase_head_at_selection.py`,
+  `collect_rerun_results.py`) were run against the `outputs/part1`/`outputs/part2` trees and
+  removed after completion (2026-08-20 cleanup); their conclusions are captured in §4 and in
+  `lift_rollout_eval_report.md` §8.
+- Evaluation report (same corrected numbers): `docs/plan/reports/lift_rollout_eval_report.md`.
 - Research definition and protocol: `docs/plan/specs/research_definition.md`, `docs/plan/specs/state_only_rollout_implementation_plan.md`.
-- Fix commit: `c09270a` (monitor fix, commit gating, fail-closed metadata, NaN guard; 509 tests passing).
+- Fix commits: `3cd510f` (monitor fix), `c09270a` (commit gating, fail-closed metadata, NaN guard;
+  509 tests passing at the time).
 - GPU runbook: `docs/plan/specs/gpu_rerun_runbook.md`.

@@ -1,10 +1,11 @@
 # PhaseForge — Lift Rollout Evaluation Report
 
 **Status:** final evaluation report, Lift task only; statistics corrected 2026-08-18
-(seed-stratified bootstrap + probability-of-improvement, per the professor's review;
-old §8 explicitly superseded by §9).
-**Scope:** held-out simulator task success for the PhaseForge controlled matrix (research_definition.md §4–§5)
-**Prepared:** 2026-08-18, for supervisor review
+(seed-stratified bootstrap + probability-of-improvement, per the professor's statistical audit;
+old §8 explicitly superseded by §9). Post-merge reproduction added 2026-08-20 (§10).
+**Scope:** held-out simulator task success for the PhaseForge controlled matrix
+(`../specs/research_definition.md` §4–§5)
+**Prepared:** 2026-08-18, for supervisor review; updated 2026-08-20 (§10)
 
 ---
 
@@ -35,16 +36,17 @@ the result is **directional, not significant**.
 - **Conclusion on the behavioral hypothesis H3: controlled null (H0) on Lift at n = 3 seeds, with
   a directional PhaseForge advantage over every comparator.** The stage-1 checkpoint-lottery bug
   (§8, FIXED) corrupted the old numbers; the corrected data make PhaseForge the top mean but
-  significance still cannot be claimed. The professor's M=1, N=3 caveat applies verbatim (§7).
-- **Do not claim better manipulation yet.** Per research_definition.md §6 this is a controlled
-  null result, or at most a directional result without statistical support; Phase 2 GPU re-runs
-  (with the adopted monitor-restoration fix) replace these numbers, and Phase 5 computes the seed budget.
+  significance still cannot be claimed. The M = 1, N = 3 caveat from the audit applies verbatim (§7).
+- **Do not claim better manipulation yet.** Per `../specs/research_definition.md` §4 this is a
+  controlled null result, or at most a directional result without statistical support; the
+  post-fix GPU re-runs (§10) reproduce the corrected pipeline exactly and supersede these
+  numbers for PhaseForge, and Phase 5 still computes the seed budget.
 
 ---
 
 ## 2. Protocol
 
-Frozen per research_definition.md §4 (H3) and the state-only rollout plan:
+Frozen per the research definition (§3 H3, §5 matrix) and the state-only rollout plan:
 
 - **Task:** robomimic `Lift`, low-dimensional structured state (privileged simulator state).
 - **Eval:** 50 paired simulator episodes per training seed, eval reset seeds 10000–10049;
@@ -58,7 +60,11 @@ Frozen per research_definition.md §4 (H3) and the state-only rollout plan:
 
 ---
 
-## 3. Results — held-out rollout success on Lift (corrected, commit `c09270a`)
+## 3. Results — held-out rollout success on Lift (statistics-corrected eval, commit `c09270a`)
+
+*(These rows evaluate the `c09270a` checkpoints, trained under the buggy stage-1
+monitor — see §8. They are the historical record; the post-fix PhaseForge numbers
+are in §10.)*
 
 | Method | Code cell / role | s42 | s43 | s44 | seed mean | strat. bootstrap 95% CI* |
 |---|---|---|---|---|---|---|
@@ -102,8 +108,8 @@ Every seed–method pair: `pfail = 0`, `invalid = 0`. All remaining failures are
   (**+0.087**). Direction favors centroid initialization in both pairs; PoI PhaseForge > Phase-Pretrain
   = 96.6%, Plain-Bootstrap > Warm-Start = 99.9%.
 - Stratified CIs still overlap within each pair. **Verdict: directional, not significant.**
-- Primary H1 evidence per research_definition §4 is the routing-alignment trajectory (NMI,
-  entropy, load, collapse), which the rollout harness does not emit. Offline-only routing metrics
+- Primary H1 evidence per research_definition §3 H1 / §8 is the routing-alignment trajectory
+  (NMI, entropy, load, collapse), which the rollout harness does not emit. Offline-only routing metrics
   exist (see §6).
 
 ### H2 — Phase-representation effect (phase-supervised vs plain encoder)
@@ -177,11 +183,11 @@ Oracle MoE (ground-truth routing, offline diagnostic): `phase_expert_nmi = 1.0` 
 phase–expert alignment by construction), `routing_entropy ≈ 0` (fully peaked, deterministic),
 `topk_balance_score ≈ 0.754`, `topk_collapse_rate = 0.333`, `action_mse ≈ 0.031` — consistent
 across seeds. It is a diagnostic reference only, not a deployable method, and its task success is
-**not** a PhaseForge upper bound (research_definition §4).
+**not** a PhaseForge upper bound (research_definition §3 H5).
 
 ---
 
-## 7. Statistical posture (Phase 4 — per professor's review §2)
+## 7. Statistical posture (Phase 4)
 
 The professor's audit (Agarwal et al. 2021, NeurIPS Outstanding Paper) found the old §3
 pooled-150-episode Wilson CI understated uncertainty: episodes from the same seed share one
@@ -253,11 +259,11 @@ independent measurements, fixed, and the fix was locally validated before any GP
    **0.0264/0.0240/0.0261** (spread 0.0024 vs 0.0255 buggy); stage-2 warm-start action loss
    0.0301/0.0279/0.0308; stage-2 NMI **0.449/0.457/0.436 (spread 0.021)**, 0% collapse in all
    seeds, final action loss 0.0286/0.0259/0.0276.
-4. **Do not over-read this report's rollout numbers:** they were produced from *buggy*
-   checkpoints at commit `c09270a`. The corrected pipeline (monitor restoration, λ = 1.0
-   as predeclared) must be re-run on GPU (Phase 2 of the implementation plan) before any
-   behavioral claim; this report then gets a final §3 update from the fresh `outputs_rerun`
-   episodes. The λ-decay refinement remains available if the spread criterion fails.
+4. **Do not over-read this report's §3 numbers:** they were produced from *buggy*
+    checkpoints at commit `c09270a`. The corrected pipeline (monitor restoration, λ = 1.0
+    as predeclared) was re-run on GPU and reproduced exactly at `master` — §10 holds the
+    replacement numbers for PhaseForge, and the five-task sweep covers the remaining cells.
+    The λ-decay refinement remains available if the spread criterion fails.
 
 ---
 
@@ -272,10 +278,10 @@ independent measurements, fixed, and the fix was locally validated before any GP
    Its conclusions were computed from the buggy-checkpoint evals; the corrected runs reverse the
    H2 direction and put PhaseForge at the top of the mean. The H3 verdict (not significant) is
    unchanged.
-4. **Next steps, in order:** (a) GPU re-run with the adopted monitor-restoration fix
-   (runbook `docs/plan/specs/gpu_rerun_runbook.md`; five-task manifest needs **no** λ overrides —
-   every method runs its predeclared configuration); (b) complete the missing cells —
-   Teacher-Forced (H4), BC-RNN — before any conclusion; (c) seed budget from Colas et al.
+4. **Next steps, in order:** (a) **completed (2026-08-19/20)** — post-fix GPU re-runs
+   reproduced the corrected results exactly (§10); (b) the five-task sweep
+   (`docs/plan/specs/gpu_rerun_runbook.md` §1c) completes the missing cells — Teacher-Forced
+   (H4), BC-RNN — and the remaining tasks; (c) seed budget from Colas et al.
    power analysis on the post-fix effect size (Phase 5); (d) multi-task claim requires the
    predeclared 3/5 tasks.
 5. **Use rollout success as the decision metric.** Offline MSE/NMI ordering did not reproduce in
@@ -306,7 +312,7 @@ is GPU nondeterminism). **Conclusion: the reported numbers are exactly reproduci
 - `docs/plan/specs/research_definition.md` — hypotheses H0–H4, required matrix, interpretation rules.
 - `docs/plan/specs/state_only_rollout_implementation_plan.md` — rollout/reset/checkpoint protocol.
 - `docs/op/implementation_plan.md` — the professor's plan, gates, and Phase 1 fix results.
-- the professor's statistical audit (2026-08-18) that this revision answers — summarized in §7 (§2 statistical posture).
+- the professor's statistical audit (2026-08-18) that this revision answers — summarized in §7.
 - `docs/dev/legacy/lift_pilot_offline_report.md` — offline action-MSE/NMI pilot (pre-fix commit).
 - `scripts/analysis/stratified_stats.py` + `tests/test_stratified_stats.py` — seed-stratified bootstrap
   and PoI; deterministic (rng seed 12345).

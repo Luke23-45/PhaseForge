@@ -1,6 +1,6 @@
 # PhaseForge — State-Only Rollout Implementation Plan
 
-**Status:** implementation plan; no code or experiments are changed by this document
+**Status:** authoritative protocol. Implemented in the codebase: pinned simulator tracks (`pyproject.toml` `rollout` extra: robosuite 1.5.1 / mujoco 3.2.7, Tool Hang 1.5.0 exception), state-only adapter (`phaseforge/evaluations/envs/`), task-independent gates (`phaseforge/evaluations/rollout/gates.py`), frozen reset-bank evaluation, and the `episodes.jsonl` schema. The Lift protocol has completed and been reproduced at `master` (see `../reports/lift_rollout_eval_report.md` §10); the five-task matrix is pending.
 
 **Scope:** non-visual, structured low-dimensional robot state only
 
@@ -40,6 +40,10 @@ debug. Lift-only results are not the final cross-task evaluation.
 6. persist per-episode results and uncertainty summaries;
 7. interpret per-task and aggregate rollout success together with the existing
    offline diagnostics.
+
+> **Status (2026-08-20):** items 1–7 are implemented and tested; the Lift
+> protocol has completed and been reproduced (see `../reports/lift_rollout_eval_report.md` §10).
+> The remaining work is the five-task sweep (`../../dev/final_run_plan.md`).
 
 The core Lift matrix is:
 
@@ -107,6 +111,8 @@ rollout evaluation.
 
 ### 4.2 Add the robosuite state-only adapter
 
+*(Implemented: `phaseforge/evaluations/envs/robosuite_adapter.py`, with the task registry in `phaseforge/evaluations/envs/tasks.py`.)*
+
 Add the adapter under `phaseforge/evaluations/envs/` with a small explicit
 interface:
 
@@ -149,6 +155,8 @@ reproducibility, but the serialized reset state is the authoritative paired
 evaluation input when the environment supports it.
 
 ### 4.4 Implement the rollout runner
+
+*(Implemented: `phaseforge/evaluations/rollout/runner.py`, invoked via `eval.mode=rollout` in `phaseforge/cli.py`; gates in `phaseforge/evaluations/rollout/gates.py`.)*
 
 Add a rollout evaluator and wire `eval.mode=rollout` in `phaseforge/cli.py`.
 The runner must:
@@ -289,8 +297,9 @@ manipulation behavior remains blocked until the complete three-seed
 matrix finishes successfully. It does not require images, a vision
 encoder, LIBERO, or comparison against VLA models.
 
-This plan records the protocol and implementation boundary; it does not imply
-that the simulator gates or training runs have already been completed.
+This plan records the protocol and implementation boundary. As of 2026-08-20
+the Lift protocol is complete and reproduced at `master`; the remaining work is
+the three-seed, five-task matrix.
 
 ## 8. Literature basis
 

@@ -1,7 +1,7 @@
 {
   "name": "five_task",
   "task": "all",
-  "description": "Frozen five-task state-only rollout evaluation. The scientific scope of the experiment (final evaluation plan, sec. 3): one row per (method, task, seed). Lift is the first debugging task because its geometry is the simplest, but the reported results cover all five benchmark tasks (Lift, Can, Square, ToolHang, Transport). Each task is evaluated as a separate single-task policy (not a multi-task policy). The same 9-method matrix is replicated for each task, including the matched temporal BC-RNN comparator. Oracle ground-truth routing is NOT a training cell: it is applied post-hoc at evaluation time on the fixed trained expert set (scripts/oracle_routing_diagnostic.py; see research_definition.md).",
+  "description": "Frozen five-task state-only rollout evaluation. The scientific scope of the experiment (final evaluation plan, sec. 3): one row per (method, task, seed). Lift is the first debugging task because its geometry is the simplest, but the reported results cover all five benchmark tasks (Lift, Can, Square, ToolHang, Transport). Each task is evaluated as a separate single-task policy (not a multi-task policy). The same 9-method matrix is replicated for each task, including the matched temporal BC-RNN comparator. Oracle ground-truth routing is NOT a training cell: it is applied post-hoc at evaluation time on the fixed trained expert set via `eval_mode='oracle'` in `phaseforge/models/phase_moe.py` (see research_definition.md, sec. 3 H5).",
   "seeds": [42, 43, 44],
   "defaults": ["train.early_stopping.enabled=false"],
   "tasks": ["Lift", "Can", "Square", "ToolHang", "Transport"],
