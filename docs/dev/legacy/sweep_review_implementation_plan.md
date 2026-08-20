@@ -19,7 +19,7 @@ The results themselves are **valid, complete, and reproducible** (no failed cell
 - `aggregates.csv`: `bc,1,n_seeds=3,n_rows=6`, action_mse_mean **0.02386** — a wrong BC floor. The true numbers are default BC **0.02796 ± 0.00052** and robot-only **0.01975 ± 0.00059**.
 - `metrics.json`, `bootstrap_ci.csv`, `paired_wilcoxon.csv`, `training_aggregates.csv`, `training_cost.csv`: same merge; the robot-only negative control is silently hidden.
 
-The report (`docs/dev/lift_pilot_offline_report.md`) already separates them manually; the *tooling* must be fixed so the paper tables are correct automatically.
+The report (`docs/dev/legacy/lift_pilot_offline_report.md`) already separates them manually; the *tooling* must be fixed so the paper tables are correct automatically.
 
 ### Fix
 1. **Schema** (`phaseforge/outputs_writer/schema.py`):

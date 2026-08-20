@@ -167,7 +167,7 @@ Recompute: `python scripts/analysis/stratified_stats.py --root outputs/part1/out
 
 ## 6. Offline diagnostics vs. rollout success
 
-The offline pilot report (`docs/dev/lift_pilot_offline_report.md`, commit before `d127980`) favored
+The offline pilot report (`docs/dev/legacy/lift_pilot_offline_report.md`, commit before `d127980`) favored
 PhaseForge on offline metrics: action MSE **0.02767** (best), phase-expert **NMI 0.430** (best of
 learned routers), top-k balance **0.991**, zero collapse. The rollout results do **not** reproduce
 that ordering. Offline MSE/NMI therefore did **not** translate into held-out success; this is a
@@ -289,7 +289,7 @@ independent measurements, fixed, and the fix was locally validated before any GP
 - `docs/plan/state_only_rollout_implementation_plan.md` — rollout/reset/checkpoint protocol.
 - `docs/op/implementation_plan.md` — the professor's plan, gates, and Phase 1 fix results.
 - `docs/op/professor_reponse.txt` — the audit this revision answers (§2 statistical posture).
-- `docs/dev/lift_pilot_offline_report.md` — offline action-MSE/NMI pilot (pre-fix commit).
+- `docs/dev/legacy/lift_pilot_offline_report.md` — offline action-MSE/NMI pilot (pre-fix commit).
 - `scripts/analysis/stratified_stats.py` + `tests/test_stratified_stats.py` — seed-stratified bootstrap
   and PoI; deterministic (rng seed 12345).
 - Agarwal, Schwarzer, Castro, Courville, Bellemare (2021), *Deep RL at the Edge of the
