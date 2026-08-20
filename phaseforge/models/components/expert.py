@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+from typing import cast
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -158,3 +161,167 @@ def warm_start_experts_from_action_head(
         if jitter_std > 0.0:
             for param in expert.parameters():
                 param.data.add_(torch.randn_like(param.data) * jitter_std)
+
+
+def partial_reinit_experts_from_action_head(
+    experts: nn.ModuleList,
+    action_head: nn.Module,
+    drop_rate: float = 0.5,
+    seed: int = 42,
+) -> list[int]:
+    """Drop-Upcycling-style partial expert reinitialization from the ActionHead.
+
+    Copies the Stage 1 ``ActionHead`` into every expert (exact, no jitter), then
+    re-initializes a fraction ``drop_rate`` of each expert's intermediate
+    neurons ("Drop-Upcycling", Nakamura et al., ICLR 2025) using the expert's
+    normal Kaiming-uniform initialization. Kept neurons retain the copied
+    ActionHead weights bit-exactly; reinitialized neurons differ per expert.
+
+    This implements the structure of Drop-Upcycling (shared index set across
+    experts, drop along the intermediate dimension) with one deviation from the
+    paper: the paper reinitializes dropped weights from N(μ_dropped, σ_dropped)
+    (the statistics of the dropped weights themselves), while this function
+    uses the expert's standard Kaiming-uniform draw (the "normal random
+    initialization" prescribed by the project decision). All other semantics
+    match: shared index set per layer applied to every expert, exact copy for
+    the kept portion, drop along the intermediate dimension so each dropped
+    neuron is consistently reinitialized across the row of the hidden-layer
+    weight matrix, the corresponding hidden-layer bias entry, and the
+    matching column of the output-projection weight matrix.
+
+    Args:
+        experts: The MoE layer's ``nn.ModuleList`` of ``ExpertMLP`` instances.
+        action_head: The Stage 1 ``ActionHead`` whose weights are copied.
+        drop_rate: Fraction of intermediate neurons to reinitialize per expert.
+            ``0.0`` reduces to an exact-copy warm start; ``1.0`` reinitializes
+            every neuron (no shared "FFN_common" structure remains). Must be
+            in ``[0.0, 1.0]``.
+        seed: Seed for the shared index-set draw and the per-(expert, neuron)
+            Kaiming draws. Same seed → bit-identical expert weights across
+            calls; same convention as ``router_init.seed``. Deterministic for
+            the entire ``[0.0, 1.0]`` range, including the ``0.0`` and ``1.0``
+            boundaries.
+
+    Returns:
+        The sorted list of dropped intermediate neuron indices (the shared
+        index set applied to every expert). Useful for audit / metadata
+        persistence.
+
+    Raises:
+        ValueError: If ``drop_rate`` is outside ``[0.0, 1.0]`` or the expert
+            structure does not match the ActionHead (propagated from
+            ``warm_start_experts_from_action_head``).
+    """
+    if not 0.0 <= drop_rate <= 1.0:
+        raise ValueError(
+            f"drop_rate must be in [0.0, 1.0], got {drop_rate}"
+        )
+
+    warm_start_experts_from_action_head(
+        experts, action_head, jitter_std=0.0
+    )
+
+    if drop_rate == 0.0:
+        return []
+
+    num_experts = len(experts)
+    if num_experts == 0:
+        return []
+
+    first_expert: ExpertMLP = cast(ExpertMLP, experts[0])
+    hidden_weight: Tensor = first_expert.hidden[0].weight  # type: ignore[assignment]
+    output_weight: Tensor = first_expert.output_proj.weight  # type: ignore[assignment]
+    hidden_dim, input_dim = hidden_weight.shape
+    output_dim, _ = output_weight.shape
+
+    k = int(round(drop_rate * hidden_dim))
+    k = max(0, min(hidden_dim, k))
+    if k == 0:
+        return []
+
+    index_gen = torch.Generator(device="cpu").manual_seed(seed)
+    shared_indices: Tensor = torch.randperm(hidden_dim, generator=index_gen)[
+        :k
+    ]
+    dropped_indices: list[int] = sorted(int(i) for i in shared_indices.tolist())
+
+    bound_h = math.sqrt(3.0) / math.sqrt(float(input_dim))
+    bound_o = math.sqrt(3.0) / math.sqrt(float(hidden_dim))
+
+    for expert_idx, expert in enumerate(experts):
+        typed_expert = cast(ExpertMLP, expert)
+        hw: Tensor = typed_expert.hidden[0].weight  # type: ignore[assignment]
+        hb: Tensor = typed_expert.hidden[0].bias  # type: ignore[assignment]
+        ow: Tensor = typed_expert.output_proj.weight  # type: ignore[assignment]
+        device = hw.device
+
+        for j, i in enumerate(dropped_indices):
+            gen_h = torch.Generator(device="cpu").manual_seed(
+                seed * 100_003 + expert_idx * 1_000 + j
+            )
+            new_h = torch.empty(
+                input_dim, dtype=hw.dtype
+            ).uniform_(-bound_h, bound_h, generator=gen_h)
+            hw.data[i, :].copy_(new_h.to(device))
+
+            hb.data[i] = 0.0
+
+            gen_o = torch.Generator(device="cpu").manual_seed(
+                seed * 100_003 + expert_idx * 1_000 + j + 50_000
+            )
+            new_o = torch.empty(
+                output_dim, dtype=ow.dtype
+            ).uniform_(-bound_o, bound_o, generator=gen_o)
+            ow.data[:, i].copy_(new_o.to(device))
+
+    return dropped_indices
+
+
+def one_warm_experts_from_action_head(
+    experts: nn.ModuleList,
+    action_head: nn.Module,
+    jitter_std: float = 0.0,
+    warm_idx: int = 0,
+) -> None:
+    """Initialize exactly one expert as a warm-started ActionHead copy.
+
+    Expert ``warm_idx`` receives the standard warm start (exact copy +
+    ``jitter_std`` noise, matching ``warm_start_experts_from_action_head``).
+    Every other expert is reset via ``ExpertMLP.reset_parameters`` — an
+    independent Kaiming-uniform draw from the standard scratch distribution.
+
+    Diagnostic for the question: does one transferred generalist expert help at
+    all, or is complete random diversity better?
+
+    Args:
+        experts: The MoE layer's ``nn.ModuleList`` of ``ExpertMLP`` instances.
+        action_head: The Stage 1 ``ActionHead`` whose weights are copied into
+            the warm expert.
+        jitter_std: Symmetry-breaking noise added to the warm expert's copied
+            weights. Defaults to ``0.0`` (exact copy) so the diagnostic cleanly
+            isolates "one generalist copy" without confounding jitter.
+        warm_idx: Index of the expert that receives the warm start. Must be in
+            ``[0, len(experts))``.
+
+    Raises:
+        ValueError: If ``warm_idx`` is out of range or ``experts`` is empty.
+    """
+    num_experts = len(experts)
+    if num_experts == 0:
+        raise ValueError(
+            f"warm_idx must be in [0, {num_experts}), got {warm_idx}"
+        )
+    if not 0 <= warm_idx < num_experts:
+        raise ValueError(
+            f"warm_idx must be in [0, {num_experts}), got {warm_idx}"
+        )
+
+    for expert_idx, expert in enumerate(experts):
+        if expert_idx == warm_idx:
+            warm_start_experts_from_action_head(
+                nn.ModuleList([cast(ExpertMLP, expert)]),
+                action_head,
+                jitter_std=jitter_std,
+            )
+        else:
+            cast(ExpertMLP, expert).reset_parameters()

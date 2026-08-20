@@ -206,6 +206,9 @@ class RobomimicHDF5Ingester:
                 if self.respect_dataset_filters and demo_key in demo_splits:
                     traj["dataset_split"] = demo_splits[demo_key]
                 traj["phase"] = np.asarray(self.phase_labeler.label(traj), dtype=np.int64)
+                calibrate = getattr(self.phase_labeler, "calibrate", None)
+                if callable(calibrate):
+                    traj["phase_thresholds"] = calibrate(traj)
                 result.append(traj)
         logger.info("%s: ingested %d trajectories", path.name, len(result))
         return result

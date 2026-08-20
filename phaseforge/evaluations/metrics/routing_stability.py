@@ -80,6 +80,40 @@ def routing_entropy(gate_logits: Tensor, normalize: bool = True) -> Tensor:
     return mean_entropy
 
 
+def routing_switch_rate(
+    top1_indices: Tensor, trajectory_id: Tensor, trajectory_position: Tensor
+) -> float:
+    """Fraction of adjacent in-trajectory step pairs whose top-1 expert changes.
+
+    A pair is adjacent iff the samples share a ``trajectory_id`` and the
+    later ``trajectory_position`` is exactly the earlier one plus one — the
+    same in-batch two-pass rule the V2-C router uses to resolve previous
+    steps (samples from different batches are never paired). Returns 0.0
+    when no adjacent pairs exist.
+
+    Args:
+        top1_indices: (N,) long tensor of per-sample top-1 expert choices.
+        trajectory_id: (N,) long tensor identifying each sample's trajectory.
+        trajectory_position: (N,) long tensor of step positions.
+    """
+    if top1_indices.numel() == 0:
+        return 0.0
+    order = torch.argsort(
+        trajectory_id * (trajectory_position.max() + 1) + trajectory_position,
+        stable=True,
+    )
+    sorted_ids = trajectory_id[order]
+    sorted_pos = trajectory_position[order]
+    sorted_top1 = top1_indices[order]
+    adjacent = (sorted_ids[1:] == sorted_ids[:-1]) & (
+        sorted_pos[1:] == sorted_pos[:-1] + 1
+    )
+    if not adjacent.any():
+        return 0.0
+    switches = (sorted_top1[1:] != sorted_top1[:-1])[adjacent]
+    return float(switches.float().mean().item())
+
+
 def routing_entropy_variance(gate_logits: Tensor, window_size: int = 100) -> Tensor:
     """Mean variance of per-step routing entropy over sliding windows.
 

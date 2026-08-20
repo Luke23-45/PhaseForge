@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Dataset
 
@@ -111,7 +112,11 @@ class SqrtPoisonModel(torch.nn.Module):
         pass
 
 
-def _make_trainer(model: torch.nn.Module, val_loader: DataLoader) -> Stage2Trainer:
+def _make_trainer(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    models_cfg: dict | None = None,
+) -> Stage2Trainer:
     cfg = DictConfig(
         {
             "project": {"device": "cpu"},
@@ -129,6 +134,7 @@ def _make_trainer(model: torch.nn.Module, val_loader: DataLoader) -> Stage2Train
                     "T_max": 1,
                 },
             },
+            **({"models": models_cfg} if models_cfg else {}),
         }
     )
     return Stage2Trainer(cfg=cfg, model=model, train_loader=val_loader, val_loader=val_loader)
@@ -178,7 +184,14 @@ def test_compute_loss_accepts_reused_output() -> None:
     total_loss, metrics = trainer._compute_loss(first, out=out)
     assert model.forward_calls == calls_before
     assert total_loss.requires_grad
-    assert set(metrics) == {"loss_total", "loss_action", "loss_balance"}
+    assert set(metrics) == {
+        "loss_total",
+        "loss_action",
+        "loss_balance",
+        "loss_sticky",
+        "loss_teacher_kl",
+        "teacher_lambda",
+    }
 
 
 def test_expert_count_uses_configured_count_not_max_index() -> None:
@@ -243,3 +256,194 @@ def test_non_finite_gradient_fails_fast() -> None:
 
     with pytest.raises(FloatingPointError, match="Non-finite gradient"):
         trainer.fit()
+
+
+class StickyMoEModel(CountingMoEModel):
+    """CountingMoEModel that also emits a fixed raw stickiness loss."""
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        out = super().forward(batch)
+        return ModelOutput(
+            action_pred=out.action_pred,
+            phase_logits=None,
+            routing_weights=out.routing_weights,
+            expert_indices=out.expert_indices,
+            gate_logits=out.gate_logits,
+            aux_losses={"balance": torch.tensor(0.0), "sticky": torch.tensor(2.0)},
+        )
+
+
+def test_sticky_loss_scaled_by_train_coeff() -> None:
+    model = StickyMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=4, seed=10), batch_size=4))
+    trainer.train_cfg.sticky_coeff = 0.5
+
+    batch = DataLoader(_DictDataset(num=1, seed=11), batch_size=1)
+    first = next(iter(batch))
+    out = model(first)
+    _, metrics = trainer._compute_loss(first, out=out)
+
+    assert metrics["loss_sticky"] == pytest.approx(1.0)  # 0.5 * 2.0
+    # default coeff 0.0 keeps the total identical to the plain loss.
+    trainer2 = _make_trainer(model, DataLoader(_DictDataset(num=4, seed=12), batch_size=4))
+    total_default, metrics_default = trainer2._compute_loss(first, out=out)
+    assert metrics_default["loss_sticky"].item() == pytest.approx(0.0)
+    assert total_default.item() == pytest.approx(
+        metrics_default["loss_action"].item(), rel=1e-6
+    )
+
+
+class TrajDictDataset(Dataset):
+    """Fixed samples with explicit trajectory keys for switch-rate tests.
+
+    traj 0: phases [0, 0]  -> adjacent pair with NO switch.
+    traj 1: phases [1, 2]  -> adjacent pair WITH a switch.
+    """
+
+    def __init__(self) -> None:
+        self.samples = [
+            {"state": torch.randn(4), "action": torch.randn(2), "phase": torch.tensor(0),
+             "trajectory_id": torch.tensor(0), "trajectory_position": torch.tensor(0)},
+            {"state": torch.randn(4), "action": torch.randn(2), "phase": torch.tensor(0),
+             "trajectory_id": torch.tensor(0), "trajectory_position": torch.tensor(1)},
+            {"state": torch.randn(4), "action": torch.randn(2), "phase": torch.tensor(1),
+             "trajectory_id": torch.tensor(1), "trajectory_position": torch.tensor(0)},
+            {"state": torch.randn(4), "action": torch.randn(2), "phase": torch.tensor(2),
+             "trajectory_id": torch.tensor(1), "trajectory_position": torch.tensor(1)},
+        ]
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        return self.samples[idx]
+
+
+def test_validate_reports_switch_rate() -> None:
+    # CountingMoEModel routes to the GT phase, so the switch rate mirrors the
+    # phase sequence: traj0 (0->0) keeps the expert, traj1 (1->2) flips it.
+    model = CountingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(TrajDictDataset(), batch_size=4))
+
+    val_metrics = trainer._validate()
+
+    assert val_metrics["val/routing_switch_rate"] == pytest.approx(0.5)
+    assert val_metrics["val/routing_switch_rate"] != 0.0
+
+
+class TeacherKLMoEModel(CountingMoEModel):
+    """CountingMoEModel that also emits phase_logits and exposes M."""
+
+    def __init__(self, num_experts: int = 3) -> None:
+        super().__init__(num_experts)
+        self.mapping = torch.eye(num_experts)
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        out = super().forward(batch)
+        return ModelOutput(
+            action_pred=out.action_pred,
+            phase_logits=torch.randn(out.action_pred.size(0), self.num_experts),
+            routing_weights=out.routing_weights,
+            expert_indices=out.expert_indices,
+            gate_logits=out.gate_logits,
+            aux_losses=out.aux_losses,
+        )
+
+    def require_soft_mapping(self) -> torch.Tensor:
+        return self.mapping
+
+
+class PhaseLogitsNoMappingModel(CountingMoEModel):
+    """Emits phase_logits but has no require_soft_mapping accessor."""
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
+        out = super().forward(batch)
+        return ModelOutput(
+            action_pred=out.action_pred,
+            phase_logits=torch.randn(out.action_pred.size(0), self.num_experts),
+            routing_weights=out.routing_weights,
+            expert_indices=out.expert_indices,
+            gate_logits=out.gate_logits,
+            aux_losses=out.aux_losses,
+        )
+
+
+def test_teacher_kl_loss_matches_manual() -> None:
+    torch.manual_seed(3)
+    model = TeacherKLMoEModel(num_experts=3)
+    trainer = _make_trainer(
+        model,
+        DataLoader(_DictDataset(num=4, seed=14), batch_size=4),
+        models_cfg={"teacher_routing": {"enabled": True}},
+    )
+    trainer.train_cfg.teacher_routing = {"lambda0": 0.5}
+
+    batch = DataLoader(_DictDataset(num=2, seed=15), batch_size=2)
+    first = next(iter(batch))
+    out = model(first)
+    total, metrics = trainer._compute_loss(first, out=out)
+
+    phase_probs = F.softmax(out.phase_logits, dim=-1)
+    target = torch.einsum("pe,bp->be", model.mapping, phase_probs)
+    expected_kl = F.kl_div(
+        F.log_softmax(out.gate_logits, dim=-1), target, reduction="batchmean"
+    )
+    assert metrics["teacher_lambda"] == pytest.approx(0.5)
+    assert metrics["loss_teacher_kl"] == pytest.approx(0.5 * expected_kl, rel=1e-6)
+    assert total.item() == pytest.approx(
+        metrics["loss_action"].item() + metrics["loss_teacher_kl"].item(), rel=1e-6
+    )
+
+
+def test_teacher_kl_schedule_anneals() -> None:
+    model = TeacherKLMoEModel(num_experts=3)
+    trainer = _make_trainer(
+        model,
+        DataLoader(_DictDataset(num=4, seed=16), batch_size=4),
+        models_cfg={"teacher_routing": {"enabled": True}},
+    )
+    trainer.train_cfg.teacher_routing = {"lambda0": 1.0}
+    trainer.train_cfg.epochs = 10
+    # First half: flat at lambda0.
+    trainer.current_epoch = 0
+    assert trainer._teacher_kl_coeff() == pytest.approx(1.0)
+    trainer.current_epoch = 4
+    assert trainer._teacher_kl_coeff() == pytest.approx(1.0)
+    trainer.current_epoch = 5
+    assert trainer._teacher_kl_coeff() == pytest.approx(1.0)
+    # Second half: linear anneal to 0.
+    trainer.current_epoch = 6
+    assert trainer._teacher_kl_coeff() == pytest.approx(0.8)
+    trainer.current_epoch = 8
+    assert trainer._teacher_kl_coeff() == pytest.approx(0.4)
+    trainer.current_epoch = 10
+    assert trainer._teacher_kl_coeff() == pytest.approx(0.0)
+
+
+def test_teacher_kl_inactive_without_models_block() -> None:
+    # phase_logits present but no models.teacher_routing block (teacher_forced
+    # pattern) -> no teacher KL, no crash.
+    model = TeacherKLMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=2, seed=17), batch_size=2))
+    batch = DataLoader(_DictDataset(num=1, seed=18), batch_size=1)
+    first = next(iter(batch))
+    out = model(first)
+    total, metrics = trainer._compute_loss(first, out=out)
+    assert metrics["loss_teacher_kl"].item() == pytest.approx(0.0)
+    assert metrics["teacher_lambda"] == pytest.approx(0.0)
+    assert total.item() == pytest.approx(metrics["loss_action"].item(), rel=1e-6)
+
+
+def test_teacher_kl_fails_closed_without_mapping() -> None:
+    # enabled=true + phase_logits but no require_soft_mapping -> RuntimeError.
+    model = PhaseLogitsNoMappingModel(num_experts=3)
+    trainer = _make_trainer(
+        model,
+        DataLoader(_DictDataset(num=2, seed=19), batch_size=2),
+        models_cfg={"teacher_routing": {"enabled": True}},
+    )
+    batch = DataLoader(_DictDataset(num=1, seed=20), batch_size=1)
+    first = next(iter(batch))
+    out = model(first)
+    with pytest.raises(RuntimeError, match="require_soft_mapping"):
+        trainer._compute_loss(first, out=out)

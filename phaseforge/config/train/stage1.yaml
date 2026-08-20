@@ -24,13 +24,21 @@ lambda_schedule:
   start: 1.0              # multiplier at epoch 0 (linear only)
   end: 0.0                # multiplier at the final epoch (linear only)
 # Phase-head class weighting for the CE loss. "none" = plain CE (protocol).
-# "balanced" = inverse-frequency weights computed from the TRAINING split
-# (counts written to metadata/phase_weights.json). Counteracts the severe
-# phase imbalance in Lift (phases 1/5 ≈ 1.2%/0.6% of steps) that lets the
-# head overfit majority phases (report §5.3, val/loss_phase 2.59 > ln6).
+# "balanced" = inverse-frequency weights computed from the TRAINING split.
+# "cui" = class-wise uniform increasing weights w_c = (1-β)/(1-β^{n_c}),
+# bounded by construction so a near-empty class cannot dominate the loss.
+# Counts/weights are written to metadata/phase_weights.json. Counteracts the
+# severe phase imbalance in Lift (phases 1/5 ≈ 1.2%/0.6% of steps) that lets
+# the head overfit majority phases (report §5.3, val/loss_phase 2.59 > ln6).
 phase_class_weight: "none"
-# Computed automatically when phase_class_weight="balanced" (inverse-frequency
-# weights over the training split). Leave null otherwise.
+# CUI decay (phase_class_weight="cui" only): w_c = (1-β)/(1-β^{n_c}).
+cui_beta: 0.999
+# Label smoothing on the phase targets (V2-A). 0.0 = plain CE (protocol,
+# bit-identical). > 0 mixes each sample's NLL with the uniform NLL, keeping
+# the phase logits soft for the downstream cells that route on them.
+soft_target_eps: 0.0
+# Computed automatically when phase_class_weight is "balanced"/"cui"
+# (training-split weights). Leave null otherwise.
 phase_weights: null
 log_every_n_steps: 50
 rich_progressbar: false

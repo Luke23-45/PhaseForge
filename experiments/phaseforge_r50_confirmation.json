@@ -1,0 +1,42 @@
+{
+  "name": "phaseforge_r50_confirmation",
+  "task": "Lift",
+  "description": "Wave 3 confirmation for the canonical R50 method: 50% partial warm-start (Drop-Upcycling-style shared index set, fresh Kaiming-uniform init for dropped neurons; kept rows are exact ActionHead copies). Pinned to num_experts=6 + centroid router (resolved from phaseforge/config/models/phaseforge_r50.yaml; no overrides). Reproduction target: Lift seeds 42/43/44 = 0.56/0.84/0.72, mean 0.707 (v2_g8 run at commit ecbd66e, reset bank a7d3953c0afcf560). The phaseforge method is the structural Stage-1 provider for the runner's auto-injection (stage-1 only, never evaluated); run phaseforge_r50 with a fresh output directory and do not reuse old Stage-2 outputs.",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "defaults": [
+    "train.early_stopping.enabled=false"
+  ],
+  "methods": [
+    {
+      "index": 1,
+      "experiment_id": "EXP-300",
+      "name": "phaseforge",
+      "role": "Stage-1 provider for phaseforge_r50 (structural dependency for the runner's auto-injection; stage-1 only, never evaluated in this confirmation)",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [
+        1
+      ],
+      "evaluate": false
+    },
+    {
+      "index": 2,
+      "experiment_id": "EXP-301",
+      "name": "phaseforge_r50",
+      "role": "canonical R50: 50% partial warm-start + E=6 centroid router (resolved from phaseforge/config/models/phaseforge_r50.yaml; no overrides)",
+      "model": "phaseforge_r50",
+      "data": "common",
+      "stages": [
+        2
+      ],
+      "stage2_source": "phaseforge",
+      "tag": "r50",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    }
+  ]
+}

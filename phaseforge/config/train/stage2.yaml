@@ -56,6 +56,19 @@ early_stopping:
 # Balance-loss weight lives on the router (models.router.balance_coeff);
 # there is deliberately no train.balance_coeff here (dead config, removed).
 
+# V2-C stickiness loss weight: scales -log p_t[top1_{t-1}] emitted by the
+# router when models.router.use_history=true. 0.0 keeps the loss
+# bit-identical to the protocol (inert for routers without history).
+sticky_coeff: 0.0
+
+# V2-D teacher-KL routing knobs. The single source of truth for whether the
+# teacher path is active is models.teacher_routing.enabled (the model emits
+# phase_logits in Stage 2 only when it is true); this block only tunes the
+# loss. lambda0 weights KL(M^T softmax(phase_logits) || router) for the
+# first half of training and anneals linearly to 0 over the second half.
+teacher_routing:
+  lambda0: 0.5
+
 # Routing metric logging
 routing_log_every_n_steps: 10
 routing_heatmap_every_n_epochs: 10

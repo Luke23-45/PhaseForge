@@ -17,6 +17,7 @@ class RouterOutput(NamedTuple):
     indices: Tensor  # (B, K) selected expert indices
     gate_logits: Tensor  # (B, E) raw logits over all experts
     balance_loss: Tensor  # scalar, auxiliary load-balancing loss
+    sticky_loss: Tensor  # scalar, raw (unscaled) history-stickiness loss
 
 
 class TopKRouter(nn.Module):
@@ -45,6 +46,22 @@ class TopKRouter(nn.Module):
             become true cosine similarities between the latent and each
             centroid — the ``phaseforge`` / ``plain_encoder_phase_bootstrap``
             cells. ``False`` keeps raw dot products.
+        use_history: If ``True`` (V2-C), a two-pass in-batch history bias is
+            added: the first pass computes the gate logits, the previous
+            in-trajectory step's top-1 expert is resolved (adjacent
+            ``(trajectory_id, trajectory_position)`` pairs only), and the
+            second pass adds a learned embedding of that choice to the
+            logits. Samples without an adjacent previous step (trajectory
+            starts, or batch-order breaks) use the dedicated "no history"
+            embedding slot. Requires ``trajectory_id`` / ``trajectory_position``
+            in the batch; without them the router degrades to the plain path.
+            The stickiness loss (scaled by ``train.sticky_coeff``) is always
+            emitted alongside it — ``0.0`` when no pairs exist or history is
+            off.
+        sticky_beta: Decay of the V2-E evaluation-time sticky EMA (default
+            0.9). The EMA tracks the learned top-1 choice across steps and is
+            the routing signal of the ``sticky`` eval mode; it lives only in
+            evaluation state and is cleared by :meth:`reset_sticky_ema`.
     """
 
     def __init__(
@@ -55,6 +72,8 @@ class TopKRouter(nn.Module):
         noise_std: float = 0.1,
         balance_coeff: float = 0.01,
         normalize_input: bool = False,
+        use_history: bool = False,
+        sticky_beta: float = 0.9,
     ) -> None:
         super().__init__()
         if not isinstance(latent_dim, int) or latent_dim < 1:
@@ -79,6 +98,10 @@ class TopKRouter(nn.Module):
         self.noise_std = noise_std
         self.balance_coeff = balance_coeff
         self.normalize_input = bool(normalize_input)
+        self.use_history = bool(use_history)
+        if not 0.0 <= sticky_beta < 1.0:
+            raise ValueError(f"sticky_beta must be in [0, 1), got {sticky_beta}")
+        self.sticky_beta = float(sticky_beta)
 
         self.gate_linear = nn.Linear(latent_dim, num_experts)
 
@@ -87,6 +110,24 @@ class TopKRouter(nn.Module):
             self.noise_linear = nn.Linear(latent_dim, num_experts)
         else:
             self.noise_linear = None
+
+        # V2-C: previous-step history. Slot 0 is the "no previous step" sentinel
+        # (trajectory start or non-adjacent batch order); slots 1..E hold the
+        # previous top-1 expert (+1). The embedding is projected to an
+        # additive logit bias, which preserves the cosine-semantics of the
+        # gate weights when normalize_input=True.
+        self.history_embedding: nn.Embedding | None
+        self.history_proj: nn.Linear | None
+        if self.use_history:
+            self.history_embedding = nn.Embedding(num_experts + 1, latent_dim)
+            self.history_proj = nn.Linear(latent_dim, num_experts, bias=False)
+        else:
+            self.history_embedding = None
+            self.history_proj = None
+
+        # V2-E: per-episode sticky-EMA evaluation state (never in the
+        # state dict; cleared by reset_sticky_ema()).
+        self._sticky_ema: Tensor | None = None
 
         self._init_weights()
 
@@ -103,11 +144,125 @@ class TopKRouter(nn.Module):
             nn.init.normal_(self.noise_linear.weight, mean=0.0, std=0.02)
             nn.init.zeros_(self.noise_linear.bias)
 
-    def forward(self, latent: Tensor) -> RouterOutput:
+        if self.history_embedding is not None:
+            nn.init.normal_(self.history_embedding.weight, mean=0.0, std=0.02)
+        if self.history_proj is not None:
+            nn.init.normal_(self.history_proj.weight, mean=0.0, std=0.02)
+
+    # ------------------------------------------------------------------
+    # V2-E evaluation-time routing interventions
+    # ------------------------------------------------------------------
+
+    def reset_sticky_ema(self) -> None:
+        """Clear the sticky-EMA evaluation state (start of a new episode)."""
+        self._sticky_ema = None
+
+    def uniform_selection(self, latent: Tensor) -> tuple[Tensor, Tensor]:
+        """Route with equal weight over ALL experts (ensemble baseline).
+
+        Returns ``(weights, indices)`` of shape ``(B, E)`` / ``(B, E)`` —
+        the deterministic counterpart of the offline uniform counterfactual
+        (average of every expert's action, no gate signal at all).
+        """
+        B = latent.size(0)
+        indices = torch.arange(
+            self.num_experts, device=latent.device
+        ).unsqueeze(0).expand(B, self.num_experts)
+        weights = torch.full(
+            (B, self.num_experts),
+            1.0 / self.num_experts,
+            device=latent.device,
+        )
+        return weights, indices
+
+    def sticky_selection(self, gate_logits: Tensor) -> tuple[Tensor, Tensor]:
+        """Route by a beta-EMA over the learned top-1 choice (V2-E sticky).
+
+        The EMA is a single ``(E,)`` vector of expert scores updated every
+        step as ``ema = beta*ema + (1-beta)*mean_onehot(argmax(probs))``;
+        the current top-k of the EMA picks the experts and the softmax over
+        those EMA scores sets their weights. At the first step (EMA unset)
+        the EMA is initialized from the current batch, so the very first
+        action equals the learned one. Batches larger than one update the
+        EMA with the batch-mean one-hot (the rollout runner always steps
+        with B=1, one episode at a time).
+        """
+        probs = F.softmax(gate_logits, dim=-1)  # (B, E)
+        top1 = probs.argmax(dim=-1)  # (B,)
+        onehot = F.one_hot(top1, num_classes=self.num_experts).float()  # (B, E)
+        batch_ema = onehot.mean(dim=0)  # (E,)
+        if self._sticky_ema is None:
+            self._sticky_ema = batch_ema
+        else:
+            self._sticky_ema = (
+                self.sticky_beta * self._sticky_ema + (1.0 - self.sticky_beta) * batch_ema
+            )
+        ema = self._sticky_ema.expand(gate_logits.size(0), -1)
+        top_k_logits, top_k_indices = torch.topk(ema, self.top_k, dim=-1)
+        top_k_weights = F.softmax(top_k_logits, dim=-1)
+        return top_k_weights, top_k_indices
+
+    def oracle_selection(self, phase_logits: Tensor, mapping: Tensor) -> tuple[Tensor, Tensor]:
+        """Route by the phase-head oracle through the soft mapping M.
+
+        ``mapping`` is the right-stochastic ``(P, E)`` matrix M (the
+        model's persistent soft phase->expert mapping; must be validated
+        nonzero by the caller). The expert distribution is
+        ``M^T softmax(phase_logits)``; the top-k of that distribution are
+        selected and re-normalized.
+        """
+        phase_probs = F.softmax(phase_logits, dim=-1)  # (B, P)
+        expert_probs = torch.einsum("pe,bp->be", mapping, phase_probs)  # (B, E)
+        top_k_logits, top_k_indices = torch.topk(expert_probs, self.top_k, dim=-1)
+        top_k_weights = F.softmax(top_k_logits, dim=-1)
+        return top_k_weights, top_k_indices
+
+    def _resolve_previous_top1(
+        self, top1: Tensor, trajectory_id: Tensor, trajectory_position: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        """Resolve each sample's previous in-trajectory top-1 expert.
+
+        Two-pass in-batch semantics: samples are sorted by
+        ``(trajectory_id, trajectory_position)``; a sample's previous step
+        exists iff it shares the trajectory with the preceding sample AND
+        that sample's position is exactly ``position - 1`` (adjacent pair).
+        Returns ``(prev_top1, prev_valid)``: the previous expert index for
+        paired samples (unset for the rest) and the pairing mask.
+        """
+        order = torch.argsort(
+            trajectory_id * (trajectory_position.max() + 1) + trajectory_position,
+            stable=True,
+        )
+        sorted_ids = trajectory_id[order]
+        sorted_pos = trajectory_position[order]
+        sorted_top1 = top1[order]
+
+        adjacent = (sorted_ids[1:] == sorted_ids[:-1]) & (
+            sorted_pos[1:] == sorted_pos[:-1] + 1
+        )
+        prev_top1 = torch.zeros_like(top1)
+        prev_valid = torch.zeros_like(top1, dtype=torch.bool)
+        if adjacent.any():
+            prev_positions = order[1:][adjacent]
+            prev_values = sorted_top1[:-1][adjacent]
+            prev_top1[prev_positions] = prev_values
+            prev_valid[prev_positions] = True
+        return prev_top1, prev_valid
+
+    def forward(
+        self,
+        latent: Tensor,
+        trajectory_id: Tensor | None = None,
+        trajectory_position: Tensor | None = None,
+    ) -> RouterOutput:
         """Route inputs to top-k experts and compute balance loss.
 
         Args:
             latent: Tensor of shape (B, latent_dim).
+            trajectory_id: Optional (B,) long tensor identifying each
+                sample's source trajectory (V2-C history routing).
+            trajectory_position: Optional (B,) long tensor with each
+                sample's step position within its trajectory.
 
         Returns:
             RouterOutput containing weights, indices, logits, and balance loss.
@@ -127,6 +282,41 @@ class TopKRouter(nn.Module):
             # standard normal noise
             noise = torch.randn_like(gate_logits)
             gate_logits = gate_logits + noise_scale * noise
+
+        # V2-C second pass: add the learned history bias of the previous
+        # step's top-1 choice (first-pass logits decide the choice).
+        prev_top1: Tensor | None = None
+        sticky_loss = torch.tensor(0.0, device=gate_logits.device)
+        B = gate_logits.size(0)
+        if (
+            self.use_history
+            and self.history_embedding is not None
+            and self.history_proj is not None
+            and trajectory_id is not None
+            and trajectory_position is not None
+        ):
+            traj_id = trajectory_id
+            traj_pos = trajectory_position
+            if traj_id.dim() != 1 or traj_pos.dim() != 1 or traj_id.numel() != B:
+                raise ValueError(
+                    "trajectory_id/trajectory_position must be 1-D tensors of "
+                    f"length B={B} when use_history=True"
+                )
+            first_pass_top1 = gate_logits.detach().argmax(dim=-1)  # (B,)
+            prev_top1, prev_valid = self._resolve_previous_top1(
+                first_pass_top1, traj_id, traj_pos
+            )
+            embed_idx = torch.where(prev_valid, prev_top1 + 1, 0)
+            history_bias = self.history_proj(self.history_embedding(embed_idx))
+            gate_logits = gate_logits + history_bias
+
+            # Stickiness: -log p_t[top1_{t-1}] over samples with a previous
+            # step. The final (second-pass) logits define p_t.
+            if prev_valid.any():
+                log_probs = F.log_softmax(gate_logits, dim=-1)
+                sticky_loss = -log_probs[prev_valid].gather(
+                    1, prev_top1[prev_valid].unsqueeze(-1)
+                ).squeeze(-1).mean()
 
         # Get routing probabilities (B, E)
         routing_probs = F.softmax(gate_logits, dim=-1)
@@ -148,6 +338,7 @@ class TopKRouter(nn.Module):
             indices=top_k_indices,
             gate_logits=gate_logits,
             balance_loss=balance_loss * self.balance_coeff,
+            sticky_loss=sticky_loss,
         )
 
     def _compute_balance_loss(self, routing_probs: Tensor, gate_logits: Tensor) -> Tensor:

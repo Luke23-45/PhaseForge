@@ -43,7 +43,10 @@ DEFAULT_MANIFEST = PROJECT_ROOT / "experiments" / "five_task.json"
 MONITOR_BY_STAGE = {1: "val/loss_action", 2: "val/loss_action"}
 
 # Models whose stage-2 resolves its stage-1 checkpoint from another model.
-STAGE2_SOURCE_ALIASES = {"baselines/phase_pretrain_random_router": "phaseforge"}
+STAGE2_SOURCE_ALIASES = {
+    "baselines/phase_pretrain_random_router": "phaseforge",
+    "phaseforge_r50": "phaseforge",
+}
 
 
 @dataclass
@@ -248,10 +251,31 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
     if corruption_rate > 0.0 and cell.method in ("teacher_forced", "oracle_moe"):
         cell.fail(f"Phase corruption not allowed for {cell.method}")
 
-    # phase_class_weight sanity: balanced requires the schema key present.
+    # phase_class_weight sanity: the mode must be known, and cui requires
+    # a valid decay in (0, 1).
     pw = str(train.get("phase_class_weight", "none"))
-    if pw not in ("none", "balanced"):
-        cell.fail(f"train.phase_class_weight={pw!r} (expected 'none' or 'balanced')")
+    if pw not in ("none", "balanced", "cui"):
+        cell.fail(f"train.phase_class_weight={pw!r} (expected 'none', 'balanced' or 'cui')")
+    if pw == "cui":
+        beta = float(train.get("cui_beta", 0.999))
+        if not 0.0 < beta < 1.0:
+            cell.fail(f"train.cui_beta={beta!r} must be in (0, 1) for cui weighting")
+
+    # sticky_coeff sanity: negative weights would reward switching.
+    if float(train.get("sticky_coeff", 0.0)) < 0.0:
+        cell.fail(f"train.sticky_coeff={train.get('sticky_coeff')!r} must be >= 0")
+
+    # teacher_routing sanity: lambda0 must be >= 0, and the model must carry
+    # the soft mapping M the teacher KL target is built from.
+    tr = train.get("teacher_routing") or {}
+    if float(tr.get("lambda0", 0.0)) < 0.0:
+        cell.fail(f"train.teacher_routing.lambda0={tr.get('lambda0')!r} must be >= 0")
+    models_tr = (cfg.models or {}).get("teacher_routing") or {}
+    if bool(models_tr.get("enabled", False)) and cfg.models.get("soft_mapping") is None:
+        cell.fail(
+            "models.teacher_routing.enabled=true requires the soft_mapping "
+            "config block (M is built at bootstrap)"
+        )
 
 
 def _check_eval_cell(cfg: DictConfig, cell: Cell, mode: str) -> None:
@@ -265,6 +289,20 @@ def _check_eval_cell(cfg: DictConfig, cell: Cell, mode: str) -> None:
         for key in ("bank", "env", "episodes"):
             if cfg.eval.get(key) is None:
                 cell.fail(f"eval.{key} missing (rollout schema) — eval group not selected?")
+        # V2-E router-mode sanity: the intervention must be one of the known
+        # modes, and oracle requires the soft_mapping block (M is built at
+        # bootstrap on the models with a router).
+        router_mode = str(cfg.eval.episodes.get("router_mode", "learned")).lower()
+        if router_mode not in ("learned", "sticky", "uniform", "oracle"):
+            cell.fail(
+                f"eval.episodes.router_mode={router_mode!r} must be one of "
+                "learned, sticky, uniform, oracle"
+            )
+        if router_mode == "oracle" and (cfg.models or {}).get("soft_mapping") is None:
+            cell.fail(
+                "eval.episodes.router_mode=oracle requires the soft_mapping "
+                "config block (M is built at bootstrap)"
+            )
 
 
 def _iter_manifest_cells(manifest: dict) -> list[Cell]:
