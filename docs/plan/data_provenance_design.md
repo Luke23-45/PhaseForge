@@ -329,7 +329,7 @@ so the eval aggregation contract is untouched.
 
 ### 5.4 Proposed summary artifacts — `_summaries/`
 
-Extends the existing summarize tooling (e.g. `scripts/summarize_eval.py` gains a
+Extends the existing summarize tooling (e.g. `scripts/analysis/summarize_eval.py` gains a
 training mode or a sibling `summarize_train.py`):
 
 The append must be schema-validated and idempotent. If the global append fails,

@@ -47,7 +47,7 @@ the Gate 2 spread criterion fails.
 ## 0. Preflight checklist (on the GPU machine)
 
 1. `git checkout 3cd510f` (or a descendant); `git status` clean.
-2. `uv run python scripts/preflight_configs.py` → must print
+2. `uv run python scripts/protocol/preflight_configs.py` → must print
    `all 165 train cell(s) and 150 eval cell(s) passed.` (315 cells).
    - This composes every (method, task, stage, seed) + every eval cell via
      Hydra and validates: data task match, `models.name` resolution alias,
@@ -144,7 +144,7 @@ phaseforge-sweep \
 - Stage-1 snapshots: keep `train.checkpoint.every_n_epochs` at the stage-1
   default (10) for the re-run — the tie-break is NOT part of the adopted
   fix, so per-epoch snapshots are unnecessary disk. Re-selection scripts
-  (`scripts/tie_break_selector.py`) remain available for post-hoc audits.
+  (`scripts/analysis/tie_break_selector.py`) remain available for post-hoc audits.
 
 ## 2. What will run (50 method rows × 3 seeds)
 
@@ -185,7 +185,7 @@ Eval mode: rollout for all except `oracle_moe` (offline metrics).
 3. Spot-check `git_commit` in a sample of `run_meta.json` files = fix revision.
 4. `phaseforge-sweep --outputs outputs_rerun --dry-run` prints all steps as
    `skip (already completed)` — nothing to re-run.
-5. Re-run `uv run python scripts/preflight_configs.py` (still 315 passed).
+5. Re-run `uv run python scripts/protocol/preflight_configs.py` (still 315 passed).
 
 ## 5. Local validation reference (CPU, for comparison)
 

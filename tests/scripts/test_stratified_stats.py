@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.stratified_stats import (
+from scripts.analysis.stratified_stats import (
     bootstrap_seed_means,
     exact_bootstrap_seed_means,
     format_poi_matrix,

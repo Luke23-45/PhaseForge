@@ -17,7 +17,7 @@ Pure post-processing: the training algorithm and the eval pipeline are
 untouched. Idempotent and re-runnable.
 
 Usage:
-  uv run python scripts/tie_break_selector.py <stage1-run-dir> [--tolerance 0.02]
+  uv run python scripts/analysis/tie_break_selector.py <stage1-run-dir> [--tolerance 0.02]
 """
 
 from __future__ import annotations

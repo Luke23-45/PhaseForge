@@ -11,7 +11,7 @@ N = 3 seeds) and report:
     resamples (ties counted as 0.5)
 
 Usage:
-    python scripts/stratified_stats.py [--root outputs] [--json out.json]
+    python scripts/analysis/stratified_stats.py [--root outputs] [--json out.json]
 
 Every episodes.jsonl under <root>/**/eval/<method>/seed*/<run>/ is loaded;
 grouping uses the explicit ``model`` and ``training_seed`` fields so the

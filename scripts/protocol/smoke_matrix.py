@@ -19,7 +19,6 @@ import argparse
 import dataclasses
 import json
 import subprocess
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -27,7 +26,7 @@ from pathlib import Path
 from phaseforge.runner.commands import eval_command, train_command
 from phaseforge.runner.protocol import Method, Step, load_protocol
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 NEW_ABLATION = {
     "bc_large",  # EXP-103
@@ -71,7 +70,8 @@ EVAL_QUIET = (
 
 
 def _step(method: Method, seed: int, stage: int | None = None) -> Step:
-    return Step(kind="train" if stage is not None else "eval", method=method, seed=seed, stage=stage)
+    kind = "train" if stage is not None else "eval"
+    return Step(kind=kind, method=method, seed=seed, stage=stage)
 
 
 def _run_dir_base(outputs: Path, method: Method, stage: int, seed: int) -> Path:
@@ -111,7 +111,9 @@ def _find_run_by_meta(base: Path, method_name: str, seed: int, tag: str | None) 
 
 def _find_provider_ckpt(outputs: Path, provider, seed: int) -> Path:
     """Stage-1 best checkpoint, refusing incomplete runs (no checkpoint files)."""
-    prov_dir = _find_run_by_meta(_run_dir_base(outputs, provider, 1, seed), provider.name, seed, None)
+    prov_dir = _find_run_by_meta(
+        _run_dir_base(outputs, provider, 1, seed), provider.name, seed, None
+    )
     ckpt = prov_dir / "checkpoints" / "checkpoint_best.pt"
     if not ckpt.is_file():
         raise RuntimeError(
@@ -173,7 +175,9 @@ def eval_cell(
 ) -> None:
     offline = dataclasses.replace(method, evaluate_mode="offline")
     step = _step(offline, seed)
-    cmd = eval_command(step, ckpt_path=ckpt_path, outputs_base=outputs, defaults=defaults + EVAL_QUIET)
+    cmd = eval_command(
+        step, ckpt_path=ckpt_path, outputs_base=outputs, defaults=defaults + EVAL_QUIET
+    )
     _execute(["phaseforge-eval", "project.log_level=WARNING"] + cmd[1:],
              logs / f"{method.name}_eval.log", timeout)
 
@@ -240,14 +244,21 @@ def main(argv: list[str] | None = None) -> int:
                     epochs=args.epochs1, stage=1, ckpt_path=None, logs=logs, timeout=args.timeout,
                 )
                 ckpt = run_dir / "checkpoints" / "checkpoint_best.pt"
-                eval_cell(method, seed, outputs, defaults, ckpt_path=ckpt, logs=logs, timeout=args.timeout)
+                eval_cell(
+                    method, seed, outputs, defaults,
+                    ckpt_path=ckpt, logs=logs, timeout=args.timeout,
+                )
                 return method.name, "train+eval ok", time.time() - t0
             run_dir = train_cell(
                 method, seed, outputs, ablation.defaults,
-                epochs=args.epochs2, stage=2, ckpt_path=provider_ckpt, logs=logs, timeout=args.timeout,
+                epochs=args.epochs2, stage=2, ckpt_path=provider_ckpt,
+                logs=logs, timeout=args.timeout,
             )
             ckpt = run_dir / "checkpoints" / "checkpoint_best.pt"
-            eval_cell(method, seed, outputs, ablation.defaults, ckpt_path=ckpt, logs=logs, timeout=args.timeout)
+            eval_cell(
+                method, seed, outputs, ablation.defaults,
+                ckpt_path=ckpt, logs=logs, timeout=args.timeout,
+            )
             return method.name, "train+eval ok", time.time() - t0
         except Exception as exc:
             return method.name, f"FAILED: {exc}", time.time() - t0
@@ -263,7 +274,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print("-" * 80)
     failed = [r for r in results if r[1].startswith("FAILED")]
-    print(f"[smoke] {len(results) - len(failed)}/{len(results)} cells passed in {time.time() - start:.0f}s")
+    print(
+        f"[smoke] {len(results) - len(failed)}/{len(results)} cells "
+        f"passed in {time.time() - start:.0f}s"
+    )
     for name, status, _ in failed:
         print(f"[FAIL] {name}: {status}")
     return 1 if failed else 0

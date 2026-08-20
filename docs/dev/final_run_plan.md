@@ -5,8 +5,8 @@ uv run python -m phaseforge.runner --list           # 4. sanity: five-task matri
 uv run python -m phaseforge.runner --dry-run        # 5. pre-flight: 315-step plan, read-only
 uv run python -m phaseforge.runner --continue-on-error  # 6. full five-task sweep
 uv run python -m phaseforge.runner --dry-run        # 7. verify: every step "done"
-uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge   # 8. train tables
-uv run python scripts/summarize_eval.py  --outputs outputs --baseline phaseforge   # 9. eval tables
+uv run python scripts/analysis/summarize_train.py --outputs outputs --baseline phaseforge   # 8. train tables
+uv run python scripts/analysis/summarize_eval.py  --outputs outputs --baseline phaseforge   # 9. eval tables
 
 
 #### main method baselines --methods 1,4,5,6,7,2 --continue-on-error.
@@ -42,8 +42,8 @@ This command trains each method/seed, creates checkpoints, and then evaluates ea
 5. Generate tables:
 
 ```bash
-uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge
-uv run python scripts/summarize_eval.py --outputs outputs --baseline phaseforge
+uv run python scripts/analysis/summarize_train.py --outputs outputs --baseline phaseforge
+uv run python scripts/analysis/summarize_eval.py --outputs outputs --baseline phaseforge
 uv run phaseforge-rollout-report outputs
 ```
 
@@ -53,7 +53,7 @@ The environment gates come first because they validate the simulator and reset b
 
 Run this once, top to bottom, on the machine that will produce the paper
 results. Every command was verified against the current code (runner,
-manifest `experiments/lift_pilot.json`, `scripts/summarize_*.py`).
+manifest `experiments/lift_pilot.json`, `scripts/analysis/summarize_*.py`).
 
 > Current workspace state (2026-08-14): `outputs/` contains only stale
 > legacy-format run dirs — no `checkpoints/checkpoint_best.pt`, no
@@ -190,7 +190,7 @@ Stage 1, add `--with-dependencies`.
 Training side:
 
 ```bash
-uv run python scripts/summarize_train.py --outputs outputs --baseline phaseforge
+uv run python scripts/analysis/summarize_train.py --outputs outputs --baseline phaseforge
 ```
 
 Writes under `outputs/_summaries/`:
@@ -206,7 +206,7 @@ Writes under `outputs/_summaries/`:
 Evaluation side:
 
 ```bash
-uv run python scripts/summarize_eval.py --outputs outputs --baseline phaseforge
+uv run python scripts/analysis/summarize_eval.py --outputs outputs --baseline phaseforge
 ```
 
 Writes under `outputs/_summaries/`:

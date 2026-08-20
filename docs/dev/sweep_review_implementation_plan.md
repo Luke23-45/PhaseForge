@@ -49,7 +49,7 @@ The report (`docs/dev/lift_pilot_offline_report.md`) already separates them manu
 ### Fix (no retraining needed)
 1. `phaseforge/trains/callbacks/persistence.py`: record a `best_val` block in `summary.json` mirroring `final_val` (phase acc, balanced acc, NMI at the *selected* epoch).
 2. `phaseforge/outputs_writer/training_summaries.py`: surface best-epoch phase metrics in `training_aggregates.csv`.
-3. Add a phase-label sanity report (Gate-3-style) to `scripts/summarize_train.py` (or a small `scripts/phase_label_stats.py`): per-phase counts, durations, balance — feeds the paper appendix and explains the NMI ceiling.
+3. Add a phase-label sanity report (Gate-3-style) to `scripts/analysis/summarize_train.py` (or a small `scripts/phase_label_stats.py`): per-phase counts, durations, balance — feeds the paper appendix and explains the NMI ceiling.
 4. **Do not** change the stage-1 monitor without a supervisor decision: `val/loss_total` is a stable validation rule and the bootstrap head is early (fine); `val/phase_balanced_acc` is the alternative but noisy at n=3. Record the trade-off, don't silently switch.
 
 ---

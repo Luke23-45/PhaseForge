@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.tie_break_selector import select_tie_break_epoch
+from scripts.analysis.tie_break_selector import select_tie_break_epoch
 
 
 def _rows(epochs: list[int], actions: list[float], phases: list[float]) -> list[dict]:

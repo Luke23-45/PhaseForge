@@ -41,7 +41,7 @@ from pathlib import Path
 from phaseforge.runner.protocol import load_protocol
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "protocol"))
 from smoke_matrix import (  # noqa: E402
     _find_run_by_meta,
 )

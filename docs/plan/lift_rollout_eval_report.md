@@ -20,7 +20,7 @@ the result is **directional, not significant**.
 - Seed means (50 paired eval episodes per training seed, all runs at commit `c09270a`):
   **PhaseForge 0.640**, Plain-Encoder Phase-Bootstrap 0.600, Scratch MoE 0.587, BC-MLP floor 0.540,
   Phase-Pretrain Random-Router 0.520, Warm-Start MoE 0.513, BC robot-only ≈ 0.013 (frozen report).
-- Seed-stratified bootstrap 95% CIs (percentile, 100 000 resamples, `scripts/stratified_stats.py`):
+- Seed-stratified bootstrap 95% CIs (percentile, 100 000 resamples, `scripts/analysis/stratified_stats.py`):
   PhaseForge **[0.500, 0.740]**, Scratch [0.520, 0.660], Plain-Bootstrap [0.580, 0.620],
   BC [0.480, 0.600], Phase-Pretrain [0.480, 0.560], Warm-Start [0.400, 0.580]. All overlap;
   **no pairwise difference is significant at n = 3 seeds.**
@@ -71,7 +71,7 @@ Frozen per research_definition.md §4 (H3) and the state-only rollout plan:
 | BC robot-only (23-dim) | information-ceiling negative control | 0.02 | 0.00 | 0.02 | 0.013 | n/a (frozen) |
 
 \* Percentile bootstrap over **seed-level means** (resample seeds with replacement), 100 000
-resamples, `scripts/stratified_stats.py` with `--rng-seed 12345`. This **replaces** the
+resamples, `scripts/analysis/stratified_stats.py` with `--rng-seed 12345`. This **replaces** the
 pooled-150-episode Wilson interval of the old §3: pooling episodes across seeds is
 pseudoreplication (episodes from one seed share one trained policy). With N = 3 seeds the
 bootstrap distribution has only 3³ = 27 distinct draw vectors, so the CIs are coarse by
@@ -161,7 +161,7 @@ Every seed–method pair: `pfail = 0`, `invalid = 0`. All remaining failures are
 | Plain-Enc. Bootstrap | `c09270a` | `outputs/part2/outputs/eval/plain_encoder_phase_bootstrap/seed{42,43,44}/2026-08-18_00-{25,33,40}-*` |
 | BC robot-only | `d127980` | frozen from previous revision (`outputs/part3/...` tree not synced locally) |
 
-Recompute: `python scripts/stratified_stats.py --root outputs/part1/outputs --root outputs/part2/outputs`.
+Recompute: `python scripts/analysis/stratified_stats.py --root outputs/part1/outputs --root outputs/part2/outputs`.
 
 ---
 
@@ -290,7 +290,7 @@ independent measurements, fixed, and the fix was locally validated before any GP
 - `docs/op/implementation_plan.md` — the professor's plan, gates, and Phase 1 fix results.
 - `docs/op/professor_reponse.txt` — the audit this revision answers (§2 statistical posture).
 - `docs/dev/lift_pilot_offline_report.md` — offline action-MSE/NMI pilot (pre-fix commit).
-- `scripts/stratified_stats.py` + `tests/test_stratified_stats.py` — seed-stratified bootstrap
+- `scripts/analysis/stratified_stats.py` + `tests/test_stratified_stats.py` — seed-stratified bootstrap
   and PoI; deterministic (rng seed 12345).
 - Agarwal, Schwarzer, Castro, Courville, Bellemare (2021), *Deep RL at the Edge of the
   Statistical Precipice* — IQM + stratified bootstrap; M = 1 caveat applies.

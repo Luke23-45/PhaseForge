@@ -9,7 +9,7 @@ and writes three artifacts under ``<outputs>/_summaries/``:
       (default ``phaseforge``), paired on (stage, seed)
 
 Usage:
-    uv run python scripts/summarize_eval.py [--outputs outputs] [--baseline phaseforge]
+    uv run python scripts/analysis/summarize_eval.py [--outputs outputs] [--baseline phaseforge]
 
 Requires:
     - At least one completed ``phaseforge-eval`` run (a non-empty

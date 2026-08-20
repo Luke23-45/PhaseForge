@@ -55,9 +55,9 @@ Key fairness nuance for the paper: PhaseForge has 1.85× total params of BC but 
 
 - `master` @ `e25b646` (rollback of λ-decay to the frozen constant-λ protocol + gitignore). Variant branch `phase-utilization-experiments` @ `289b3c3` carries only inert config keys; the V1/V2/V4/V6 implementations were **local patches, not committed** — do not rely on them; re-implement cleanly on master.
 - `docs/professor/` is untracked (report not yet committed).
-- Current authoritative rollout results (Lift, 3 seeds, constant λ, `289b3c3`): **V0 (phaseforge) 0.633** (0.68/0.72/0.50); variant cells V4 0.600, V2 0.540, V6 0.440. All Wilson/pooled CIs overlap → current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage (see `scripts/stratified_stats.py`, `f02a48b`).
+- Current authoritative rollout results (Lift, 3 seeds, constant λ, `289b3c3`): **V0 (phaseforge) 0.633** (0.68/0.72/0.50); variant cells V4 0.600, V2 0.540, V6 0.440. All Wilson/pooled CIs overlap → current estimates favor PhaseForge, but the present sample does not establish a statistically reliable advantage (see `scripts/analysis/stratified_stats.py`, `f02a48b`).
 - GPU stage-1/2 checkpoints were never synced to this machine (only metrics/metadata). Any GPU cell that needs a stage-1 checkpoint must either re-run stage 1 on GPU or sync checkpoints from Colab — plan for re-running (cheap, deterministic, commit-gated).
-- Rigor machinery in place: commit-gated runner, fail-closed metadata, NaN monitor guard, 509 tests, `scripts/preflight_configs.py` validates all config cells.
+- Rigor machinery in place: commit-gated runner, fail-closed metadata, NaN monitor guard, 509 tests, `scripts/protocol/preflight_configs.py` validates all config cells.
 
 ---
 
@@ -117,7 +117,7 @@ Seeded post-labeling transform in the data pipeline (`data.common.dataset`), con
 `freeze_encoder: false` exists; add optional `train.encoder_lr_scale` (e.g. 0.1×) via optimizer param groups so the encoder adapts at a small LR.
 
 ### 1.6 Fairness accounting script (professor §15)
-`scripts/fairness_accounting.py`: per cell — total params, stage-2 trainable params, active params/sample (K×expert+router), total optimizer steps, examples seen (steps×batch), approximate training FLOPs (fwd+bwd, from resolved config) and inference FLOPs. Run on every cell at Gate 3 and included in the results table.
+`scripts/analysis/fairness_accounting.py`: per cell — total params, stage-2 trainable params, active params/sample (K×expert+router), total optimizer steps, examples seen (steps×batch), approximate training FLOPs (fwd+bwd, from resolved config) and inference FLOPs. Run on every cell at Gate 3 and included in the results table.
 
 **Gate 1:** default configs bit-identical (CPU rerun of the V0 reference reproduces its recorded curves); 509+ tests pass; ruff/mypy clean; `preflight_configs.py` validates every new cell (K≤E top-k, corruption rejected on teacher_forced/oracle, `bc_large` |ratio−1|≤1.5%, freeze/FT consistency, oracle training rejected).
 
@@ -152,7 +152,7 @@ Same eval protocol: 50 paired episodes, reset bank `a7d3953c0afcf560`, horizon 5
 - **Mechanism story (professor §31):** per-cell trajectory plots — NMI, routing entropy, balance, collapse, action MSE vs epoch (data already logged).
 - **Specialization evidence (professor §16):** M_{z,e} matrices for every MoE cell; NMI alone is never cited as specialization.
 - **Gap decomposition (professor §17-18):** oracle (GT-routed eval-time intervention on the trained expert set) − phaseforge = routing-quality gap; teacher_forced − phaseforge = privileged-training strategy gap; phase predictability is assessed directly via phase-head accuracy vs GT (H5).
-- **Statistics:** existing `scripts/stratified_stats.py` (seed-stratified bootstrap + PoI) on the new matrix; M=1-task caveat kept.
+- **Statistics:** existing `scripts/analysis/stratified_stats.py` (seed-stratified bootstrap + PoI) on the new matrix; M=1-task caveat kept.
 - **Fairness table (professor §15):** params/steps/examples/FLOPs/active-per-sample for every row of the final comparison.
 - **Decision points for supervisor (professor §43-44):** does PhaseForge beat all four comparators (random-router, plain+centroid, unsupervised-cluster, param-matched dense)? Is oracle only modestly above PhaseForge? Does K=12 reveal sub-phase structure? Only then update the claim wording.
 

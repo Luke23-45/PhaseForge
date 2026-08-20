@@ -15,7 +15,7 @@ side) and every ``eval/**/episodes.jsonl`` (rollout side) and writes:
       differences per (task, training seed)
 
 Usage:
-    uv run python scripts/summarize_train.py [--outputs outputs] [--baseline phaseforge]
+    uv run python scripts/analysis/summarize_train.py [--outputs outputs] [--baseline phaseforge]
 
 Requires:
     - At least one completed training run (a non-empty

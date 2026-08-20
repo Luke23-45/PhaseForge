@@ -18,10 +18,10 @@ mid-matrix:
 
 Usage::
 
-    uv run python scripts/preflight_configs.py                 # full matrix
-    uv run python scripts/preflight_configs.py --methods bc     # subset
-    uv run python scripts/preflight_configs.py --tasks Lift     # subset
-    uv run python scripts/preflight_configs.py --manifest experiments/lift_pilot.json
+    uv run python scripts/protocol/preflight_configs.py                 # full matrix
+    uv run python scripts/protocol/preflight_configs.py --methods bc     # subset
+    uv run python scripts/protocol/preflight_configs.py --tasks Lift     # subset
+    uv run python scripts/protocol/preflight_configs.py --manifest experiments/lift_pilot.json
 
 Exit code is 0 when every cell passes; errors are collected and reported
 per cell with the exact failing override.
