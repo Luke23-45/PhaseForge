@@ -668,7 +668,7 @@ def test_verify_bank_against_baseline_passes_on_match() -> None:
     import tempfile
     from pathlib import Path
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     from experiments import v2_gates
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -717,7 +717,7 @@ def test_verify_bank_against_baseline_fails_on_mismatch() -> None:
     import tempfile
     from pathlib import Path
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     from experiments import v2_gates
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -768,7 +768,7 @@ def test_verify_bank_against_baseline_skips_when_baseline_missing() -> None:
     import tempfile
     from pathlib import Path
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     from experiments import v2_gates
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -962,7 +962,7 @@ def test_manifest_has_wave3_cells_with_correct_overrides() -> None:
     import json
     from pathlib import Path
 
-    manifest_path = Path(__file__).resolve().parents[1] / "experiments" / "lift_ablation.json"
+    manifest_path = Path(__file__).resolve().parents[2] / "experiments" / "lift_ablation.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_name = {m["name"]: m for m in manifest["methods"]}
 
@@ -1003,7 +1003,7 @@ def test_phaseforge_r50_canonical_config_resolves_to_intended() -> None:
     """
     from hydra import compose, initialize
 
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(
             config_name="main",
             overrides=[

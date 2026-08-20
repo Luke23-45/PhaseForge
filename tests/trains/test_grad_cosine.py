@@ -83,7 +83,7 @@ def test_grad_cosine_degenerate_returns_none() -> None:
 
 
 def _build_stage1_trainer(grad_cosine: bool, model_cfg: str = "phaseforge"):
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(
             config_name="main",
             overrides=[

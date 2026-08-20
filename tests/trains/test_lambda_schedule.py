@@ -17,7 +17,7 @@ from phaseforge.utils.registry import build_model, build_trainer
 
 
 def _build_trainer(overrides: list[str], epochs: int = 1):
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(
             config_name="main",
             overrides=[

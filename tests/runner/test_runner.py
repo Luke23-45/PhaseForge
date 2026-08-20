@@ -27,7 +27,7 @@ from phaseforge.runner.resolver import (
     stage_checkpoint_relative,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = PROJECT_ROOT / "experiments" / "lift_pilot.json"
 
 
@@ -424,7 +424,7 @@ def test_eval_mode_override_alone_leaves_metrics_schema() -> None:
     Layer 1: the runner MUST emit ``eval=<group>``."""
     from hydra import compose, initialize
 
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(config_name="main", overrides=["eval.mode=rollout"])
     # The default eval group is metrics (offline), so these rollout-only
     # sections are absent. This is exactly the state the buggy runner
@@ -441,7 +441,7 @@ def test_eval_group_selector_loads_rollout_schema() -> None:
     ``load_or_generate_bank`` requires."""
     from hydra import compose, initialize
 
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(config_name="main", overrides=["eval=rollout"])
     assert "bank" in cfg.eval
     assert "env" in cfg.eval

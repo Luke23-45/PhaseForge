@@ -78,7 +78,7 @@ def test_invalid_parameters_rejected() -> None:
 
 
 def test_build_model_from_hydra_config() -> None:
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(config_name="main", overrides=["models=baselines/bc_rnn", "data=lift_rnn"])
         model = build_model(cfg)
         assert isinstance(model, BehaviorCloningRNNModel)
@@ -86,7 +86,7 @@ def test_build_model_from_hydra_config() -> None:
 
 
 def test_stage1_trainer_with_padded_sequence_batch() -> None:
-    with initialize(version_base="1.3", config_path="../phaseforge/config"):
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(
             config_name="main",
             overrides=[
