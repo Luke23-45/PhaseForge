@@ -2,8 +2,8 @@
 
 **Status:** implemented (`phaseforge-sweep`, `python -m phaseforge.runner`)
 
-**Related plans:** [data_provenance_design.md](data_provenance_design.md),
-[final_evaluation_plan.md](final_evaluation_plan.md),
+**Related plans:** [data_provenance_design.md](../design/data_provenance_design.md),
+[final_evaluation_plan.md](../design/final_evaluation_plan.md),
 [research_definition.md](research_definition.md)
 
 The runner executes the frozen experiment matrix from a single JSON protocol

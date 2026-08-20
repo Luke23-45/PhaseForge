@@ -2,7 +2,7 @@
 
 **Status:** finalized design; schema implemented (`_ledger/`, `_results/`, `_summaries/` write paths and validators live); behavioral-evaluation parameters updated in the schema as rollout landed.
 
-**Related plans:** [final_evaluation_plan.md](final_evaluation_plan.md), [research_definition.md](research_definition.md)
+**Related plans:** [final_evaluation_plan.md](final_evaluation_plan.md), [research_definition.md](../specs/research_definition.md)
 
 **Scope of this document:** the exact set of training-time and evaluation-time
 data that must be persisted per run so that the research paper can be written

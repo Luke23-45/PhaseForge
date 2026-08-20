@@ -273,7 +273,7 @@ independent measurements, fixed, and the fix was locally validated before any GP
    H2 direction and put PhaseForge at the top of the mean. The H3 verdict (not significant) is
    unchanged.
 4. **Next steps, in order:** (a) GPU re-run with the adopted monitor-restoration fix
-   (runbook `docs/plan/gpu_rerun_runbook.md`; five-task manifest needs **no** λ overrides —
+   (runbook `docs/plan/specs/gpu_rerun_runbook.md`; five-task manifest needs **no** λ overrides —
    every method runs its predeclared configuration); (b) complete the missing cells —
    Teacher-Forced (H4), BC-RNN — before any conclusion; (c) seed budget from Colas et al.
    power analysis on the post-fix effect size (Phase 5); (d) multi-task claim requires the
@@ -303,8 +303,8 @@ is GPU nondeterminism). **Conclusion: the reported numbers are exactly reproduci
 
 ## 11. References
 
-- `docs/plan/research_definition.md` — hypotheses H0–H4, required matrix, interpretation rules.
-- `docs/plan/state_only_rollout_implementation_plan.md` — rollout/reset/checkpoint protocol.
+- `docs/plan/specs/research_definition.md` — hypotheses H0–H4, required matrix, interpretation rules.
+- `docs/plan/specs/state_only_rollout_implementation_plan.md` — rollout/reset/checkpoint protocol.
 - `docs/op/implementation_plan.md` — the professor's plan, gates, and Phase 1 fix results.
 - the professor's statistical audit (2026-08-18) that this revision answers — summarized in §7 (§2 statistical posture).
 - `docs/dev/legacy/lift_pilot_offline_report.md` — offline action-MSE/NMI pilot (pre-fix commit).

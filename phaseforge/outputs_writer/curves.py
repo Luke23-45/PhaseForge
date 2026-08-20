@@ -8,7 +8,7 @@ disk, appends hold a cross-process ``FileLock`` + ``fsync``, and the
 per-epoch curve append is idempotent (a resumed run never duplicates an
 already-written epoch).
 
-Schema follows the final specification (``docs/plan/data_provenance_design.md``
+Schema follows the final specification (``docs/plan/design/data_provenance_design.md``
 §5.1/§5.2): a single row schema with required core fields plus optional
 stage/model-specific fields. A ``bc`` row carries only the core block;
 a Stage 2 ``phaseforge`` row adds the routing fields. Absence is honest.

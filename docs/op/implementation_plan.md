@@ -24,10 +24,10 @@
 
 **0.1 — Router terminology fix (doc-only).**
 Replace every "Switch-Transformer-style" with "Shazeer/GShard-style sparse top-2 gating (noisy gate, load-balancing loss)" in:
-- `docs/plan/professor_decision_report.md`
-- `docs/plan/research_definition.md` (if present there)
+- `docs/plan/reports/professor_decision_report.md`
+- `docs/plan/specs/research_definition.md` (if present there)
 - method docstrings in `phaseforge/models/phase_moe.py` / `bootstrap_moe` (check first)
-- `docs/plan/lift_rollout_eval_report.md` (superseded anyway, but fix on touch)
+- `docs/plan/reports/lift_rollout_eval_report.md` (superseded anyway, but fix on touch)
 
 **0.2 — Related-work research (2 papers + 1 search).**
 - Read in full: LAR-MoE (https://arxiv.org/abs/2603.08476), MoE-ACT (https://arxiv.org/abs/2601.21971). Search for the "Semantically Structured MoE" paper the professor referenced (not yet identified).
@@ -100,7 +100,7 @@ Replace every "Switch-Transformer-style" with "Shazeer/GShard-style sparse top-2
 
 ## Phase 4 — Statistical posture (writing, no compute)
 
-Per professor §2 + §7 Phase 4, applied to `docs/plan/lift_rollout_eval_report.md` (or a new corrected section):
+Per professor §2 + §7 Phase 4, applied to `docs/plan/reports/lift_rollout_eval_report.md` (or a new corrected section):
 
 1. **Seed-stratified bootstrap CI** (resample seeds with replacement — mirror Agarwal's per-task stratification, applied to seeds) **replacing the pooled-150-episode Wilson CI**, which is pseudoreplication (episodes from one seed are correlated).
 2. **Probability-of-improvement per pairwise comparison** (bootstrap P(X>Y) over per-episode Bernoulli outcomes, e.g., "72% probability PhaseForge beats Warm-Start MoE") — more informative than CI overlap, directly recommended by Agarwal et al.

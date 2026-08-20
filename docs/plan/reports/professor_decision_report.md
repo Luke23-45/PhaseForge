@@ -186,7 +186,7 @@ The previous report (§8) should be superseded by this document's §3 numbers wi
 
 - This analysis's evidence: `outputs/part1/outputs/`, `outputs/part2/outputs/` (runner state `_runner/state.json` — all cells `completed` at `c09270a`; per-episode logs, `rollout_summary.json`, `training_curves.jsonl`).
 - Analysis scripts: `scripts/compare_rerun_report.py`, `scripts/seed_dependence_deepdive.py`, `scripts/episode_crosscheck.py`, `scripts/phase_head_at_selection.py`, `scripts/collect_rerun_results.py`.
-- Previous report (superseded numbers): `docs/plan/lift_rollout_eval_report.md`.
-- Research definition and protocol: `docs/plan/research_definition.md`, `docs/plan/state_only_rollout_implementation_plan.md`.
+- Previous report (superseded numbers): `docs/plan/reports/lift_rollout_eval_report.md`.
+- Research definition and protocol: `docs/plan/specs/research_definition.md`, `docs/plan/specs/state_only_rollout_implementation_plan.md`.
 - Fix commit: `c09270a` (monitor fix, commit gating, fail-closed metadata, NaN guard; 509 tests passing).
-- GPU runbook: `docs/plan/gpu_rerun_runbook.md`.
+- GPU runbook: `docs/plan/specs/gpu_rerun_runbook.md`.

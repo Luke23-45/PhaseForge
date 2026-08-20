@@ -268,7 +268,7 @@ def main() -> int:
     print("\n" + "=" * 90)
 
     # Save to markdown file in docs/
-    out_path = PROJECT_ROOT / "docs" / "plan" / "fairness_accounting.md"
+    out_path = PROJECT_ROOT / "docs" / "plan" / "reports" / "fairness_accounting.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         f"# PhaseForge Fairness & Compute Accounting\n\n{md_table}\n",

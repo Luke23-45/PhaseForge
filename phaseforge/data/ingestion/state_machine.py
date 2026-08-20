@@ -28,7 +28,7 @@ Design notes (bugs fixed here, each proven by simulation)
   splits so validation is available without trajectory leakage.
 - Bug 2: task_id is deterministic (sorted-name -> int); the ingester builds it.
 
-Benchmark contract (docs/plan/final_evaluation_plan.md, Gate 0)
+Benchmark contract (docs/plan/design/final_evaluation_plan.md, Gate 0)
 ----------------------------------------------------------------
 The dataset-specific conversion (robomimic HDF5 -> trajectory dicts) lives in
 a pluggable ``data.ingester`` instantiated by :meth:`_ingest_source`. The
@@ -277,7 +277,7 @@ class DataPipelineStateMachine:
         if source is None or not source.get("dir"):
             raise PipelineError(
                 "data.source.dir is not configured. The robomimic protocol "
-                "(docs/plan/final_evaluation_plan.md, Gate 0) requires a "
+                "(docs/plan/design/final_evaluation_plan.md, Gate 0) requires a "
                 "source block with the raw dataset directory before the "
                 "pipeline can ingest. Legacy benchmark-specific data configs "
                 "are archived under legacy/ and are not part of the protocol."
@@ -379,7 +379,7 @@ class DataPipelineStateMachine:
         if ingester_cfg is None:
             raise PipelineError(
                 "data.ingester is not configured — the source adapter for the "
-                "robomimic/robosuite protocol (docs/plan/final_evaluation_plan.md, "
+                "robomimic/robosuite protocol (docs/plan/design/final_evaluation_plan.md, "
                 "Gate 0/1) is not implemented yet. The former benchmark-specific "
                 "ingestion stack was archived to legacy/ and must not be used."
             )

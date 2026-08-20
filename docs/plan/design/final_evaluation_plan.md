@@ -1,8 +1,8 @@
 # PhaseForge — Final State-Based Evaluation and Research Plan
 
-**Status:** **SUPERSEDED** — [state_only_rollout_implementation_plan.md](state_only_rollout_implementation_plan.md) is now the authoritative protocol for the current five-task state-only paper. This file is retained for reference; its earlier required/optional classifications must not override the authoritative plan.
+**Status:** **SUPERSEDED** — [state_only_rollout_implementation_plan.md](../specs/state_only_rollout_implementation_plan.md) is now the authoritative protocol for the current five-task state-only paper. This file is retained for reference; its earlier required/optional classifications must not override the authoritative plan.
 
-**Research definition:** [research_definition.md](research_definition.md)
+**Research definition:** [research_definition.md](../specs/research_definition.md)
 
 **Research area:** non-visual robot manipulation from structured low-dimensional observations
 
