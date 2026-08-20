@@ -1,7 +1,7 @@
 {
   "name": "lift_ablation",
   "task": "Lift",
-  "description": "Comprehensive PhaseForge research evaluation protocol based on literature review & professor feedback. Wave 1: Core Confirmatory Matrix (15 methods) covering 4-way initialization factorial, parameter-matched BC-Large, negative control, generic spherical/Euclidean KMeans controls, linear phase-head init, spherical averaging, PhaseForge-FT, and teacher-forced. Oracle MoE is an evaluation-time routing intervention applied to a fixed trained expert set. Wave 2: Expert scaling (unconfounded K=3/12), jitter sweep (0.0/0.1), and phase label corruption (25%/50%/shuffle).",
+  "description": "Comprehensive PhaseForge research evaluation protocol based on literature review & professor feedback. Wave 1: Core Confirmatory Matrix (15 methods) covering 4-way initialization factorial, parameter-matched BC-Large, negative control, generic spherical/Euclidean KMeans controls, linear phase-head init, spherical averaging, PhaseForge-FT, and teacher-forced. Oracle MoE is an evaluation-time routing intervention applied to a fixed trained expert set. Wave 2: Expert scaling (unconfounded K=3/12), jitter sweep (0.0/0.1), and phase label corruption (25%/50%/shuffle). Wave 3: Drop-Upcycling-style partial expert reinitialization (`warmstart_r50`, EXP-210) and the one-warm-plus-random diagnostic (`pf_one_warm_plus_random`, EXP-211), both pinned to num_experts=6 + centroid router so the comparison against `pf_centroid_random` / `phaseforge_e6` is expert-init-only.",
   "seeds": [42, 43, 44],
   "defaults": [
     "train.early_stopping.enabled=false"
@@ -349,6 +349,46 @@
         "data.phase_shuffle_control=true"
       ],
       "tag": "shuffle",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 26,
+      "experiment_id": "EXP-210",
+      "name": "warmstart_r50",
+      "role": "Wave 3 expert-init: Drop-Upcycling-style partial 50% reinitialization (shared index set across experts, fresh standard Kaiming-uniform init for dropped neurons). Pinned to num_experts=6 + centroid router to compare against pf_centroid_random / phaseforge_e6 (NOT the 8-expert soft_mapping default).",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.router.num_experts=6",
+        "models.router_init.type=centroid",
+        "models.expert_init.type=partial_warm",
+        "+models.expert_init.drop_rate=0.5",
+        "+models.expert_init.seed=${project.seed}"
+      ],
+      "tag": "r50",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 27,
+      "experiment_id": "EXP-211",
+      "name": "pf_one_warm_plus_random",
+      "role": "Wave 3 expert-init diagnostic: one warmstart generalist + (n-1) random experts. Pinned to num_experts=6 + centroid router. warm_idx rotated deterministically by training seed so each seed tests a different warm expert (avoids phase-0 confound).",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.router.num_experts=6",
+        "models.router_init.type=centroid",
+        "models.expert_init.type=one_warm",
+        "models.expert_init.jitter_std=0.0",
+        "+models.expert_init.rotate_warm_idx_by_seed=true"
+      ],
+      "tag": "onewarm",
       "evaluate": true,
       "evaluate_mode": "rollout"
     }

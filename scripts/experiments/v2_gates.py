@@ -1,4 +1,4 @@
-"""V2 gates G1/G3/G4: cloud experiment launchers + findings collection.
+"""V2 gates G1/G3/G4/G8: cloud experiment launchers + findings collection.
 
 The gate cells already exist in the lift_ablation manifest and run through
 ``phaseforge-sweep`` (commit-gated registry, auto-injected provider
@@ -20,6 +20,11 @@ so the stepwise gating from report1.md stays enforceable:
   phaseforge configuration (``num_experts=6``, ``router_init.type=centroid``)
   on the shared wave-3 bank to separate the bank effect from the V2-B
   config change when the G3 re-baseline disagrees with the Wave-1 number.
+* ``g8`` — Wave 3 expert-init (EXP-210 + EXP-211): Drop-Upcycling-style
+  partial reinitialization (``warmstart_r50``) and the one-warm-plus-random
+  diagnostic (``pf_one_warm_plus_random``). Both pinned to ``num_experts=6``
+  + centroid router so the comparison against the g6 baseline (and against
+  ``pf_centroid_random``) is expert-init-only.
 
 Per-gate findings (SR + CI + bank id per seed) are collected from each
 cell's ``rollout_summary.json`` into ``outputs/_findings/v2_gates_<gate>.json``.
@@ -63,6 +68,14 @@ GATES: dict[str, dict] = {
         "methods": ["phaseforge_e6"],
         "namespace": "outputs/v2_e6_diag",
         "role": "E=6 centroid re-run on shared bank (EXP-209)",
+    },
+    "g8": {
+        "methods": ["warmstart_r50", "pf_one_warm_plus_random"],
+        "namespace": "outputs/v2_g8",
+        "role": "Wave 3 expert-init: Drop-Upcycling-style partial reinit + "
+        "one-warm diagnostic, pinned to E=6 + centroid (EXP-210 + EXP-211)",
+        "baseline_gate": "g6",
+        "baseline_method": "phaseforge_e6",
     },
 }
 
@@ -126,13 +139,78 @@ def _collect(gate: str, manifest: Path, seeds: list[int], outputs: Path) -> dict
     return results
 
 
+def _verify_bank_against_baseline(
+    gate: str,
+    seeds: list[int],
+    results: dict,
+    spec: dict,
+) -> tuple[bool, str]:
+    """Fail if any g8 rollout was on a different reset bank than the baseline.
+
+    Compares the ``reset_bank`` recorded in each g8 rollout against the same
+    seed's baseline (typically g6 ``phaseforge_e6``). Returns ``(True, "")``
+    if the baseline findings are missing or if all banks match; returns
+    ``(False, error_msg)`` on the first mismatch.
+
+    A gate opt in by setting ``baseline_gate`` and ``baseline_method`` in its
+    GATES entry. Currently only ``g8`` uses this guard, because the Wave 3
+    expert-init cells are only meaningful when compared against the g6 E=6
+    centroid baseline on the same reset bank.
+    """
+    baseline_gate = spec.get("baseline_gate")
+    baseline_method = spec.get("baseline_method")
+    if baseline_gate is None or baseline_method is None:
+        return True, ""
+
+    baseline_findings_path = FINDINGS_DIR / f"v2_gates_{baseline_gate}.json"
+    if not baseline_findings_path.is_file():
+        print(
+            f"[v2-gates] {gate}: bank-verification skipped — baseline "
+            f"findings not found at {baseline_findings_path}. Run "
+            f"`--gates {baseline_gate}` first to record the baseline banks."
+        )
+        return True, ""
+
+    baseline = json.loads(baseline_findings_path.read_text(encoding="utf-8"))
+    baseline_results = baseline.get("results", {})
+
+    for name in spec["methods"]:
+        for seed in seeds:
+            cell = results.get(f"{name}:{seed}", {})
+            if "error" in cell:
+                continue
+            cell_bank = cell.get("reset_bank")
+            baseline_key = f"{baseline_method}:{seed}"
+            baseline_cell = baseline_results.get(baseline_key, {})
+            baseline_bank = baseline_cell.get("reset_bank")
+            if baseline_bank is None:
+                return False, (
+                    f"{gate}: baseline cell {baseline_key} missing "
+                    f"reset_bank in {baseline_findings_path.name}"
+                )
+            if cell_bank != baseline_bank:
+                return False, (
+                    f"{gate}: bank mismatch for {name}:{seed}: cell "
+                    f"reset_bank={cell_bank!r} != baseline "
+                    f"{baseline_method}:{seed} reset_bank={baseline_bank!r} "
+                    f"(from {baseline_findings_path.name}). The comparison "
+                    "is only valid on a matched reset bank — re-run g8 "
+                    f"after re-running {baseline_gate} on the same bank."
+                )
+    print(
+        f"[v2-gates] {gate}: bank-verification passed against "
+        f"{baseline_method} (baseline gate {baseline_gate})."
+    )
+    return True, ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--gates",
         nargs="+",
         default=[],
-        help="Gates to run: g1, g3, g4 (default: all).",
+        help="Gates to run: g1, g3, g4, g6, g8 (default: all).",
     )
     parser.add_argument("--seeds", default="42,43,44")
     parser.add_argument("--manifest", default=PROJECT_ROOT / "experiments" / "lift_ablation.json")
@@ -183,6 +261,11 @@ def main(argv: list[str] | None = None) -> int:
                 continue
         seeds = [int(s) for s in args.seeds.split(",")]
         results = _collect(gate, manifest, seeds, (outputs_root / spec["namespace"]).resolve())
+        bank_ok, bank_err = _verify_bank_against_baseline(gate, seeds, results, spec)
+        if not bank_ok:
+            print(f"[v2-gates] {gate}: BANK CHECK FAILED — {bank_err}", file=sys.stderr)
+            overall_rc = 2
+            continue
         payload = {
             "gate": gate,
             "role": spec["role"],

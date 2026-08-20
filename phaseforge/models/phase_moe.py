@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn.functional as F
@@ -19,6 +20,8 @@ from phaseforge.models.components.clustering import (
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
+    one_warm_experts_from_action_head,
+    partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
 from phaseforge.models.components.moe_layer import MoELayer
@@ -36,6 +39,14 @@ logger = logging.getLogger(__name__)
 EVAL_ROUTER_MODES: frozenset[str] = frozenset(
     {"learned", "sticky", "uniform", "oracle"}
 )
+
+
+def _hash_dropped_indices(indices: list[int]) -> str:
+    """Stable sha256 of the dropped-neuron index set for audit metadata."""
+    h = hashlib.sha256()
+    for i in sorted(indices):
+        h.update(int(i).to_bytes(8, "little", signed=False))
+    return h.hexdigest()
 
 
 class PhaseBootstrappedMoE(BaseManipulationModel):
@@ -68,7 +79,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                   'kmeans' | 'phase_head' | 'soft_mapping' | 'random'), 'seed' (int),
                   'mapping_mode'/'temperature' (soft_mapping only).
         expert_init: Optional configuration dictionary for expert initialization.
-            Keys: 'type' ('warmstart' | 'random'), 'jitter_std' (float).
+            Keys: 'type' ('warmstart' | 'partial_warm' | 'one_warm' | 'random'),
+            'jitter_std' (float; warmstart/one_warm), 'drop_rate' (float;
+            partial_warm, default 0.5), 'warm_idx' (int; one_warm, default 0),
+            'rotate_warm_idx_by_seed' (bool; one_warm, default false),
+            'seed' (int; partial_warm, default 42).
         soft_mapping: Optional configuration dictionary for the soft
             phase-to-expert mapping M (V2-B; see
             phaseforge.models.components.soft_mapping). The (P, E) matrix
@@ -114,6 +129,13 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         )
         self.soft_mapping_cfg = dict(soft_mapping) if soft_mapping is not None else {}
         self.teacher_routing_cfg = dict(teacher_routing) if teacher_routing is not None else {}
+
+        # Audit metadata populated by ``bootstrap_moe`` after a successful
+        # Stage 1 -> Stage 2 transition. Initialized to ``None`` so the model
+        # state is well-defined before Stage 2 and consumers (cli metadata
+        # writer, tests) can rely on attribute existence rather than relying
+        # on dynamic attribute creation.
+        self._expert_init_info: dict[str, Any] | None = None
 
         # Persistent soft phase->expert mapping M (P, E). Zero-initialized:
         # a checkpoint that predates M (or a stage-1 checkpoint) loads into
@@ -352,6 +374,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         device: torch.device | str = "cuda",
         router_init: dict[str, Any] | None = None,
         expert_init: dict[str, Any] | None = None,
+        training_seed: int | None = None,
     ) -> None:
         """Bootstrapping the MoE from Stage 1 knowledge.
 
@@ -365,20 +388,35 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             * 'random': keeps random router initialization.
         - Expert initialization:
             * 'warmstart': ActionHead weights copied with configurable jitter_std.
-            * 'random': independent Kaiming draws.
+            * 'partial_warm': ActionHead copied (exact, no jitter) and a
+              fraction ``drop_rate`` of intermediate neurons reinitialized
+              per expert using the standard Kaiming-uniform draw (Drop-
+              Upcycling-style; shared index set across experts; see
+              ``partial_reinit_experts_from_action_head``).
+            * 'one_warm': expert ``warm_idx`` receives the standard warm
+              start; all other experts are reset via Kaiming-uniform draws.
+            * 'random': independent Kaiming draws for every expert.
 
         Args:
             dataloader: Training dataloader to compute centroids/clusters over.
             device: Compute device.
             router_init: Optional override for router initialization config.
             expert_init: Optional override for expert initialization config.
+            training_seed: Optional training seed used to deterministically
+                rotate ``warm_idx`` for ``one_warm`` when
+                ``expert_init.rotate_warm_idx_by_seed`` is true. Ignored
+                otherwise.
         """
         r_cfg = router_init or self.router_init_cfg
         e_cfg = expert_init or self.expert_init_cfg
 
         r_type = str(r_cfg.get("type", "centroid")).lower()
         e_type = str(e_cfg.get("type", "warmstart")).lower()
-        jitter_std = float(e_cfg.get("jitter_std", 0.02))
+        jitter_std = float(e_cfg.get("jitter_std", 0.02))  # type: ignore[arg-type]
+        drop_rate = float(e_cfg.get("drop_rate", 0.5))  # type: ignore[arg-type]
+        init_seed = int(e_cfg.get("seed", 42))  # type: ignore[arg-type]
+        warm_idx = int(e_cfg.get("warm_idx", 0))  # type: ignore[arg-type]
+        rotate_warm_idx_by_seed = bool(e_cfg.get("rotate_warm_idx_by_seed", False))  # type: ignore[arg-type]
         cluster_seed = int(r_cfg.get("seed", 42))
 
         logger.info(
@@ -551,6 +589,10 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             )
 
         # 3. Expert Initialization
+        expert_init_info: dict[str, Any] = {
+            "type": e_type,
+            "jitter_std": jitter_std,
+        }
         if e_type == "warmstart":
             warm_start_experts_from_action_head(
                 self.moe_layer.experts, self.action_head, jitter_std=jitter_std
@@ -558,15 +600,98 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             logger.info(
                 f"Warm-started all {num_experts} experts from ActionHead (jitter_std={jitter_std})."
             )
+        elif e_type == "partial_warm":
+            first_typed = cast(ExpertMLP, self.moe_layer.experts[0]) if num_experts > 0 else None
+            hidden_dim = (
+                int(first_typed.hidden[0].weight.size(0))  # type: ignore[union-attr,operator]
+                if first_typed is not None
+                else 0
+            )
+            dropped_indices = partial_reinit_experts_from_action_head(
+                self.moe_layer.experts,
+                self.action_head,
+                drop_rate=drop_rate,
+                seed=init_seed,
+            )
+            logger.info(
+                f"Partial-warm-started all {num_experts} experts from ActionHead "
+                f"(drop_rate={drop_rate}, seed={init_seed}, "
+                f"dropped={len(dropped_indices)}/{hidden_dim}, jitter_std=0.0)."
+            )
+            expert_init_info.update(
+                {
+                    "drop_rate": drop_rate,
+                    "init_seed": init_seed,
+                    "hidden_dim": hidden_dim,
+                    "num_dropped_neurons": len(dropped_indices),
+                    "dropped_neuron_indices": dropped_indices,
+                    "dropped_indices_sha256": _hash_dropped_indices(dropped_indices),
+                }
+            )
+        elif e_type == "one_warm":
+            effective_warm_idx = warm_idx
+            if rotate_warm_idx_by_seed:
+                if training_seed is None:
+                    raise ValueError(
+                        "expert_init.rotate_warm_idx_by_seed=true but no "
+                        "training_seed was passed to bootstrap_moe"
+                    )
+                effective_warm_idx = (warm_idx + int(training_seed)) % num_experts
+            one_warm_experts_from_action_head(
+                self.moe_layer.experts,
+                self.action_head,
+                jitter_std=jitter_std,
+                warm_idx=effective_warm_idx,
+            )
+            logger.info(
+                f"Warm-started expert {effective_warm_idx}/{num_experts} from ActionHead "
+                f"(jitter_std={jitter_std}, requested_warm_idx={warm_idx}, "
+                f"rotate_warm_idx_by_seed={rotate_warm_idx_by_seed}, "
+                f"training_seed={training_seed}); reset the other {num_experts - 1} "
+                "experts to independent random draws."
+            )
+            expert_init_info.update(
+                {
+                    "warm_idx": int(effective_warm_idx),
+                    "requested_warm_idx": int(warm_idx),
+                    "rotate_warm_idx_by_seed": rotate_warm_idx_by_seed,
+                    "training_seed": int(training_seed) if training_seed is not None else None,
+                }
+            )
         elif e_type == "random":
             for expert in self.moe_layer.experts:
-                expert.reset_parameters()
+                expert.reset_parameters()  # type: ignore[union-attr,operator]
             logger.info(
                 f"Reset all {num_experts} experts to independent random draws "
                 "(scratch distribution)."
             )
         else:
-            raise ValueError(f"Unknown expert_init type '{e_type}'. Supported: warmstart, random.")
+            raise ValueError(
+                f"Unknown expert_init type '{e_type}'. Supported: "
+                "warmstart, partial_warm, one_warm, random."
+            )
+
+        router_cfg = r_cfg
+        self._expert_init_info = {
+            "expert_init": expert_init_info,
+            "router": {
+                "num_experts": int(num_experts),
+                "top_k": int(self.moe_layer.router.top_k),
+                "init_type": r_type,
+                "init_seed": int(cluster_seed),
+                "init_mapping_mode": (
+                    str(router_cfg.get("mapping_mode"))
+                    if "mapping_mode" in router_cfg
+                    else None
+                ),
+                "init_temperature": (
+                    float(router_cfg.get("temperature"))  # type: ignore[arg-type]
+                    if "temperature" in router_cfg
+                    else None
+                ),
+            },
+            "training_seed": int(training_seed) if training_seed is not None else None,
+        }
 
         # Exclude Stage 1 heads from the optimizer in Stage 2
         for param in self.action_head.parameters():

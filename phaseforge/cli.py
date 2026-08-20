@@ -632,7 +632,11 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
                 + _unused_stage1_head_prefixes(model),
             )
 
-            model.bootstrap_moe(dataloader=train_loader, device=cfg.project.get("device", "cuda"))
+            model.bootstrap_moe(
+                dataloader=train_loader,
+                device=cfg.project.get("device", "cuda"),
+                training_seed=cfg.project.get("seed"),
+            )
 
             # Compute and persist t=0 initial routing diagnostics (professor Change 7)
             try:
@@ -652,6 +656,21 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
                     logger.info("Persisted t=0 routing diagnostics to metadata/init_routing.json")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not compute init routing diagnostics: %s", exc)
+
+            # Persist expert-init audit metadata (dropped indices, seed,
+            # router config, etc.) so the run can be reproduced / audited
+            # without re-running bootstrap_moe.
+            try:
+                expert_info = getattr(model, "_expert_init_info", None)
+                if expert_info:
+                    meta_dir = output_dir / "metadata"
+                    meta_dir.mkdir(parents=True, exist_ok=True)
+                    (meta_dir / "init_expert.json").write_text(
+                        json.dumps(expert_info, indent=2), encoding="utf-8"
+                    )
+                    logger.info("Persisted expert-init metadata to metadata/init_expert.json")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not persist expert-init metadata: %s", exc)
         else:
             # Models without bootstrapping (ScratchMoE, OraclePhaseMoE)
             # train from scratch — no checkpoint needed.

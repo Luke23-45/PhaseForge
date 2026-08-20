@@ -45,6 +45,8 @@ NEW_ABLATION = {
     "pf_corrupt_25",  # EXP-205
     "pf_corrupt_50",  # EXP-206
     "pf_shuffle_control",  # EXP-207
+    "warmstart_r50",  # EXP-210 (Wave 3 expert-init)
+    "pf_one_warm_plus_random",  # EXP-211 (Wave 3 expert-init)
 }
 
 NEW_BC_RNN = {"bc_rnn"}
