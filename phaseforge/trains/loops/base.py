@@ -149,6 +149,11 @@ class BaseTrainer(ABC):
         self.current_epoch = 0
         self.global_step = 0
         self.should_stop = False
+        # On-device "every training loss this epoch was finite" flag. AND-ed
+        # per batch without a host sync; materialized once per epoch in
+        # :meth:`_check_epoch_loss_finite` (see the guard note in
+        # :meth:`_train_epoch`).
+        self._epoch_loss_finite: torch.Tensor | None = None
         # Checkpoint payload queued by resume(); applied at the start of the
         # next fit() so subclasses that re-create the optimizer (e.g. after
         # freezing) restore state into the final optimizer instance.
@@ -376,6 +381,7 @@ class BaseTrainer(ABC):
                 epoch_t0 = time.perf_counter()
                 train_t0 = time.perf_counter()
                 self._train_epoch()
+                self._check_epoch_loss_finite()
                 train_seconds = time.perf_counter() - train_t0
                 steps_in_epoch = self.global_step - steps_before
                 val_metrics = self._validate()
@@ -414,6 +420,7 @@ class BaseTrainer(ABC):
     def _train_epoch(self) -> None:
         self.model.train()
         self._reset_train_pool()
+        self._epoch_loss_finite = None
 
         use_pbar = self.train_cfg.get("rich_progressbar", False)
 
@@ -446,14 +453,22 @@ class BaseTrainer(ABC):
             loss, metrics = self._compute_loss(batch, out=out)
             n = self._batch_sample_count(batch)
 
-            # Fail fast on non-finite losses: a NaN/Inf loss would otherwise
-            # corrupt the optimizer state and the checkpoint silently.
-            if not torch.isfinite(loss):
-                raise FloatingPointError(
-                    f"Non-finite training loss ({loss.item()}) at global step "
-                    f"{self.global_step + 1}, epoch {self.current_epoch}. "
-                    "Aborting to avoid corrupting the run."
-                )
+            # Fail fast on non-finite losses — without a per-step host sync.
+            # Converting a device tensor to bool (`if not torch.isfinite(loss)`)
+            # synchronizes every step; instead the per-batch finiteness is
+            # AND-reduced on-device here and materialized exactly once per
+            # epoch in _check_epoch_loss_finite(), BEFORE validation, curve
+            # persistence, and the checkpoint callback run — so a corrupted
+            # epoch can never produce artifacts. Non-finite *gradients* are
+            # still caught per step (clip_grad_norm_'s error_if_nonfinite,
+            # or the explicit guard below when clipping is disabled), i.e.
+            # before the optimizer applies them.
+            finite = torch.isfinite(loss.detach())
+            self._epoch_loss_finite = (
+                finite
+                if self._epoch_loss_finite is None
+                else self._epoch_loss_finite & finite
+            )
 
             loss.backward()
 
@@ -476,14 +491,28 @@ class BaseTrainer(ABC):
                     ) from exc
             else:
                 # Keep the explicit guard when clipping is disabled; there is
-                # no aggregate norm call in that configuration.
-                for name, param in self.model.named_parameters():
-                    if param.grad is not None and not torch.isfinite(param.grad).all():
-                        raise FloatingPointError(
-                            f"Non-finite gradient in '{name}' at global step "
-                            f"{self.global_step + 1}, epoch {self.current_epoch}. "
-                            "Aborting to avoid corrupting the run."
-                        )
+                # no aggregate norm call in that configuration. One fused
+                # check (a single host sync) replaces the former
+                # per-parameter loop (~one sync per parameter); the offending
+                # parameter is named only on the failure path.
+                grads = [p.grad for p in self.model.parameters() if p.grad is not None]
+                if grads and not bool(
+                    torch.stack([torch.isfinite(g).all() for g in grads]).all().item()
+                ):
+                    for name, param in self.model.named_parameters():
+                        if param.grad is not None and not bool(
+                            torch.isfinite(param.grad).all().item()
+                        ):
+                            raise FloatingPointError(
+                                f"Non-finite gradient in '{name}' at global step "
+                                f"{self.global_step + 1}, epoch {self.current_epoch}. "
+                                "Aborting to avoid corrupting the run."
+                            )
+                    raise FloatingPointError(
+                        f"Non-finite gradient at global step "
+                        f"{self.global_step + 1}, epoch {self.current_epoch}. "
+                        "Aborting to avoid corrupting the run."
+                    )
 
             self.optimizer.step()
             self.global_step += 1
@@ -513,6 +542,27 @@ class BaseTrainer(ABC):
                 postfix = {k: f"{self._metric_to_float(v):.4f}" for k, v in metrics.items()}
                 postfix["loss"] = f"{loss.item():.4f}"
                 pbar.set_postfix(postfix)
+
+    def _check_epoch_loss_finite(self) -> None:
+        """Abort the run if any training loss this epoch was non-finite.
+
+        The per-batch finiteness flag is accumulated on-device (no host sync
+        per step) and materialized exactly once per epoch here — before
+        validation, curve persistence, and the checkpoint callback, so a
+        corrupted epoch never produces artifacts (no checkpoint, no curve
+        row, no ledger completion). With gradient clipping enabled,
+        ``clip_grad_norm_(error_if_nonfinite=True)`` additionally aborts per
+        step on non-finite gradients, before the optimizer applies them.
+        """
+        flag = self._epoch_loss_finite
+        if flag is None:
+            return
+        if not bool(flag.item()):
+            raise FloatingPointError(
+                f"Non-finite training loss during epoch {self.current_epoch} "
+                f"(global steps up to {self.global_step}). Aborting before "
+                "any epoch-end artifact is written."
+            )
 
     def _batch_sample_count(self, batch: dict[str, torch.Tensor]) -> int:
         """Number of valid samples a batch contributes to the losses.
@@ -548,9 +598,16 @@ class BaseTrainer(ABC):
             return {}
 
         self.model.eval()
-        agg_metrics: dict[str, float] = {}
         total_samples = 0
         self._reset_validation_pool()
+
+        # Loss metrics are accumulated on-device in float64 — the exact
+        # arithmetic of the former Python-float accumulation (float32 ->
+        # float64 is exact, adds and the final division keep their order) —
+        # and materialized ONCE at the epoch boundary. The old per-batch
+        # `.item()` cost one host/device synchronization per tensor metric
+        # per batch (~340/epoch on the big tasks' validation sets).
+        agg_sums: dict[str, torch.Tensor] = {}
 
         use_pbar = self.train_cfg.get("rich_progressbar", False)
 
@@ -588,11 +645,18 @@ class BaseTrainer(ABC):
                 continue
             self._collect_validation_pool(batch, out, metrics)
             for k, v in metrics.items():
-                agg_metrics[k] = agg_metrics.get(k, 0.0) + self._metric_to_float(v) * n
+                if isinstance(v, torch.Tensor):
+                    contribution = v.detach().to(device=self.device, dtype=torch.float64)
+                else:
+                    contribution = torch.tensor(
+                        float(v), device=self.device, dtype=torch.float64
+                    )
+                acc = agg_sums.get(k)
+                agg_sums[k] = contribution * n if acc is None else acc + contribution * n
             total_samples += n
 
         if total_samples > 0:
-            agg_metrics = {k: v / total_samples for k, v in agg_metrics.items()}
+            agg_metrics = {k: float((v / total_samples).item()) for k, v in agg_sums.items()}
             self._finalize_validation_pool(agg_metrics)
-
-        return agg_metrics
+            return agg_metrics
+        return {}

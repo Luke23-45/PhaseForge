@@ -92,7 +92,11 @@ def _resolve_device(cfg: DictConfig) -> torch.device:
 
 
 def _init_run_bookkeeping(
-    cfg: DictConfig, output_dir: Path, *, kind: str
+    cfg: DictConfig,
+    output_dir: Path,
+    *,
+    kind: str,
+    data_config_hash: str | None = None,
 ) -> tuple[RunWriter, RunLedger, str]:
     """Create the RunWriter + pending ledger row for a run directory.
 
@@ -104,7 +108,9 @@ def _init_run_bookkeeping(
     is written immediately; the ledger row is ``pending`` until the
     caller flips it via the run-specific finalizer
     (:func:`_finalize_training_run` / :func:`_finalize_eval_run` /
-    :func:`_mark_run_failed`).
+    :func:`_mark_run_failed`). ``data_config_hash`` may be supplied when the
+    caller already computed it (it is derived several times per run and each
+    derivation re-stats the raw dataset).
     """
     from phaseforge.data.ingestion.cache_manager import CacheManager
 
@@ -112,9 +118,11 @@ def _init_run_bookkeeping(
     ledger = RunLedger(outputs_base / "_ledger")
     run_writer = RunWriter(output_dir)
     timestamp, tag, run_id = parse_run_dir(output_dir.name)
+    if data_config_hash is None:
+        data_config_hash = CacheManager.compute_hash(cfg.data)
     run_writer.write_environment(
         collect_environment(
-            data_config_hash=CacheManager.compute_hash(cfg.data),
+            data_config_hash=data_config_hash,
             config_hash=config_hash(cfg),
             extra={"kind": kind, "device": str(cfg.project.device), "tag": tag},
         )
@@ -311,8 +319,12 @@ def train(cfg: DictConfig) -> None:
 
     # Save resolved config and lightweight run metadata. run_meta.json
     # records the effective data-config hash (final specification §5.5),
-    # mirroring the eval path and environment.json.
+    # mirroring the eval path and environment.json. The hash is computed
+    # once and threaded through bookkeeping/meta/finalization: each
+    # derivation re-stats the raw dataset and spawns a git subprocess.
     from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    data_config_hash = CacheManager.compute_hash(cfg.data)
 
     with open(output_dir / "resolved_config.yaml", "w") as f:
         f.write(OmegaConf.to_yaml(cfg, resolve=True))
@@ -320,20 +332,24 @@ def train(cfg: DictConfig) -> None:
         output_dir,
         cfg,
         kind="train",
-        data_config_hash=CacheManager.compute_hash(cfg.data),
+        data_config_hash=data_config_hash,
     )
 
     logger.info(f"Output directory: {output_dir}")
 
     # 2. Run lifecycle bookkeeping BEFORE any work so a killed cloud session
     #    still leaves a pending ledger row + environment fingerprint.
-    run_writer, ledger, run_id = _init_run_bookkeeping(cfg, output_dir, kind="train")
+    run_writer, ledger, run_id = _init_run_bookkeeping(
+        cfg, output_dir, kind="train", data_config_hash=data_config_hash
+    )
     try:
-        _train_body(cfg, output_dir, run_id)
+        _train_body(cfg, output_dir, run_id, data_config_hash=data_config_hash)
     except BaseException as exc:
         _mark_run_failed(run_writer, ledger, run_id, exc)
         raise
-    _finalize_training_run(cfg, output_dir, run_writer, ledger, run_id)
+    _finalize_training_run(
+        cfg, output_dir, run_writer, ledger, run_id, data_config_hash=data_config_hash
+    )
 
 
 def _finalize_training_run(
@@ -342,6 +358,7 @@ def _finalize_training_run(
     run_writer: RunWriter,
     ledger: RunLedger,
     run_id: str,
+    data_config_hash: str | None = None,
 ) -> None:
     """Complete a successful training run in the provenance-defined order.
 
@@ -374,7 +391,7 @@ def _finalize_training_run(
         except Exception:
             logger.exception("Failed to write the reconciliation record for run %s.", run_id)
     try:
-        _copy_data_provenance(cfg, output_dir)
+        _copy_data_provenance(cfg, output_dir, data_config_hash=data_config_hash)
     except Exception:
         logger.exception("Failed to copy the cache data provenance into %s.", output_dir.name)
     try:
@@ -428,18 +445,21 @@ def _append_training_summary_row(cfg: DictConfig, output_dir: Path) -> None:
     append_training_summary_row(base_dir / "_results", summary)
 
 
-def _copy_data_provenance(cfg: DictConfig, output_dir: Path) -> None:
+def _copy_data_provenance(
+    cfg: DictConfig, output_dir: Path, data_config_hash: str | None = None
+) -> None:
     """Copy the cache manifest's provenance block into the run directory.
 
     Uses the effective cache hash recorded in ``environment.json`` when
     available (the pipeline may have fallen back to a different cache),
-    else the freshly computed data-config hash.
+    else the data-config hash (computed here only when not supplied by the
+    caller).
     """
     from phaseforge.data.ingestion.cache_manager import CacheManager
     from phaseforge.data.paths import processed_cache_root
 
     env_path = output_dir / "metadata" / "environment.json"
-    config_hash_val = CacheManager.compute_hash(cfg.data)
+    config_hash_val = data_config_hash or CacheManager.compute_hash(cfg.data)
     if env_path.is_file():
         try:
             import json as _json
@@ -478,14 +498,25 @@ def _phase_class_weights(
     raise ValueError(f"unknown phase_class_weight mode {mode!r}")
 
 
-def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
+def _train_body(
+    cfg: DictConfig, output_dir: Path, run_id: str, data_config_hash: str | None = None
+) -> None:
     """The training work itself, wrapped in run lifecycle bookkeeping."""
-    # 2. Init W&B (lazy import: cli.py stays importable without wandb installed)
-    try:
-        import wandb
-    except ImportError:
-        wandb = None
-    if wandb is not None and cfg.project.wandb.mode != "disabled":
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+
+    if data_config_hash is None:
+        data_config_hash = CacheManager.compute_hash(cfg.data)
+
+    # 2. Init W&B. The import is guarded on the mode: importing wandb costs
+    #    seconds per process and the default mode is "disabled" — importing
+    #    unconditionally would burn that time in every sweep cell.
+    wandb = None
+    if cfg.project.wandb.mode != "disabled":
+        try:
+            import wandb
+        except ImportError:
+            wandb = None
+    if wandb is not None:
         wandb.init(
             project=cfg.project.wandb.project,
             entity=cfg.project.wandb.entity,
@@ -696,13 +727,12 @@ def _train_body(cfg: DictConfig, output_dir: Path, run_id: str) -> None:
         source_stage1 = checkpoint_source_info(
             cfg.train.stage1_ckpt_path, base=cfg.project.output_dir
         )
-    from phaseforge.data.ingestion.cache_manager import CacheManager
 
     trainer.add_callback(
         MetricPersistenceCallback(
             run_dir=output_dir,
             run_id=run_id,
-            data_config_hash=CacheManager.compute_hash(cfg.data),
+            data_config_hash=data_config_hash,
             source_stage1=source_stage1,
         )
     )

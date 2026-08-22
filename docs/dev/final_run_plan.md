@@ -130,6 +130,13 @@ per reset case — see `docs/dev/rollout_performance_review.md`):
 .venv-toolhang/Scripts/python.exe scripts/dev/ab_reset_equivalence.py --tasks tool_hang
 ```
 
+First-run GPU verification (training review §8, external-review requirement):
+before the sweep, run one short training cell (e.g. 3-epoch Lift stage-1) on
+the sweep GPU and confirm (a) `train_steps_per_second` in the curve rows is
+compute-bound (the flat loader's host-to-device copies must not throttle it),
+and (b) batches arrive pinned — `pytest tests/data/test_flat_loader.py -k
+real_pinning` must pass there (it skips on CPU-only machines).
+
 ---
 
 ## 4. Pre-flight (read-only)

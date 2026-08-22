@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -17,8 +18,14 @@ from omegaconf import DictConfig, OmegaConf
 logger = logging.getLogger(__name__)
 
 
+@functools.lru_cache(maxsize=1)
 def git_commit() -> str:
-    """Best-effort HEAD SHA of the repo containing this module ('' when N/A)."""
+    """Best-effort HEAD SHA of the repo containing this module ('' when N/A).
+
+    Cached per process: a training run never moves HEAD, and the value feeds
+    the data-config identity which is derived several times per run (each
+    derivation used to spawn its own ~150 ms git subprocess).
+    """
     try:
         repo = Path(__file__).resolve().parents[3]
         result = subprocess.run(

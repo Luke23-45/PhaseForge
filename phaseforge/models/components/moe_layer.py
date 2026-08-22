@@ -155,18 +155,18 @@ class MoELayer(nn.Module):
         # Implementation note: For small K (e.g., 2) and E (e.g., 6-8), iterating over
         # experts is often faster than complex scatter/gather batched operations due to
         # kernel launch overheads. We use the loop-over-experts approach.
-
-        # Flatten indices and weights for easier masking
-        # We need to find which items in the batch go to which expert
+        #
+        # There is deliberately NO "expert received zero tokens" early-skip:
+        # converting a CUDA tensor to bool (`match_mask.any()`) is a
+        # host-device synchronization, so the skip cost 6 syncs per forward
+        # on GPU. An expert invoked on an empty (0, D) slice is an exact
+        # no-op (empty forward, empty gather, empty index_add_), so always
+        # dispatching is bit-identical and sync-free.
 
         for expert_idx, expert_net in enumerate(self.experts):
             # Find all locations where this expert was selected
             # match_mask: (B, K) boolean tensor
             match_mask = indices == expert_idx
-
-            # Check if this expert was selected at all in this batch
-            if not match_mask.any():
-                continue
 
             # Find the batch indices that selected this expert
             # batch_idx: 1D tensor of batch indices

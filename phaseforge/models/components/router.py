@@ -9,6 +9,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+#: Cached 0.0 scalar per device for the sticky-loss default — the default is
+#: requested every forward; a fresh device tensor per call is a small
+#: allocation repeated over tens of thousands of steps. Read-only constant,
+#: value/dtype identical to ``torch.tensor(0.0)``.
+_ZERO_SCALARS: dict[torch.device, Tensor] = {}
+
+
+def _zero_scalar(device: torch.device) -> Tensor:
+    zero = _ZERO_SCALARS.get(device)
+    if zero is None:
+        zero = torch.zeros((), device=device)
+        _ZERO_SCALARS[device] = zero
+    return zero
+
 
 class RouterOutput(NamedTuple):
     """Standardized output from the TopKRouter."""
@@ -286,7 +300,7 @@ class TopKRouter(nn.Module):
         # V2-C second pass: add the learned history bias of the previous
         # step's top-1 choice (first-pass logits decide the choice).
         prev_top1: Tensor | None = None
-        sticky_loss = torch.tensor(0.0, device=gate_logits.device)
+        sticky_loss = _zero_scalar(gate_logits.device)
         B = gate_logits.size(0)
         if (
             self.use_history

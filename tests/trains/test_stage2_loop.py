@@ -69,12 +69,19 @@ class CountingMoEModel(torch.nn.Module):
 
 
 class NaNMoEModel(CountingMoEModel):
-    """Fake MoE with a poisoned forward: NaN action predictions."""
+    """Fake MoE with a poisoned forward: NaN action predictions.
+
+    The NaN is injected through the parameter-carrying output
+    (``probe * zeros * nan``) so the loss has a grad_fn, matching real
+    models: backward() runs, produces NaN gradients, and the per-step
+    gradient guard aborts. (A *constant* NaN loss would instead crash
+    backward() with a bare RuntimeError — the epoch-end loss flag remains
+    the backstop for that pathological case.)"""
 
     def forward(self, batch: dict[str, torch.Tensor]) -> ModelOutput:
         out = super().forward(batch)
         return ModelOutput(
-            action_pred=torch.full_like(out.action_pred, float("nan")),
+            action_pred=out.action_pred * float("nan"),
             phase_logits=None,
             routing_weights=out.routing_weights,
             expert_indices=out.expert_indices,
@@ -241,10 +248,17 @@ def test_validate_losses_are_sample_weighted() -> None:
 
 
 def test_non_finite_loss_fails_fast() -> None:
+    # Guard ordering (training review T3): with clipping disabled the
+    # per-step fused gradient guard is the first abort surface for a NaN
+    # loss (NaN forward -> NaN backward -> guard fires before
+    # optimizer.step()); the epoch-end on-device loss flag is the backstop
+    # for non-finite losses that never reach a gradient (e.g. detached
+    # constants). Either way the run aborts with a non-finite error before
+    # any epoch-end artifact is written.
     model = NaNMoEModel(num_experts=3)
     trainer = _make_trainer(model, DataLoader(_DictDataset(seed=8), batch_size=8))
 
-    with pytest.raises(FloatingPointError, match="Non-finite training loss"):
+    with pytest.raises(FloatingPointError, match="Non-finite"):
         trainer.fit()
 
 
@@ -447,3 +461,97 @@ def test_teacher_kl_fails_closed_without_mapping() -> None:
     out = model(first)
     with pytest.raises(RuntimeError, match="require_soft_mapping"):
         trainer._compute_loss(first, out=out)
+
+
+class _EpochEndRecorder(torch.nn.Module):
+    """No-op probe model + callback pair recording epoch-end invocations."""
+
+
+class RecordingCallback:
+    def __init__(self) -> None:
+        self.epoch_end_epochs: list[int] = []
+
+    def on_epoch_end(self, trainer, val_metrics) -> None:
+        self.epoch_end_epochs.append(int(trainer.current_epoch))
+
+
+def test_non_finite_loss_aborts_before_epoch_end_artifacts() -> None:
+    """T3: the loss-finiteness guard fires at the epoch boundary — after the
+    epoch trained, but BEFORE validation persistence / the checkpoint
+    callback, so a corrupted epoch produces no artifacts."""
+    model = NaNMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(seed=21), batch_size=8))
+    recorder = RecordingCallback()
+    trainer.add_callback(recorder)
+
+    with pytest.raises(FloatingPointError, match="Non-finite"):
+        trainer.fit()
+
+    assert recorder.epoch_end_epochs == [], "on_epoch_end ran despite a non-finite loss epoch"
+
+
+def test_epoch_loss_finite_backstop_check() -> None:
+    """The epoch-end backstop check itself: a red flag aborts before any
+    artifact, a green flag passes, and no flag (empty epoch) is a no-op."""
+    model = CountingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=8, seed=23), batch_size=8))
+
+    trainer._epoch_loss_finite = torch.tensor(False)
+    with pytest.raises(FloatingPointError, match="Non-finite training loss"):
+        trainer._check_epoch_loss_finite()
+
+    trainer._epoch_loss_finite = torch.tensor(True)
+    trainer._check_epoch_loss_finite()  # green: no raise
+
+    trainer._epoch_loss_finite = None
+    trainer._check_epoch_loss_finite()  # empty: no raise
+
+
+def test_finite_epoch_sets_green_loss_flag() -> None:
+    """T3: a clean epoch leaves the on-device finite flag True (no abort)."""
+    model = CountingMoEModel(num_experts=3)
+    trainer = _make_trainer(model, DataLoader(_DictDataset(num=16, seed=22), batch_size=8))
+
+    trainer.fit()
+
+    assert trainer._epoch_loss_finite is not None
+    assert bool(trainer._epoch_loss_finite.item())
+
+
+def test_trainer_zero_scalar_cache_is_stable_constant() -> None:
+    """T7a: the stage-2 aux-loss zero default is a cached, unmutated 0.0."""
+    from phaseforge.trains.loops.stage2_loop import _zero_scalar
+
+    zero = _zero_scalar(torch.device("cpu"))
+    assert zero.item() == 0.0
+    assert zero.dtype == torch.float32
+    assert _zero_scalar(torch.device("cpu")) is zero
+
+
+def test_validate_aggregation_exact_python_float_math() -> None:
+    """T4: the on-device float64 accumulation must reproduce the former
+    per-batch Python-float (float64) arithmetic EXACTLY — same operation
+    order, same rounding — including a short final batch (sample-weighted
+    means). Exact equality, not approx: the guard exists to prove the
+    aggregation refactor is numerically invisible."""
+    model = CountingMoEModel(num_experts=3)
+    dataset = _DictDataset(num=7, seed=24)
+    loader = DataLoader(dataset, batch_size=4)
+    trainer = _make_trainer(model, loader)
+
+    agg: dict[str, float] = {}
+    total = 0
+    for batch in loader:
+        out = model(batch)
+        _, metrics = trainer._compute_loss(batch, out=out)
+        n = batch["action"].shape[0]
+        for k, v in metrics.items():
+            f = float(v.detach().cpu().item()) if isinstance(v, torch.Tensor) else float(v)
+            agg[k] = agg.get(k, 0.0) + f * n
+        total += n
+    expected = {k: v / total for k, v in agg.items()}
+
+    val_metrics = trainer._validate()
+    for k, v in expected.items():
+        assert k in val_metrics, f"metric {k} missing from validation output"
+        assert val_metrics[k] == v, f"{k}: {val_metrics[k]!r} != {v!r}"

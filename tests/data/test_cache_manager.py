@@ -249,6 +249,33 @@ def test_git_commit_helper_returns_sha(tmp_path: Path) -> None:
     assert commit == "" or len(commit) == 40
 
 
+def test_git_commit_is_cached_per_process(monkeypatch) -> None:
+    """The lru_cache must collapse repeated lookups into one git subprocess.
+
+    The data-config identity derives git_commit() several times per training
+    run; without the cache each derivation spawns its own ~150 ms subprocess.
+    """
+    import phaseforge.data.ingestion.cache_manager as cm
+
+    calls = []
+    real_run = cm.subprocess.run
+
+    def counting_run(*args, **kwargs):
+        calls.append(args)
+        return real_run(*args, **kwargs)
+
+    cm.git_commit.cache_clear()
+    monkeypatch.setattr(cm.subprocess, "run", counting_run)
+    try:
+        first = cm.git_commit()
+        second = cm.git_commit()
+        third = cm.git_commit()
+    finally:
+        monkeypatch.setattr(cm.subprocess, "run", real_run)
+    assert first == second == third
+    assert len(calls) == 1, f"expected exactly one git subprocess, got {len(calls)}"
+
+
 def test_sha256_file_streams_large_content(tmp_path: Path) -> None:
     from phaseforge.data.ingestion.cache_manager import sha256_file
 

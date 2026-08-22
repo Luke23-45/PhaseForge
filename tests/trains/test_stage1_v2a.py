@@ -204,3 +204,58 @@ def test_phase_class_weights_cui_invalid_beta_rejected() -> None:
 def test_phase_class_weights_unknown_mode_rejected() -> None:
     with pytest.raises(ValueError, match="unknown phase_class_weight"):
         _phase_class_weights("banana", {0: 1})
+
+
+def test_validate_aggregation_exact_python_float_math() -> None:
+    """T4: the base-loop validation aggregation (on-device float64) must
+    reproduce the former per-batch Python-float arithmetic EXACTLY, with a
+    short final batch exercising the sample weighting."""
+    from torch.utils.data import DataLoader, Dataset
+
+    from phaseforge.trains.loops.stage1_loop import Stage1Trainer  # noqa: F401 (already imported)
+
+    class _DS(Dataset):
+        def __init__(self, num: int = 7) -> None:
+            g = torch.Generator().manual_seed(31)
+            self.state = torch.randn(num, 4, generator=g)
+            self.action = torch.randn(num, 2, generator=g)
+            self.phase = torch.randint(0, 4, (num,), generator=g)
+
+        def __len__(self) -> int:
+            return len(self.action)
+
+        def __getitem__(self, i: int) -> dict[str, torch.Tensor]:
+            return {"state": self.state[i], "action": self.action[i], "phase": self.phase[i]}
+
+    train_cfg = {
+        "epochs": 1,
+        "grad_clip_norm": 0.0,
+        "log_every_n_steps": 1,
+        "lambda_phase": 1.0,
+        "optimizer": {"_target_": "torch.optim.AdamW", "lr": 1.0e-4},
+        "scheduler": {
+            "_target_": "torch.optim.lr_scheduler.CosineAnnealingLR",
+            "T_max": 1,
+        },
+    }
+    cfg = DictConfig({"project": {"device": "cpu"}, "train": train_cfg})
+    loader = DataLoader(_DS(), batch_size=4)
+    model = FakePhaseModel()
+    trainer = Stage1Trainer(cfg=cfg, model=model, train_loader=loader, val_loader=loader)
+
+    agg: dict[str, float] = {}
+    total = 0
+    for batch in loader:
+        out = model(batch)
+        _, metrics = trainer._compute_loss(batch, out=out)
+        n = batch["action"].shape[0]
+        for k, v in metrics.items():
+            f = float(v.detach().cpu().item()) if isinstance(v, torch.Tensor) else float(v)
+            agg[k] = agg.get(k, 0.0) + f * n
+        total += n
+    expected = {k: v / total for k, v in agg.items()}
+
+    val_metrics = trainer._validate()
+    for k, v in expected.items():
+        assert k in val_metrics, f"metric {k} missing from validation output"
+        assert val_metrics[k] == v, f"{k}: {val_metrics[k]!r} != {v!r}"

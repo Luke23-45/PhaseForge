@@ -108,10 +108,15 @@ def test_mc_bootstrap_matches_exact_distribution() -> None:
     from collections import Counter
 
     rates = {42: 0.60, 43: 0.48, 44: 0.54}
-    exact = Counter(exact_bootstrap_seed_means(rates))
+    # Bin values at 1e-9 before counting: the exact enumerator and the MC
+    # sampler compute the same means in different summation orders, so e.g.
+    # 0.56 materializes as BOTH 0.56 and 0.5599999999999999 — without
+    # quantization the MC mass splits across float neighbors of one exact
+    # value and the 4-sigma comparison fails on an artifact, not statistics.
+    exact = Counter(round(v, 9) for v in exact_bootstrap_seed_means(rates))
     n_exact = sum(exact.values())
     n_mc = 200_000
-    mc = Counter(bootstrap_seed_means(rates, n_mc, random.Random(7)))
+    mc = Counter(round(v, 9) for v in bootstrap_seed_means(rates, n_mc, random.Random(7)))
     for value, count in exact.items():
         p_exact = count / n_exact
         p_mc = mc[value] / n_mc

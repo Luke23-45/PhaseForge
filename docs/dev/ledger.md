@@ -772,6 +772,123 @@ slow — is it headless, is everything optimized correctly?" Full record:
 
 ---
 
+## Phase 8d — Training hot-path review (PLAN ONLY; no patches applied)
+
+> Prompt: optimize the training phase the way rollout was optimized —
+> line-level, measured, no generic advice, plan first for review.
+> **Nothing in this phase was implemented**; the patch plan
+> (`docs/dev/training_performance_review.md`) awaits project-owner approval.
+> Measurement artifacts (`outputs__perfreview/`, temp scripts) deleted.
+
+- [x] **S8d.1 Full code read of the training path** — loops (base/stage1/
+      stage2), callbacks, dataset/collator/state machine/cache manager,
+      model forward chain (encoder/router/moe_layer/experts/bootstrap),
+      cli/runner command. Confirmed the main train loop is already
+      sync-disciplined (on-device metrics, non-blocking H2D, single-pass
+      clip); defects concentrate elsewhere (below).
+- [x] **S8d.2 Measurements (dev CPU, torch 2.13.0+cpu, 2 threads)** —
+      Lift s1 3-epoch run 72.4 s wall (epochs 17.2/0.92/1.55 s);
+      Lift s2 35.4 s (epochs ≈4.9 s); ToolHang epoch 9.7 s steady
+      (337 batches); loader: workers=2 12.1 ms/batch steady vs workers=0
+      50–54 ms vs in-process prep 68 ms/batch (225 µs/item); worker spawn
+      6.9 s/run (Windows); step cost 17.4 ms (s1) / 31.0 ms (s2) with
+      exactly 6 `Tensor.any()` calls/s2 step; `collect_environment`
+      8.3 s (imports sklearn ≈2.5 s, wandb ≈2.2 s, scipy ≈0.4 s just for
+      `__version__`) vs `importlib.metadata.version` 3–11 ms/pkg; cache
+      load 0.46 s; git subprocess 146 ms × ~3 unmemoized hashes/run.
+- [x] **S8d.3 Findings + proposed patches T1–T7** (review doc §2):
+      T1 version lookup via dist metadata (−4.5–5 s/process); T2 drop the
+      MoE per-expert `.any()` early-continue (bit-identical — empty-slice
+      forward/`index_add_`/gather verified exact no-ops; removes 6 CUDA
+      syncs/step = 404k per ToolHang s2 run); T3 replace the per-step
+      `isfinite(loss)` sync with an on-device epoch-level finite flag
+      checked before checkpoint write (+1-sync concatenated check for the
+      no-clip branch); T4 on-device validation aggregation + single
+      end-of-epoch transfer (replaces ~340 syncs/epoch on big tasks;
+      bit-identical means by preserving accumulation order); T5 flat
+      in-memory batch iterator for `sequence_length=1` configs (randperm
+      per epoch from a `project.seed` generator, drop_last parity, RNN
+      configs keep the legacy loader; content bit-identical, permutation
+      sequence differs from `RandomSampler` — disclosed); T6 memoize
+      data-config hash + `git_commit` per process; T7 micro items
+      (cached zero-scalar aux tensors, stacked metric accumulation;
+      `get_rng_state_all` per save kept deliberately for resume fidelity).
+- [x] **S8d.4 Rejected with evidence** — torch.compile (480 fresh
+      processes × warm-up is net-negative; dynamic MoE shapes), AMP/TF32
+      (launch-bound, not matmul-bound), larger batch/epochs (protocol),
+      more workers (measured floor is IPC), in-process multi-cell runner
+      (breaks crash isolation). Review doc §3.
+- [x] **S8d.5 External claims verified against primary sources** —
+      bool/`.item()`/`.cpu()`/computed-index syncs: official PyTorch
+      tuning guide + NVIDIA sync-free guide (review doc §7).
+- [x] **S8d.7 Research pass (rev 2): every issue checked against community
+      best practice; second code sweep for missed issues.** Found+added
+      **T1b**: `cli.py:485` imports wandb unconditionally (~2.2 s/process
+      with `mode=disabled`). Upgraded T1 to the single-pass
+      `distributions()` dict form (importlib_metadata#95). Rejected
+      `torch._assert_async` for T3 despite its sync-free appeal — corrupts
+      the CUDA context on failure, traceback surfaces at an unrelated line,
+      `assert_msg` ignored (pytorch#131491), private API — the epoch-end
+      on-device flag is the robust design. T5 validated as the canonical
+      resident-tensor/randperm/index_select pattern (PyTorch forums, SO,
+      Lightning #2361); refined to always use a CPU generator (portable,
+      avoids generator/device mismatch). T2 dense-dispatch variant rejected
+      (Shazeer sparse lineage arXiv:1701.06538; fixed-256 GEMMs would drift
+      float paths). torch.compile rejection reaffirmed with official
+      sources (FX-graph cache does not eliminate per-process cold start —
+      Dynamo + AOTAutograd re-run per process; pytorch#114206/#113287/
+      #96152). AdamW left unchanged: `foreach=None` already selects foreach
+      on CUDA per official docs (fused would drift numerics). Review doc
+      §0 records the full research table; §7 lists all sources.
+- [x] **S8d.6 Implementation of approved patches COMPLETE** (project
+      owner: "proceed. and implement all the patches"). Implemented in gated
+      order T1/T1b/T6 → T2/T3/T7a → T4 → T5 with per-phase verification:
+      T1+T1b+T6, T2+T3+T7a, and T4 each reproduced the pre-patch Lift
+      stage-1 AND stage-2 3-epoch curves **bit-identically** (baseline
+      itself proven deterministic, 2 runs IDENTICAL); T5 (flat
+      `InMemoryBatchLoader`, `sequence_length=1` configs; RNN keeps the
+      DataLoader) passed content-parity (batches bit-equal to the collator
+      with the permutation pinned; full-multiset coverage; drop_last
+      parity), same-seed determinism (stage-1 ×2 and stage-2 ×2 IDENTICAL,
+      bootstrap included), and differs from baseline curves only through
+      the disclosed permutation-stream change. Measured head-to-head
+      (interleaved, same process): batch fetch 490–551 ms/epoch (workers=2)
+      → **3.1–9.0 ms/epoch**; worker spawn 6.8 s → 0; environment
+      fingerprint imports eliminated (metadata single pass,
+      sys.modules-first preserves exact strings). Suite **738 passed**
+      (+25 new tests); preflight 165+150 green; dry-runs exactly 315/165;
+      ruff clean on all touched files (3 pre-existing findings left in
+      untouched files). One PRE-EXISTING failure found by the suite gate
+      and fixed test-only: `test_mc_bootstrap_matches_exact_distribution`
+      failed at HEAD from float-neighbor aliasing (0.56 vs
+      0.5599999999999999) — comparison now quantizes at 1e-9; the analysis
+      module is unchanged. T7b evaluated and NOT taken (documented);
+      `get_rng_state_all` per checkpoint save kept by decision. Review doc
+      rev 3 records everything (§8). Tree left UNCOMMITTED.
+- [x] **S8d.8 External review of the implemented patches adjudicated; P1+P2
+      confirmed and patched.** P1: the flat loader yielded PAGEABLE gathered
+      batches while the trainer requests non_blocking H2D — the legacy
+      DataLoader pinned in that configuration, so T5 had silently dropped
+      the pinned-batch contract (magnitude honest: ~30 KB batches → µs-scale
+      sync copies, not a plausible bottleneck, but a real contract
+      regression). Patched: `pin_memory` support in `InMemoryBatchLoader`
+      via a `_pin` helper, enabled under the legacy gating (config AND cuda
+      target AND CUDA available — `pin_memory()` raises on CPU-only builds,
+      verified) hoisted and shared by both loader paths. P2: stale local
+      `result` annotation fixed to the union type. Gates: 740 passed + 1
+      CUDA-skipped (real-pinning test, runs on the sweep machine), ruff
+      clean, fresh same-seed determinism pair-run identical. The reviewer's
+      remaining requirement — a real cloud-GPU benchmark of the flat-loader
+      H2D behavior before the final run — added as a first-run gate in
+      `final_run_plan.md` §3 (no GPU on the dev box; not claimed as
+      demonstrated until run).
+
+      *Evidence: `docs/dev/training_performance_review.md` (measurements,
+      file:line citations, verification plan); commands and raw numbers in
+      S8d.2.*
+
+---
+
 ## Phase 9 — Final sweep execution
 
 > **Status: fully prepared; execution pending.** Everything preparable is
@@ -924,3 +1041,7 @@ slow — is it headless, is everything optimized correctly?" Full record:
 | 2026-08-22 | **Phase 8c: rollout performance & determinism revision implemented and gated** (D12 recorded) | Audit answer: rollout IS fully headless (no GL ever; dataset pins lite_physics=False, 25 substeps/step; step ≈17.8 ms ≈97% robosuite OSC). Discovered the stock reset path was **episode-order-dependent** (warmstart/OSC-cache/initial_joint/geometry leaks; same case twice diverged 9.6e-2/3.8e-1) and hard reset recompiled the MJCF every episode (530–770 ms). Implemented: canonicalized soft reset (construction seeding + hard_reset=False + hidden-state canonicalization), P1 tolerance harmonization, P2 torch single-thread in eval. Standing gate redefined to S-vs-S on pinned metadata and **PASSED on all five tasks** (bitwise; retired-hard arm informational ≤5e-2, attributed). Bench harness corrected to protocol env (reset 2.7 ms vs 637 ms; eval ≈2–3 h for all 150 cells). Parallel-cells proposal REJECTED (RunnerState not concurrency-safe) — final sweep sequential. Review doc corrected (lite_physics fact, residual attribution, 150-cell count, disclosures). Suite 711 green. D12 ratification pending before numbers enter the paper. Working tree left UNCOMMITTED per project owner instruction. |
 | 2026-08-22 | **Phase 8c finalization: external review adjudicated; refutation institutionalized** | The pasted external review's "critical regression" (soft reset allegedly degenerates bank generation) was verified against source and measurement — **REFUTED** (`_reset_internal()` placement sampling runs in both reset branches; 5-case generation distinct on all five tasks, min pairwise L2 0.096–0.209 vs 1e-3 threshold). Its Patch A (per-restore hard-reset toggling) NOT implemented — solves a non-existent problem and re-introduces the retired branch. Added `--bank-smoke` permanent mode to `ab_reset_equivalence.py` (passed all 5 tasks, exit 0, in-memory only). Review doc §3.3 records the full adjudication incl. rejected docstring/gate re-anchoring proposals. Ruff clean; suite re-run green. The review's two open questions answered by evidence: bank generation needs NO hard reset; `action_tolerance=1e-4` remains the single contract. Tree remains UNCOMMITTED per standing instruction. |
 | 2026-08-22 | **Post-review bank invalidation patch implemented** | Reset-bank identity and manifests now carry `soft-reset-canonical-v1`; `ResetBank.load` rejects missing or stale protocol revisions, so pre-revision bank IDs cannot be reused by the final sweep. The five current banks must be regenerated through the final evaluation path before the gates and their new IDs recorded in the run plan. The rollout benchmark now restores the saved Torch intra-op thread count correctly. Focused rollout tests: 60 passed; full suite: 713 passed. |
+| 2026-08-22 | **Phase 8d: training hot-path review complete — PLAN ONLY, no patches applied** | Full training-path code read + clean measurements (no profiler for headline numbers): the main train loop is already sync-disciplined; the real costs are (a) `collect_environment` importing sklearn/wandb/scipy per process for `__version__` (≈4.5–5 s × 315 cells), (b) MoE dispatch `.any()` ×6/step = CUDA syncs (404k per ToolHang stage-2 run), (c) per-step `isfinite(loss)` sync, (d) per-metric-per-batch validation syncs (~340/epoch on big tasks), (e) 68 ms/batch per-item Python data path behind a 12 ms worker-IPC floor, (f) unmemoized hash/git calls. Patches T1–T7 proposed with bit-identity/determinism gates (T2/T3 bit-identical — empty-slice no-op verified empirically; T5's flat iterator changes permutation sequence, disclosed, seed-reproducible; RNN cells keep the legacy loader). torch.compile/AMP/TF32/more-workers/multi-cell-runner rejected WITH evidence. External sync claims verified against the official PyTorch tuning guide + NVIDIA sync-free guide. Plan awaiting project-owner approval in `docs/dev/training_performance_review.md`; nothing implemented, nothing committed. |
+| 2026-08-22 | **Phase 8d rev 2: per-issue online research pass + second code sweep** | Every issue re-checked against community/official sources; no proposed patch invalidated. NEW issue found: unconditional `import wandb` in `_train_body` (~2.2 s/process with wandb installed and disabled) → patch T1b. T1 upgraded to single-pass `distributions()` (importlib_metadata#95). `torch._assert_async` REJECTED for T3 (sync-free but corrupts CUDA context on failure, misleading async traceback, ignored assert_msg pytorch#131491, private API) — robust epoch-end flag kept. T5 validated as canonical resident-tensor+randperm+index_select pattern (forums/SO/Lightning) with CPU-generator refinement. Dense MoE dispatch rejected (Shazeer sparse lineage; GEMM batch-size float drift). torch.compile rejection reaffirmed via official caching tutorial + pytorch#114206/#113287/#96152 (per-process Dynamo/AOTAutograd cost persists). AdamW unchanged (foreach already default on CUDA; fused = numerics drift). Review doc rev 2 (§0 research table, §7 sources); still PLAN ONLY, nothing implemented, nothing committed. |
+| 2026-08-22 | **Phase 8d rev 3: training patches T1–T7a IMPLEMENTED and gated** | Approved ("implement all the patches"). Baseline determinism proven (2× s1 IDENTICAL). T1 (metadata versions, sys.modules-first + single-pass `distributions()`), T1b (wandb mode-guarded import), T6 (git_commit lru_cache + hash threaded through cli) — curves bit-IDENTICAL s1+s2. T2 (MoE `.any()` skip removed, bit-identity vs old-loop reference incl. unselected experts), T3 (on-device epoch-level loss-finite flag checked before any artifact + fused single-sync no-clip grad guard), T7a (cached zero scalars) — bit-IDENTICAL. T4 (float64 on-device validation aggregation + one cat/`.cpu()` per epoch) — bit-IDENTICAL via exact-equality tests replicating the old Python-float math. T5 (flat in-memory batch iterator; content bit-equal, drop_last parity, seed-reproducible; RNN configs keep DataLoader) — deterministic (s1×2, s2×2 IDENTICAL), differs from baseline only by the disclosed permutation stream. Fetch head-to-head: 490–551→3.1–9.0 ms/epoch; spawn 6.8 s→0. Suite 738 green (+25 tests); preflight 165+150; dry-runs 315/165 exact; ruff clean on touched files. Pre-existing stats-test float-aliasing failure fixed TEST-ONLY. Nothing committed. |
+| 2026-08-22 | **Phase 8d rev 4: external review adjudicated — P1/P2 confirmed and patched** | Reviewer verified the implementation clean (738 tests, dispatch bit-identity, guards, aggregation, fingerprint, caching) and raised two findings; both manually confirmed against source. P1: flat loader's gathered batches are pageable while `_move_batch` requests non_blocking — the pinned-batch contract the legacy DataLoader provided on CUDA was silently dropped; patched with `pin_memory` support gated identically to the legacy branch (and shared gating hoisted in `_build_dataloaders`), `_pin` helper testable on CPU-only builds, real-pinning test runs only where CUDA exists. P2: stale `result` local annotation → union type. 740 passed + 1 skipped; ruff clean; same-seed determinism re-proven. Cloud-GPU flat-loader benchmark recorded as a first-run gate in final_run_plan.md §3 (dev box has no GPU — speedup on GPU remains an estimate until then). Nothing committed. |

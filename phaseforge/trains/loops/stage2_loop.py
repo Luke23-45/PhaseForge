@@ -17,6 +17,21 @@ from phaseforge.trains.loops.base import (
 
 logger = logging.getLogger(__name__)
 
+#: Cached 0.0 scalar per device. The aux-loss defaults below are requested
+#: every training step; constructing a fresh device tensor each time is a
+#: small per-step allocation × tens of thousands of steps per run. The cached
+#: tensor is a read-only constant (value and dtype identical to
+#: ``torch.tensor(0.0)``) — consumers only read or multiply it.
+_ZERO_SCALARS: dict[torch.device, torch.Tensor] = {}
+
+
+def _zero_scalar(device: torch.device) -> torch.Tensor:
+    zero = _ZERO_SCALARS.get(device)
+    if zero is None:
+        zero = torch.zeros((), device=device)
+        _ZERO_SCALARS[device] = zero
+    return zero
+
 
 class Stage2Trainer(BaseTrainer):
     """Trainer for Stage 2.
@@ -152,12 +167,12 @@ class Stage2Trainer(BaseTrainer):
             action_loss = F.mse_loss(out.action_pred, target_action)
 
         # Balance Loss
-        balance_loss = out.aux_losses.get("balance", torch.tensor(0.0, device=self.device))
+        balance_loss = out.aux_losses.get("balance", _zero_scalar(self.device))
 
         # V2-C stickiness loss: -log p_t[top1_{t-1}], emitted by the router
         # when use_history=True. train.sticky_coeff scales it; 0.0 keeps the
         # loss bit-identical to the protocol (0.0 * x == 0.0).
-        sticky_loss = out.aux_losses.get("sticky", torch.tensor(0.0, device=self.device))
+        sticky_loss = out.aux_losses.get("sticky", _zero_scalar(self.device))
         sticky_coeff = float(self.train_cfg.get("sticky_coeff", 0.0))
 
         # V2-D teacher KL routing. Single source of truth is
@@ -167,7 +182,7 @@ class Stage2Trainer(BaseTrainer):
         # emits them through its own label-free eval path) never receives the
         # teacher KL. T = M^T softmax(phase_logits), detached; λ(t) = λ0 for
         # the first half of training, then linear anneal to 0.
-        teacher_kl = torch.tensor(0.0, device=self.device)
+        teacher_kl = _zero_scalar(self.device)
         teacher_lambda = 0.0
         models_cfg = self.cfg.get("models") or {}
         teacher_enabled = bool(
@@ -224,14 +239,19 @@ class Stage2Trainer(BaseTrainer):
         metrics so validation stays a single forward pass per batch.
 
         Loss metrics are aggregated sample-weighted (see
-        :meth:`BaseTrainer._batch_sample_count`), so a short final validation
-        batch does not weigh as much as a full one.
+        :meth:`BaseTrainer._batch_sample_count`) with on-device float64
+        accumulation — bit-identical to the former Python-float arithmetic,
+        materialized once at the epoch boundary instead of one host/device
+        sync per tensor metric per batch. Routing tensors (expert indices,
+        gate logits, phases, trajectory keys) are likewise collected on-device
+        and moved to the host with a single ``torch.cat(...).cpu()`` per
+        epoch.
         """
         if self.val_loader is None:
             return {}
 
         self.model.eval()
-        agg_metrics: dict[str, float] = {}
+        agg_sums: dict[str, torch.Tensor] = {}
         total_samples = 0
         self._val_routing_acc.reset()
 
@@ -259,26 +279,33 @@ class Stage2Trainer(BaseTrainer):
             if n == 0:
                 continue
             for k, v in metrics.items():
-                agg_metrics[k] = agg_metrics.get(k, 0.0) + self._metric_to_float(v) * n
+                if isinstance(v, torch.Tensor):
+                    contribution = v.detach().to(device=self.device, dtype=torch.float64)
+                else:
+                    contribution = torch.tensor(
+                        float(v), device=self.device, dtype=torch.float64
+                    )
+                acc = agg_sums.get(k)
+                agg_sums[k] = contribution * n if acc is None else acc + contribution * n
             total_samples += n
 
             if out.expert_indices is not None:
-                expert_indices_all.append(out.expert_indices.detach().cpu())
-                phases_all.append(batch["phase"].cpu())
+                expert_indices_all.append(out.expert_indices.detach())
+                phases_all.append(batch["phase"])
                 if "trajectory_id" in batch:
-                    traj_id_all.append(batch["trajectory_id"].cpu())
-                    traj_pos_all.append(batch["trajectory_position"].cpu())
+                    traj_id_all.append(batch["trajectory_id"])
+                    traj_pos_all.append(batch["trajectory_position"])
             if out.gate_logits is not None:
-                gate_logits_all.append(out.gate_logits.detach().cpu())
+                gate_logits_all.append(out.gate_logits.detach())
 
         if total_samples == 0:
             return {}
-        agg_metrics = {k: v / total_samples for k, v in agg_metrics.items()}
+        agg_metrics = {k: float((v / total_samples).item()) for k, v in agg_sums.items()}
 
         # Routing diagnostics: balance-vs-specialization trajectory (C3).
         if expert_indices_all:
-            expert_indices = torch.cat(expert_indices_all, dim=0)
-            phases = torch.cat(phases_all, dim=0)
+            expert_indices = torch.cat(expert_indices_all, dim=0).cpu()
+            phases = torch.cat(phases_all, dim=0).cpu()
 
             agg_metrics["val/phase_expert_nmi"] = phase_alignment.phase_expert_nmi(
                 phases, expert_indices
@@ -306,7 +333,7 @@ class Stage2Trainer(BaseTrainer):
             agg_metrics["val/top1_collapse_rate"] = expert_utilization.collapse_rate(top1_fractions)
 
         if gate_logits_all:
-            gate_logits = torch.cat(gate_logits_all, dim=0)
+            gate_logits = torch.cat(gate_logits_all, dim=0).cpu()
             agg_metrics["val/routing_entropy"] = routing_stability.routing_entropy(
                 gate_logits, normalize=True
             ).item()
@@ -318,8 +345,8 @@ class Stage2Trainer(BaseTrainer):
             agg_metrics["val/routing_switch_rate"] = (
                 routing_stability.routing_switch_rate(
                     expert_indices[:, 0],
-                    torch.cat(traj_id_all, dim=0),
-                    torch.cat(traj_pos_all, dim=0),
+                    torch.cat(traj_id_all, dim=0).cpu(),
+                    torch.cat(traj_pos_all, dim=0).cpu(),
                 )
             )
 
