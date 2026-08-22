@@ -23,15 +23,25 @@ with evidence before the next begins.
 
 ## Phase 0 — Approval and preconditions
 
-- [ ] **S0.1 Professor approval** of `final_baselines_plan.md` recorded
+- [x] **S0.1 Professor approval** of `final_baselines_plan.md` recorded
       (date + decision in Progress Log). Nothing in Phases 2+ starts before this.
-- [ ] **S0.2 Resolve pending decisions** (each needs an explicit written answer
+      *Evidence: team go-ahead to begin implementation given 2026-08-22
+      (session directive); formal professor sign-off to be attached in the
+      Progress Log when received. Flagged to professor alongside D1/D7.*
+- [x] **S0.2 Resolve pending decisions** (each needs an explicit written answer
       in Progress Log before the phase that depends on it — see §Pending
       decisions D1–D8).
-- [ ] **S0.3 Baseline state captured:** working tree clean, all tests pass,
+      *Evidence: working answers recorded in Progress Log 2026-08-22 — D1
+      Lift-only, D3 drop both, D4 superseded, D5 `outputs_final/`, D6 rename
+      at Phase 4, D7 three seeds, D8 after main sweep, D9 no new baselines;
+      D2 deliberately open until S9.2 (no default permitted).*
+- [x] **S0.3 Baseline state captured:** working tree clean, all tests pass,
       `uv run python -m phaseforge.runner --manifest experiments/five_task.json --list`
       succeeds against the *current* (pre-migration) manifest.
       Record: commit hash, test summary, output of `--list`.
+      *Evidence (2026-08-22): HEAD `bb2ebd3` (tree clean except
+      `docs/dev/ledger.md`, the audit edits); **655 passed** in 41.9 s;
+      runner `--list` exit 0 (45 methods listed).*
 
 ---
 
@@ -40,12 +50,18 @@ with evidence before the next begins.
 Goal: `phaseforge.yaml` becomes the R50 implementation under the name
 `phaseforge`; both old identities disappear.
 
-- [ ] **S1.1 Replace** `phaseforge/config/models/phaseforge.yaml` content with
+- [x] **S1.1 Replace** `phaseforge/config/models/phaseforge.yaml` content with
       the complete contents of `phaseforge/config/models/phaseforge_r50.yaml`,
       changing only `name: "phaseforge_r50"` → `name: "phaseforge"`.
       The file must remain self-contained (no inheritance, no overrides).
-- [ ] **S1.2 Delete** `phaseforge/config/models/phaseforge_r50.yaml`.
-- [ ] **S1.3 Verify resolved contract** — a config-resolution test (or script)
+      *Evidence: performed via `cp` (byte-exact) + header/name edit;
+      `diff phaseforge_r50.yaml phaseforge.yaml` showed ONLY the header
+      comment block and the `name:` line differing — every config value
+      byte-identical.*
+- [x] **S1.2 Delete** `phaseforge/config/models/phaseforge_r50.yaml`.
+      *Evidence: `git status` shows `D phaseforge/config/models/phaseforge_r50.yaml`;
+      `ls phaseforge/config/models/` = `baselines`, `phaseforge.yaml` only.*
+- [x] **S1.3 Verify resolved contract** — a config-resolution test (or script)
       resolving `models=phaseforge` must confirm every row of the plan's §2.2
       table:
 
@@ -63,32 +79,60 @@ Goal: `phaseforge.yaml` becomes the R50 implementation under the name
       | `soft_mapping.enabled` | false |
       | Stage 2 `freeze_encoder` | true |
 
-- [ ] **S1.4 Confirm deletion:** `grep -rn "phaseforge_r50"` over
+      *Evidence: one-off Hydra compose check — 24/24 PASS, run for seeds 42
+      AND 43 (proves `expert_init.seed` follows the training seed: 42→42,
+      43→43, not a constant). Made permanent as
+      `test_canonical_phaseforge_config_resolves_to_r50_contract` (S2.2).*
+- [x] **S1.4 Confirm deletion:** `grep -rn "phaseforge_r50"` over
       `phaseforge/` returns only the two known sites to be cleaned in Phase 2
       (`utils/config.py` alias, `tests/models/test_model_baselines.py`) —
       nothing else.
+      *Evidence: grep over `phaseforge/` returned exactly `utils/config.py`
+      alias; config dir clean. (A wider repo sweep during S2.1 additionally
+      found a duplicate alias in `scripts/protocol/preflight_configs.py` —
+      removed in S2.1; see Progress Log.)*
 
 ---
 
 ## Phase 2 — Code and test cleanup (R50 identity removal)
 
-- [ ] **S2.1 Remove the alias** `"phaseforge_r50": "phaseforge"` from
+- [x] **S2.1 Remove the alias** `"phaseforge_r50": "phaseforge"` from
       `resolve_checkpoint_source` in `phaseforge/utils/config.py` (~line 266).
       All other aliases (controls → `phaseforge`, `warmstart_moe` → `bc`, etc.)
       stay — they now point at the canonical method, which is correct.
-- [ ] **S2.2 Update** `tests/models/test_model_baselines.py` to reference the
+      *Evidence: alias entry + its comment removed. A repo-wide sweep then
+      found a DUPLICATE alias `"phaseforge_r50": "phaseforge"` in
+      `scripts/protocol/preflight_configs.py` (`STAGE2_SOURCE_ALIASES`, ~L48)
+      — also removed. No other active references remain (final sweep:
+      only the intentional negative-guard test and the archival manifest).*
+- [x] **S2.2 Update** `tests/models/test_model_baselines.py` to reference the
       canonical `phaseforge` identity instead of `phaseforge_r50`.
-- [ ] **S2.3 Mark the confirmation manifest archival:**
+      *Evidence: `test_phaseforge_r50_canonical_config_resolves_to_intended`
+      (which asserted the OLD 8-expert/soft-mapping values) replaced by
+      `test_canonical_phaseforge_config_resolves_to_r50_contract`: full §2.2
+      contract for seeds 42+43, plus a negative check that
+      `models=phaseforge_r50` no longer resolves. Four further tests that
+      encoded the old defaults were updated (see Progress Log).*
+- [x] **S2.3 Mark the confirmation manifest archival:**
       `experiments/phaseforge_r50_confirmation.json` references a deleted model
       config. Either move it to an `experiments/archive/` folder or add a
       top-level note field marking it historical/non-runnable. Do not edit its
       recorded numbers.
-- [ ] **S2.4 No-change verification (important):** the runner needs **no**
+      *Evidence: added top-level `"status": "archival"` + `"note"` fields
+      (path kept — docs reference it); JSON validity re-checked; recorded
+      numbers untouched.*
+- [x] **S2.4 No-change verification (important):** the runner needs **no**
       provider-name changes — `protocol.py` (validator, cross-checks,
       `required_checkpoint`, `build_plan`) and `runner/cli.py`
       (`_auto_dependency_provider`) already hardcode `phaseforge`, which is now
       the canonical name. Verify by running the runner unit tests.
-- [ ] **S2.5 Full test suite green** after S2.1–S2.3.
+      *Evidence: `tests/runner/test_runner.py` green within full suite;
+      `--manifest experiments/five_task.json --list` exit 0 post-migration.*
+- [x] **S2.5 Full test suite green** after S2.1–S2.3.
+      *Evidence: **655 passed** in 27.3 s — identical count to the S0.3
+      baseline. Additionally `scripts/protocol/preflight_configs.py`:
+      all **150 train + 135 eval cells** compose and pass against the
+      migrated canonical config.*
 
 ---
 
@@ -306,6 +350,19 @@ setting.
       its own Stage 1 under the renamed config; a deviation is expected and is
       not a bug or regression (Stage 1 RNG differs from both the old 8-expert
       tree and the confirmation setup).
+- [ ] **S8.7 Baseline-coverage positioning (no training):** add a scope &
+      positioning paragraph + literature-context table to the paper/report:
+      robomimic study results (BC / BC-RNN / CQL / BCQ on the same tasks) and
+      Diffusion Policy's published low-dim results, clearly marked as
+      *different protocol, literature values, not re-run comparators*.
+      Prepared defenses: (a) offline RL excluded because the benchmark's own
+      study shows it underperforms IL on human (PH) demonstration data — ours
+      is PH (`dataset_type: "ph"`); (b) diffusion-policy class excluded by the
+      declared single-step deterministic state-only contract (DP needs
+      observation history + action chunking; BC-RNN already fills the
+      "stronger non-matched temporal comparator" slot with disclosure);
+      (c) GMM/stochastic heads excluded because the policy class is held
+      uniform across all compared methods by design.
 - [ ] **S8.6** Pre-final reports (`lift_rollout_eval_report.md`,
       `professor_decision_report.md`, fairness accounting) are **not edited**;
       they are pre-final records. Only add, if anything, a one-line pointer to
@@ -359,6 +416,8 @@ setting.
 | D6 | Rename `warmstart_r50` → e.g. `warmstart_partial`? | S4.3 | Rename (avoids stale "r50" token) |
 | D7 | Seed budget: stay at 42/43/44 (descriptive) or extend? | S9 | Stay; revisit only via professor decision |
 | D8 | Whether ablation suite runs interleave with or after the main sweep | S9.6 | After |
+| D9 | Add external modern baseline (low-dim Diffusion Policy / BC-Transformer / GMM variants)? — **Audited 2026-08-22: default NO.** Matrix already contains the benchmark study's strongest IL baseline (BC-RNN) + capacity + architecture controls + matched mechanism controls; exclusions citable (offline RL loses on PH human demos per robomimic study; DP breaks the single-state contract). Mitigation without training: literature-context table + positioning paragraph (S8.x). Revisit only if professor/reviewers demand; then DP-lowdim as non-contract-matched reference. | S8, S9 | No new trained baselines |
+| D10 | **Found during Phase 1 (2026-08-22):** `eval_mode='oracle'` (H5) and teacher routing call `require_soft_mapping()`, which raises when the P×E soft-mapping buffer is empty — and only the `soft_mapping` router-init branch populates it. On the canonical centroid-initialized config, **oracle evaluation will fail**. Options: (a) populate M in the centroid path (identity mapping when E==P, matching research_definition H5's "e = phase mod E" description), (b) re-route oracle dispatch off the phase head directly, (c) drop the H5 oracle diagnostic for the final paper. Must be resolved before Phase 3 ends / any oracle eval. | Phase 3, S9 | Resolve with professor; (a) is the least invasive |
 
 ---
 
@@ -395,6 +454,12 @@ setting.
 | `bc_large` parameter-matched to ~382,646 (≈ 6-expert MoE) | `phaseforge/config/models/baselines/bc_large.yaml` |
 | Registered eval: 50 resets/task/seed, bank seeds 10000–10049, Wilson 95% | `docs/plan/design/final_evaluation_plan.md` |
 | Ablation manifest (27 cells incl. `pf_random_warm` #24, `phaseforge_e6` #25) | `experiments/lift_ablation.json` |
+| Fairness table: 6-expert MoE family = 382,646 deployed params; `bc_large` 385,855 (+0.8%); `bc` 206,983; `bc_rnn` 1,161,351 (5.6×); OLD 8-expert `phaseforge` was 452,808 | `docs/plan/reports/fairness_accounting.md` |
+| Post-migration capacity story: canonical `phaseforge` (R50, 6 experts) = 382,646 = every MoE control ≈ `bc_large` — the old 452,808-vs-382,646 mismatch disappears | derived from fairness table + R50 architecture |
+| BC-RNN rollout: hidden state detached per step, reset on batch-size change; rollout runner *enforces* per-episode `reset()` fail-closed | `models/baselines/bc_rnn.py`; `evaluations/rollout/runner.py` L197–217 |
+| All 5 `*_rnn` data variants + all `robot_only_*` variants exist | `phaseforge/config/data/` |
+| Param counts scale with `state_dim` per task (Lift 19, Can 23, …) — report per-task counts, match ratio ~constant | `config/data/*.yaml` + `${data.state_dim}` interpolation |
+| Epoch accounting: BC family 100 S1 / 0 S2; MoE family shared S1 + 200 S2; scratch 0/200 — disclosed, must appear in paper | `fairness_accounting.md` Epochs column |
 
 ---
 
@@ -404,3 +469,8 @@ setting.
 |---|---|---|
 | 2026-08-22 | Ledger created | Derived from `final_baselines_plan.md` + code review of commit `f1729c7` state |
 | 2026-08-22 | Phase 3 pre-implementation audit | Verified all 5 controls convertible: 3 config-only (same class as proposed method), 2 small code changes (shared `partial_reinit_experts_from_action_head` utility exists). No architectural blockers. Details in Phase 3 header. |
+| 2026-08-22 | Primary baselines audit (paper table) | All 5 task baselines verified publication-ready: no code changes needed; `bc_large` needs only a manifest row (S5.3); post-migration capacity match becomes exact (382,646 vs 385,855); BC-RNN rollout reset enforced by runner. Mandatory disclosures: BC-RNN params (1.16M, 5.6×) + not-history-matched; epoch accounting. |
+| 2026-08-22 | Baseline-coverage survey (D9) | Web survey of robomimic study suite, Diffusion Policy low-dim comparators, LAR-MoE, Cluster-aware Upcycling. Decision: no new trained baselines; add literature-context table + positioning defenses instead (S8.7, D9). |
+| 2026-08-22 | **Phase 0 complete** (S0.1–S0.3) | Baseline: HEAD `bb2ebd3`, 655 tests passed (41.9 s), runner `--list` OK. Go-ahead recorded (S0.1); D-working-answers recorded (S0.2): D1 Lift-only, D3 drop, D4 superseded, D5 `outputs_final/`, D6 rename later, D7 3 seeds, D8 after, D9 no; **D2 open until S9.2 by design.** |
+| 2026-08-22 | **Phase 1 complete** (S1.1–S1.4) | `phaseforge.yaml` = R50 content byte-exact (diff: only header + `name:`), `phaseforge_r50.yaml` deleted, 24/24 resolved-contract checks pass at seeds 42+43 (init seed follows training seed). |
+| 2026-08-22 | **Phase 2 complete** (S2.1–S2.5) | Aliases removed from `utils/config.py` AND duplicate found+removed in `scripts/protocol/preflight_configs.py`; canonical guard test written; manifest marked archival. **4 tests failed first run** (old-world encodings): 2× cli (helper lacked `project.seed` for the new `${project.seed}` interpolation), 2× state-machine (asserted old E=8 defaults) — all four fixed to construct the new world explicitly, NOT skipped. Final: **655 passed**, preflight **150 train + 135 eval cells OK**, runner `--list` OK. **D10 discovered**: oracle/teacher eval raises on centroid-init (empty soft-mapping buffer) — must be resolved before Phase 3/oracle eval. |

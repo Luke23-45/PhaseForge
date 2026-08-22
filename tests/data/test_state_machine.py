@@ -51,12 +51,22 @@ def test_phase_consuming_models_are_detected() -> None:
 
 
 def test_soft_mapping_init_allows_experts_ne_phases() -> None:
-    """V2-B phaseforge (P=6 phases, 8 experts) passes the phase-count guard.
+    """A soft-mapping init with P=6 phases, E=8 experts passes the guard.
 
     The P x E soft mapping bridges phase index to expert index, so
     num_experts must be decoupled from num_phases for this router init.
+    The canonical ``phaseforge`` config is centroid/E=6 (E == P), so the
+    E != P case is constructed explicitly here from the canonical config —
+    it is no longer the historical 8-expert default.
     """
-    fsm = _fsm_for_model("phaseforge")
+    data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+    models_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    models_cfg.router_init.type = "soft_mapping"
+    models_cfg.soft_mapping.enabled = True
+    models_cfg.router.num_experts = 8
+    fsm = DataPipelineStateMachine(
+        DictConfig({"models": models_cfg, "data": data_cfg})
+    )
     assert int(fsm.cfg.models.router.num_experts) == 8
     assert int(fsm.cfg.data.phase_labeler.num_phases) == 6
     # Construction already ran the guard; reach it explicitly for the assert.
@@ -68,6 +78,9 @@ def test_non_soft_mapping_init_still_requires_match() -> None:
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
     models_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
     models_cfg.router_init.type = "banana"
+    # The canonical config has E == P == 6, which the guard would accept for
+    # any init type; force E != P so the strict-matching requirement fires.
+    models_cfg.router.num_experts = 8
     with pytest.raises(PipelineError, match="num_phases inconsistency"):
         DataPipelineStateMachine(
             DictConfig({"models": models_cfg, "data": data_cfg})

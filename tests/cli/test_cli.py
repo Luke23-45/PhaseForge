@@ -176,10 +176,16 @@ def _build_model_for_test(name: str) -> torch.nn.Module:
         if name == "phaseforge"
         else f"phaseforge/config/models/baselines/{name}.yaml"
     )
-    # Model configs interpolate ${data.state_dim}/${data.action_dim}, so the
-    # data block must be present for the config to resolve — same as the CLI.
+    # Model configs interpolate ${data.state_dim}/${data.action_dim} and the
+    # canonical phaseforge ties expert_init.seed to ${project.seed}, so the
+    # data and project blocks must be present for the config to resolve —
+    # same as the CLI's full composition.
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    return build_model(DictConfig({"models": OmegaConf.load(path), "data": data_cfg}))
+    return build_model(
+        DictConfig(
+            {"models": OmegaConf.load(path), "data": data_cfg, "project": {"seed": 42}}
+        )
+    )
 
 
 def test_stage1_bootstrap_load_matrix_all_cells() -> None:

@@ -45,7 +45,6 @@ MONITOR_BY_STAGE = {1: "val/loss_action", 2: "val/loss_action"}
 # Models whose stage-2 resolves its stage-1 checkpoint from another model.
 STAGE2_SOURCE_ALIASES = {
     "baselines/phase_pretrain_random_router": "phaseforge",
-    "phaseforge_r50": "phaseforge",
 }
 
 

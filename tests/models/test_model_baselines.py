@@ -994,26 +994,20 @@ def test_manifest_has_wave3_cells_with_correct_overrides() -> None:
     )
 
 
-def test_phaseforge_r50_canonical_config_resolves_to_intended() -> None:
-    """The canonical phaseforge_r50 config must resolve exactly as intended.
+def test_canonical_phaseforge_config_resolves_to_r50_contract() -> None:
+    """The canonical ``phaseforge`` config must resolve to the R50 contract.
 
-    Guards the reviewer's P0 concern in its permanent form: the dedicated
-    config file must not silently inherit the old phaseforge defaults
-    (num_experts=8, soft_mapping router init, warmstart-with-jitter).
+    Permanent guard for the final migration: the canonical method identity is
+    the promoted R50 implementation (six experts, top-2 routing, centroid
+    router init, seed-dependent 50% partial warm-start, soft mapping off,
+    frozen Stage 2 encoder), and the separate ``phaseforge_r50`` config no
+    longer exists. The pre-final 8-expert / soft-mapping / warmstart-with-
+    jitter defaults must never silently return.
     """
     from hydra import compose, initialize
 
     with initialize(version_base="1.3", config_path="../../phaseforge/config"):
-        cfg = compose(
-            config_name="main",
-            overrides=[
-                "models=phaseforge_r50",
-                "train=stage2",
-                "data=common",
-                "project.seed=42",
-            ],
-        )
-        phaseforge = compose(
+        cfg42 = compose(
             config_name="main",
             overrides=[
                 "models=phaseforge",
@@ -1022,18 +1016,49 @@ def test_phaseforge_r50_canonical_config_resolves_to_intended() -> None:
                 "project.seed=42",
             ],
         )
-    m = cfg.models
-    assert m.name == "phaseforge_r50"
-    assert m.router.num_experts == 6, "must not inherit num_experts=8"
-    assert m.router_init.type == "centroid", "must not inherit soft_mapping"
-    assert m.expert_init.type == "partial_warm", "must not be plain warmstart"
-    assert m.expert_init.drop_rate == 0.5
-    assert m.expert_init.jitter_std == 0.0
-    assert m.soft_mapping.enabled is False, "soft-mapping machinery must be off"
+        cfg43 = compose(
+            config_name="main",
+            overrides=[
+                "models=phaseforge",
+                "train=stage2",
+                "data=common",
+                "project.seed=43",
+            ],
+        )
 
-    assert phaseforge.models.router.num_experts == 8
-    assert phaseforge.models.router_init.type == "soft_mapping"
-    assert phaseforge.models.expert_init.type == "warmstart"
+    for cfg, seed in ((cfg42, 42), (cfg43, 43)):
+        m = cfg.models
+        assert m.name == "phaseforge"
+        assert m._target_ == "phaseforge.models.phase_moe.PhaseBootstrappedMoE"
+        assert m.router.num_experts == 6, "must not reintroduce num_experts=8"
+        assert m.router.top_k == 2
+        assert m.router.normalize_input is True
+        assert m.router_init.type == "centroid", "must not reintroduce soft_mapping"
+        assert m.expert_init.type == "partial_warm", "must not be plain warmstart"
+        assert m.expert_init.drop_rate == 0.5
+        assert m.expert_init.jitter_std == 0.0
+        assert m.expert_init.seed == seed, (
+            "partial-init seed must follow the training seed, not stay constant"
+        )
+        assert m.soft_mapping.enabled is False, "soft-mapping machinery must be off"
+        assert cfg.train.freeze_encoder is True, "Stage 2 must freeze the encoder"
+
+    # The absorbed R50 config must not survive as a separate active config:
+    # resolving it must fail loudly rather than fall back to anything.
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
+        try:
+            compose(
+                config_name="main",
+                overrides=["models=phaseforge_r50"],
+            )
+        except Exception as exc:  # hydra.errors.MissingConfigException et al.
+            assert "phaseforge_r50" in str(exc)
+        else:
+            raise AssertionError(
+                "models=phaseforge_r50 must no longer resolve after the "
+                "canonical migration; the config file was deleted."
+            )
+
 
 
 def test_moe_layer_clones_have_independent_storage() -> None:
