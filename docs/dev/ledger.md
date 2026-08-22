@@ -297,7 +297,7 @@ implementations that hardcode the full warm-start call:
 
 ## Phase 5 — Manifest migration (`experiments/five_task.json`)
 
-- [ ] **S5.1 Proposed-method rows:** exactly one per task. Full row shape
+- [x] **S5.1 Proposed-method rows:** exactly one per task. Full row shape
       (fields `index`, `data`, `task` are **required** — the plan's example
       block omits them; without them the row defaults to `data: "common"`,
       `task: null` and breaks five-task identity):
@@ -311,24 +311,46 @@ implementations that hardcode the full warm-start call:
 
       (analogously `can`/`Can`, `square`/`Square`, `tool_hang`/`ToolHang`,
       `transport`/`Transport`.)
-- [ ] **S5.2 Consumer rows** (`phase_pretrain_random_router`, `teacher_forced`,
+      *Evidence: the five rows already carried the full shape (index/data/
+      task present); post-migration `model: phaseforge` resolves to the
+      canonical R50 contract. Verified programmatically: 5 proposed rows,
+      each `model=phaseforge, stages=[1,2], stage2_source=self`, with data,
+      task, index.*
+- [x] **S5.2 Consumer rows** (`phase_pretrain_random_router`, `teacher_forced`,
       and any clustering/phase-head controls in the matrix per D1):
       `stage2_source: "phaseforge"` — now resolving to the canonical method.
-- [ ] **S5.3 Add promoted rows** per the plan §4.2–4.3 and D1:
+      *Evidence: unchanged rows already point at `phaseforge`; D1 (Lift-only)
+      means no clustering controls added here.*
+- [x] **S5.3 Add promoted rows** per the plan §4.2–4.3 and D1:
       `bc_large` per task; `pf_spherical_kmeans` / `pf_kmeans` /
       `pf_phase_head` if D1 says five-task.
-- [ ] **S5.4 Manifest hygiene:** no `phaseforge_r50` string anywhere; no
+      *Evidence: `bc_large` added as indices 46–50 (all five tasks, stages
+      [1], full shape); clustering controls NOT added per D1 default
+      (Lift-only mechanism table).*
+- [x] **S5.4 Manifest hygiene:** no `phaseforge_r50` string anywhere; no
       duplicate rows; indices unique per task; `bc_rnn` rows unchanged.
-- [ ] **S5.5 Validate with the runner parser:**
+      *Evidence: programmatic check — 50 rows, unique (task,name) identities,
+      unique (task,index), zero `phaseforge_r50` occurrences, 5 proposed
+      rows complete.*
+- [x] **S5.5 Validate with the runner parser:**
       `uv run python -m phaseforge.runner --manifest experiments/five_task.json --list`.
-- [ ] **S5.6 Expected step count computed and recorded BEFORE the dry run**
+      *Evidence: exit 0; 50 methods listed.*
+- [x] **S5.6 Expected step count computed and recorded BEFORE the dry run**
       (do not reuse the old 315 number — the matrix changed). Formula: per
-      method-row × seed: (#stages + 1 if evaluate). Then:
-
-      `uv run python -m phaseforge.runner --manifest experiments/five_task.json --dry-run`
-
-      Dry-run step count must equal the computed count; dependency graph
-      contains no stale provider names (gate 7 of plan §11).
+      method-row × seed: (#stages + 1 if evaluate). Then dry-run; step count
+      must equal the computed count; dependency graph contains no stale
+      provider names (gate 7 of plan §11).
+      *Evidence: hand-computed 19/task/seed × 5 tasks + 10 bc_rnn = 105/seed
+      × 3 = **315**; runner dry-run reports exactly **315 steps**. Preflight
+      (after fixing its parameter check, below): **165 train + 150 eval
+      cells OK**.*
+      *Phase-5 finding — preflight parameter bug fixed: the bc_large check
+      hardcoded the Lift deployed count (382,646) for every task and mixed
+      total-vs-deployed bases, falsely failing ToolHang/Transport. Now
+      computes the per-task PhaseForge deployed count dynamically (same data
+      config, minus detached Stage-1 heads), tolerance ±2%. Actual per-task
+      match: +0.84% / +0.96% / +0.96% / +1.81% / −0.52% — all within band;
+      per-task counts must still be reported (S9.5).*
 
 ---
 

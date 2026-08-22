@@ -214,20 +214,53 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
         if top_k > num_experts:
             cell.fail(f"router top_k ({top_k}) > num_experts ({num_experts})")
 
-    # Validate BC-large parameter matching (|ratio - 1| <= 0.015)
+    # Validate BC-large parameter matching against the per-task PhaseForge
+    # DEPLOYED count (|ratio - 1| <= 0.02). The reference is computed
+    # dynamically by composing and building the canonical phaseforge model
+    # on the SAME data config (state_dim scales every model's first encoder
+    # layer) and subtracting the detached Stage-1 heads (action head + phase
+    # head), which are not part of the deployed policy. bc_large is
+    # single-stage: it has no detached heads, so its total IS its deployed
+    # count. The previous hardcoded 382,646 target was the Lift figure and
+    # compared bases inconsistently, falsely failing ToolHang/Transport.
     if "bc_large" in model_name:
         from phaseforge.utils.registry import build_model
 
         try:
             m = build_model(cfg)
             params = sum(p.numel() for p in m.parameters())
-            target_params = 382646  # PhaseForge deployed parameter count
-            ratio = params / target_params
-            if abs(ratio - 1.0) > 0.015:
+
+            reference = Cell(
+                method="phaseforge",
+                model="phaseforge",
+                data=cell.data,
+                task=cell.task,
+                stage=2,
+                seed=cell.seed,
+            )
+            pf_cfg = _compose_cell(reference)
+            if pf_cfg is None:
                 cell.fail(
-                    f"bc_large params={params} deviates from PhaseForge "
-                    f"({target_params}) by {abs(ratio - 1.0):.2%}"
+                    "reference phaseforge composition failed; cannot validate "
+                    "bc_large parameter match"
                 )
+            else:
+                pf = build_model(pf_cfg)
+                pf_total = sum(p.numel() for p in pf.parameters())
+                detached = 0
+                for head in ("action_head", "phase_head"):
+                    module = getattr(pf, head, None)
+                    if module is not None:
+                        detached += sum(p.numel() for p in module.parameters())
+                target_params = pf_total - detached
+
+                ratio = params / target_params
+                if abs(ratio - 1.0) > 0.02:
+                    cell.fail(
+                        f"bc_large params={params} deviates from per-task "
+                        f"PhaseForge deployed count ({target_params}) by "
+                        f"{abs(ratio - 1.0):.2%}"
+                    )
         except Exception as exc:
             cell.fail(f"bc_large parameter count validation failed: {exc}")
 
