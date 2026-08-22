@@ -92,6 +92,22 @@ class ExpertMLP(nn.Module):
         return torch.tanh(self.output_proj(h))
 
 
+def hash_dropped_indices(indices: list[int]) -> str:
+    """Stable sha256 of the dropped-neuron index set for audit metadata.
+
+    Shared by every partial-warm-start site (``PhaseBootstrappedMoE`` and the
+    R50-matched baseline bootstraps) so all runs record a comparable,
+    content-addressed fingerprint of the dropped index set. Byte-for-byte
+    identical to the original private ``phase_moe._hash_dropped_indices``.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    for i in sorted(indices):
+        h.update(int(i).to_bytes(8, "little", signed=False))
+    return h.hexdigest()
+
+
 def warm_start_experts_from_action_head(
     experts: nn.ModuleList,
     action_head: nn.Module,

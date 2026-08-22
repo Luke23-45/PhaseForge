@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Any, cast
 
@@ -20,6 +19,7 @@ from phaseforge.models.components.clustering import (
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
+    hash_dropped_indices,
     one_warm_experts_from_action_head,
     partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
@@ -42,11 +42,8 @@ EVAL_ROUTER_MODES: frozenset[str] = frozenset(
 
 
 def _hash_dropped_indices(indices: list[int]) -> str:
-    """Stable sha256 of the dropped-neuron index set for audit metadata."""
-    h = hashlib.sha256()
-    for i in sorted(indices):
-        h.update(int(i).to_bytes(8, "little", signed=False))
-    return h.hexdigest()
+    """Backward-compatible alias of the shared audit hash."""
+    return hash_dropped_indices(indices)
 
 
 class PhaseBootstrappedMoE(BaseManipulationModel):
