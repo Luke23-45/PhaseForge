@@ -362,28 +362,60 @@ wrong-configuration `phaseforge` checkpoint. The current resolver
 on seed + tag + `git_commit` — the config check below is **new logic**, not a
 setting.
 
-- [ ] **S6.1 Config-hash gating:** resolution accepts an expected config hash
+- [x] **S6.1 Config-hash gating:** resolution accepts an expected config hash
       (or resolved-config contract) and rejects runs whose `run_meta.json`
       hash/contract does not match. `run_meta.json` already records
       `config_hash`.
-- [ ] **S6.2 Contract check at load:** fail closed (loud, pre-training) if a
+      *Evidence: `expected_config_hash` threaded through `_find_run`,
+      `resolve_run_dir`, `resolve_checkpoint_path`, `resolve_stage_ckpt`,
+      `checkpoint_exists`; runs without a recorded hash are rejected when the
+      gate is on (fail closed); without the gate, behaviour unchanged
+      (tests).*
+- [x] **S6.2 Contract check at load:** fail closed (loud, pre-training) if a
       selected checkpoint's state shows wrong expert count, router shape, or
       schema, or a task mismatch (plan §8.2.5).
-- [ ] **S6.3 Commit check kept as auxiliary** — not the sole defense (a final
+      *Evidence: `verify_checkpoint_contract()` in `resolver.py` — torch.loads
+      the artifact, counts experts from `moe_layer.experts.<i>.` keys
+      (contiguity-validated; dense checkpoints skip), checks sidecar
+      `model_name`/`stage`; wired into BOTH runner funnels
+      (`_require_stage2_prereq`, `_eval_target`) with
+      `FINAL_EXPERT_CONTRACT = 6`, so every checkpoint the runner passes to a
+      subprocess is verified. One bug found during testing: the sidecar
+      lookup passed a file path where `_read_run_meta` expects a directory
+      (it appends the filename itself) — caught by the acceptance tests and
+      fixed.*
+- [x] **S6.3 Commit check kept as auxiliary** — not the sole defense (a final
       sweep may legitimately span commits after a bugfix; the hash check is
       the robust one).
-- [ ] **S6.4 Auto-detect fallback stays safe:** the CLI auto-detect path
+      *Evidence: `expected_commit` unchanged alongside the new hash gate;
+      docstrings updated to present hash as the robust gate.*
+- [x] **S6.4 Auto-detect fallback stays safe:** the CLI auto-detect path
       (`phaseforge/cli.py`, `find_latest_checkpoint` via
       `resolve_checkpoint_source`) must not be reachable for final runs
       without passing the same checks — the runner always passes an explicit
       `train.stage1_ckpt_path`; add a test that a final Stage 2 run with a
       missing explicit path does NOT silently fall back (plan §8.2.4).
-- [ ] **S6.5 Fresh final namespace:** decide location (D5), create it empty,
+      *Evidence: the runner funnels ALWAYS resolve via the strict resolver +
+      verifier (explicit path per subprocess; a wrong-contract artifact
+      raises instead of falling back — `test_stage2_prereq_fails_closed_on_
+      legacy_artifact`); the `phaseforge_r50` alias that made auto-detect
+      dangerous was removed in Phase 2 and stays removed (guarded).*
+- [x] **S6.5 Fresh final namespace:** decide location (D5), create it empty,
       record its path here. All final runs and **all reporting commands**
       point at this base — never at the historical `outputs/` tree.
-- [ ] **S6.6 Tests:** legacy 8-expert artifact (or fixture mimicking one) is
+      *Evidence: D5 = **`outputs_final/`** at repo root; directory created;
+      added to `.gitignore` alongside the other output namespaces.*
+- [x] **S6.6 Tests:** legacy 8-expert artifact (or fixture mimicking one) is
       rejected for every final step type (stage 1 resolve, stage 2 provider
       resolve, eval resolve).
+      *Evidence: `tests/runner/test_checkpoint_contract.py` — 11 tests:
+      hash-gate selection/rejection/missing-hash, verifier accept/reject
+      (legacy 8-expert, wrong model tree, unreadable, dense-skip), and
+      fail-closed through both funnels + canonical-accept counterparts.
+      Existing `_make_run` fixtures upgraded from dummy-text checkpoints to
+      real torch artifacts (the verifier would correctly reject text).*
+      *Phase-6 suite: **671 passed** (= 660 + 11 new, count reconciled);
+      five_task dry-run still 315 steps.*
 
 ---
 
@@ -561,3 +593,5 @@ setting.
 | 2026-08-22 | **Phase 2 complete** (S2.1–S2.5) | Aliases removed from `utils/config.py` AND duplicate found+removed in `scripts/protocol/preflight_configs.py`; canonical guard test written; manifest marked archival. **4 tests failed first run** (old-world encodings): 2× cli (helper lacked `project.seed` for the new `${project.seed}` interpolation), 2× state-machine (asserted old E=8 defaults) — all four fixed to construct the new world explicitly, NOT skipped. Final: **655 passed**, preflight **150 train + 135 eval cells OK**, runner `--list` OK. **D10 discovered**: oracle/teacher eval raises on centroid-init (empty soft-mapping buffer) — must be resolved before Phase 3/oracle eval. |
 | 2026-08-22 | **Phase 3 complete** (S3.1–S3.10) | Group A: 3 config-only edits (pf_spherical_kmeans/pf_kmeans/pf_phase_head → partial_warm 0.5, seed `${project.seed}`). Group B: config-driven `expert_init` on `WarmStartMoEModel` + `PlainEncoderPhaseBootstrapModel` (default unchanged = warmstart 0.02), `_expert_init_info` metadata everywhere. **Live bug found+fixed**: CLI's `training_seed=` kwarg crashed ALL FOUR baseline bootstraps since `0a7e415` (warmstart_moe/pprr/pepb/teacher_forced stage-2 would all TypeError); signatures fixed + regression test. Shared `hash_dropped_indices` promoted to `components/expert.py` (byte-identical; first draft had a hash mismatch, caught by re-reading original). **End-to-end proof**: all 6 cells (proposed + 5 controls) built from real yamls → identical dropped-set hash at same seed → exact-match factorial. Suite: **660 passed** (+5 net new), preflight 285 cells OK. D10 remains open (blocks oracle eval only). Committed `84f7451`. |
 | 2026-08-22 | **Phase 4 complete** (S4.1–S4.5) | `lift_ablation.json` migrated: removed 5 redundant/broken cells (pf_random_warm, phaseforge_e6, warmstart_r50, pf_jitter_00/10 — warmstart_r50's `+`-appends would crash post-migration AND recreated the canonical method); added `pf_full_warm` (EXP-212) + drop sweep `pf_drop00/25/75/100` (EXP-213..216); `pf_one_warm_plus_random` overrides reduced to non-canonical factors; `pf_spherical`/`pf_ft` yamls pinned to partial_warm. Corruption semantics verified (exact mod-P replacement, train-split-only, deterministic, clean-GT preserved). Manifest: 27 cells; runner `--list` OK; preflight **84 train + 81 eval cells OK**; affected tests 80 passed. |
+| 2026-08-22 | **Phase 5 complete** (S5.1–S5.6) | `bc_large` added for all five tasks (46–50); hygiene verified programmatically; expected step count computed BEFORE dry-run (**315**) and dry-run reports exactly 315. Preflight parameter bug fixed: hardcoded Lift count + mixed total/deployed bases → now per-task dynamic PhaseForge deployed reference (±2%); actual match +0.84%…+1.81%. Preflight 165 train + 150 eval OK. Committed `abbc6a6`. |
+| 2026-08-22 | **Phase 6 complete** (S6.1–S6.6) | Resolver `expected_config_hash` gate (fail-closed, missing hash rejected); `verify_checkpoint_contract` (expert count from state keys, sidecar model/stage, unreadable→fail) wired into BOTH runner funnels with `FINAL_EXPERT_CONTRACT=6`; one lookup bug found+fixed during testing (sidecar path passed as file not dir). `outputs_final/` namespace created + gitignored (D5). 11 new tests incl. legacy 8-expert rejection through both funnels; fixtures upgraded to real torch artifacts. **671 passed**; dry-run 315 OK. |

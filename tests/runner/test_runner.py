@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import torch
 
 from phaseforge.runner import cli as runner_cli
 from phaseforge.runner import executor as runner_executor
@@ -561,6 +562,8 @@ def _make_run(
     completed: bool = True,
     seed_dir: bool = True,
     commit: str | None = None,
+    num_experts: int | None = None,
+    config_hash: str | None = None,
 ) -> None:
     run_dir = base / model / f"stage{stage}"
     if seed_dir:
@@ -568,12 +571,28 @@ def _make_run(
     run_dir = run_dir / name
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    (ckpt_dir / "checkpoint_best.pt").write_text("dummy")
-    meta = {"seed": seed}
-    if tag is not None:
-        meta["tag"] = tag
-    if commit is not None:
-        meta["git_commit"] = commit
+    # Real (loadable) checkpoint payloads: the runner's contract verifier
+    # torch.loads every resolved artifact, so dummy text files would fail
+    # closed. Dense key set by default; MoE expert keys when requested.
+    state: dict[str, object] = {
+        "encoder.hidden.0.weight": torch.zeros(4, 4),
+        "action_head.trunk.0.weight": torch.zeros(4, 4),
+    }
+    if num_experts is not None:
+        for i in range(num_experts):
+            state[f"moe_layer.experts.{i}.hidden.0.weight"] = torch.zeros(4, 4)
+    torch.save({"model_state_dict": state, "stage": stage}, ckpt_dir / "checkpoint_best.pt")
+    meta: dict[str, object] = {
+        "kind": "train",
+        "model_name": model,
+        "stage": stage,
+        "seed": seed,
+        "git_commit": commit or "deadbeef",
+        "tag": tag,
+        "method": None,
+    }
+    if config_hash is not None:
+        meta["config_hash"] = config_hash
     (run_dir / "run_meta.json").write_text(json.dumps(meta), encoding="utf-8")
     if completed:
         # Real runs get the sibling lifecycle marker written by RunWriter

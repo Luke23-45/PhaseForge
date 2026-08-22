@@ -118,6 +118,7 @@ def _find_run(
     seed: int,
     tag: str | None,
     expected_commit: str | None = None,
+    expected_config_hash: str | None = None,
 ) -> Path:
     if not search_dir.is_dir():
         raise CheckpointError(f"No {kind} runs found under {search_dir} for seed {seed}.")
@@ -131,10 +132,25 @@ def _find_run(
             continue
         if expected_commit and meta.get("git_commit") != expected_commit:
             continue
+        if expected_config_hash is not None:
+            # Fail closed: a run without a recorded config hash is not
+            # eligible when the contract is enforced.
+            if meta.get("config_hash") != expected_config_hash:
+                continue
         return run
     raise CheckpointError(
         f"No completed {kind} run for {model_name} seed {seed}"
         + (f" with tag {tag!r}" if tag else " with no tag")
+        + (
+            f" and config_hash {expected_config_hash!r}"
+            if expected_config_hash
+            else ""
+        )
+        + (
+            f" and git commit {expected_commit!r}"
+            if expected_commit
+            else ""
+        )
         + f" under {search_dir}."
     )
 
@@ -147,9 +163,10 @@ def resolve_run_dir(
     seed: int,
     tag: str | None = None,
     expected_commit: str | None = None,
+    expected_config_hash: str | None = None,
 ) -> Path:
     """Return the newest *completed* run directory for ``model/stage`` matching
-    seed+tag.
+    seed+tag (and, when given, commit and config hash).
 
     Searches ``<outputs_base>/<model_name>/stage<stage>/`` (including
     ``seed{S}/`` sub-directories when present) newest-first and returns the
@@ -164,7 +181,11 @@ def resolve_run_dir(
 
     When ``expected_commit`` is given, only runs whose ``run_meta.json``
     ``git_commit`` matches it are eligible — stale pre-fix checkpoints from
-    an earlier git revision are never selected for a re-run.
+    an earlier git revision are never selected for a re-run. When
+    ``expected_config_hash`` is given, only runs whose recorded
+    ``config_hash`` matches are eligible; runs without a recorded hash are
+    rejected (fail closed). This is the robust artifact-contract gate: it
+    holds even if a sweep legitimately spans several commits.
 
     Raises:
         CheckpointError: No matching run directory exists.
@@ -177,6 +198,7 @@ def resolve_run_dir(
         seed=seed,
         tag=tag,
         expected_commit=expected_commit,
+        expected_config_hash=expected_config_hash,
     )
 
 
@@ -188,14 +210,15 @@ def resolve_checkpoint_path(
     seed: int,
     state: RunnerState | None = None,
     expected_commit: str | None = None,
+    expected_config_hash: str | None = None,
 ) -> Path:
     """Resolve the absolute ``checkpoint_best.pt`` for a completed stage.
 
     Prefers the exact artifact recorded in the runner state; falls back to a
     strict seed+tag scan (so manually launched runs work too). The returned
-    path is the one the evaluation step loads. With ``expected_commit``, both
-    the registry lookup and the scan are gated to runs produced at that git
-    revision.
+    path is the one the evaluation step loads. With ``expected_commit`` /
+    ``expected_config_hash``, both the registry lookup and the scan are
+    gated to runs produced at that git revision / resolved config.
     """
     rel = state.get_ckpt(method.phase_key, seed, stage) if state is not None else None
     if rel:
@@ -209,6 +232,7 @@ def resolve_checkpoint_path(
         seed=seed,
         tag=method.output_tag,
         expected_commit=expected_commit,
+        expected_config_hash=expected_config_hash,
     )
     ckpt = run_dir / _REQUIRED_CKPT_REL
     if not ckpt.is_file():
@@ -227,6 +251,7 @@ def resolve_stage_ckpt(
     seed: int,
     tag: str | None = None,
     expected_commit: str | None = None,
+    expected_config_hash: str | None = None,
 ) -> Path:
     """Resolve the absolute ``checkpoint_best.pt`` of a provider run.
 
@@ -237,8 +262,9 @@ def resolve_stage_ckpt(
     whose ``tag=None`` means "no constraint" and can therefore pick a tagged
     sibling variant that shares the provider's output tree (e.g.
     ``bc_robot_only`` next to ``bc``), crashing the stage-2 load with a
-    dimension mismatch. With ``expected_commit``, only provider checkpoints
-    produced at that git revision are eligible.
+    dimension mismatch. With ``expected_commit`` / ``expected_config_hash``,
+    only provider checkpoints produced at that git revision / resolved
+    config are eligible.
     """
     run_dir = resolve_run_dir(
         outputs_base,
@@ -247,6 +273,7 @@ def resolve_stage_ckpt(
         seed=seed,
         tag=tag,
         expected_commit=expected_commit,
+        expected_config_hash=expected_config_hash,
     )
     ckpt = run_dir / _REQUIRED_CKPT_REL
     if not ckpt.is_file():
@@ -265,6 +292,7 @@ def checkpoint_exists(
     seed: int,
     tag: str | None = None,
     expected_commit: str | None = None,
+    expected_config_hash: str | None = None,
 ) -> bool:
     """Return whether a ``checkpoint_best.pt`` exists for the exact seed+tag."""
     try:
@@ -275,6 +303,7 @@ def checkpoint_exists(
             seed=seed,
             tag=tag,
             expected_commit=expected_commit,
+            expected_config_hash=expected_config_hash,
         )
     except CheckpointError:
         return False
@@ -301,6 +330,7 @@ def resolve_eval_run_dir(
     seed: int,
     tag: str | None = None,
     expected_commit: str | None = None,
+    expected_config_hash: str | None = None,
 ) -> Path:
     """Return the newest evaluation run directory matching seed+tag.
 
@@ -315,4 +345,116 @@ def resolve_eval_run_dir(
         seed=seed,
         tag=tag,
         expected_commit=expected_commit,
+        expected_config_hash=expected_config_hash,
     )
+
+
+_EXPERT_KEY_RE = re.compile(r"^moe_layer\.experts\.(\d+)\.")
+
+
+def _count_experts_from_state_keys(state_keys) -> int | None:
+    """Return the expert count implied by ``moe_layer.experts.<i>.`` keys.
+
+    Returns ``None`` when the state dict carries no MoE expert keys (dense
+    models such as BC), in which case the expert-count contract check is not
+    applicable.
+    """
+    indices = {
+        int(m.group(1))
+        for key in state_keys
+        if (m := _EXPERT_KEY_RE.match(str(key))) is not None
+    }
+    if not indices:
+        return None
+    expected = set(range(len(indices)))
+    if indices != expected:
+        raise CheckpointError(
+            "Checkpoint expert indices are not contiguous "
+            f"(found {sorted(indices)}); the artifact is corrupt or from an "
+            "incompatible architecture."
+        )
+    return len(indices)
+
+
+def verify_checkpoint_contract(
+    ckpt_path: Path,
+    *,
+    expected_model_name: str | None = None,
+    expected_num_experts: int | None = None,
+    expected_stage: int | None = None,
+) -> dict[str, Any]:
+    """Fail closed unless a checkpoint satisfies the requested contract.
+
+    Loads the checkpoint header (CPU) and its sibling ``run_meta.json``
+    (``<run_dir>/run_meta.json`` next to ``checkpoints/checkpoint_best.pt``)
+    and verifies:
+
+    * the sidecar's ``model_name`` matches ``expected_model_name`` (when
+      given) — catches artifacts selected from the wrong model's tree;
+    * the sidecar's ``stage`` matches ``expected_stage`` (when given);
+    * the state dict's MoE expert count matches ``expected_num_experts``
+      (when given and the checkpoint contains experts — dense checkpoints
+      skip this check). This is the guard against pre-final artifacts of the
+      same filesystem name (e.g. the retired 8-expert ``phaseforge``).
+
+    Returns a summary dict (``num_experts``, sidecar fields) for logging.
+
+    Raises:
+        CheckpointError: The checkpoint violates the contract, cannot be
+            read, or the sidecar is missing a required field.
+    """
+    import torch
+
+    ckpt_path = Path(ckpt_path)
+    try:
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    except Exception as exc:  # noqa: BLE001 - any load failure must fail closed
+        raise CheckpointError(
+            f"Checkpoint {ckpt_path} cannot be loaded for contract "
+            f"verification: {type(exc).__name__}: {exc}"
+        ) from exc
+    state = ckpt.get("model_state_dict") if isinstance(ckpt, dict) else None
+    if state is None:
+        raise CheckpointError(
+            f"Checkpoint {ckpt_path} has no 'model_state_dict' entry; not a "
+            "PhaseForge training artifact."
+        )
+
+    num_experts = _count_experts_from_state_keys(state.keys())
+    if (
+        expected_num_experts is not None
+        and num_experts is not None
+        and num_experts != expected_num_experts
+    ):
+        raise CheckpointError(
+            f"Checkpoint {ckpt_path} has {num_experts} experts; the final "
+            f"protocol requires {expected_num_experts}. Refusing to consume a "
+            "pre-final/incompatible artifact."
+        )
+
+    # run_dir/checkpoints/checkpoint_best.pt -> run_dir (the sidecar lives
+    # at run_dir/run_meta.json; _read_run_meta appends the file name).
+    run_dir = ckpt_path.parent.parent
+    meta = _read_run_meta(run_dir)
+    if expected_model_name is not None:
+        got = meta.get("model_name")
+        if got != expected_model_name:
+            raise CheckpointError(
+                f"Checkpoint {ckpt_path} belongs to model {got!r}; expected "
+                f"{expected_model_name!r}."
+            )
+    if expected_stage is not None:
+        got = meta.get("stage")
+        if got is not None and int(got) != int(expected_stage):
+            raise CheckpointError(
+                f"Checkpoint {ckpt_path} is a stage-{got} artifact; expected "
+                f"stage {expected_stage}."
+            )
+
+    return {
+        "num_experts": num_experts,
+        "model_name": meta.get("model_name"),
+        "stage": meta.get("stage"),
+        "config_hash": meta.get("config_hash"),
+        "seed": meta.get("seed"),
+    }

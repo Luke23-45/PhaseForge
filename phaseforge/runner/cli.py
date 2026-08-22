@@ -64,10 +64,20 @@ from phaseforge.runner.resolver import (
     resolve_run_dir,
     resolve_stage_ckpt,
     stage_checkpoint_relative,
+    verify_checkpoint_contract,
 )
 from phaseforge.utils.config import git_info
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+#: Expert-count contract for every MoE checkpoint consumed by the final
+#: protocol (the canonical method and all MoE controls are six-expert).
+#: Dense checkpoints (BC family) carry no ``moe_layer.experts.*`` keys and
+#: skip the check inside ``verify_checkpoint_contract``. This is the
+#: fail-closed guard against pre-final artifacts that share a filesystem
+#: name with the canonical method (the retired 8-expert ``phaseforge``).
+FINAL_EXPERT_CONTRACT = 6
+
 #: Default protocol manifest. The full five-task evaluation lives in
 #: ``experiments/five_task.json``; ``experiments/lift_pilot.json`` is the
 #: original single-task pilot that remains useful for debugging the
@@ -225,7 +235,7 @@ def _require_stage2_prereq(
         source_tag = (
             step.method.output_tag if step.method.stage2_source == "self" else step.method.task
         )
-        return resolve_stage_ckpt(
+        ckpt = resolve_stage_ckpt(
             outputs_base,
             model,
             stage,
@@ -241,6 +251,15 @@ def _require_stage2_prereq(
             f"seed {step.seed} under {outputs_base}. Run {model} stage 1 first, "
             "or re-run with --with-dependencies."
         ) from exc
+    # Fail closed on contract violations (wrong model tree, wrong expert
+    # count, wrong stage) before the subprocess consumes the artifact.
+    verify_checkpoint_contract(
+        ckpt,
+        expected_model_name=model,
+        expected_num_experts=FINAL_EXPERT_CONTRACT,
+        expected_stage=stage,
+    )
+    return ckpt
 
 
 def _auto_dependency_provider(
@@ -345,7 +364,7 @@ def _resolve_stage2_with_auto_dependency(
 def _eval_target(
     step: Step, outputs_base: Path, state: RunnerState, expected_commit: str | None = None
 ) -> Path:
-    return resolve_checkpoint_path(
+    ckpt = resolve_checkpoint_path(
         outputs_base,
         step.method,
         step.method.final_stage,
@@ -353,6 +372,15 @@ def _eval_target(
         state=state,
         expected_commit=expected_commit,
     )
+    # Fail closed before evaluation consumes a pre-final or cross-model
+    # artifact (same filesystem name, wrong contract).
+    verify_checkpoint_contract(
+        ckpt,
+        expected_model_name=step.method.model_name,
+        expected_num_experts=FINAL_EXPERT_CONTRACT,
+        expected_stage=step.method.final_stage,
+    )
+    return ckpt
 
 
 def _should_skip_eval(
