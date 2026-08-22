@@ -1174,12 +1174,15 @@ def test_bootstrap_rejects_one_warm_seed_rotation_without_seed() -> None:
     assert model.stage == 1
 
 
-def test_manifest_has_wave3_cells_with_correct_overrides() -> None:
-    """The Wave-3 cells must override the 8-expert / soft_mapping defaults.
+def test_manifest_wave3_wave4_cells_match_canonical_world() -> None:
+    """The expert-init suite must be consistent with the canonical R50 method.
 
-    Without these overrides the comparison against ``pf_centroid_random`` (6
-    experts, centroid) would confound expert initialization with the V2-B
-    config change. See the reviewer's P0 note.
+    After the canonical migration, ``phaseforge`` itself is E=6 centroid with
+    50% partial warm-start, so: the old Wave-3 cells that recreated that
+    setting via overrides (warmstart_r50, phaseforge_e6, pf_random_warm) and
+    the inert-under-partial_warm jitter cells are removed; the one-warm cell
+    keeps only its genuinely non-canonical overrides; and the Wave-4 suite
+    (full warm-start + drop-rate sweep) varies exactly one factor.
     """
     import json
     from pathlib import Path
@@ -1188,32 +1191,52 @@ def test_manifest_has_wave3_cells_with_correct_overrides() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_name = {m["name"]: m for m in manifest["methods"]}
 
-    r50 = by_name["warmstart_r50"]
-    assert r50["model"] == "phaseforge", "warmstart_r50 should build on phaseforge"
-    r50_overrides = " ".join(r50["overrides"])
-    assert "models.router.num_experts=6" in r50_overrides, (
-        "warmstart_r50 must pin num_experts=6 to match pf_centroid_random"
-    )
-    assert "models.router_init.type=centroid" in r50_overrides, (
-        "warmstart_r50 must pin router_init.type=centroid (NOT the "
-        "soft_mapping default in phaseforge.yaml)"
-    )
-    assert "models.expert_init.type=partial_warm" in r50_overrides
-    assert "+models.expert_init.drop_rate=0.5" in r50_overrides
-    assert "+models.expert_init.seed=${project.seed}" in r50_overrides, (
-        "warmstart_r50 should tie init seed to training seed for "
-        "seed-robustness studies"
-    )
+    # Removed cells must stay removed (regression against silent revival).
+    for gone in (
+        "warmstart_r50",
+        "phaseforge_e6",
+        "pf_random_warm",
+        "pf_jitter_00",
+        "pf_jitter_10",
+    ):
+        assert gone not in by_name, f"{gone} was removed as redundant post-migration"
 
+    # The one-warm diagnostic keeps only the overrides that differ from the
+    # canonical config (type, jitter, rotate-by-seed); expert count and
+    # router type come from the canonical method itself.
     onewarm = by_name["pf_one_warm_plus_random"]
     onewarm_overrides = " ".join(onewarm["overrides"])
-    assert "models.router.num_experts=6" in onewarm_overrides
-    assert "models.router_init.type=centroid" in onewarm_overrides
     assert "models.expert_init.type=one_warm" in onewarm_overrides
+    assert "models.expert_init.jitter_std=0.0" in onewarm_overrides
     assert "+models.expert_init.rotate_warm_idx_by_seed=true" in onewarm_overrides, (
         "pf_one_warm_plus_random must rotate warm_idx by training seed "
         "to avoid the phase-0 confound the reviewer flagged"
     )
+    assert "models.router.num_experts" not in onewarm_overrides, (
+        "num_experts=6 is now the canonical default; pinning it is stale"
+    )
+    assert "models.router_init.type" not in onewarm_overrides, (
+        "centroid router init is now the canonical default; pinning it is stale"
+    )
+
+    # Wave 4: full warm-start cell and the drop-rate sweep vary exactly the
+    # declared factor against the canonical partial_warm 0.5.
+    full_warm = by_name["pf_full_warm"]
+    fw = " ".join(full_warm["overrides"])
+    assert "models.expert_init.type=warmstart" in fw
+    assert "models.expert_init.jitter_std=0.02" in fw
+
+    for name, rate in (
+        ("pf_drop00", "0.0"),
+        ("pf_drop25", "0.25"),
+        ("pf_drop75", "0.75"),
+        ("pf_drop100", "1.0"),
+    ):
+        cell = by_name[name]
+        assert cell["model"] == "phaseforge"
+        assert cell["overrides"] == [f"models.expert_init.drop_rate={rate}"], (
+            f"{name} must vary ONLY the drop rate"
+        )
 
 
 def test_canonical_phaseforge_config_resolves_to_r50_contract() -> None:

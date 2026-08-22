@@ -1,7 +1,7 @@
 {
   "name": "lift_ablation",
   "task": "Lift",
-  "description": "Comprehensive PhaseForge research evaluation protocol based on literature review & professor feedback. Wave 1: Core Confirmatory Matrix (15 methods) covering 4-way initialization factorial, parameter-matched BC-Large, negative control, generic spherical/Euclidean KMeans controls, linear phase-head init, spherical averaging, PhaseForge-FT, and teacher-forced. Oracle MoE is an evaluation-time routing intervention applied to a fixed trained expert set. Wave 2: Expert scaling (unconfounded K=3/12), jitter sweep (0.0/0.1), and phase label corruption (25%/50%/shuffle). Wave 3: Drop-Upcycling-style partial expert reinitialization (`warmstart_r50`, EXP-210) and the one-warm-plus-random diagnostic (`pf_one_warm_plus_random`, EXP-211), both pinned to num_experts=6 + centroid router so the comparison against `pf_centroid_random` / `phaseforge_e6` is expert-init-only.",
+  "description": "PhaseForge Lift ablation protocol under the canonical R50 method (six experts, top-2, centroid router, 50% partial expert warm-start). Wave 1: core matrix (dense floors, capacity control, negative control, scratch/warm-start MoE, R50-matched H1/H2 controls, generic clustering and phase-head router controls, spherical averaging, PhaseForge-FT, teacher-forced). Wave 2 (migrated to the canonical provider): expert scaling K=3/12 and phase-label corruption (25%/50%/permutation shuffle). Wave 3: one-warm-plus-random expert-init diagnostic (rotate-by-seed). Wave 4: expert-initialization suite at the canonical centroid router — full standard warm-start (EXP-212) and the partial-warm drop-rate sweep 0%/25%/75%/100% (EXP-213..216); 50% is the canonical proposed method (EXP-101). Removed as redundant after the canonical migration: pf_random_warm (= phase_pretrain_random_router at partial-warm), phaseforge_e6 and warmstart_r50 (= the canonical method itself), pf_jitter_00/pf_jitter_10 (superseded by the drop-rate sweep; jitter is inert under partial_warm). Oracle MoE remains an evaluation-time routing intervention on a fixed trained expert set.",
   "seeds": [42, 43, 44],
   "defaults": [
     "train.early_stopping.enabled=false"
@@ -177,39 +177,6 @@
       "evaluate_mode": "rollout"
     },
 {
-      "index": 24,
-      "experiment_id": "EXP-208",
-      "name": "pf_random_warm",
-      "role": "router-init x expert-init ablation (random router + warmstart experts)",
-      "model": "phaseforge",
-      "data": "common",
-      "stages": [2],
-      "stage2_source": "phaseforge",
-      "evaluate": true,
-      "evaluate_mode": "rollout",
-      "overrides": [
-        "models.router_init.type=random"
-      ],
-      "tag": "random_warm"
-    },
-    {
-      "index": 25,
-      "experiment_id": "EXP-209",
-      "name": "phaseforge_e6",
-      "role": "V2 diagnostic: report1 phaseforge config (E=6, centroid init) on the shared bank",
-      "model": "phaseforge",
-      "data": "common",
-      "stages": [1, 2],
-      "stage2_source": "self",
-      "evaluate": true,
-      "evaluate_mode": "rollout",
-      "overrides": [
-        "models.router.num_experts=6",
-        "models.router_init.type=centroid"
-      ],
-      "tag": "e6_diag"
-    },
-    {
       "index": 15,
       "experiment_id": "EXP-115",
       "name": "pf_ft",
@@ -272,38 +239,6 @@
       "evaluate_mode": "rollout"
     },
     {
-      "index": 19,
-      "experiment_id": "EXP-203",
-      "name": "pf_jitter_00",
-      "role": "Wave 2 Jitter sweep: zero expert warmstart jitter (jitter_std=0.0)",
-      "model": "phaseforge",
-      "data": "common",
-      "stages": [2],
-      "stage2_source": "phaseforge",
-      "overrides": [
-        "models.expert_init.jitter_std=0.0"
-      ],
-      "tag": "jitter00",
-      "evaluate": true,
-      "evaluate_mode": "rollout"
-    },
-    {
-      "index": 20,
-      "experiment_id": "EXP-204",
-      "name": "pf_jitter_10",
-      "role": "Wave 2 Jitter sweep: high expert warmstart jitter (jitter_std=0.1)",
-      "model": "phaseforge",
-      "data": "common",
-      "stages": [2],
-      "stage2_source": "phaseforge",
-      "overrides": [
-        "models.expert_init.jitter_std=0.1"
-      ],
-      "tag": "jitter10",
-      "evaluate": true,
-      "evaluate_mode": "rollout"
-    },
-    {
       "index": 21,
       "experiment_id": "EXP-205",
       "name": "pf_corrupt_25",
@@ -353,42 +288,101 @@
       "evaluate_mode": "rollout"
     },
     {
-      "index": 26,
-      "experiment_id": "EXP-210",
-      "name": "warmstart_r50",
-      "role": "Wave 3 expert-init: Drop-Upcycling-style partial 50% reinitialization (shared index set across experts, fresh standard Kaiming-uniform init for dropped neurons). Pinned to num_experts=6 + centroid router to compare against pf_centroid_random / phaseforge_e6 (NOT the 8-expert soft_mapping default).",
-      "model": "phaseforge",
-      "data": "common",
-      "stages": [2],
-      "stage2_source": "phaseforge",
-      "overrides": [
-        "models.router.num_experts=6",
-        "models.router_init.type=centroid",
-        "models.expert_init.type=partial_warm",
-        "+models.expert_init.drop_rate=0.5",
-        "+models.expert_init.seed=${project.seed}"
-      ],
-      "tag": "r50",
-      "evaluate": true,
-      "evaluate_mode": "rollout"
-    },
-    {
       "index": 27,
       "experiment_id": "EXP-211",
       "name": "pf_one_warm_plus_random",
-      "role": "Wave 3 expert-init diagnostic: one warmstart generalist + (n-1) random experts. Pinned to num_experts=6 + centroid router. warm_idx rotated deterministically by training seed so each seed tests a different warm expert (avoids phase-0 confound).",
+      "role": "Wave 3 expert-init diagnostic: one warmstart generalist + (n-1) random experts at the canonical centroid router. warm_idx rotated deterministically by training seed so each seed tests a different warm expert (avoids phase-0 confound).",
       "model": "phaseforge",
       "data": "common",
       "stages": [2],
       "stage2_source": "phaseforge",
       "overrides": [
-        "models.router.num_experts=6",
-        "models.router_init.type=centroid",
         "models.expert_init.type=one_warm",
         "models.expert_init.jitter_std=0.0",
         "+models.expert_init.rotate_warm_idx_by_seed=true"
       ],
       "tag": "onewarm",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 28,
+      "experiment_id": "EXP-212",
+      "name": "pf_full_warm",
+      "role": "Wave 4 expert-init suite: full standard warm-start (every expert parameter copied from the Stage 1 action head with the declared small symmetry-breaking jitter) at the canonical centroid router — the pre-final PhaseForge initialization, preserved as an ablation of the canonical 50% partial warm-start.",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.type=warmstart",
+        "models.expert_init.jitter_std=0.02"
+      ],
+      "tag": "fullwarm",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 29,
+      "experiment_id": "EXP-213",
+      "name": "pf_drop00",
+      "role": "Wave 4 drop-rate sweep: 0% partial warm-start (exact full copy, no jitter, no reinitialization). Same deterministic procedure as the canonical method, only drop_rate varies.",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.drop_rate=0.0"
+      ],
+      "tag": "drop00",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 30,
+      "experiment_id": "EXP-214",
+      "name": "pf_drop25",
+      "role": "Wave 4 drop-rate sweep: 25% partial warm-start. Same deterministic procedure as the canonical method, only drop_rate varies.",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.drop_rate=0.25"
+      ],
+      "tag": "drop25",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 31,
+      "experiment_id": "EXP-215",
+      "name": "pf_drop75",
+      "role": "Wave 4 drop-rate sweep: 75% partial warm-start. Same deterministic procedure as the canonical method, only drop_rate varies.",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.drop_rate=0.75"
+      ],
+      "tag": "drop75",
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 32,
+      "experiment_id": "EXP-216",
+      "name": "pf_drop100",
+      "role": "Wave 4 drop-rate sweep: 100% reinitialization (no shared structure with the Stage 1 action head remains; equivalent to fully random experts drawn through the same deterministic procedure).",
+      "model": "phaseforge",
+      "data": "common",
+      "stages": [2],
+      "stage2_source": "phaseforge",
+      "overrides": [
+        "models.expert_init.drop_rate=1.0"
+      ],
+      "tag": "drop100",
       "evaluate": true,
       "evaluate_mode": "rollout"
     }

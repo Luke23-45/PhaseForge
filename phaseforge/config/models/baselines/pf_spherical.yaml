@@ -45,5 +45,7 @@ router_init:
   type: "spherical_centroid"
 
 expert_init:
-  type: "warmstart"
-  jitter_std: 0.02
+  type: "partial_warm"
+  drop_rate: 0.5
+  jitter_std: 0.0
+  seed: ${project.seed}   # R50-matched: tied to the training seed

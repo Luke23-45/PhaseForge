@@ -245,22 +245,53 @@ implementations that hardcode the full warm-start call:
 
 ## Phase 4 — New ablation cells
 
-- [ ] **S4.1 Full-warm centroid cell** (canonical encoder + centroid router +
+- [x] **S4.1 Full-warm centroid cell** (canonical encoder + centroid router +
       standard full warm-start with the declared small jitter) — new config;
       this is the old method's behavior preserved as an ablation, clearly
       named (e.g. `pf_full_warm`), never as a proposed method.
-- [ ] **S4.2 Drop-rate sweep cells:** 0%, 25%, 75%, 100% (50% is canonical).
+      *Evidence: `pf_full_warm` (EXP-212, index 28) in `lift_ablation.json` —
+      manifest-override cell on canonical `phaseforge`
+      (`expert_init.type=warmstart, jitter_std=0.02`); no new yaml needed.*
+- [x] **S4.2 Drop-rate sweep cells:** 0%, 25%, 75%, 100% (50% is canonical).
       Same deterministic partial-init procedure, only `drop_rate` varies.
-- [ ] **S4.3 Migrate existing ablation cells to the canonical provider:**
+      *Evidence: `pf_drop00/25/75/100` (EXP-213..216, indices 29–32), each a
+      single-override cell (`models.expert_init.drop_rate=X`); guard test
+      asserts each varies ONLY the drop rate.*
+- [x] **S4.3 Migrate existing ablation cells to the canonical provider:**
       `pf_random_random`, `pf_centroid_random`, `warmstart_r50`,
       `pf_one_warm_plus_random` (expert-init suite); `pf_ft`, `pf_corrupt_25`,
       `pf_corrupt_50`, `pf_shuffle_control` (representation suite);
       `pf_k3`, `pf_k12` (capacity suite). Each: point Stage 1 at canonical
       `phaseforge`, verify expert-count / router / seed parity (plan §6.2).
-- [ ] **S4.4 Verify label-corruption semantics** of `pf_corrupt_*` /
+      *Evidence: all cells already consume provider `phaseforge` (now
+      canonical). Config pins: `pf_spherical.yaml` + `pf_ft.yaml` →
+      partial_warm 0.5 (covers pf_k3/pf_k12 via their base model);
+      `pf_random_random`/`pf_centroid_random` keep `expert_init.type=random`
+      BY DESIGN (they are the "fully random experts" cells of §6.2);
+      `pf_one_warm_plus_random` overrides reduced to its genuinely
+      non-canonical factors. **`warmstart_r50` REMOVED as redundant** — after
+      the canonical migration its override set recreates the proposed method
+      exactly (and its `+`-append overrides would crash since the keys now
+      exist); D6's rename default superseded by removal — the expert-init
+      contrast is now canonical vs `pf_full_warm` vs the drop sweep.*
+- [x] **S4.4 Verify label-corruption semantics** of `pf_corrupt_*` /
       `pf_shuffle_control` before reuse (plan §6.3).
-- [ ] **S4.5 Decide-and-document fate of unmentioned cells** (D3/D4 below):
+      *Evidence: `corrupt_phase_labels` (data/common/dataset.py) — exact
+      forced-different replacement `z' = (z + U{1..P-1}) mod P` at rate p;
+      shuffle control permutes labels preserving class marginals; train-split
+      only (validation labels stay clean → checkpoint selection unaffected);
+      per-trajectory deterministic seeds (`project.seed`-derived); clean GT
+      kept as `phase_gt_clean`. The cells are stage-2 consumers of the clean
+      provider Stage 1, so corruption affects exactly the bootstrap
+      (centroid) labels — matching §6.3's declared semantics.*
+- [x] **S4.5 Decide-and-document fate of unmentioned cells** (D3/D4 below):
       `pf_random_warm`, `phaseforge_e6`, `pf_jitter_00`, `pf_jitter_10`.
+      *Evidence: removed from `lift_ablation.json` — `pf_random_warm` =
+      `phase_pretrain_random_router` at partial-warm (redundant);
+      `phaseforge_e6` = the canonical method itself (redundant);
+      `pf_jitter_*` superseded by the drop sweep (jitter inert under
+      partial_warm; drop_rate 0.0/1.0 subsume the endpoints). Rationale
+      recorded in the manifest description; removal guarded by test.*
 
 ---
 
@@ -506,4 +537,5 @@ setting.
 | 2026-08-22 | **Phase 0 complete** (S0.1–S0.3) | Baseline: HEAD `bb2ebd3`, 655 tests passed (41.9 s), runner `--list` OK. Go-ahead recorded (S0.1); D-working-answers recorded (S0.2): D1 Lift-only, D3 drop, D4 superseded, D5 `outputs_final/`, D6 rename later, D7 3 seeds, D8 after, D9 no; **D2 open until S9.2 by design.** |
 | 2026-08-22 | **Phase 1 complete** (S1.1–S1.4) | `phaseforge.yaml` = R50 content byte-exact (diff: only header + `name:`), `phaseforge_r50.yaml` deleted, 24/24 resolved-contract checks pass at seeds 42+43 (init seed follows training seed). |
 | 2026-08-22 | **Phase 2 complete** (S2.1–S2.5) | Aliases removed from `utils/config.py` AND duplicate found+removed in `scripts/protocol/preflight_configs.py`; canonical guard test written; manifest marked archival. **4 tests failed first run** (old-world encodings): 2× cli (helper lacked `project.seed` for the new `${project.seed}` interpolation), 2× state-machine (asserted old E=8 defaults) — all four fixed to construct the new world explicitly, NOT skipped. Final: **655 passed**, preflight **150 train + 135 eval cells OK**, runner `--list` OK. **D10 discovered**: oracle/teacher eval raises on centroid-init (empty soft-mapping buffer) — must be resolved before Phase 3/oracle eval. |
-| 2026-08-22 | **Phase 3 complete** (S3.1–S3.10) | Group A: 3 config-only edits (pf_spherical_kmeans/pf_kmeans/pf_phase_head → partial_warm 0.5, seed `${project.seed}`). Group B: config-driven `expert_init` on `WarmStartMoEModel` + `PlainEncoderPhaseBootstrapModel` (default unchanged = warmstart 0.02), `_expert_init_info` metadata everywhere. **Live bug found+fixed**: CLI's `training_seed=` kwarg crashed ALL FOUR baseline bootstraps since `0a7e415` (warmstart_moe/pprr/pepb/teacher_forced stage-2 would all TypeError); signatures fixed + regression test. Shared `hash_dropped_indices` promoted to `components/expert.py` (byte-identical; first draft had a hash mismatch, caught by re-reading original). **End-to-end proof**: all 6 cells (proposed + 5 controls) built from real yamls → identical dropped-set hash at same seed → exact-match factorial. Suite: **660 passed** (+5 net new), preflight 285 cells OK. D10 remains open (blocks oracle eval only). |
+| 2026-08-22 | **Phase 3 complete** (S3.1–S3.10) | Group A: 3 config-only edits (pf_spherical_kmeans/pf_kmeans/pf_phase_head → partial_warm 0.5, seed `${project.seed}`). Group B: config-driven `expert_init` on `WarmStartMoEModel` + `PlainEncoderPhaseBootstrapModel` (default unchanged = warmstart 0.02), `_expert_init_info` metadata everywhere. **Live bug found+fixed**: CLI's `training_seed=` kwarg crashed ALL FOUR baseline bootstraps since `0a7e415` (warmstart_moe/pprr/pepb/teacher_forced stage-2 would all TypeError); signatures fixed + regression test. Shared `hash_dropped_indices` promoted to `components/expert.py` (byte-identical; first draft had a hash mismatch, caught by re-reading original). **End-to-end proof**: all 6 cells (proposed + 5 controls) built from real yamls → identical dropped-set hash at same seed → exact-match factorial. Suite: **660 passed** (+5 net new), preflight 285 cells OK. D10 remains open (blocks oracle eval only). Committed `84f7451`. |
+| 2026-08-22 | **Phase 4 complete** (S4.1–S4.5) | `lift_ablation.json` migrated: removed 5 redundant/broken cells (pf_random_warm, phaseforge_e6, warmstart_r50, pf_jitter_00/10 — warmstart_r50's `+`-appends would crash post-migration AND recreated the canonical method); added `pf_full_warm` (EXP-212) + drop sweep `pf_drop00/25/75/100` (EXP-213..216); `pf_one_warm_plus_random` overrides reduced to non-canonical factors; `pf_spherical`/`pf_ft` yamls pinned to partial_warm. Corruption semantics verified (exact mod-P replacement, train-split-only, deterministic, clean-GT preserved). Manifest: 27 cells; runner `--list` OK; preflight **84 train + 81 eval cells OK**; affected tests 80 passed. |
