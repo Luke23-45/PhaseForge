@@ -75,7 +75,7 @@ Sources: https://arxiv.org/abs/2304.13705 · https://arxiv.org/html/2410.13126v1
 
 Sources: https://arxiv.org/abs/2009.12293 · https://robosuite.ai/docs/algorithms/benchmarking.html
 
-### 3.6 Dexterous, state-only IL — SOIL (ICRA 2021) and CIMER (ICRA 2025; arXiv 2024)
+### 3.6 Dexterous, state-only IL — SOIL (IROS 2021) and CIMER (ICRA 2025; arXiv 2024)
 
 Closest precedent for "no vision, pure state" papers:
 
@@ -322,7 +322,7 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 4. Zhao et al., *ACT* (RSS 2023). https://arxiv.org/abs/2304.13705 · ALOHA Unleashed: https://arxiv.org/html/2410.13126v1
 5. LIBERO and VLA benchmarks are intentionally excluded from the PhaseForge protocol; they are not used as evidence for the core state-only evaluation.
 6. Zhu et al., *robosuite*. https://arxiv.org/abs/2009.12293 · https://robosuite.ai/docs/algorithms/benchmarking.html
-7. Radosavovic et al., *SOIL* (ICRA 2021). https://arxiv.org/abs/2004.04650
+7. Radosavovic et al., *SOIL* (IROS 2021). https://arxiv.org/abs/2004.04650
 8. Han et al., *CIMER* (ICRA 2025; arXiv preprint 2024) — 5 seeds, 200-ep robustness. https://par.nsf.gov/servlets/purl/10621141 · official page: https://star-lab.cc.gatech.edu/papers/han-cimer-icra/
 9. Xu et al., *Move-Then-Operate: Behavioral Phasing* (2026; preprint, venue not verified). https://arxiv.org/html/2604.23620v1
 10. *Critical Interval MSE* (2026; preprint, venue not verified). https://arxiv.org/html/2606.29898v1

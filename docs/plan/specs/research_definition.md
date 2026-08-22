@@ -2,7 +2,7 @@
 
 **Status:** finalized research specification (incorporating literature audit & professor feedback)
 
-**Scope:** non-visual robot manipulation from privileged structured low-dimensional simulator state
+**Scope:** non-visual robot manipulation from privileged structured low-dimensional simulator state (published-precedent justification: §2b)
 
 **Benchmark:** robomimic v0.1 low-dimensional demonstrations with a single, explicitly pinned robosuite release track
 
@@ -38,6 +38,21 @@ PhaseForge sits at the intersection of four research traditions:
 5. **Phase / Subtask-Conditioned Manipulation:** PAMAE (Yang et al. 2026), SMP (Hao et al. 2026).
 
 **Differentiator:** PhaseForge investigates **privileged regime geometry transfer** under a controlled factorial design, comparing privileged phase prototypes against generic unsupervised clustering (Spherical K-means) and discriminative classification directions.
+
+### 2b. State-Only Scope — Published Precedent (verified against primary sources, 2026-08-22)
+
+The non-visual scope is a deliberate methodological choice for a **training-strategy / routing-mechanism study**, not a missing modality. Structured low-dimensional observations are an established, first-class evaluation track at major robotics venues; each citation below was checked against its primary source (arXiv record / proceedings page) before inclusion.
+
+| Precedent | Venue (as verified) | What it establishes for this scope decision |
+|---|---|---|
+| Mandlekar et al., *What Matters in Learning from Offline Human Demonstrations for Robot Manipulation* ([arXiv:2108.03298](https://arxiv.org/abs/2108.03298)) | CoRL 2021 (Oral) | Defines the reference offline-IL protocol this project adopts and explicitly studies **two parallel observation tracks — low-dimensional state and images** — treating the low-dim track as a primary setting for field-level lessons (e.g., Lesson C4: offline metrics ≠ rollout success). |
+| Radosavovic et al., *State-Only Imitation Learning for Dexterous Manipulation* ([arXiv:2004.04650](https://arxiv.org/abs/2004.04650)) | IROS 2021 | Entire paper is state-only imitation learning for dexterous manipulation (no vision inputs); direct precedent that pure-state manipulation studies meet top-venue standards when claims match scope. |
+| Chi et al., *Diffusion Policy: Visuomotor Policy Learning via Action Diffusion* ([arXiv:2303.04137](https://arxiv.org/abs/2303.04137)) | RSS 2023; extended journal version (IJRR 2024) | Benchmarks 12 tasks across 4 manipulation benchmarks and reports **state-input policies as a first-class comparison table** on robomimic low-dim tasks alongside visuomotor variants. |
+| Chen et al., *S2I — Towards Effective Utilization of Mixed-Quality Demonstrations* ([arXiv:2409.19917](https://arxiv.org/abs/2409.19917)) | ICRA 2025 | Recent accepted work whose primary simulation evaluation is the **state-based robomimic benchmark** (BC-RNN backbone, multi-seed), demonstrating continued community acceptance of the setting. |
+
+**Relation to vision-based MoE-routing work.** The closest concurrent MoE-routing methods — LAR-MoE (arXiv:2603.08476, preprint), SMP (ICLR 2026 poster), MoE-ACT (RSS 2026; see [`../design/related_work_positioning.md`](../design/related_work_positioning.md)) — operate on images or VLA features. Their visual encoders introduce representation-learning variance that would confound a factorial isolation of encoder supervision × router initialization × expert warm-start. PhaseForge's state-only design is what makes its H1–H4 contrasts clean; it is positioned as the controlled-mechanism complement to those systems papers, not as a competitor system claim.
+
+**Claim boundary carried by this scope.** State-only evidence supports no perception, generalization-to-novel-visual-appearance, or real-robot deployment claims; the permitted/prohibited claims table (§4) governs. Visual observation is declared future work; if later demanded, the predeclared contingency is a single scoped appendix cell (one additional task, image observations, three cells only: PhaseForge / BC / WarmStart-MoE) — not a full redesign.
 
 ---
 
