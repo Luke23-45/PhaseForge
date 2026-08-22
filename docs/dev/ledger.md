@@ -674,6 +674,104 @@ tree (post-LAR-deletion):
 
 ---
 
+## Phase 8c — Rollout performance & determinism revision
+
+*2026-08-22 audit, motivated by the cloud (GPU) final sweep: "rollout is
+slow — is it headless, is everything optimized correctly?" Full record:
+`docs/dev/rollout_performance_review.md` (corrected post-review).*
+
+**Findings (all measured on the installed stack, none assumed):**
+
+- **Headless: yes.** `has_renderer/has_offscreen_renderer/use_camera_obs`
+  all forced False; no GL context is ever created (verified in robosuite
+  source) — cloud needs no EGL/OSMoca setup. Dataset pins
+  `lite_physics=False` (exact per-substep execution; enabling True would be
+  a parity break, not an optimization).
+- **Cost structure (protocol env):** `env.step` ~17.8 ms (25 substeps;
+  robosuite OSC machinery ~97%, physics ~0.45 ms — vendor-pinned, not ours
+  to touch); policy forward ~1 ms; reset was **530–770 ms/episode** because
+  robosuite's default `hard_reset=True` recompiles the MJCF every reset.
+- **Pre-existing protocol defect discovered:** the stock reset path leaked
+  hidden state across episodes — `qacc_warmstart` (O(10) residue), OSC
+  controller cached refs/goals and `initial_joint`, observable caches, and
+  construction-time geometry drawn from the global RNG (robosuite samples
+  `BoxObject` sizes inside `make`). Measured consequence: the SAME bank
+  case run twice diverged (9.6e-2; 3.8e-1 with another case between) — the
+  "identical resets" promise held only for `(time, qpos, qvel)`, and
+  episode conditions varied across methods/processes.
+
+- [x] **S8c.1 Adapter revision implemented** (`robosuite_adapter.py`):
+      `hard_reset=False` forced; deterministic construction seeding
+      (task-derived seed around `make`, caller RNG restored); hidden-state
+      canonicalization in `reset_to` (zero warmstart → `sim.forward()` →
+      per part-controller `update(force=True)` then
+      `update_initial_joints(restored joints)` → observables force-refresh;
+      order matters — joints must be read after the forced update).
+      *Evidence: git diff; regression tests in
+      `tests/evaluations/envs/test_rollout_adapter.py` (3 new).*
+- [x] **S8c.2 Standing determinism gate redefined and passing.**
+      `scripts/dev/ab_reset_equivalence.py` now gates the ADOPTED path on
+      the dataset-pinned env: same case must be BITWISE EQUAL across
+      episode histories AND independent env constructions. **PASSED on all
+      five tasks** (robosuite 1.5.1 and 1.5.0; exit 0). The retired
+      hard-reset arm is informational (≤5e-2, fully attributed to its
+      per-reset placement re-sampling).
+      *Evidence: gate output in review doc Appendix B.*
+- [x] **S8c.3 Cost harness corrected** (`scripts/dev/bench_rollout_hotpath.py`):
+      sections A/C/D now run on the dataset-pinned env (was dev-fallback
+      metadata, i.e. robosuite defaults); reset arms labeled
+      PROTOCOL vs RETIRED. Protocol reset: **~2.7 ms vs ~637 ms retired
+      (~230×)**; per-cell eval ≈ 40–70 s; 150-cell evaluation ≈ 2–3 h
+      sequential.
+- [x] **S8c.4 Semantics-preserving micro-opts** (review §4): P1 tolerance
+      harmonization IMPLEMENTED (adapter owns
+      `eval.episodes.action_tolerance`; both validation sites consistent;
+      default 1e-4 unchanged); P2 `torch.set_num_threads(1)` in eval
+      processes IMPLEMENTED (disclosure: changes bitwise inference vs
+      default threads — uniform across all final evals); P1b duplicate
+      validation and balance-loss skip REJECTED with recorded reasons.
+      *Evidence: `runner.py` `_adapter_from_config` +
+      `run_rollout_evaluation`; suite green.*
+- [x] **S8c.5 Parallel-cells proposal REJECTED for the final sweep.**
+      Concurrent runner processes on one namespace are unsafe:
+      `RunnerState.save()` has no cross-process lock/merge (lost updates);
+      `results.jsonl` is FileLock-safe but insufficient. Sequential sweep;
+      a `--jobs` pool inside one runner process is the correct design if
+      ever needed. *Evidence: `runner/registry.py` save(); review §4.*
+- [x] **S8c.6 Review corrections applied** to
+      `docs/dev/rollout_performance_review.md`: lite_physics fact fixed
+      (dataset pins False); residual attributed to the retired branch;
+      run count fixed (150 eval cells); P0-parallel reclassified; P2 +
+      cross-machine bitwise caveats added; gate redefined S-vs-S on pinned
+      metadata; old-path order-dependence numbers added (§3.0).
+- [ ] **S8c.7 Supervisor ratification (D12) before sweep numbers enter the
+      paper** — the canonicalized reset is a protocol revision; pre-revision
+      rollout numbers are not cross-version comparable (and were
+      order-dependent). Run-plan preconditions updated.
+- [x] **S8c.8 External-review regression claim REFUTED (2026-08-22).** An
+      external review asserted that forcing `hard_reset=False` breaks bank
+      generation (claimed: soft reset skips placement re-sampling → 50
+      duplicate states → `InfrastructureError`) and proposed re-enabling
+      hard reset per-restore. Refuted by source (`_reset_internal()` —
+      where the placement sampling lives — runs unconditionally in BOTH
+      branches of `MujocoEnv.reset()`; the hard branch only recompiles the
+      model) and by measurement through the exact eval-path factory:
+      consecutive soft resets differ by L2 = 1.20; 5-case generation min
+      pairwise L2 = Lift 0.135 / ToolHang 0.096 / Square 0.209 / Transport
+      0.102 (threshold 1e-3). Institutionalized as the harness's
+      `--bank-smoke` mode (passed on all five tasks; nothing written to the
+      frozen banks). The review's proposals to re-anchor the gate to the
+      retired hard branch (H-vs-S ≤ 1.8e-3) and weaken the adapter
+      docstring from "bitwise-identical" to "~1e-3-bounded" were REJECTED —
+      the adopted-path bitwise property is proven (S8c.2). Its other
+      confirmations (tolerance ownership, threads pinning, intentional
+      duplicate validation, balance-loss rejection) match the implemented
+      state. Ruff clean on all touched files.
+      *Evidence: review doc §3.3; `ab_reset_equivalence.py --bank-smoke`
+      outputs.*
+
+---
+
 ## Phase 9 — Final sweep execution
 
 > **Status: fully prepared; execution pending.** Everything preparable is
@@ -743,6 +841,7 @@ tree (post-LAR-deletion):
 | D9 | Add external modern baseline (low-dim Diffusion Policy / BC-Transformer / GMM variants)? — **Audited 2026-08-22: default NO.** Matrix already contains the benchmark study's strongest IL baseline (BC-RNN) + capacity + architecture controls + matched mechanism controls; exclusions citable (offline RL loses on PH human demos per robomimic study; DP breaks the single-state contract). Mitigation without training: literature-context table + positioning paragraph (S8.x). Revisit only if professor/reviewers demand; then DP-lowdim as non-contract-matched reference. | S8, S9 | No new trained baselines |
 | D10 | **Found during Phase 1 (2026-08-22):** `eval_mode='oracle'` (H5) and teacher routing call `require_soft_mapping()`, which raises when the P×E soft-mapping buffer is empty — and only the `soft_mapping` router-init branch populates it. On the canonical centroid-initialized config, **oracle evaluation will fail**. Options: (a) populate M in the centroid path (identity mapping when E==P, matching research_definition H5's "e = phase mod E" description), (b) re-route oracle dispatch off the phase head directly, (c) drop the H5 oracle diagnostic for the final paper. Must be resolved before Phase 3 ends / any oracle eval. | Phase 3, S9 | Resolve with professor; (a) is the least invasive |
 | D11 | **`lar_moe_state_only` implementation — RESOLVED 2026-08-22: DEFERRED, do not implement for this paper.** Supervisory decision after full-paper review (`docs/dev/lar_moe_state_only_implementation_plan.md`, Rev. 2): (i) at n=3 seeds the testbed cannot statistically resolve another comparator in the observed band (PhaseForge std 0.122, pf_centroid_random std 0.231 pre-migration; D2 variance question still open); (ii) the comparison is low-information regardless of direction (an adapted method, not a reproduction — a win uninterpretable, a loss dismissible); (iii) no registered claim requires it (H3 already contrasts privileged vs. generic unsupervised structure via `pf_spherical_kmeans`); (iv) cost is high (new data layer + model + two trainers + four ±F/±R ablations). Revisit ONLY if all three hold post-five-task: professor approval + consistent task-repeatable PhaseForge margin over BC/Warmstart + real compute headroom; then Lift-only pilot, main method only. Escalated same day at project owner direction: **HARD-DELETED** — the plan document was removed from the active tree (verified: zero code/config/manifest references ever existed). The full Rev. 2 design remains recoverable from git history (commit `1ab35de`) if all three revisit conditions are ever met. Refines D9: the sanctioned exception is withdrawn. | — | Hard-deleted 2026-08-22; recover from `1ab35de` |
+| D12 | **Reset-path protocol revision (Phase 8c) — implemented, pending supervisor ratification before sweep numbers enter the paper.** The rollout protocol now uses the canonicalized soft reset: `hard_reset=False` + deterministic construction seeding + hidden-state canonicalization (warmstart/OSC caches/`initial_joint`/observables). Grounds: the stock hard-reset path was **episode-order-dependent** (same case twice diverged 9.6e-2; 3.8e-1 with interleaving — cross-method condition variance), while the adopted path is **bitwise-deterministic per case** (gate passed on all five tasks) and ~230× cheaper per reset. Disclosure duties: single reset path for all sweep cells (internally valid); pre-revision rollout numbers are NOT cross-version comparable; eval inference pinned to 1 torch thread; cross-machine bitwise equality is not claimed. | S9.2 reporting (sweep may run before ratification; numbers must not enter the paper unratified) | Ratify before reporting; full record in `docs/dev/rollout_performance_review.md` §7 |
 ---
 
 ## Invariants — never do these
@@ -785,12 +884,15 @@ tree (post-LAR-deletion):
 | Param counts scale with `state_dim` per task (Lift 19, Can 23, …) — report per-task counts, match ratio ~constant | `config/data/*.yaml` + `${data.state_dim}` interpolation |
 | Epoch accounting: BC family 100 S1 / 0 S2; MoE family shared S1 + 200 S2; scratch 0/200 — disclosed, must appear in paper | `fairness_accounting.md` Epochs column |
 | Five-task readiness (Phase 8b audit, 2026-08-22): 15 per-task data configs compose + registry-validate; raw HDF5 ×5; caches ×5 tasks; preflight 165 train + 150 eval cells green; dry-run 315 steps | `experiments/five_task.json`; `phaseforge/config/data/`; live re-run in audit |
-| Banks on disk (ALL FIVE, verified `load(verify=True)` 2026-08-22): Lift `a7d3953c0afcf560`, Can `310d9cfd3fa5e843`, Square `e16288589f5f69c2`, ToolHang `db5b4c2a5e6519d0` (robosuite 1.5.0), Transport `c6683cf0dbb23876` — 50 cases each, bank seed 2026 | `data/processed/eval_banks/*/manifest.json` |
+| Pre-revision banks on disk (verified `load(verify=True)` 2026-08-22 but **not valid for the current protocol**): Lift `a7d3953c0afcf560`, Can `310d9cfd3fa5e843`, Square `e16288589f5f69c2`, ToolHang `db5b4c2a5e6519d0` (robosuite 1.5.0), Transport `c6683cf0dbb23876` — 50 cases each, bank seed 2026; regenerate under `soft-reset-canonical-v1` | `data/processed/eval_banks/*/manifest.json`; `reset_bank.py` |
 | Wilcoxon reporting (FIXED S8b.1 2026-08-22): baseline identity now resolves per tag and the pairing key is `(seed, tag)` — the old `(baseline, None)` identity + stage-locked key silently emptied the CSV / dropped every PhaseForge-vs-BC pair | `phaseforge/outputs_writer/tables.py` |
 | `stratified_stats.py` (FIXED S8b.2 2026-08-22): groups `(task, model, training_seed)`; `--root` now REPLACES the default (the old append+default mixed historical `outputs/` into explicit `outputs_final` scans) | `scripts/analysis/stratified_stats.py` |
 | Dry-run preview semantics: fresh-namespace dry-run prints AUTO-INJECT dependency previews (provider stage-1 commands may repeat 2–4×) and BLOCKED evals; execution never retrains an existing provider (auto-dependency resolves in-sweep via state registry) | `runner/cli.py` `_print_dry_run` / `_resolve_stage2_with_auto_dependency` |
 | `TaskSpec.schema_version` strings (v1) lag the data configs (can/square/tool-hang = v2) but the field is unconsumed — only the data-config `schema_version` is read (`state_machine.py` L531) | `evaluations/envs/task_registry.py`; `phaseforge/config/data/*.yaml` |
 | ToolHang venv carries the FULL training stack (torch 2.13.0+cpu, h5py, editable phaseforge, 5 console scripts) because every ToolHang step — train AND eval — is dispatched there | `runner/executor.py` L156; live probe 2026-08-22 |
+| Rollout is fully headless (no GL context ever; dataset pins `lite_physics=False` — 25 substeps/policy step; `env.step` ≈17.8 ms of which ~97% is robosuite OSC machinery, ~0.45 ms physics) | `robosuite_adapter.py` `_FORCED_ENV_KWARGS`; review doc §1–2 |
+| Reset path (Phase 8c): protocol = canonicalized soft reset ~2.7 ms/case vs retired hard reset ~530–770 ms (recompiles MJCF every episode); adopted path bitwise-deterministic per case (gate passed all 5 tasks); stock path was order-dependent (same case twice → 9.6e-2 / 3.8e-1) | `robosuite_adapter.py`; `scripts/dev/ab_reset_equivalence.py`; review doc |
+| Parallel runner processes on one namespace are UNSAFE: `RunnerState.save()` has no cross-process lock/merge (lost updates); `results.jsonl` appends are FileLock-safe but insufficient — final sweep runs sequential | `runner/registry.py` save(); review doc §4 |
 
 ---
 
@@ -819,3 +921,6 @@ tree (post-LAR-deletion):
 | 2026-08-22 | **Phase 8b implemented (S8b.1–S8b.5)** | S8b.1 fixed BOTH the per-tag baseline identity AND a second latent flaw found during implementation: the `(stage, seed, tag)` pairing key could never pair PhaseForge (stage 2) with the BC family (stage 1) — key relaxed to `(seed, tag)` (deployment comparison on identical resets). S8b.2 fixed the task pooling AND a third bug: `--root` append+default silently mixed historical `outputs/` into explicit `outputs_final` scans — now replaces. S8b.3: `tests/data/test_per_task_configs.py` (33 tests incl. labeler-slice boundary guard + manifest↔config drift guard). S8b.4: Can `310d9cfd3fa5e843` / Square `e16288589f5f69c2` generated under `.venv-rollout`, ToolHang `db5b4c2a5e6519d0` under `.venv-toolhang` via the eval-time `load_or_generate_bank` path — first-ever successful ToolHang env-stack exercise; all five banks SHA-verified. S8b.5: registry strings aligned v2 (+drift-guard test), dry-run preview note in runbook §5. Suite **708 passed** (+37); preflight 165+150 green post-change. S8b.6 remains execution-time (post-sweep). |
 | 2026-08-22 | **`final_run_plan.md` finalized** | Full rewrite against the frozen end state. Corrections vs. the old text: sweep/dry-run/gate/--list/re-run commands now use `.venv-rollout/Scripts/python` (the old `uv run` sweep command would fail every eval subprocess — the dev env has no robosuite/mujoco); `fairness_accounting.py` takes NO `--outputs` flag (old command would crash) — the per-task parameter match is the preflight script's job; step-count derivation restated exactly (21 per (task,seed) = 11 train + 10 eval × 5 × 3 = 315). Additions: frozen 10-method matrix table with roles/stages/stage-2 sources + the D2 primary-family scope; five-bank id table (§2.3); expected artifact row counts (150/165); S8b.6 per-phase check in §6; per-task `stratified_stats.py` in §8; new §9 ablation suite (27 cells, 165 steps, `outputs_ablation/` namespace — gitignored; both manifests' dry-runs verified under the rollout venv: 315 and 165 steps); D9 literature-context exclusion in §10. |
 | 2026-08-22 | Run plan reconciled against the original baseline/ablation plain-list | Item-by-item check vs. the early plan list passed with one recorded amendment and both loose ends closed: the three router controls (`pf_spherical_kmeans`/`pf_kmeans`/`pf_phase_head`) stayed **Lift-only** per D1 (not promoted to the five-task matrix as the early list sketched) — §1 now states the exact-match factorial pinning; §9 now spells out the suite composition (9 Lift matrix replicas without `bc_rnn` + 18 ablation-only cells), the removals (`pf_random_warm`/`phaseforge_e6` D3, `pf_jitter_00/10` D4, `warmstart_r50`), and that the optional top-1 routing variant was never included; §10 records the retired identities (8-expert config, `phaseforge_r50` file+alias, `lar_moe` D11). All claims re-verified against `lift_ablation.json` programmatically. |
+| 2026-08-22 | **Phase 8c: rollout performance & determinism revision implemented and gated** (D12 recorded) | Audit answer: rollout IS fully headless (no GL ever; dataset pins lite_physics=False, 25 substeps/step; step ≈17.8 ms ≈97% robosuite OSC). Discovered the stock reset path was **episode-order-dependent** (warmstart/OSC-cache/initial_joint/geometry leaks; same case twice diverged 9.6e-2/3.8e-1) and hard reset recompiled the MJCF every episode (530–770 ms). Implemented: canonicalized soft reset (construction seeding + hard_reset=False + hidden-state canonicalization), P1 tolerance harmonization, P2 torch single-thread in eval. Standing gate redefined to S-vs-S on pinned metadata and **PASSED on all five tasks** (bitwise; retired-hard arm informational ≤5e-2, attributed). Bench harness corrected to protocol env (reset 2.7 ms vs 637 ms; eval ≈2–3 h for all 150 cells). Parallel-cells proposal REJECTED (RunnerState not concurrency-safe) — final sweep sequential. Review doc corrected (lite_physics fact, residual attribution, 150-cell count, disclosures). Suite 711 green. D12 ratification pending before numbers enter the paper. Working tree left UNCOMMITTED per project owner instruction. |
+| 2026-08-22 | **Phase 8c finalization: external review adjudicated; refutation institutionalized** | The pasted external review's "critical regression" (soft reset allegedly degenerates bank generation) was verified against source and measurement — **REFUTED** (`_reset_internal()` placement sampling runs in both reset branches; 5-case generation distinct on all five tasks, min pairwise L2 0.096–0.209 vs 1e-3 threshold). Its Patch A (per-restore hard-reset toggling) NOT implemented — solves a non-existent problem and re-introduces the retired branch. Added `--bank-smoke` permanent mode to `ab_reset_equivalence.py` (passed all 5 tasks, exit 0, in-memory only). Review doc §3.3 records the full adjudication incl. rejected docstring/gate re-anchoring proposals. Ruff clean; suite re-run green. The review's two open questions answered by evidence: bank generation needs NO hard reset; `action_tolerance=1e-4` remains the single contract. Tree remains UNCOMMITTED per standing instruction. |
+| 2026-08-22 | **Post-review bank invalidation patch implemented** | Reset-bank identity and manifests now carry `soft-reset-canonical-v1`; `ResetBank.load` rejects missing or stale protocol revisions, so pre-revision bank IDs cannot be reused by the final sweep. The five current banks must be regenerated through the final evaluation path before the gates and their new IDs recorded in the run plan. The rollout benchmark now restores the saved Torch intra-op thread count correctly. Focused rollout tests: 60 passed; full suite: 713 passed. |

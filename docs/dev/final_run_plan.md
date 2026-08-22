@@ -6,7 +6,9 @@ Manifest `experiments/five_task.json`, namespace `outputs_final/` only.
 **Preconditions:** professor approval recorded in the ledger; D2
 multiplicity correction confirmed (draft: Holm step-down over the five
 primary comparisons per task); D10 resolved before any oracle /
-teacher-forced *diagnostic* evaluation (blocks nothing else).
+teacher-forced *diagnostic* evaluation (blocks nothing else); D12
+reset-path revision (ledger Phase 8c) ratified before sweep numbers enter
+the paper — the sweep itself may run unratified.
 
 ---
 
@@ -76,17 +78,22 @@ reuse.
 
 ### 2.3 Reset banks (frozen artifacts — travel with the `data/` root)
 
-| Task | bank_id | robosuite |
+| Task | Current bank artifact | robosuite |
 |---|---|---|
-| Lift | `a7d3953c0afcf560` | 1.5.1 |
-| Can | `310d9cfd3fa5e843` | 1.5.1 |
-| Square | `e16288589f5f69c2` | 1.5.1 |
-| ToolHang | `db5b4c2a5e6519d0` | 1.5.0 |
-| Transport | `c6683cf0dbb23876` | 1.5.1 |
+| Lift | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
+| Can | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
+| Square | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
+| ToolHang | Generate under `soft-reset-canonical-v1` before the gates | 1.5.0 |
+| Transport | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
 
-50 cases each, bank seed 2026, SHA-256-verified. A machine lacking them
-regenerates byte-identical banks during section 3's gates
-(`auto_generate: true`).
+The previously recorded IDs (`a7d3953c0afcf560`, `310d9cfd3fa5e843`,
+`e16288589f5f69c2`, `db5b4c2a5e6519d0`, and `c6683cf0dbb23876`) predate the
+current reset protocol and must not be used for the final experiment. The
+current bank identity includes the protocol revision
+`soft-reset-canonical-v1`; the first gate run generates the five current
+50-case artifacts with seed 2026, and their resulting IDs must be recorded
+here and in the ledger before the sweep begins. SHA-256 verification remains
+mandatory on every later load.
 
 ### 2.4 Sanity: manifest loads
 
@@ -114,6 +121,14 @@ Every gate must pass (parity, bank verification, action contract, native
 success predicate, sanity sweeps, demo replay). A failed gate blocks the
 sweep (plan §11 gate 9). Never substitute `uv run` — it resolves the
 mujoco-less dev environment.
+
+Reset-path determinism gate (must exit 0; adopted path is bitwise-deterministic
+per reset case — see `docs/dev/rollout_performance_review.md`):
+
+```bash
+.venv-rollout/Scripts/python.exe scripts/dev/ab_reset_equivalence.py
+.venv-toolhang/Scripts/python.exe scripts/dev/ab_reset_equivalence.py --tasks tool_hang
+```
 
 ---
 

@@ -28,8 +28,11 @@ env:
 
 bank:
   # Frozen reset bank: {num_cases} cases seeded from a fresh simulator,
-  # content-hash-identified, SHA-256-verified on every load. Regeneration
-  # changes the bank_id; existing banks are never silently overwritten.
+  # content-hash-identified, SHA-256-verified on every load. The bank ID
+  # includes the reset-protocol revision; banks generated under an older
+  # simulator-construction/reset protocol are rejected and never reused.
+  # Regeneration creates a new frozen artifact; existing banks are never
+  # silently overwritten.
   num_cases: 50
   seed: 2026
   auto_generate: true
