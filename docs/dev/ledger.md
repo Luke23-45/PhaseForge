@@ -452,9 +452,16 @@ setting.
       The Lift gate run was started and cancelled mid-stream in session;
       gate execution is a precondition in runbook §2 and must be green
       before S9.2.*
-- [x] **S7.5 Frozen reset bank verification:** 50 resets per task, seeds
-      10000–10049, identical order for every method (registered protocol;
-      Lift bank hash `a7d3953c0afcf560` for reference).
+- [x] **S7.5 Frozen reset bank verification:** 50 serialized reset cases
+      per task, generated from one seeded stream (bank seed **2026**), the
+      identical content-addressed artifact in identical order for every
+      method and seed. *(Corrected 2026-08-22, Phase 8b audit: the earlier
+      "seeds 10000–10049" wording came from the superseded
+      `final_evaluation_plan.md` and does not match the implementation —
+      per authoritative plan §4.3 the serialized reset states are the
+      authoritative paired input; a seed is recorded for reproducibility
+      only. Banks on disk: Lift `a7d3953c0afcf560`, Transport
+      `c6683cf0dbb23876`; Can/Square/ToolHang pending S8b.4.)*
       *Evidence: the gates (S7.4) verify the bank per task inside their
       run; verification therefore executes together with gate execution on
       the sweep machine.*
@@ -541,6 +548,96 @@ setting.
 
 ---
 
+## Phase 8b — Five-task readiness audit (non-Lift coverage)
+
+*Audit 2026-08-22, prompted by: only Lift has ever been run end-to-end —
+is anything missing for Can / Square / ToolHang / Transport?*
+
+**Verdict: no missing per-task implementation artifacts.** The design is a
+single manifest (`experiments/five_task.json`) + per-task data YAMLs — there
+are correctly NO per-task JSON files to add. Verified live on the current
+tree (post-LAR-deletion):
+
+- All **15 data configs** (`lift/can/square/tool_hang/transport` +
+  `robot_only_*` + `*_rnn`) compose under Hydra and pass
+  `validate_task_schema` (state dims 19/23/23/53/59; action dims 7×4 + 14;
+  env names Lift/PickPlaceCan/NutAssemblySquare/ToolHang/TwoArmTransport).
+- Raw PH low-dim HDF5 present for all five tasks; caches already exist for
+  all five tasks, `enforce_strict_cache` guards reuse, and phase-threshold
+  backfill runs on cache hit (`state_machine.py`
+  `_backfill_phase_thresholds`).
+- Preflight re-run **today**: `165 train + 150 eval cells passed`; sweep
+  dry-run plans exactly **315 steps**. Model dims flow from
+  `${data.state_dim}` / `${data.action_dim}` (no per-task hardcoding).
+- Runner dispatches every ToolHang step (train AND eval) to
+  `.venv-toolhang` with a robosuite==1.5.0 / mujoco≥3.2.7 pin preflight;
+  both venvs verified to carry the full training stack (torch 2.13.0+cpu,
+  h5py, editable phaseforge, all five console scripts).
+- Reset banks: Lift `a7d3953c0afcf560` and Transport `c6683cf0dbb23876`
+  exist (50 cases each, bank seed 2026, robosuite 1.5.1). Can / Square /
+  ToolHang banks do not exist yet; `eval.bank.auto_generate: true` creates
+  them at first rollout, frozen + SHA-verified thereafter.
+- Phase labeler is config-driven; `robot_only_*` slice overrides match
+  their layouts ([14,17)/[21,23] joint-state layouts; [0,3)/[7,9]
+  Transport), so labels come from the right signals everywhere.
+
+**Gaps found — close before S9.2/S9.4:**
+
+- [ ] **S8b.1 Wilcoxon CSV is five-task-broken (reporting bug).**
+      `write_paired_wilcoxon_csv` hardcodes the baseline identity as
+      `(baseline, None)`, but the five-task runner stamps
+      `project.tag=Can|Square|…` on every cell, so no row matches the
+      baseline identity and `paired_wilcoxon.csv` would be silently
+      **empty** after the sweep. Fix: resolve the baseline identity
+      per-comparison as `(baseline, tag_of_method_b)` (the pairing key
+      already includes tag). Add a regression test with tagged rows.
+      *Evidence: `phaseforge/outputs_writer/tables.py` L358–395
+      (`baseline_identity = (baseline, None)`); tag stamping visible in the
+      dry-run argv; `row["tag"] = cfg.project.get("tag")` at
+      `phaseforge/cli.py` ~L180.*
+- [ ] **S8b.2 `stratified_stats.py` pools all tasks.** It groups episodes
+      by `(model, training_seed)` — in the five-task namespace that mixes
+      tasks. Episode rows carry `task` (and the outputs writer already has
+      a per-`(task, model, tag, seed)` summarizer), so extend the grouping
+      key to `(task, model, training_seed)`; behavior for single-task
+      namespaces (ablations) stays identical.
+      *Evidence: `scripts/analysis/stratified_stats.py` `load_episodes`;
+      `phaseforge/outputs_writer/episodes.py` schema includes `task`.*
+- [ ] **S8b.3 Per-task config-composition test (test gap).** No pytest
+      composes `data=can|square|tool_hang|transport` (only lift variants);
+      a regression in those YAMLs passes the suite today and is caught only
+      by the manual preflight script. Add a parametrized test composing
+      all 15 data configs → registry validation, plus a manifest check that
+      every `five_task.json` (method.data, method.task) pair resolves.
+- [ ] **S8b.4 Pre-generate + verify Can/Square/ToolHang reset banks** via
+      the S7.4 gate runs (Can/Square under `.venv-rollout`, ToolHang under
+      `.venv-toolhang` — its bank pins robosuite 1.5.0 inside `bank_id`).
+      Verify each: 50 contiguous cases, `ResetBank.load(verify=True)`
+      clean, manifest `task` / `env_canonical` / `robosuite_version`
+      correct; record the three new `bank_id`s here. Banks must exist
+      **before** any policy rollout (S7.5 discipline), not mid-sweep.
+- [ ] **S8b.5 Remaining text alignments.** Done in this audit for the
+      ledger itself (S7.4 commands, S7.5 bank description, facts table).
+      Remaining: (a) align `task_registry.TaskSpec.schema_version` strings
+      (registry says v1 for can/square/tool-hang, configs say v2 — the
+      field is **unconsumed**; only the data-config `schema_version` is
+      read, by `state_machine.py` L531), zero-risk alignment for reviewer
+      clarity; (b) document the dry-run preview semantics in
+      `final_run_plan.md` §5: a fresh-namespace dry-run prints
+      AUTO-INJECT dependency previews (identical provider stage-1 commands
+      may appear 2–4×) and BLOCKED for eval steps whose checkpoints do not
+      exist yet — execution itself resolves providers in-sweep and never
+      retrains an existing one. The superseded
+      `final_evaluation_plan.md`'s 10000–10049 bank-seed wording stays
+      untouched (historical record) and is disclosed, not edited.
+- [ ] **S8b.6 Post-sweep per-phase artifact check (append to S9.5):**
+      confirm every cache used by final evals contains
+      `phase_thresholds.json` (backfill should provide it; with
+      `require_phase_tracking: false` a missing artifact silently nulls
+      per-phase SR — it must not be silently null in the final report).
+
+---
+
 ## Phase 9 — Final sweep execution
 
 > **Status: fully prepared; execution pending.** Everything preparable is
@@ -584,6 +681,10 @@ setting.
       enforces the per-task ±2% band), capacity,
       training cost, configuration/provenance hashes. Three seeds reported as
       descriptive only. *(spec: authoritative protocol §5 + D2 draft.)*
+      *(Phase 8b additions: confirm `paired_wilcoxon.csv` and stratified
+      stats are non-empty and per-task — requires the S8b.1 / S8b.2 fixes;
+      and verify per S8b.6 that every final-eval cache has
+      `phase_thresholds.json` so per-phase SR is not silently null.)*
 - [ ] **S9.6 Ablation program** (Lift first) planned/tracked as a follow-up
       ledger section once the main matrix is secured.
       *(manifest ready: `experiments/lift_ablation.json`, 27 cells,
@@ -639,7 +740,7 @@ setting.
 | Confirmation: Lift 0.56/0.84/0.72, mean 0.707, Stage 1 from old tree | `experiments/phaseforge_r50_confirmation.json` |
 | Controls today use full warm-start (`warm_start_experts_from_action_head`) | e.g. `phaseforge/models/baselines/warmstart_moe.py` L111–121 |
 | `bc_large` parameter-matched to ~382,646 (≈ 6-expert MoE) | `phaseforge/config/models/baselines/bc_large.yaml` |
-| Registered eval: 50 resets/task/seed, bank seeds 10000–10049, Wilson 95% | `docs/plan/design/final_evaluation_plan.md` |
+| Registered eval: 50 frozen serialized resets/task (bank seed 2026, content-addressed `bank_id`; serialized states are the authoritative paired input per plan §4.3 — the 10000–10049 wording in the superseded design doc never matched the implementation) | `docs/plan/specs/state_only_rollout_implementation_plan.md` §4.3; `evaluations/rollout/reset_bank.py` |
 | Ablation manifest (27 cells incl. `pf_random_warm` #24, `phaseforge_e6` #25) | `experiments/lift_ablation.json` |
 | Fairness table: 6-expert MoE family = 382,646 deployed params; `bc_large` 385,855 (+0.8%); `bc` 206,983; `bc_rnn` 1,161,351 (5.6×); OLD 8-expert `phaseforge` was 452,808 | `docs/plan/reports/fairness_accounting.md` |
 | Post-migration capacity story: canonical `phaseforge` (R50, 6 experts) = 382,646 = every MoE control ≈ `bc_large` — the old 452,808-vs-382,646 mismatch disappears | derived from fairness table + R50 architecture |
@@ -647,6 +748,13 @@ setting.
 | All 5 `*_rnn` data variants + all `robot_only_*` variants exist | `phaseforge/config/data/` |
 | Param counts scale with `state_dim` per task (Lift 19, Can 23, …) — report per-task counts, match ratio ~constant | `config/data/*.yaml` + `${data.state_dim}` interpolation |
 | Epoch accounting: BC family 100 S1 / 0 S2; MoE family shared S1 + 200 S2; scratch 0/200 — disclosed, must appear in paper | `fairness_accounting.md` Epochs column |
+| Five-task readiness (Phase 8b audit, 2026-08-22): 15 per-task data configs compose + registry-validate; raw HDF5 ×5; caches ×5 tasks; preflight 165 train + 150 eval cells green; dry-run 315 steps | `experiments/five_task.json`; `phaseforge/config/data/`; live re-run in audit |
+| Banks on disk: Lift `a7d3953c0afcf560`, Transport `c6683cf0dbb23876` (50 cases, seed 2026, robosuite 1.5.1); Can/Square/ToolHang to be generated via S7.4/S8b.4 gates; ToolHang bank pins robosuite 1.5.0 in its `bank_id` | `data/processed/eval_banks/*/manifest.json` |
+| Wilcoxon reporting bug: `write_paired_wilcoxon_csv` baseline identity `(baseline, None)` never matches five-task tagged rows (`project.tag=Can\|…` on every cell) → CSV silently empty unless fixed (S8b.1) | `phaseforge/outputs_writer/tables.py` L358–395; `phaseforge/cli.py` ~L180 |
+| `stratified_stats.py` groups `(model, training_seed)` only → pools the five tasks; episodes rows carry `task` so the fix is a grouping-key extension (S8b.2) | `scripts/analysis/stratified_stats.py`; `outputs_writer/episodes.py` |
+| Dry-run preview semantics: fresh-namespace dry-run prints AUTO-INJECT dependency previews (provider stage-1 commands may repeat 2–4×) and BLOCKED evals; execution never retrains an existing provider (auto-dependency resolves in-sweep via state registry) | `runner/cli.py` `_print_dry_run` / `_resolve_stage2_with_auto_dependency` |
+| `TaskSpec.schema_version` strings (v1) lag the data configs (can/square/tool-hang = v2) but the field is unconsumed — only the data-config `schema_version` is read (`state_machine.py` L531) | `evaluations/envs/task_registry.py`; `phaseforge/config/data/*.yaml` |
+| ToolHang venv carries the FULL training stack (torch 2.13.0+cpu, h5py, editable phaseforge, 5 console scripts) because every ToolHang step — train AND eval — is dispatched there | `runner/executor.py` L156; live probe 2026-08-22 |
 
 ---
 
@@ -671,3 +779,4 @@ setting.
 | 2026-08-22 | LAR-MoE plan reviewed against the full paper (arXiv:2603.08476v1) and revised to Revision 2 | Cross-check confirmed the two-stage design, losses (Eqs. 1-2, 5), soft routing with learnable T (init 100), the ±F/±R ablation structure, and the exclusion list. Fixed: expert architecture unspecified (now REQUIRED: ACT-style transformer-decoder experts with H learned query tokens, no CVAE); expert conditioning path c_t pre-registered (primary: frozen student latent; deviation alternative must be renamed); AdamW pinned; stop-gradient/joint-training/teacher-disposal recorded as AC1-AC3; entropy sign semantics stated; group-sparsity 2x3 expert grid fixed for N=6; hyperparameter provenance + tuning-parity rule added (no official code exists, verified 2026-08-22). |
 | 2026-08-22 | **D11 recorded: `lar_moe_state_only` DEFERRED** | Decision put in writing per supervisory recommendation, referencing both `docs/dev/lar_moe_state_only_implementation_plan.md` (Rev. 2, now status DEFERRED with revisit conditions) and `docs/plan/reports/baseline_positioning.md` (D9 record). No code will be written for it; all effort redirects to the five-task sweep. Mechanism-story caution reiterated: R50 identity locked, claims await the sweep. |
 | 2026-08-22 | **D11 escalated: `lar_moe_state_only` plan hard-deleted** | Project owner directed hard deletion. `docs/dev/lar_moe_state_only_implementation_plan.md` removed via `git rm` (survives in history at `1ab35de`, Rev. 2). Pre-deletion sweep confirmed zero active references in `phaseforge/`, `tests/`, `experiments/`, `scripts/` — no code, config, or manifest entry ever existed. All effort remains on the five-task sweep. |
+| 2026-08-22 | **Phase 8b: five-task readiness audit complete** (prompt: "only Lift has ever been run — is anything missing for the other four?") | Verdict: no missing per-task artifacts — single-manifest design + 15 validated data configs + per-task caches + ToolHang venv dispatch all verified LIVE (preflight 165+150 green, dry-run 315, both venvs probed, all 15 configs composed + registry-validated, banks inspected). **Two real reporting bugs found**: S8b.1 `paired_wilcoxon.csv` baseline identity `(baseline, None)` never matches tagged five-task rows → silently empty CSV after the sweep; S8b.2 `stratified_stats.py` pools tasks (grouping lacks `task`). Plus: test gap S8b.3 (no non-Lift config composition in pytest), bank pre-generation S8b.4 (Can/Square/ToolHang), text alignments S8b.5 (registry schema strings, dry-run preview docs; ledger S7.5 + facts row corrected in place), per-phase artifact check S8b.6. All recorded as Phase 8b steps — implementation pending, to run before S9.2/S9.4. |
