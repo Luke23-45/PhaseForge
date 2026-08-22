@@ -39,7 +39,9 @@ are reported with intervals but sit outside the corrected family;
 
 The mechanism controls `pf_spherical_kmeans`, `pf_kmeans`, `pf_phase_head`
 are **not** in this matrix (ledger D1): they run in the Lift ablation
-suite (section 9).
+suite (section 9), pinned to the same 50% partial warm-start and the same
+canonical `phaseforge` Stage-1 provider as the proposed method, so the
+router-initialization comparison is an exact-match factorial.
 
 ---
 
@@ -258,14 +260,28 @@ Report contents per `state_only_rollout_implementation_plan.md` §5:
 ## 9. Ablation suite (AFTER the main matrix — ledger D8)
 
 `experiments/lift_ablation.json`: 27 cells, Lift only, seeds 42/43/44, own
-namespace `outputs_ablation/` (165 runner steps). Contains the matched
-mechanism controls
-(`pf_spherical_kmeans`, `pf_kmeans`, `pf_phase_head`), the router/init
-factorial (`pf_random_random`, `pf_centroid_random`), top-k and
-partial-warm-rate sweeps (`pf_k3`/`pf_k12`, `pf_drop00/25/75/100`,
-`pf_full_warm`, `pf_one_warm_plus_random`), phase-supervision corruption
-(`pf_corrupt_25/50`, `pf_shuffle_control`), and fine-tune/representation
-variants (`pf_ft`, `pf_spherical`).
+namespace `outputs_ablation/` (165 runner steps). Composition: the nine
+Lift replicas of the main matrix (`phaseforge`, `bc`, `bc_large`,
+`bc_robot_only`, `scratch_moe`, `warmstart_moe`,
+`phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`,
+`teacher_forced` — `bc_rnn` excluded; the suite is self-contained in its
+own namespace) plus 18 ablation-only cells:
+
+- **Router initialization** (all on the canonical provider + 50% partial
+  warm-start): `pf_spherical_kmeans`, `pf_kmeans`, `pf_phase_head`,
+  `pf_random_random`, `pf_centroid_random` vs the canonical centroid.
+- **Expert initialization**: drop-rate sweep `pf_drop00/25/75/100`
+  (50% = canonical), `pf_full_warm`, `pf_one_warm_plus_random`.
+- **Representation & training**: `pf_spherical`, `pf_ft`,
+  `pf_corrupt_25`, `pf_corrupt_50`, `pf_shuffle_control`.
+- **Capacity/routing scale**: `pf_k3`, `pf_k12` (canonical = 6 experts,
+  top-2; the optional top-1 variant was never included).
+
+Removed from the suite during migration (final): `pf_random_warm` and
+`phaseforge_e6` dropped as redundant with the expert-init factorial
+(ledger D3); `pf_jitter_00`/`pf_jitter_10` superseded by the drop-rate
+sweep (D4); `warmstart_r50` removed — its overrides would crash
+post-migration and it recreated the canonical method.
 
 ```bash
 .venv-rollout/Scripts/python -m phaseforge.runner \
@@ -287,3 +303,8 @@ Start it only after the main matrix is complete and verified (section 6).
 - Pre-final results under `outputs/` are never merged into the final tables.
 - No external re-run baselines (D9): robomimic-study and Diffusion-Policy
   numbers appear only as literature context in the paper.
+- The retired identities are gone from source and stay gone: the old
+  8-expert `phaseforge` config, the separate `phaseforge_r50` config, and
+  the `phaseforge_r50 → phaseforge` alias were deleted (ledger Phases 1–2).
+  No `phaseforge_r50` method row, checkpoint namespace, or paper label
+  exists; `lar_moe_state_only` is withdrawn (D11).
