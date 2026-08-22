@@ -1,12 +1,15 @@
 # config/models/baselines/plain_encoder_phase_bootstrap.yaml — C1 cell:
-# plain (BC) encoder x CENTROID router (isolates the centroid router init
-# without phase supervision)
+# plain (BC) encoder x CENTROID router (isolates the phase-supervised
+# representation at fixed centroid routing)
 #
 # Shares the BC Stage 1 checkpoint (resolve_checkpoint_source maps this
 # name to "bc"); the MoE is bootstrapped with phase centroids computed over
-# the plain encoder's latent space, exactly like phaseforge. Comparing with
-# warmstart_moe isolates the centroid-init effect; comparing with phaseforge
-# isolates the phase-supervised-encoder effect.
+# the plain encoder's latent space, exactly like the canonical phaseforge.
+# The expert init is pinned to the canonical R50 50% partial warm-start so
+# this cell is an exact factorial control: comparing with phaseforge
+# isolates the phase-supervised-encoder effect; comparing with
+# phase_pretrain_random_router isolates the router-init effect at the same
+# partial-warm expert init.
 
 name: "plain_encoder_phase_bootstrap"
 _target_: phaseforge.models.baselines.plain_encoder_phase_bootstrap.PlainEncoderPhaseBootstrapModel
@@ -47,3 +50,11 @@ expert:
   activation: "gelu"
 
 num_phases: 6
+
+expert_init:
+  # R50-matched control: identical expert initialization to the canonical
+  # phaseforge method (50% partial warm-start, seed tied to training seed).
+  type: "partial_warm"
+  drop_rate: 0.5
+  jitter_std: 0.0
+  seed: ${project.seed}

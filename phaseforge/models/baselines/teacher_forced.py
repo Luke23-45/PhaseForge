@@ -90,6 +90,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         self._stage = 1
         self._encoder_frozen = False
         self._last_gate_logits: Tensor | None = None
+        self._expert_init_info: dict | None = None
 
     @property
     def stage(self) -> int:
@@ -242,17 +243,27 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         return {"gate_logits": self._last_gate_logits}
 
     @torch.no_grad()
-    def bootstrap_moe(self, dataloader: DataLoader, device: torch.device | str = "cuda") -> None:
+    def bootstrap_moe(
+        self,
+        dataloader: DataLoader,
+        device: torch.device | str = "cuda",
+        training_seed: int | None = None,
+    ) -> None:
         """Transition to Stage 2: warm-start experts, keep the frozen phase head.
 
         No centroid computation is needed — routing is by the phase head, not
         the router's gate. The router stays at its random init for structural
-        parity with the other cells; it is never consulted.
+        parity with the other cells; it is never consulted. The expert init
+        stays the standard full warm start per the locked E8 decisions (this
+        is a privileged-training diagnostic, not an R50-matched factorial
+        control).
 
         Args:
             dataloader: Training dataloader (kept for CLI signature parity;
                 not iterated — no centroids are computed).
             device: Compute device.
+            training_seed: The run's training seed (passed by the CLI to
+                every bootstrap call; recorded in the audit metadata).
         """
         self.to(device)
 
@@ -263,6 +274,16 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         # 2. Initialize Experts with ActionHead weights (identical warm start
         #    to every other cell: exact strict copy + symmetry-breaking jitter).
         warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
+
+        self._expert_init_info = {
+            "expert_init": {"type": "warmstart", "jitter_std": 0.02},
+            "router": {
+                "num_experts": int(len(self.moe_layer.experts)),
+                "top_k": int(self.moe_layer.router.top_k),
+                "init_type": "phase_head_dispatch",
+            },
+            "training_seed": int(training_seed) if training_seed is not None else None,
+        }
 
         # The Stage 1 action head is unused in Stage 2 (and the phase head is
         # frozen with the encoder bundle); exclude both from the optimizer.

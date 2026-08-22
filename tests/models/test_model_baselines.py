@@ -23,6 +23,7 @@ from phaseforge.models.baselines.plain_encoder_phase_bootstrap import (
 )
 from phaseforge.models.baselines.scratch_moe import ScratchMoEModel
 from phaseforge.models.baselines.teacher_forced import TeacherForcedMoEModel
+from phaseforge.models.baselines.warmstart_moe import WarmStartMoEModel
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
@@ -207,32 +208,59 @@ def test_resolve_checkpoint_source_new_cells() -> None:
 
 
 def test_phase_pretrain_random_router_keeps_random_router() -> None:
+    """R50-matched C1 cell: random router, 50% partial warm-start experts.
+
+    The control's registered configuration pins ``expert_init`` to the
+    canonical partial warm-start, so the bootstrap must (a) leave the router
+    untouched and (b) initialize experts exactly like the proposed method:
+    kept neurons bit-exact copies of the ActionHead, dropped neurons
+    reinitialized per expert.
+    """
     encoder, action_head, router, expert, _ = _make_components()
     model = PhasePretrainRandomRouterModel(
-        encoder=encoder, action_head=action_head, router=router, expert=expert
+        encoder=encoder,
+        action_head=action_head,
+        router=router,
+        expert=expert,
+        expert_init={"type": "partial_warm", "drop_rate": 0.5, "seed": 42},
     )
     assert model.stage == 1
 
     router_before = model.moe_layer.router.gate_linear.weight.data.clone()
 
     torch.manual_seed(1234)
-    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu", training_seed=42)
 
     # Router must be untouched: the ONLY difference vs phaseforge is the
     # missing centroid init.
     assert model.stage == 2
     assert torch.allclose(model.moe_layer.router.gate_linear.weight.data, router_before)
 
-    # Experts must be warm-started from the action head (mapping check).
-    # The bootstrap adds a small symmetry-breaking jitter (std 0.02), so the
-    # copy matches within tolerance rather than bit-for-bit.
+    # Experts: partial warm-start semantics (hidden dim 64 -> 32 dropped).
+    info = model._expert_init_info
+    assert info["expert_init"]["type"] == "partial_warm"
+    assert info["expert_init"]["drop_rate"] == 0.5
+    assert info["expert_init"]["init_seed"] == 42
+    assert info["expert_init"]["num_dropped_neurons"] == 32
+    dropped = info["expert_init"]["dropped_neuron_indices"]
+    assert len(dropped) == 32 and len(set(dropped)) == 32
+    assert info["expert_init"]["dropped_indices_sha256"]
+    assert info["router"]["init_type"] == "random"
+    assert info["training_seed"] == 42
+
+    kept = [i for i in range(64) if i not in dropped]
     expert0 = model.moe_layer.experts[0]
-    assert torch.allclose(expert0.hidden[0].weight, action_head.trunk[0].weight, atol=0.1)
-    assert torch.allclose(expert0.output_proj.weight, action_head.mean_head.weight, atol=0.1)
-    # ...but the jitter must break the bit-identical symmetry between experts.
-    assert not torch.allclose(
-        model.moe_layer.experts[0].output_proj.weight,
-        model.moe_layer.experts[1].output_proj.weight,
+    # Kept rows: bit-exact ActionHead copies (partial warm = no jitter).
+    assert torch.equal(expert0.hidden[0].weight.data[kept], action_head.trunk[0].weight.data[kept])
+    # Dropped rows: reinitialized (differ from the ActionHead copy).
+    assert not torch.equal(
+        expert0.hidden[0].weight.data[dropped], action_head.trunk[0].weight.data[dropped]
+    )
+    # Dropped-row biases zeroed and experts differ from each other on drops.
+    assert torch.all(expert0.hidden[0].bias.data[dropped] == 0.0)
+    assert not torch.equal(
+        model.moe_layer.experts[0].hidden[0].weight.data,
+        model.moe_layer.experts[1].hidden[0].weight.data,
     )
 
 
@@ -242,6 +270,7 @@ def test_phase_pretrain_random_router_keeps_random_router() -> None:
 
 
 def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
+    """R50-matched C1 cell: BC-encoder centroids + 50% partial warm experts."""
     encoder, action_head, router, expert, _ = _make_components()
     model = PlainEncoderPhaseBootstrapModel(
         encoder=encoder,
@@ -249,6 +278,7 @@ def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
         router=router,
         expert=expert,
         num_phases=3,
+        expert_init={"type": "partial_warm", "drop_rate": 0.5, "seed": 42},
     )
     assert model.stage == 1
 
@@ -267,25 +297,217 @@ def test_plain_encoder_phase_bootstrap_sets_centroids() -> None:
     expected = torch.nn.functional.normalize(expected, p=2, dim=-1)
 
     torch.manual_seed(1234)
-    model.bootstrap_moe(dataloader=dataloader, device="cpu")
+    model.bootstrap_moe(dataloader=dataloader, device="cpu", training_seed=42)
 
     assert model.stage == 2
     got = model.moe_layer.router.gate_linear.weight.data[:3]
     assert torch.allclose(got, expected, atol=1e-6)
     assert torch.allclose(model.moe_layer.router.gate_linear.bias.data, torch.zeros(4), atol=1e-6)
 
-    # Experts warm-started from the action head (within the symmetry-breaking
-    # jitter tolerance; same reasoning as the random-router test above).
-    assert torch.allclose(
-        model.moe_layer.experts[0].hidden[0].weight,
-        action_head.trunk[0].weight,
-        atol=0.1,
+    # Experts: partial warm-start semantics (hidden dim 64 -> 32 dropped).
+    info = model._expert_init_info
+    assert info["expert_init"]["type"] == "partial_warm"
+    assert info["expert_init"]["drop_rate"] == 0.5
+    assert info["expert_init"]["num_dropped_neurons"] == 32
+    assert info["expert_init"]["dropped_indices_sha256"]
+    assert info["router"]["init_type"] == "centroid"
+    assert info["training_seed"] == 42
+
+    dropped = info["expert_init"]["dropped_neuron_indices"]
+    kept = [i for i in range(64) if i not in dropped]
+    expert0 = model.moe_layer.experts[0]
+    assert torch.equal(expert0.hidden[0].weight.data[kept], action_head.trunk[0].weight.data[kept])
+    assert not torch.equal(
+        expert0.hidden[0].weight.data[dropped], action_head.trunk[0].weight.data[dropped]
     )
-    assert torch.allclose(
-        model.moe_layer.experts[0].output_proj.weight,
-        action_head.mean_head.weight,
-        atol=0.1,
+
+
+# ---------------------------------------------------------------------------
+# R50-matched controls: CLI parity, seed determinism, config contract
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_accepts_cli_training_seed_kwarg() -> None:
+    """Every bootstrap class must accept the CLI's exact bootstrap call.
+
+    Regression guard: ``phaseforge/cli.py`` passes ``training_seed=`` to
+    ``bootstrap_moe`` unconditionally. Commit 0a7e415 added the kwarg to the
+    CLI without updating the baseline signatures, so every baseline stage-2
+    run crashed with a TypeError until the signatures were aligned.
+    """
+    cases = [
+        lambda: WarmStartMoEModel(
+            encoder=StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32),
+            action_head=ActionHead(input_dim=32, output_dim=7, hidden_dim=64),
+            router=TopKRouter(latent_dim=32, num_experts=4, top_k=2),
+            expert=ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7),
+        ),
+        lambda: PhasePretrainRandomRouterModel(
+            encoder=StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32),
+            action_head=ActionHead(input_dim=32, output_dim=7, hidden_dim=64),
+            router=TopKRouter(latent_dim=32, num_experts=4, top_k=2),
+            expert=ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7),
+            expert_init={"type": "partial_warm", "drop_rate": 0.5, "seed": 42},
+        ),
+        lambda: PlainEncoderPhaseBootstrapModel(
+            encoder=StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32),
+            action_head=ActionHead(input_dim=32, output_dim=7, hidden_dim=64),
+            router=TopKRouter(latent_dim=32, num_experts=4, top_k=2),
+            expert=ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7),
+            num_phases=3,
+            expert_init={"type": "partial_warm", "drop_rate": 0.5, "seed": 42},
+        ),
+        lambda: TeacherForcedMoEModel(
+            encoder=StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32),
+            action_head=ActionHead(input_dim=32, output_dim=7, hidden_dim=64),
+            phase_head=PhaseClassificationHead(latent_dim=32, num_phases=3),
+            router=TopKRouter(latent_dim=32, num_experts=4, top_k=2),
+            expert=ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7),
+        ),
+    ]
+    for make in cases:
+        model = make()
+        model.bootstrap_moe(
+            dataloader=_make_dataloader(), device="cpu", training_seed=42
+        )
+        assert model.stage == 2
+        assert model._expert_init_info is not None
+        assert model._expert_init_info["training_seed"] == 42
+
+
+def test_warmstart_moe_default_remains_standard_warmstart() -> None:
+    """S3.10 guard: the behavioral baseline must keep its full warm start.
+
+    ``warmstart_moe`` is not an R50 factorial control; converting it would
+    silently change the registered behavioral baseline.
+    """
+    encoder, action_head, router, expert, _ = _make_components()
+    model = WarmStartMoEModel(
+        encoder=encoder, action_head=action_head, router=router, expert=expert
     )
+    torch.manual_seed(1234)
+    model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu", training_seed=42)
+
+    info = model._expert_init_info
+    assert info["expert_init"]["type"] == "warmstart"
+    assert info["expert_init"]["jitter_std"] == 0.02
+    assert "drop_rate" not in info["expert_init"]
+    # Full copy (with jitter tolerance, NOT bit-exact: jitter breaks symmetry).
+    expert0 = model.moe_layer.experts[0]
+    assert torch.allclose(expert0.hidden[0].weight, action_head.trunk[0].weight, atol=0.1)
+    assert not torch.equal(expert0.hidden[0].weight, action_head.trunk[0].weight)
+
+
+def test_group_b_partial_warm_is_seed_deterministic() -> None:
+    """Same init seed -> bit-identical experts; different seed -> different.
+
+    All builds start from deep-copied (bit-identical) components so the only
+    varying factor is the partial-warm init seed.
+    """
+    import copy
+
+    encoder, action_head, router, expert, _ = _make_components()
+
+    def build_and_bootstrap(seed: int) -> PhasePretrainRandomRouterModel:
+        model = PhasePretrainRandomRouterModel(
+            encoder=copy.deepcopy(encoder),
+            action_head=copy.deepcopy(action_head),
+            router=copy.deepcopy(router),
+            expert=copy.deepcopy(expert),
+            expert_init={"type": "partial_warm", "drop_rate": 0.5, "seed": seed},
+        )
+        model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+        return model
+
+    a1 = build_and_bootstrap(42)
+    a2 = build_and_bootstrap(42)
+    b = build_and_bootstrap(43)
+
+    for e_a, e_b in zip(a1.moe_layer.experts, a2.moe_layer.experts):
+        assert torch.equal(e_a.hidden[0].weight, e_b.hidden[0].weight)
+    for e_a, e_b in zip(a1.moe_layer.experts, b.moe_layer.experts):
+        assert not torch.equal(e_a.hidden[0].weight, e_b.hidden[0].weight)
+    assert (
+        a1._expert_init_info["expert_init"]["dropped_indices_sha256"]
+        == a2._expert_init_info["expert_init"]["dropped_indices_sha256"]
+    )
+    assert (
+        a1._expert_init_info["expert_init"]["dropped_indices_sha256"]
+        != b._expert_init_info["expert_init"]["dropped_indices_sha256"]
+    )
+
+
+def test_group_b_rejects_unknown_expert_init_type() -> None:
+    for make_model in (
+        lambda: WarmStartMoEModel(
+            encoder=StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32),
+            action_head=ActionHead(input_dim=32, output_dim=7, hidden_dim=64),
+            router=TopKRouter(latent_dim=32, num_experts=4, top_k=2),
+            expert=ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7),
+            expert_init={"type": "not_a_real_type"},
+        ),
+        lambda: PlainEncoderPhaseBootstrapModel(
+            encoder=StateEncoder(input_dim=151, hidden_dims=[64], latent_dim=32),
+            action_head=ActionHead(input_dim=32, output_dim=7, hidden_dim=64),
+            router=TopKRouter(latent_dim=32, num_experts=4, top_k=2),
+            expert=ExpertMLP(input_dim=32, hidden_dims=[64], output_dim=7),
+            num_phases=3,
+            expert_init={"type": "not_a_real_type"},
+        ),
+    ):
+        model = make_model()
+        with pytest.raises(ValueError, match="Unknown expert_init type"):
+            model.bootstrap_moe(dataloader=_make_dataloader(), device="cpu")
+        assert model.stage == 1
+
+
+def test_r50_matched_control_configs_resolve_partial_warm() -> None:
+    """S3.9 config guard: the five matched controls pin the R50 expert init.
+
+    Composes every control's registered model config and asserts the partial
+    warm-start contract, including that the init seed follows the training
+    seed (not a constant). The behavioral baselines (warmstart_moe,
+    scratch_moe) and the teacher-forced diagnostic must NOT carry an
+    expert_init override (S3.10).
+    """
+    from hydra import compose, initialize
+
+    matched = [
+        "baselines/phase_pretrain_random_router",
+        "baselines/plain_encoder_phase_bootstrap",
+        "baselines/pf_spherical_kmeans",
+        "baselines/pf_kmeans",
+        "baselines/pf_phase_head",
+    ]
+    untouched = ["baselines/warmstart_moe", "baselines/scratch_moe", "baselines/teacher_forced"]
+
+    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
+        for seed in (42, 43):
+            for model_path in matched:
+                cfg = compose(
+                    config_name="main",
+                    overrides=[
+                        f"models={model_path}",
+                        "train=stage2",
+                        "data=common",
+                        f"project.seed={seed}",
+                    ],
+                )
+                ei = cfg.models.expert_init
+                assert ei.type == "partial_warm", f"{model_path} must pin partial_warm"
+                assert ei.drop_rate == 0.5, f"{model_path} must pin drop_rate=0.5"
+                assert ei.jitter_std == 0.0, f"{model_path} must pin jitter_std=0.0"
+                assert ei.seed == seed, (
+                    f"{model_path} init seed must follow the training seed"
+                )
+        for model_path in untouched:
+            cfg = compose(
+                config_name="main",
+                overrides=[f"models={model_path}", "train=stage2", "data=common"],
+            )
+            assert "expert_init" not in cfg.models, (
+                f"{model_path} must NOT carry an expert_init override"
+            )
 
 
 # ---------------------------------------------------------------------------

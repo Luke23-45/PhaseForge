@@ -9,15 +9,19 @@ Completes the 2x2 factorial (issues register C1):
 This cell shares the plain BC Stage 1 checkpoint with ``warmstart_moe``
 (``resolve_checkpoint_source`` maps it to ``bc``) but runs the *centroid*
 bootstrap: phase centroids computed over the plain encoder's latent space
-initialize the router. Comparing it against ``warmstart_moe`` isolates the
-effect of the centroid router init without phase supervision; comparing it
-against ``phaseforge`` isolates the effect of phase supervision in the
-pretraining encoder given the same centroid init.
+initialize the router. Its registered model config pins the canonical 50%
+partial warm-start for the experts, so it is an exact R50 factorial control.
+Comparing it against ``phase_pretrain_random_router`` isolates the effect of
+phase supervision in the pretraining encoder (same partial-warm experts,
+same random-vs-centroid router contrast); comparing it against the canonical
+``phaseforge`` isolates the phase-supervision effect given the same centroid
+router init.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import torch
 from torch import Tensor
@@ -28,6 +32,8 @@ from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import (
     ExpertMLP,
+    hash_dropped_indices,
+    partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
 from phaseforge.models.components.moe_layer import MoELayer
@@ -44,6 +50,9 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
     gate weights with phase latent centroids exactly like
     :class:`PhaseBootstrappedMoE`. The phase structure is therefore induced
     into the plain encoder's latent space via the router init alone.
+    Expert initialization is config-driven (``expert_init``); the
+    registered config pins the canonical 50% partial warm-start so the
+    cell is an exact factorial control for the H2 representation claim.
 
     Args:
         encoder: The StateEncoder instance (loaded from the BC Stage 1 ckpt).
@@ -61,12 +70,17 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         router: TopKRouter,
         expert: ExpertMLP,
         num_phases: int,
+        expert_init: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.action_head = action_head
         self.moe_layer = MoELayer(router=router, experts=expert)
         self.num_phases = num_phases
+        self.expert_init_cfg: dict[str, Any] = (
+            dict(expert_init) if expert_init is not None else {"type": "warmstart", "jitter_std": 0.02}
+        )
+        self._expert_init_info: dict[str, Any] | None = None
         self._stage = 1
         self._encoder_frozen = False
         self._last_gate_logits: Tensor | None = None
@@ -141,17 +155,28 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         return {"gate_logits": self._last_gate_logits}
 
     @torch.no_grad()
-    def bootstrap_moe(self, dataloader: DataLoader, device: torch.device | str = "cuda") -> None:
+    def bootstrap_moe(
+        self,
+        dataloader: DataLoader,
+        device: torch.device | str = "cuda",
+        training_seed: int | None = None,
+    ) -> None:
         """Centroid-bootstrap a MoE on top of the plain (BC) encoder.
 
-        Identical algorithm to :class:`PhaseBootstrappedMoE.bootstrap_moe`:
+        Identical router algorithm to :class:`PhaseBootstrappedMoE.bootstrap_moe`:
         1. Compute phase centroids in the (plain) encoder's latent space.
         2. Initialize the router gate weights with the normalized centroids.
-        3. Warm-start the experts from the Stage 1 ActionHead weights.
+        3. Initialize the experts per the config-driven ``expert_init``
+           (``warmstart`` or R50-matched ``partial_warm``; the registered
+           model config pins the canonical 50% partial warm-start so this
+           cell is an exact factorial control for the H2 representation
+           claim).
 
         Args:
             dataloader: Training dataloader to compute centroids over.
             device: Compute device.
+            training_seed: The run's training seed (passed by the CLI;
+                audit metadata and partial-warm seed fallback).
         """
         logger.info("Starting centroid bootstrap over the plain (BC) encoder...")
         self.to(device)
@@ -218,16 +243,72 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
 
         logger.info(f"Initialized router weights with {limit} phase centroids.")
 
-        # 3. Initialize Experts with ActionHead weights (exact, strict copy +
-        #    small symmetry-breaking jitter).
-        warm_start_experts_from_action_head(self.moe_layer.experts, self.action_head)
+        # 3. Initialize Experts per the config-driven init type.
+        e_cfg = self.expert_init_cfg
+        e_type = str(e_cfg.get("type", "warmstart")).lower()
+        jitter_std = float(e_cfg.get("jitter_std", 0.02))
+        num_experts = len(self.moe_layer.experts)
+        expert_init_info: dict[str, Any] = {"type": e_type, "jitter_std": jitter_std}
+
+        if e_type == "warmstart":
+            # Exact, strict copy + small symmetry-breaking jitter.
+            warm_start_experts_from_action_head(
+                self.moe_layer.experts, self.action_head, jitter_std=jitter_std
+            )
+            logger.info(
+                f"Warm-started all {num_experts} experts from ActionHead "
+                f"(jitter_std={jitter_std})."
+            )
+        elif e_type == "partial_warm":
+            init_seed = int(e_cfg.get("seed", training_seed if training_seed is not None else 42))
+            drop_rate = float(e_cfg.get("drop_rate", 0.5))
+            first_typed = cast(ExpertMLP, self.moe_layer.experts[0]) if num_experts > 0 else None
+            hidden_dim = (
+                int(first_typed.hidden[0].weight.size(0))  # type: ignore[union-attr,operator]
+                if first_typed is not None
+                else 0
+            )
+            dropped_indices = partial_reinit_experts_from_action_head(
+                self.moe_layer.experts,
+                self.action_head,
+                drop_rate=drop_rate,
+                seed=init_seed,
+            )
+            expert_init_info.update(
+                {
+                    "drop_rate": drop_rate,
+                    "init_seed": init_seed,
+                    "hidden_dim": hidden_dim,
+                    "num_dropped_neurons": len(dropped_indices),
+                    "dropped_neuron_indices": dropped_indices,
+                    "dropped_indices_sha256": hash_dropped_indices(dropped_indices),
+                }
+            )
+            logger.info(
+                f"Partial-warm-started all {num_experts} experts from ActionHead "
+                f"(drop_rate={drop_rate}, seed={init_seed}, "
+                f"dropped={len(dropped_indices)}/{hidden_dim}, jitter_std=0.0)."
+            )
+        else:
+            raise ValueError(
+                f"Unknown expert_init type '{e_type}'. Supported: "
+                "warmstart, partial_warm."
+            )
+
+        self._expert_init_info = {
+            "expert_init": expert_init_info,
+            "router": {
+                "num_experts": int(num_experts),
+                "top_k": int(self.moe_layer.router.top_k),
+                "init_type": "centroid",
+            },
+            "training_seed": int(training_seed) if training_seed is not None else None,
+        }
 
         # The Stage 1 action head is unused in Stage 2; exclude it from the
         # optimizer so trainable-parameter counts are correct.
         for param in self.action_head.parameters():
             param.requires_grad = False
-
-        logger.info("Initialized all experts with Stage 1 ActionHead weights.")
 
         # Automatically transition to Stage 2
         self.stage = 2

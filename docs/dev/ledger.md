@@ -164,20 +164,22 @@ claim is permitted.
 `kmeans`, `phase_head`) and `partial_warm` expert init. Conversion = edit the
 YAML `expert_init` block only; no Python changes.
 
-- [ ] **S3.1 `pf_spherical_kmeans`** — in
+- [x] **S3.1 `pf_spherical_kmeans`** — in
       `config/models/baselines/pf_spherical_kmeans.yaml`, replace
       `expert_init: {type: warmstart, jitter_std: 0.02}` with
       `{type: partial_warm, drop_rate: 0.5, jitter_std: 0.0, seed: ${project.seed}}`.
-- [ ] **S3.2 `pf_kmeans`** — same edit in `pf_kmeans.yaml`.
-- [ ] **S3.3 `pf_phase_head`** — same edit in `pf_phase_head.yaml`.
-- [ ] **S3.4 Group-A seed caveat:** the explicit `seed: ${project.seed}` line
+- [x] **S3.2 `pf_kmeans`** — same edit in `pf_kmeans.yaml`.
+- [x] **S3.3 `pf_phase_head`** — same edit in `pf_phase_head.yaml`.
+- [x] **S3.4 Group-A seed caveat:** the explicit `seed: ${project.seed}` line
       is mandatory — without it `bootstrap_moe` defaults `init_seed=42`
       (constant), breaking seed-dependent parity with the canonical method.
+      *Evidence: all three yamls carry the explicit seed line; the config
+      guard test asserts `ei.seed == project.seed` at seeds 42 AND 43.*
 
 **Group B — small code change (2 cells).** These have their own bootstrap
 implementations that hardcode the full warm-start call:
 
-- [ ] **S3.5 `phase_pretrain_random_router`** — currently a pure subclass of
+- [x] **S3.5 `phase_pretrain_random_router`** — currently a pure subclass of
       `WarmStartMoEModel` inheriting its warm-start `bootstrap_moe`
       (`models/baselines/phase_pretrain_random_router.py`, entire class is the
       docstring + inheritance). Rework: parameterize `WarmStartMoEModel`'s
@@ -185,22 +187,48 @@ implementations that hardcode the full warm-start call:
       `partial_reinit_experts_from_action_head(experts, action_head,
       drop_rate=0.5, seed=training_seed)` and set `_expert_init_info`.
       Keep: provider = `phaseforge`, random router.
-- [ ] **S3.6 `plain_encoder_phase_bootstrap`** — own `bootstrap_moe` ending in
+      *Evidence: implemented via config-driven `expert_init` param on
+      `WarmStartMoEModel` (default stays warmstart 0.02); the subclass passes
+      its yaml's partial_warm block through; class docstring rewritten to the
+      new factorial framing.*
+- [x] **S3.6 `plain_encoder_phase_bootstrap`** — own `bootstrap_moe` ending in
       a hardcoded `warm_start_experts_from_action_head(...)` call
       (`models/baselines/plain_encoder_phase_bootstrap.py` ~L220). Swap that
       call for `partial_reinit_experts_from_action_head(...)` (drop 0.5,
       training seed) + set `_expert_init_info`. Keep: BC provider, centroid
       router over BC latents.
-- [ ] **S3.7 Group-B training-seed plumbing:** both classes must receive the
+      *Evidence: same config-driven dispatch as S3.5; centroid router logic
+      untouched (test re-verifies centroids to 1e-6).*
+- [x] **S3.7 Group-B training-seed plumbing:** both classes must receive the
       run's training seed (as `PhaseBootstrappedMoE.bootstrap_moe` does via
       `training_seed=`) so the partial-init draw is seed-dependent.
-- [ ] **S3.8 Per-control run metadata** must persist (verify in test):
+      *Evidence — **live bug found and fixed**: `cli.py` (~L635) passes
+      `training_seed=` to every `bootstrap_moe` call, but all three baseline
+      signatures lacked the parameter (broken since commit `0a7e415`), so
+      `warmstart_moe` / `phase_pretrain_random_router` /
+      `plain_encoder_phase_bootstrap` / `teacher_forced` stage-2 runs all
+      crashed with TypeError. Fixed on all four classes
+      (`teacher_forced.py` included — signature + audit metadata, init
+      unchanged per locked E8). Regression test
+      `test_bootstrap_accepts_cli_training_seed_kwarg` pins the exact CLI
+      call for all four.*
+- [x] **S3.8 Per-control run metadata** must persist (verify in test):
       router type, expert-init type, drop rate, dropped-neuron hash, training
       seed, resolved Stage 1 provider.
-- [ ] **S3.9 Negative test:** a control configured with the old standard
+      *Evidence: `_expert_init_info` set by all bootstrap classes (persisted
+      by `cli.py` via `getattr(model, "_expert_init_info")` to
+      `metadata/init_expert.json`); unit tests assert every field (router
+      init_type, expert_init type/drop_rate/dropped hash, training_seed);
+      Stage 1 provider persisted by the existing `source_stage1` mechanism.*
+- [x] **S3.9 Negative test:** a control configured with the old standard
       warm-start path fails or is loudly distinguishable in metadata — no
       silent inheritance of the old path.
-- [ ] **S3.10 Deliberate non-change:** `warmstart_moe` and `scratch_moe` keep
+      *Evidence: `test_r50_matched_control_configs_resolve_partial_warm`
+      guards the five registered configs at seeds 42+43 (fails loudly if any
+      reverts to warmstart); `test_group_b_rejects_unknown_expert_init_type`
+      asserts ValueError on unknown types; S3.10 guard asserts the untouched
+      cells carry no `expert_init` override.*
+- [x] **S3.10 Deliberate non-change:** `warmstart_moe` and `scratch_moe` keep
       their current initialization (standard warm-start / random). They are
       behavioral baselines, not factorial controls. Do not "fix" them.
       Note: after S3.5, `phase_pretrain_random_router` is no longer
@@ -208,6 +236,10 @@ implementations that hardcode the full warm-start call:
       today) — the 2×2 factorial becomes {encoder source} × {router init} at
       fixed partial-warm expert init, matched to the proposed method; update
       the class docstring accordingly.
+      *Evidence: `test_warmstart_moe_default_remains_standard_warmstart`
+      (default = warmstart 0.02, no drop_rate); config guard asserts
+      warmstart_moe/scratch_moe/teacher_forced yamls carry no expert_init;
+      docstrings updated on both C1 classes.*
 
 ---
 
@@ -474,3 +506,4 @@ setting.
 | 2026-08-22 | **Phase 0 complete** (S0.1–S0.3) | Baseline: HEAD `bb2ebd3`, 655 tests passed (41.9 s), runner `--list` OK. Go-ahead recorded (S0.1); D-working-answers recorded (S0.2): D1 Lift-only, D3 drop, D4 superseded, D5 `outputs_final/`, D6 rename later, D7 3 seeds, D8 after, D9 no; **D2 open until S9.2 by design.** |
 | 2026-08-22 | **Phase 1 complete** (S1.1–S1.4) | `phaseforge.yaml` = R50 content byte-exact (diff: only header + `name:`), `phaseforge_r50.yaml` deleted, 24/24 resolved-contract checks pass at seeds 42+43 (init seed follows training seed). |
 | 2026-08-22 | **Phase 2 complete** (S2.1–S2.5) | Aliases removed from `utils/config.py` AND duplicate found+removed in `scripts/protocol/preflight_configs.py`; canonical guard test written; manifest marked archival. **4 tests failed first run** (old-world encodings): 2× cli (helper lacked `project.seed` for the new `${project.seed}` interpolation), 2× state-machine (asserted old E=8 defaults) — all four fixed to construct the new world explicitly, NOT skipped. Final: **655 passed**, preflight **150 train + 135 eval cells OK**, runner `--list` OK. **D10 discovered**: oracle/teacher eval raises on centroid-init (empty soft-mapping buffer) — must be resolved before Phase 3/oracle eval. |
+| 2026-08-22 | **Phase 3 complete** (S3.1–S3.10) | Group A: 3 config-only edits (pf_spherical_kmeans/pf_kmeans/pf_phase_head → partial_warm 0.5, seed `${project.seed}`). Group B: config-driven `expert_init` on `WarmStartMoEModel` + `PlainEncoderPhaseBootstrapModel` (default unchanged = warmstart 0.02), `_expert_init_info` metadata everywhere. **Live bug found+fixed**: CLI's `training_seed=` kwarg crashed ALL FOUR baseline bootstraps since `0a7e415` (warmstart_moe/pprr/pepb/teacher_forced stage-2 would all TypeError); signatures fixed + regression test. Shared `hash_dropped_indices` promoted to `components/expert.py` (byte-identical; first draft had a hash mismatch, caught by re-reading original). **End-to-end proof**: all 6 cells (proposed + 5 controls) built from real yamls → identical dropped-set hash at same seed → exact-match factorial. Suite: **660 passed** (+5 net new), preflight 285 cells OK. D10 remains open (blocks oracle eval only). |

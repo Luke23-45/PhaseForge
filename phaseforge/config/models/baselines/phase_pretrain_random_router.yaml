@@ -1,11 +1,13 @@
 # config/models/baselines/phase_pretrain_random_router.yaml — C1 cell:
 # phase-supervised encoder x RANDOM router (isolates the centroid router init)
 #
-# Shares the phaseforge Stage 1 checkpoint (resolve_checkpoint_source maps
-# this name to "phaseforge"); the MoE is bootstrapped with a random router,
-# exactly like warmstart_moe. Comparing with phaseforge isolates the
-# centroid-init effect; comparing with warmstart_moe isolates the
-# phase-supervised-encoder effect.
+# Shares the canonical phaseforge Stage 1 checkpoint (resolve_checkpoint_source
+# maps this name to "phaseforge"); the MoE is bootstrapped with a random
+# router. The expert init is pinned to the canonical R50 50% partial
+# warm-start so this cell is an exact factorial control: comparing with
+# phaseforge isolates the centroid-init effect; comparing with
+# plain_encoder_phase_bootstrap isolates the phase-supervised-encoder effect
+# at the same partial-warm expert init.
 
 name: "phase_pretrain_random_router"
 _target_: phaseforge.models.baselines.phase_pretrain_random_router.PhasePretrainRandomRouterModel
@@ -42,3 +44,11 @@ expert:
   hidden_dims: [256]
   output_dim: ${data.action_dim}
   activation: "gelu"
+
+expert_init:
+  # R50-matched control: identical expert initialization to the canonical
+  # phaseforge method (50% partial warm-start, seed tied to training seed).
+  type: "partial_warm"
+  drop_rate: 0.5
+  jitter_std: 0.0
+  seed: ${project.seed}
