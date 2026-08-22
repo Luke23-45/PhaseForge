@@ -11,9 +11,11 @@ Adaptations from the csd reference:
 * grouping is (model, tag, stage) not (system, method) — the ``tag`` axis
   keeps data-variant runs that share a model name (e.g. ``bc`` vs
   ``bc``/``robot_only``) in separate rows;
-* the paired Wilcoxon pairing key is (stage, seed, tag) — PhaseForge's
-  multi-seed protocol shares seeds across all model variants, so the pairing
-  is exact;
+* the paired Wilcoxon pairing key is (seed, tag) — PhaseForge's multi-seed
+  protocol shares seeds across all model variants and every method is
+  evaluated at its own final stage on the identical frozen reset bank, so
+  the per-seed pairing is exact across stages and tasks (the tag keeps
+  tasks/variants separate);
 * ``min_pairs`` defaults to 3 (PhaseForge's SEEDS=[42, 43, 44]); scipy's
   Wilcoxon needs at least one pair to compute but n=3 has very low power,
   so the paper should report n alongside p;
@@ -269,26 +271,31 @@ def paired_wilcoxon(
     metric: str,
     min_pairs: int = _MIN_PAIRS_DEFAULT,
 ) -> dict[str, object] | None:
-    """Paired Wilcoxon signed-rank on same ``(stage, seed, tag)`` pairs.
+    """Paired Wilcoxon signed-rank on same ``(seed, tag)`` pairs.
 
     ``method_a``/``method_b`` are ``(model, tag)`` identities, so data-variant
     runs that share a model name (e.g. ``("bc", None)`` vs
-    ``("bc", "robot_only")``) never cross-pair. Returns ``None`` when fewer
-    than ``min_pairs`` pairs are available or when scipy is not installed
-    (the paper can still be built from ``aggregates.csv`` +
-    ``bootstrap_ci.csv``; this function is best effort).
+    ``("bc", "robot_only")``) never cross-pair. The pairing key deliberately
+    excludes ``stage``: every method is evaluated at its own final stage
+    (MoE family stage 2, BC family stage 1) on the identical frozen reset
+    bank, so the per-seed paired difference is the deployment comparison the
+    paper reports — a stage-locked key would silently drop every
+    PhaseForge-vs-BC pair. Returns ``None`` when fewer than ``min_pairs``
+    pairs are available or when scipy is not installed (the paper can still
+    be built from ``aggregates.csv`` + ``bootstrap_ci.csv``; this function is
+    best effort).
     """
     try:
         from scipy.stats import wilcoxon
     except Exception:
         return None
-    pa: dict[tuple[int, int, str | None], float] = {}
-    pb: dict[tuple[int, int, str | None], float] = {}
+    pa: dict[tuple[int, str | None], float] = {}
+    pb: dict[tuple[int, str | None], float] = {}
     for row in rows:
         if math.isnan(float(getattr(row, metric))):
             continue
         identity = (row.model, row.tag)
-        key = (int(row.stage), int(row.seed), row.tag)
+        key = (int(row.seed), row.tag)
         if identity == method_a:
             pa[key] = float(getattr(row, metric))
         elif identity == method_b:
@@ -362,13 +369,23 @@ def write_paired_wilcoxon_csv(
     baseline: str,
     min_pairs: int = _MIN_PAIRS_DEFAULT,
 ) -> Path:
-    """Write ``_summaries/paired_wilcoxon.csv`` (baseline vs every other method)."""
+    """Write ``_summaries/paired_wilcoxon.csv`` (baseline vs every other method).
+
+    The baseline identity is resolved **per comparison** as
+    ``(baseline, tag_of_method_b)``. Five-task rows carry the protocol task
+    as their tag (``Can``/``Square``/…), so a single hardcoded
+    ``(baseline, None)`` identity would match no row and the CSV would be
+    silently empty; with per-tag resolution each comparison stays within one
+    task while untagged (single-task) namespaces keep their exact previous
+    pairing. Tagged variants of the baseline model itself (e.g.
+    ``robot_only``) are skipped — they pair against nothing by design.
+    """
     identities = sorted({(row.model, row.tag) for row in rows}, key=lambda i: (i[0], i[1] or ""))
-    baseline_identity = (baseline, None)
     out: list[dict[str, object]] = []
     for identity in identities:
-        if identity == baseline_identity:
+        if identity[0] == baseline:
             continue
+        baseline_identity = (baseline, identity[1])
         for metric in METRIC_COLUMNS:
             record = paired_wilcoxon(
                 rows,

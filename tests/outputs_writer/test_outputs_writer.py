@@ -687,6 +687,86 @@ class TestTables:
         assert text.splitlines()[0].startswith("method_a,tag_a,method_b,tag_b,metric")
         assert "scratch_moe" in text
 
+    def test_wilcoxon_csv_pairs_five_task_tags(self, tmp_path: Path) -> None:
+        # Regression (Phase 8b / S8b.1): five-task rows carry the protocol
+        # task as their tag. The old hardcoded baseline identity
+        # (baseline, None) matched no tagged row, so the CSV was silently
+        # empty; the baseline must resolve per tag, and the pairing key must
+        # not include stage (PhaseForge final stage 2 vs BC final stage 1).
+        import csv as csv_mod
+
+        rows = []
+        for task in ("Can", "Square"):
+            for seed in (42, 43, 44):
+                rows.append(
+                    make_result_row(
+                        model="phaseforge", tag=task, stage=2, seed=seed, action_mse=0.02
+                    )
+                )
+                rows.append(
+                    make_result_row(
+                        model="bc",
+                        tag=task,
+                        stage=1,
+                        seed=seed,
+                        action_mse=0.03,
+                        with_metrics=False,
+                    )
+                )
+        path = write_paired_wilcoxon_csv(
+            rows, tmp_path / "paired_wilcoxon.csv", baseline="phaseforge"
+        )
+        with open(path, newline="", encoding="utf-8") as f:
+            records = list(csv_mod.DictReader(f))
+        action_rows = [r for r in records if r["metric"] == "action_mse"]
+        assert {r["tag_a"] for r in action_rows} == {"Can", "Square"}
+        assert all(r["method_a"] == "phaseforge" for r in action_rows)
+        assert all(r["method_b"] == "bc" for r in action_rows)
+        assert all(int(r["n_pairs"]) == 3 for r in action_rows)
+        # A tag the baseline never runs (robot-only style) has no baseline
+        # rows, so no comparison is emitted for it.
+        rows += [
+            make_result_row(
+                model="bc",
+                tag="Can__robot_only",
+                stage=1,
+                seed=s,
+                action_mse=0.01,
+                with_metrics=False,
+            )
+            for s in (42, 43, 44)
+        ]
+        path = write_paired_wilcoxon_csv(
+            rows, tmp_path / "paired_wilcoxon2.csv", baseline="phaseforge"
+        )
+        with open(path, newline="", encoding="utf-8") as f:
+            records2 = list(csv_mod.DictReader(f))
+        assert all(r["tag_b"] in {"Can", "Square"} for r in records2)
+
+    def test_paired_wilcoxon_pairs_across_final_stages(self) -> None:
+        # Each method is evaluated at its own final stage (MoE family 2, BC
+        # family 1); a stage-locked pairing key would drop every
+        # PhaseForge-vs-BC pair, so the key is (seed, tag).
+        rows = [
+            make_result_row(model="phaseforge", tag="Can", stage=2, seed=s, action_mse=0.02)
+            for s in (42, 43, 44)
+        ]
+        rows += [
+            make_result_row(
+                model="bc", tag="Can", stage=1, seed=s, action_mse=0.05, with_metrics=False
+            )
+            for s in (42, 43, 44)
+        ]
+        record = paired_wilcoxon(
+            rows,
+            method_a=("phaseforge", "Can"),
+            method_b=("bc", "Can"),
+            metric="action_mse",
+        )
+        assert record is not None
+        assert record["n_pairs"] == 3
+        assert record["mean_diff"] == pytest.approx(-0.03)
+
     def test_bootstrap_ci_is_deterministic_and_finite(self) -> None:
         values = [0.01, 0.02, 0.03, 0.04, 0.05]
         first = bootstrap_ci(values)

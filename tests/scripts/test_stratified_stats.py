@@ -1,7 +1,8 @@
-"""Tests for the seed-stratified bootstrap statistics (Phase 4)."""
+"""Tests for the seed-stratified bootstrap statistics (Phase 4; Phase 8b/S8b.2 task grouping)."""
 
 from __future__ import annotations
 
+import json
 import random
 from pathlib import Path
 
@@ -13,20 +14,23 @@ from scripts.analysis.stratified_stats import (
     format_poi_matrix,
     format_table,
     load_episodes,
+    main,
     percentile_ci,
     probability_of_improvement,
     seed_means,
 )
 
 
-def _write_episodes(root: Path, model: str, seed: int, successes: list[bool]) -> None:
-    run_dir = root / "eval" / model / f"seed{seed}" / "run_1"
+def _write_episodes(
+    root: Path, model: str, seed: int, successes: list[bool], task: str = "Lift", run: str = "run_1"
+) -> None:
+    run_dir = root / "eval" / model / f"seed{seed}" / run
     run_dir.mkdir(parents=True, exist_ok=True)
     lines = []
     for i, ok in enumerate(successes):
         lines.append(
             "{"
-            f'"model": "{model}", "training_seed": {seed}, '
+            f'"task": "{task}", "model": "{model}", "training_seed": {seed}, '
             f'"episode_index": {i}, "success": {str(ok).lower()}, '
             f'"valid_episode": true'
             "}"
@@ -34,28 +38,57 @@ def _write_episodes(root: Path, model: str, seed: int, successes: list[bool]) ->
     (run_dir / "episodes.jsonl").write_text("\n".join(lines), encoding="utf-8")
 
 
-def test_load_and_group_by_model_and_seed(tmp_path: Path) -> None:
+def test_load_and_group_by_task_model_and_seed(tmp_path: Path) -> None:
     _write_episodes(tmp_path, "alpha", 42, [True, False, True])
     _write_episodes(tmp_path, "alpha", 43, [True, True])
     _write_episodes(tmp_path, "beta", 42, [False, False])
     groups = load_episodes([tmp_path])
-    assert groups[("alpha", 42)] == [True, False, True]
-    assert groups[("alpha", 43)] == [True, True]
-    assert groups[("beta", 42)] == [False, False]
+    assert groups[("Lift", "alpha", 42)] == [True, False, True]
+    assert groups[("Lift", "alpha", 43)] == [True, True]
+    assert groups[("Lift", "beta", 42)] == [False, False]
+
+
+def test_tasks_are_never_pooled(tmp_path: Path) -> None:
+    # Regression (Phase 8b / S8b.2): the same method run on two tasks must
+    # stay in separate groups — the old (model, seed) key averaged across
+    # tasks into one meaningless number.
+    _write_episodes(tmp_path, "alpha", 42, [True] * 10, task="Lift", run="lift_run")
+    _write_episodes(tmp_path, "alpha", 42, [False] * 10, task="Can", run="can_run")
+    groups = load_episodes([tmp_path])
+    assert groups[("Lift", "alpha", 42)] == [True] * 10
+    assert groups[("Can", "alpha", 42)] == [False] * 10
+    methods = seed_means(groups)
+    assert methods["Lift"]["alpha"][42] == 1.0
+    assert methods["Can"]["alpha"][42] == 0.0
+
+
+def test_main_reports_per_task_json(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    for task, outcomes in (("Can", [True] * 6), ("Square", [False] * 6)):
+        _write_episodes(tmp_path, "phaseforge", 42, outcomes, task=task, run=f"{task.lower()}_run")
+        _write_episodes(tmp_path, "bc", 42, outcomes, task=task, run=f"{task.lower()}_run")
+    out = tmp_path / "stats.json"
+    code = main(["--root", str(tmp_path), "--json", str(out), "--n-resamples", "2000"])
+    assert code == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert set(payload["tasks"]) == {"Can", "Square"}
+    assert payload["tasks"]["Can"]["methods"]["phaseforge"]["seed_rates"]["42"] == 1.0
+    assert payload["tasks"]["Square"]["methods"]["phaseforge"]["seed_rates"]["42"] == 0.0
+    printed = capsys.readouterr().out
+    assert "task: Can" in printed and "task: Square" in printed
 
 
 def test_invalid_episodes_excluded(tmp_path: Path) -> None:
     run_dir = tmp_path / "eval" / "alpha" / "seed42" / "run_1"
     run_dir.mkdir(parents=True)
     (run_dir / "episodes.jsonl").write_text(
-        '{"model": "alpha", "training_seed": 42, "success": true, '
+        '{"task": "Lift", "model": "alpha", "training_seed": 42, "success": true, '
         '"valid_episode": false}\n'
-        '{"model": "alpha", "training_seed": 42, "success": false, '
+        '{"task": "Lift", "model": "alpha", "training_seed": 42, "success": false, '
         '"valid_episode": true}\n',
         encoding="utf-8",
     )
     groups = load_episodes([tmp_path])
-    assert groups[("alpha", 42)] == [False]
+    assert groups[("Lift", "alpha", 42)] == [False]
 
 
 def test_missing_root_exits(tmp_path: Path) -> None:
@@ -67,8 +100,8 @@ def test_seed_means_are_unweighted_across_unequal_counts(tmp_path: Path) -> None
     _write_episodes(tmp_path, "alpha", 42, [True] * 5 + [False] * 5)
     _write_episodes(tmp_path, "alpha", 43, [True, False])
     methods = seed_means(load_episodes([tmp_path]))
-    assert methods["alpha"][42] == 0.5
-    assert methods["alpha"][43] == 0.5
+    assert methods["Lift"]["alpha"][42] == 0.5
+    assert methods["Lift"]["alpha"][43] == 0.5
 
 
 def test_mc_bootstrap_matches_exact_distribution() -> None:
@@ -136,7 +169,7 @@ def test_table_and_matrix_smoke(tmp_path: Path, capsys: pytest.CaptureFixture) -
     _write_episodes(tmp_path, "beta", 43, [False] * 5)
     _write_episodes(tmp_path, "beta", 44, [False] * 5)
     groups = load_episodes([tmp_path])
-    methods = seed_means(groups)
+    methods = seed_means(groups)["Lift"]
     draws = {m: bootstrap_seed_means(r, 1_000, random.Random(7)) for m, r in methods.items()}
     cis = {m: percentile_ci(d) for m, d in draws.items()}
     poi = {

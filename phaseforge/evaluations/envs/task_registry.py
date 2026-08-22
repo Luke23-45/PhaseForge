@@ -196,7 +196,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         state_dims=_CAN_SQUARE_DIMS,
         action_dim=7,
         horizon=500,
-        schema_version="robomimic-can-structured-v1",
+        schema_version="robomimic-can-structured-v2",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
     ),
     "Square": TaskSpec(
@@ -206,7 +206,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         state_dims=_CAN_SQUARE_DIMS,
         action_dim=7,
         horizon=500,
-        schema_version="robomimic-square-structured-v1",
+        schema_version="robomimic-square-structured-v2",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
     ),
     "ToolHang": TaskSpec(
@@ -216,7 +216,7 @@ _BUILD_SPECS: dict[str, TaskSpec] = {
         state_dims=_TOOL_HANG_DIMS,
         action_dim=7,
         horizon=500,
-        schema_version="robomimic-tool-hang-structured-v1",
+        schema_version="robomimic-tool-hang-structured-v2",
         default_env_kwargs={**_DEFAULT_PANDA_KWARGS, "horizon": 500},
     ),
     "Transport": TaskSpec(

@@ -126,6 +126,17 @@ Expect every step `done` (no `pending`, no `failed`), and confirm:
 Get-Item outputs_final\_results\results.jsonl, outputs_final\_results\training_summary.jsonl
 ```
 
+> **Dry-run preview semantics (do not misread):** against a *fresh*
+> namespace nothing exists yet, so the preview prints `AUTO-INJECT
+> dependency` commands for stage-2 cells whose provider checkpoint is not
+> there — identical provider stage-1 commands (e.g.
+> `models=phaseforge train=stage1 data=can`) can therefore appear 2–4
+> times — and `BLOCKED` for every eval step. This is a preview artifact
+> only: at execution the providers are trained once early in the sweep and
+> auto-resolution reuses them (an existing provider is never retrained).
+> The authoritative completion signal is the numbered step list
+> (`done`/`pending`) and the summary matrix, not the `$` command echoes.
+
 Reproduce the fairness/parameter table against the migrated canonical
 method before reporting (the committed `fairness_accounting.md` still shows
 the retired 8-expert row):

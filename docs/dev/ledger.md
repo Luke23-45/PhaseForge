@@ -583,51 +583,86 @@ tree (post-LAR-deletion):
 
 **Gaps found — close before S9.2/S9.4:**
 
-- [ ] **S8b.1 Wilcoxon CSV is five-task-broken (reporting bug).**
+- [x] **S8b.1 Wilcoxon CSV is five-task-broken (reporting bug).**
       `write_paired_wilcoxon_csv` hardcodes the baseline identity as
       `(baseline, None)`, but the five-task runner stamps
       `project.tag=Can|Square|…` on every cell, so no row matches the
       baseline identity and `paired_wilcoxon.csv` would be silently
-      **empty** after the sweep. Fix: resolve the baseline identity
-      per-comparison as `(baseline, tag_of_method_b)` (the pairing key
-      already includes tag). Add a regression test with tagged rows.
-      *Evidence: `phaseforge/outputs_writer/tables.py` L358–395
-      (`baseline_identity = (baseline, None)`); tag stamping visible in the
-      dry-run argv; `row["tag"] = cfg.project.get("tag")` at
-      `phaseforge/cli.py` ~L180.*
-- [ ] **S8b.2 `stratified_stats.py` pools all tasks.** It groups episodes
+      **empty** after the sweep. **Implemented 2026-08-22** — and the fix
+      surfaced a second latent flaw in the same function: the pairing key
+      was `(stage, seed, tag)`, which can never pair PhaseForge (final
+      stage 2) with the BC family (final stage 1) — i.e. even with per-tag
+      resolution, every headline PhaseForge-vs-BC comparison would have had
+      zero pairs. Fix (both): baseline identity resolved per comparison as
+      `(baseline, tag_of_method_b)` AND pairing key relaxed to
+      `(seed, tag)` — every method is evaluated at its own final stage on
+      the identical frozen bank, so the per-seed pair IS the deployment
+      comparison the paper reports. Tagged baseline-model variants
+      (robot_only) are skipped explicitly.
+      *Evidence: `phaseforge/outputs_writer/tables.py`
+      `paired_wilcoxon` + `write_paired_wilcoxon_csv` rewritten; 2 new
+      regression tests in `tests/outputs_writer/test_outputs_writer.py`
+      (`test_wilcoxon_csv_pairs_five_task_tags` — fails on the old code —
+      and `test_paired_wilcoxon_pairs_across_final_stages`); module
+      docstring updated; 176 outputs_writer tests green.*
+- [x] **S8b.2 `stratified_stats.py` pools all tasks.** It groups episodes
       by `(model, training_seed)` — in the five-task namespace that mixes
-      tasks. Episode rows carry `task` (and the outputs writer already has
-      a per-`(task, model, tag, seed)` summarizer), so extend the grouping
-      key to `(task, model, training_seed)`; behavior for single-task
-      namespaces (ablations) stays identical.
-      *Evidence: `scripts/analysis/stratified_stats.py` `load_episodes`;
-      `phaseforge/outputs_writer/episodes.py` schema includes `task`.*
-- [ ] **S8b.3 Per-task config-composition test (test gap).** No pytest
+      tasks. **Implemented 2026-08-22**: grouping key is now
+      `(task, model, training_seed)`; per-task tables/matrices printed and
+      the JSON payload nests under `"tasks"`. The fix also surfaced a
+      **third bug**: `--root` used `action="append"` with
+      `default=["outputs"]`, so an explicit `--root outputs_final` would
+      APPEND to the historical default and silently mix pre-final rows into
+      the final stats (a namespace-invariant violation). Now
+      `default=None` + explicit replacement — `--root` fully overrides.
+      *Evidence: `scripts/analysis/stratified_stats.py` rewritten
+      (`load_episodes`, `seed_means`, `main`, docstrings);
+      `tests/scripts/test_stratified_stats.py` updated + 2 new tests
+      (`test_tasks_are_never_pooled`, `test_main_reports_per_task_json`);
+      18 script tests green.*
+- [x] **S8b.3 Per-task config-composition test (test gap).** No pytest
       composes `data=can|square|tool_hang|transport` (only lift variants);
       a regression in those YAMLs passes the suite today and is caught only
-      by the manual preflight script. Add a parametrized test composing
-      all 15 data configs → registry validation, plus a manifest check that
-      every `five_task.json` (method.data, method.task) pair resolves.
-- [ ] **S8b.4 Pre-generate + verify Can/Square/ToolHang reset banks** via
-      the S7.4 gate runs (Can/Square under `.venv-rollout`, ToolHang under
-      `.venv-toolhang` — its bank pins robosuite 1.5.0 inside `bank_id`).
-      Verify each: 50 contiguous cases, `ResetBank.load(verify=True)`
-      clean, manifest `task` / `env_canonical` / `robosuite_version`
-      correct; record the three new `bank_id`s here. Banks must exist
-      **before** any policy rollout (S7.5 discipline), not mid-sweep.
-- [ ] **S8b.5 Remaining text alignments.** Done in this audit for the
+      by the manual preflight script. **Implemented 2026-08-22**: new
+      `tests/data/test_per_task_configs.py` — 33 tests: all 15 data configs
+      composed + registry-validated (dims/keys/action_dim/env-name), phase
+      labeler slices asserted to land exactly on the declared
+      `robot0_eef_pos` / `robot0_gripper_qpos` key boundaries (codifies the
+      robot-only re-pinning), rnn-vs-structured schema equivalence, and a
+      manifest guard that every `five_task.json` (data, task) pair composes
+      and agrees (config ↔ manifest cannot drift silently).
+      *Evidence: 32 tests in the file green + registry drift-guard below;
+      full suite 708 passed.*
+- [x] **S8b.4 Pre-generate + verify Can/Square/ToolHang reset banks.**
+      **Done 2026-08-22 on this machine**, using the *same* code path eval
+      uses (`load_or_generate_bank` + `resolve_pinned_metadata`), under the
+      correct venv per task — Can/Square via `.venv-rollout` (robosuite
+      1.5.1), ToolHang via `.venv-toolhang` (robosuite 1.5.0). This is also
+      the **first successful end-to-end exercise of the ToolHang
+      environment stack** (metadata → parity gate → env creation → seeded
+      resets) on any machine — a meaningful de-risk for the sweep.
+      All five banks then verified with `ResetBank.load(verify=True)`:
+      50 contiguous cases, SHA-256 clean, correct env/robosuite pins.
+      | Task | bank_id | env | robosuite |
+      |---|---|---|---|
+      | Lift | `a7d3953c0afcf560` | Lift | 1.5.1 |
+      | Can | `310d9cfd3fa5e843` | PickPlaceCan | 1.5.1 |
+      | Square | `e16288589f5f69c2` | NutAssemblySquare | 1.5.1 |
+      | ToolHang | `db5b4c2a5e6519d0` | ToolHang | 1.5.0 |
+      | Transport | `c6683cf0dbb23876` | TwoArmTransport | 1.5.1 |
+      All banks: 50 cases, bank seed 2026. Banks travel with the repo's
+      `data/` root to the sweep machine; the S7.4 gates re-verify them.
+      Full gate RUNS remain pending on the sweep machine per Phase 7.
+- [x] **S8b.5 Remaining text alignments.** Done in this audit for the
       ledger itself (S7.4 commands, S7.5 bank description, facts table).
-      Remaining: (a) align `task_registry.TaskSpec.schema_version` strings
-      (registry says v1 for can/square/tool-hang, configs say v2 — the
-      field is **unconsumed**; only the data-config `schema_version` is
-      read, by `state_machine.py` L531), zero-risk alignment for reviewer
-      clarity; (b) document the dry-run preview semantics in
-      `final_run_plan.md` §5: a fresh-namespace dry-run prints
-      AUTO-INJECT dependency previews (identical provider stage-1 commands
-      may appear 2–4×) and BLOCKED for eval steps whose checkpoints do not
-      exist yet — execution itself resolves providers in-sweep and never
-      retrains an existing one. The superseded
+      **Completed 2026-08-22**: (a) `task_registry` schema strings aligned
+      to the data configs (can/square/tool-hang → structured-v2; verified
+      unconsumed first; new drift-guard test
+      `test_registry_schema_strings_match_structured_configs` locks them
+      together); (b) dry-run preview semantics documented in
+      `final_run_plan.md` §5 (AUTO-INJECT previews may repeat provider
+      stage-1 commands 2–4×; BLOCKED evals in a fresh namespace; execution
+      never retrains an existing provider). The superseded
       `final_evaluation_plan.md`'s 10000–10049 bank-seed wording stays
       untouched (historical record) and is disclosed, not edited.
 - [ ] **S8b.6 Post-sweep per-phase artifact check (append to S9.5):**
@@ -635,6 +670,7 @@ tree (post-LAR-deletion):
       `phase_thresholds.json` (backfill should provide it; with
       `require_phase_tracking: false` a missing artifact silently nulls
       per-phase SR — it must not be silently null in the final report).
+      *(Execution-time check — cannot be done before the sweep.)*
 
 ---
 
@@ -749,9 +785,9 @@ tree (post-LAR-deletion):
 | Param counts scale with `state_dim` per task (Lift 19, Can 23, …) — report per-task counts, match ratio ~constant | `config/data/*.yaml` + `${data.state_dim}` interpolation |
 | Epoch accounting: BC family 100 S1 / 0 S2; MoE family shared S1 + 200 S2; scratch 0/200 — disclosed, must appear in paper | `fairness_accounting.md` Epochs column |
 | Five-task readiness (Phase 8b audit, 2026-08-22): 15 per-task data configs compose + registry-validate; raw HDF5 ×5; caches ×5 tasks; preflight 165 train + 150 eval cells green; dry-run 315 steps | `experiments/five_task.json`; `phaseforge/config/data/`; live re-run in audit |
-| Banks on disk: Lift `a7d3953c0afcf560`, Transport `c6683cf0dbb23876` (50 cases, seed 2026, robosuite 1.5.1); Can/Square/ToolHang to be generated via S7.4/S8b.4 gates; ToolHang bank pins robosuite 1.5.0 in its `bank_id` | `data/processed/eval_banks/*/manifest.json` |
-| Wilcoxon reporting bug: `write_paired_wilcoxon_csv` baseline identity `(baseline, None)` never matches five-task tagged rows (`project.tag=Can\|…` on every cell) → CSV silently empty unless fixed (S8b.1) | `phaseforge/outputs_writer/tables.py` L358–395; `phaseforge/cli.py` ~L180 |
-| `stratified_stats.py` groups `(model, training_seed)` only → pools the five tasks; episodes rows carry `task` so the fix is a grouping-key extension (S8b.2) | `scripts/analysis/stratified_stats.py`; `outputs_writer/episodes.py` |
+| Banks on disk (ALL FIVE, verified `load(verify=True)` 2026-08-22): Lift `a7d3953c0afcf560`, Can `310d9cfd3fa5e843`, Square `e16288589f5f69c2`, ToolHang `db5b4c2a5e6519d0` (robosuite 1.5.0), Transport `c6683cf0dbb23876` — 50 cases each, bank seed 2026 | `data/processed/eval_banks/*/manifest.json` |
+| Wilcoxon reporting (FIXED S8b.1 2026-08-22): baseline identity now resolves per tag and the pairing key is `(seed, tag)` — the old `(baseline, None)` identity + stage-locked key silently emptied the CSV / dropped every PhaseForge-vs-BC pair | `phaseforge/outputs_writer/tables.py` |
+| `stratified_stats.py` (FIXED S8b.2 2026-08-22): groups `(task, model, training_seed)`; `--root` now REPLACES the default (the old append+default mixed historical `outputs/` into explicit `outputs_final` scans) | `scripts/analysis/stratified_stats.py` |
 | Dry-run preview semantics: fresh-namespace dry-run prints AUTO-INJECT dependency previews (provider stage-1 commands may repeat 2–4×) and BLOCKED evals; execution never retrains an existing provider (auto-dependency resolves in-sweep via state registry) | `runner/cli.py` `_print_dry_run` / `_resolve_stage2_with_auto_dependency` |
 | `TaskSpec.schema_version` strings (v1) lag the data configs (can/square/tool-hang = v2) but the field is unconsumed — only the data-config `schema_version` is read (`state_machine.py` L531) | `evaluations/envs/task_registry.py`; `phaseforge/config/data/*.yaml` |
 | ToolHang venv carries the FULL training stack (torch 2.13.0+cpu, h5py, editable phaseforge, 5 console scripts) because every ToolHang step — train AND eval — is dispatched there | `runner/executor.py` L156; live probe 2026-08-22 |
@@ -779,4 +815,5 @@ tree (post-LAR-deletion):
 | 2026-08-22 | LAR-MoE plan reviewed against the full paper (arXiv:2603.08476v1) and revised to Revision 2 | Cross-check confirmed the two-stage design, losses (Eqs. 1-2, 5), soft routing with learnable T (init 100), the ±F/±R ablation structure, and the exclusion list. Fixed: expert architecture unspecified (now REQUIRED: ACT-style transformer-decoder experts with H learned query tokens, no CVAE); expert conditioning path c_t pre-registered (primary: frozen student latent; deviation alternative must be renamed); AdamW pinned; stop-gradient/joint-training/teacher-disposal recorded as AC1-AC3; entropy sign semantics stated; group-sparsity 2x3 expert grid fixed for N=6; hyperparameter provenance + tuning-parity rule added (no official code exists, verified 2026-08-22). |
 | 2026-08-22 | **D11 recorded: `lar_moe_state_only` DEFERRED** | Decision put in writing per supervisory recommendation, referencing both `docs/dev/lar_moe_state_only_implementation_plan.md` (Rev. 2, now status DEFERRED with revisit conditions) and `docs/plan/reports/baseline_positioning.md` (D9 record). No code will be written for it; all effort redirects to the five-task sweep. Mechanism-story caution reiterated: R50 identity locked, claims await the sweep. |
 | 2026-08-22 | **D11 escalated: `lar_moe_state_only` plan hard-deleted** | Project owner directed hard deletion. `docs/dev/lar_moe_state_only_implementation_plan.md` removed via `git rm` (survives in history at `1ab35de`, Rev. 2). Pre-deletion sweep confirmed zero active references in `phaseforge/`, `tests/`, `experiments/`, `scripts/` — no code, config, or manifest entry ever existed. All effort remains on the five-task sweep. |
-| 2026-08-22 | **Phase 8b: five-task readiness audit complete** (prompt: "only Lift has ever been run — is anything missing for the other four?") | Verdict: no missing per-task artifacts — single-manifest design + 15 validated data configs + per-task caches + ToolHang venv dispatch all verified LIVE (preflight 165+150 green, dry-run 315, both venvs probed, all 15 configs composed + registry-validated, banks inspected). **Two real reporting bugs found**: S8b.1 `paired_wilcoxon.csv` baseline identity `(baseline, None)` never matches tagged five-task rows → silently empty CSV after the sweep; S8b.2 `stratified_stats.py` pools tasks (grouping lacks `task`). Plus: test gap S8b.3 (no non-Lift config composition in pytest), bank pre-generation S8b.4 (Can/Square/ToolHang), text alignments S8b.5 (registry schema strings, dry-run preview docs; ledger S7.5 + facts row corrected in place), per-phase artifact check S8b.6. All recorded as Phase 8b steps — implementation pending, to run before S9.2/S9.4. |
+| 2026-08-22 | **Phase 8b: five-task readiness audit complete** (prompt: "only Lift has ever been run — is anything missing for the other four?") | Verdict: no missing per-task artifacts — single-manifest design + 15 validated data configs + per-task caches + ToolHang venv dispatch all verified LIVE (preflight 165+150 green, dry-run 315, both venvs probed, all 15 configs composed + registry-validated, banks inspected). **Two real reporting bugs found**: S8b.1 `paired_wilcoxon.csv` baseline identity `(baseline, None)` never matches tagged five-task rows → silently empty CSV after the sweep; S8b.2 `stratified_stats.py` pools tasks (grouping lacks `task`). Plus: test gap S8b.3 (no non-Lift config composition in pytest), bank pre-generation S8b.4 (Can/Square/ToolHang), text alignments S8b.5 (registry schema strings, dry-run preview docs; ledger S7.5 + facts row corrected in place), per-phase artifact check S8b.6. All recorded as Phase 8b steps. |
+| 2026-08-22 | **Phase 8b implemented (S8b.1–S8b.5)** | S8b.1 fixed BOTH the per-tag baseline identity AND a second latent flaw found during implementation: the `(stage, seed, tag)` pairing key could never pair PhaseForge (stage 2) with the BC family (stage 1) — key relaxed to `(seed, tag)` (deployment comparison on identical resets). S8b.2 fixed the task pooling AND a third bug: `--root` append+default silently mixed historical `outputs/` into explicit `outputs_final` scans — now replaces. S8b.3: `tests/data/test_per_task_configs.py` (33 tests incl. labeler-slice boundary guard + manifest↔config drift guard). S8b.4: Can `310d9cfd3fa5e843` / Square `e16288589f5f69c2` generated under `.venv-rollout`, ToolHang `db5b4c2a5e6519d0` under `.venv-toolhang` via the eval-time `load_or_generate_bank` path — first-ever successful ToolHang env-stack exercise; all five banks SHA-verified. S8b.5: registry strings aligned v2 (+drift-guard test), dry-run preview note in runbook §5. Suite **708 passed** (+37); preflight 165+150 green post-change. S8b.6 remains execution-time (post-sweep). |

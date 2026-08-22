@@ -1,10 +1,11 @@
-"""Seed-stratified bootstrap statistics for the Lift rollout evaluation.
+"""Seed-stratified bootstrap statistics for the rollout evaluation.
 
-Replaces the pooled-150-episode Wilson interval, which is pseudoreplication:
+Replaces the pooled-episode Wilson interval, which is pseudoreplication:
 episodes from the same training seed share one trained policy and are
 correlated. Here we resample *seeds* with replacement (Agarwal et al. 2021,
-applied at the seed level as the professor recommended for M = 1 task,
-N = 3 seeds) and report:
+applied at the seed level as the professor recommended, N = 3 seeds) and
+report, **per task** (Lift / Can / Square / ToolHang / Transport — never
+pooled across tasks):
 
   - per-method seed-level means + percentile bootstrap 95% CIs
   - a pairwise probability-of-improvement matrix P(X > Y) over the same
@@ -14,8 +15,10 @@ Usage:
     python scripts/analysis/stratified_stats.py [--root outputs] [--json out.json]
 
 Every episodes.jsonl under <root>/**/eval/<method>/seed*/<run>/ is loaded;
-grouping uses the explicit ``model`` and ``training_seed`` fields so the
-directory layout is not trusted.
+grouping uses the explicit ``task``, ``model`` and ``training_seed`` fields
+so the directory layout is not trusted. (Phase 8b / S8b.2: the grouping key
+gained ``task`` — the former (model, seed) key pooled the five-task matrix
+into meaningless cross-task averages.)
 """
 
 from __future__ import annotations
@@ -31,9 +34,9 @@ N_RESAMPLES_DEFAULT = 100_000
 RNG_SEED_DEFAULT = 12345
 
 
-def load_episodes(roots: list[Path]) -> dict[tuple[str, int], list[bool]]:
-    """Load per-episode success booleans grouped by (model, training_seed)."""
-    groups: dict[tuple[str, int], list[bool]] = defaultdict(list)
+def load_episodes(roots: list[Path]) -> dict[tuple[str, str, int], list[bool]]:
+    """Load per-episode success booleans grouped by (task, model, training_seed)."""
+    groups: dict[tuple[str, str, int], list[bool]] = defaultdict(list)
     found = 0
     for root in roots:
         if not root.exists():
@@ -44,7 +47,8 @@ def load_episodes(roots: list[Path]) -> dict[tuple[str, int], list[bool]]:
                 row = json.loads(line)
                 if not row.get("valid_episode", True):
                     continue
-                groups[(row["model"], row["training_seed"])].append(
+                task = row.get("task") or "unknown"
+                groups[(task, row["model"], row["training_seed"])].append(
                     bool(row["success"])
                 )
     if found == 0:
@@ -52,14 +56,16 @@ def load_episodes(roots: list[Path]) -> dict[tuple[str, int], list[bool]]:
     return dict(groups)
 
 
-def seed_means(groups: dict[tuple[str, int], list[bool]]) -> dict[str, dict[int, float]]:
-    """Per-method dict of training_seed -> success rate."""
-    methods: dict[str, dict[int, float]] = defaultdict(dict)
-    for (model, seed), outcomes in groups.items():
+def seed_means(
+    groups: dict[tuple[str, str, int], list[bool]],
+) -> dict[str, dict[str, dict[int, float]]]:
+    """Nested per-task dict of method -> training_seed -> success rate."""
+    tasks: dict[str, dict[str, dict[int, float]]] = defaultdict(lambda: defaultdict(dict))
+    for (task, model, seed), outcomes in groups.items():
         if not outcomes:
             continue
-        methods[model][seed] = sum(outcomes) / len(outcomes)
-    return dict(methods)
+        tasks[task][model][seed] = sum(outcomes) / len(outcomes)
+    return {task: dict(methods) for task, methods in tasks.items()}
 
 
 def bootstrap_seed_means(
@@ -176,40 +182,51 @@ def format_poi_matrix(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", action="append", default=["outputs"], type=Path)
+    parser.add_argument(
+        # default=None + post-processing (not default=["outputs"] with
+        # action="append", which would APPEND to the historical default and
+        # silently mix pre-final rows into an explicit --root outputs_final
+        # scan — a namespace invariant violation).
+        "--root",
+        action="append",
+        default=None,
+        type=Path,
+    )
     parser.add_argument("--n-resamples", type=int, default=N_RESAMPLES_DEFAULT)
     parser.add_argument("--rng-seed", type=int, default=RNG_SEED_DEFAULT)
     parser.add_argument("--json", type=Path, default=None)
     args = parser.parse_args(argv)
-    args.root = [Path(r) for r in args.root]
+    args.root = [Path(r) for r in (args.root or ["outputs"])]
 
     groups = load_episodes(args.root)
-    methods = seed_means(groups)
-    if not methods:
-        sys.exit("error: no (model, training_seed) groups with outcomes found")
+    tasks = seed_means(groups)
+    if not tasks:
+        sys.exit("error: no (task, model, training_seed) groups with outcomes found")
 
     rng = random.Random(args.rng_seed)
-    cis: dict[str, tuple[float, float]] = {}
-    poi: dict[tuple[str, str], float] = {}
-    for method, rates in methods.items():
-        draws = bootstrap_seed_means(rates, args.n_resamples, rng)
-        cis[method] = percentile_ci(draws)
-    for x in methods:
-        for y in methods:
-            if x == y:
-                continue
-            poi[(x, y)] = probability_of_improvement(
-                methods[x], methods[y], args.n_resamples, rng
-            )
+    payload_tasks: dict[str, dict[str, object]] = {}
+    for task in sorted(tasks):
+        methods = tasks[task]
+        cis: dict[str, tuple[float, float]] = {}
+        poi: dict[tuple[str, str], float] = {}
+        for method, rates in methods.items():
+            draws = bootstrap_seed_means(rates, args.n_resamples, rng)
+            cis[method] = percentile_ci(draws)
+        for x in methods:
+            for y in methods:
+                if x == y:
+                    continue
+                poi[(x, y)] = probability_of_improvement(
+                    methods[x], methods[y], args.n_resamples, rng
+                )
 
-    print(format_table(methods, cis, args.n_resamples))
-    print()
-    print(format_poi_matrix(methods, poi, args.n_resamples))
+        print(f"=== task: {task} ({len(methods)} method(s)) ===")
+        print(format_table(methods, cis, args.n_resamples))
+        print()
+        print(format_poi_matrix(methods, poi, args.n_resamples))
+        print()
 
-    if args.json is not None:
-        payload = {
-            "rng_seed": args.rng_seed,
-            "n_resamples": args.n_resamples,
+        payload_tasks[task] = {
             "methods": {
                 m: {
                     "seed_rates": {str(s): r for s, r in rates.items()},
@@ -222,10 +239,17 @@ def main(argv: list[str] | None = None) -> int:
                 f"{x} > {y}": poi[(x, y)] for (x, y) in poi
             },
         }
+
+    if args.json is not None:
+        payload = {
+            "rng_seed": args.rng_seed,
+            "n_resamples": args.n_resamples,
+            "tasks": payload_tasks,
+        }
         args.json.write_text(
             json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
         )
-        print(f"\nwrote {args.json}")
+        print(f"wrote {args.json}")
     return 0
 
 
