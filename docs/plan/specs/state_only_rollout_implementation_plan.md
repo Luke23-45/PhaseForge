@@ -2,6 +2,20 @@
 
 **Status:** authoritative protocol. Implemented in the codebase: pinned simulator tracks (`pyproject.toml` `rollout` extra: robosuite 1.5.1 / mujoco 3.2.7, Tool Hang 1.5.0 exception), state-only adapter (`phaseforge/evaluations/envs/`), task-independent gates (`phaseforge/evaluations/rollout/gates.py`), frozen reset-bank evaluation, and the `episodes.jsonl` schema. The Lift protocol has completed and been reproduced at `master` (see `../reports/lift_rollout_eval_report.md` §10); the five-task matrix is pending.
 
+**Canonical method (2026-08-22 migration):** the proposed method in all final
+runs is `phaseforge` resolving to the promoted **R50 configuration** — six
+experts, top-2 routing, centroid router initialization, 50% partial expert
+warm-start (seed-dependent), soft mapping disabled — with the H1–H4 controls
+R50-matched (see `research_definition.md` §5 lineage note). Pre-final results
+from the retired 8-expert configuration are excluded from the final evidence.
+
+**Reproduction expectation:** the final Lift results are **not expected to
+reproduce the pre-final confirmation numbers** (0.56 / 0.84 / 0.72, mean
+0.707). The confirmation's Stage 2 was bootstrapped from the retired
+configuration's Stage 1 tree; the final method trains its own Stage 1 under
+the canonical identity, and construction-time RNG consumption differs — a
+deviation on Lift is expected and is not a bug or regression.
+
 **Scope:** non-visual, structured low-dimensional robot state only
 
 **Supersedes:** the required/optional classification for the next implementation
@@ -240,7 +254,13 @@ For every task, report:
   (PhaseForge versus BC-MLP, Scratch MoE, Warm-Start MoE,
   Phase-Pretrain Random-Router, and Plain-Encoder Phase-Bootstrap). Privileged
   routing and robot-only negative-control rows are descriptive, not part of the
-  primary comparison family;
+  primary comparison family. **Concrete correction (DRAFT — pending professor
+  confirmation before the sweep starts):** Holm step-down over the five
+  primary comparisons within each task (25 paired McNemar tests in total,
+  five per task), applied to the per-seed-aggregated paired tables; BC-Large
+  and BC-RNN are reported with intervals but sit outside the corrected
+  family (capacity and temporal context rows); across-seed direction
+  consistency is reported descriptively;
 - infrastructure failures separately (excluded from the success denominator);
   policy-caused invalid actions/NaNs/safety violations counted as failures
   under a strict metric and labeled separately;

@@ -13,6 +13,8 @@ htmlcov/
 # Environments
 .env
 .venv/
+.venv-rollout/
+.venv-toolhang/
 venv/
 env/
 

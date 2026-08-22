@@ -1,228 +1,180 @@
-uv sync --extra rollout                             # 1. common env: robosuite 1.5.1
-# 2. create .venv-toolhang separately with robosuite 1.5.0 (see below)
-# 3. provision all five datasets under $PHASEFORGE_DATA_DIR/raw/robomimic/
-uv run python -m phaseforge.runner --list           # 4. sanity: five-task matrix + seeds
-uv run python -m phaseforge.runner --dry-run        # 5. pre-flight: 315-step plan, read-only
-uv run python -m phaseforge.runner --continue-on-error  # 6. full five-task sweep
-uv run python -m phaseforge.runner --dry-run        # 7. verify: every step "done"
-uv run python scripts/analysis/summarize_train.py --outputs outputs --baseline phaseforge   # 8. train tables
-uv run python scripts/analysis/summarize_eval.py  --outputs outputs --baseline phaseforge   # 9. eval tables
-
-
-#### main method baselines --methods 1,4,5,6,7,2 --continue-on-error.
-
-You are right. I mixed up the checkpoint-free environment gates with learned-policy evaluation.
-
-Correct order:
-
-1. Provision and verify all five datasets.
-
-2. Run the checkpoint-free environment gates:
-
-```bash
-uv run phaseforge-gates data=lift eval=rollout
-uv run phaseforge-gates data=can eval=rollout
-uv run phaseforge-gates data=square eval=rollout
-.venv-toolhang/bin/phaseforge-gates data=tool_hang eval=rollout
-uv run phaseforge-gates data=transport eval=rollout
-```
-
-3. Run the full sweep:
-
-```bash
-uv run python -m phaseforge.runner \
-  --manifest experiments/five_task.json \
-  --continue-on-error
-```
-
-This command trains each method/seed, creates checkpoints, and then evaluates each checkpoint.
-
-4. Verify that no cells failed or remain pending. Rerun failures before reporting results.
-
-5. Generate tables:
-
-```bash
-uv run python scripts/analysis/summarize_train.py --outputs outputs --baseline phaseforge
-uv run python scripts/analysis/summarize_eval.py --outputs outputs --baseline phaseforge
-uv run phaseforge-rollout-report outputs
-```
-
-The environment gates come first because they validate the simulator and reset bank. The learned-policy evaluations happen afterward, inside the sweep, after checkpoints are created.
-
-# Final Run Plan — Lift pilot sweep → paper tables
+# Final Run Plan — Five-Task Sweep → Paper Tables (canonical R50 protocol)
 
 Run this once, top to bottom, on the machine that will produce the paper
-results. Every command was verified against the current code (runner,
-manifest `experiments/lift_pilot.json`, `scripts/analysis/summarize_*.py`).
+results. Verified against the migrated codebase (canonical `phaseforge` =
+R50 contract, 10-method matrix in `experiments/five_task.json`, checkpoint
+contract gating, fresh `outputs_final/` namespace).
 
-> Current workspace state (2026-08-14): `outputs/` contains only stale
-> legacy-format run dirs — no `checkpoints/checkpoint_best.pt`, no
-> `<run_dir>.completed` markers, no `outputs/_results/`, no
-> `outputs/_runner/state.json`. The runner ignores those legacy dirs, so
-> the sweep below starts clean. A completed sweep is what makes the paper
-> tables possible: `_results/results.jsonl` (eval rows) +
-> `_results/training_summary.jsonl` (train rows) → `_summaries/*`.
+> **Preconditions (implementation ledger Phase 0/§11):** professor approval
+> of `final_baselines_plan.md` recorded, and the D2 multiplicity correction
+> confirmed (draft: Holm step-down over the five primary comparisons per
+> task — see `state_only_rollout_implementation_plan.md` §5). Do not start
+> the sweep until both are recorded in the ledger's Progress Log.
 
 ---
 
 ## 1. One-time setup
 
-### 1.1 Install the package
+### 1.1 Environments (pinned simulator tracks)
+
+The dev environment may run any modern Python (tests only). The **rollout
+environment must be Python 3.11** — `mujoco==3.2.7` has no wheels for
+Python ≥3.13:
 
 ```bash
-uv sync --extra dev
+# main rollout env (robosuite 1.5.1 / mujoco 3.2.7)
+uv venv --python 3.11 .venv-rollout
+uv pip install --python .venv-rollout -e ".[rollout]"
+# robosuite 1.5.x on Windows loads a DLL from its own utils dir that the
+# PyPI wheel does not bundle — copy it from the mujoco package:
+cp .venv-rollout/Lib/site-packages/mujoco/mujoco.dll \
+   .venv-rollout/Lib/site-packages/robosuite/utils/mujoco.dll
+
+# Tool Hang env (robosuite 1.5.0 / mujoco 3.2.7)
+uv venv --python 3.11 .venv-toolhang
+uv pip install --python .venv-toolhang -e .
+uv pip install --python .venv-toolhang "robosuite==1.5.0" "mujoco==3.2.7"
+cp .venv-toolhang/Lib/site-packages/mujoco/mujoco.dll \
+   .venv-toolhang/Lib/site-packages/robosuite/utils/mujoco.dll
 ```
 
-(If `uv` is unavailable: `pip install -e ".[dev]"`.)
+### 1.2 Datasets (fail-closed — the pipeline will NOT download)
 
-### 1.2 Provision the dataset (fail-closed — the pipeline will NOT download it)
-
-Place the official robomimic **Lift Proficient-Human low-dim** HDF5
-file(s) under:
-
-```
-{PHASEFORGE_DATA_DIR}/raw/robomimic/lift/
-```
-
-Default root if the variable is unset: `./data/raw/robomimic/lift`.
-Set it for the whole session (PowerShell):
-
-```powershell
-$env:PHASEFORGE_DATA_DIR = "D:\phaseforge-data"
-```
-
-Record the dataset revision and checksum in the external data manifest
-before training. The cache (`{root}/processed/cache`) builds automatically
-on first use; a later cache hit only re-verifies.
+All five official robomimic **Proficient-Human low-dim v1.5** HDF5 sets under
+`{PHASEFORGE_DATA_DIR}/raw/robomimic/{lift,can,square,tool_hang,transport}/`
+(default root `./data/raw/robomimic/`). Record dataset revisions/checksums
+in the external data manifest. The cache builds automatically on first use.
 
 ### 1.3 Sanity: the manifest loads
 
 ```bash
-uv run python -m phaseforge.runner --list
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --list
 ```
 
-Expect the five-task manifest and `seeds: [42, 43, 44]`.
+Expect 50 methods (10 per task × 5 tasks), `seeds: [42, 43, 44]`, and the
+proposed `phaseforge` rows with `stage1,stage2`.
 
 ---
 
-## 2. Pre-flight (read-only — executes nothing)
+## 2. Environment gates (checkpoint-free — run BEFORE any training)
 
 ```bash
-uv run python -m phaseforge.runner --dry-run
+.venv-rollout/Scripts/phaseforge-gates data=lift eval=rollout
+.venv-rollout/Scripts/phaseforge-gates data=can eval=rollout
+.venv-rollout/Scripts/phaseforge-gates data=square eval=rollout
+.venv-toolhang/Scripts/phaseforge-gates data=tool_hang eval=rollout
+.venv-rollout/Scripts/phaseforge-gates data=transport eval=rollout
 ```
 
-Expect `plan (315 steps, ...)`: all five tasks, methods, and 3 seeds, with
-training stages in dependency order, then each method's configured
-evaluation. Per-step lines:
-stage-1 and eval of a finished method print `WOULD RUN`; a stage-2 step whose
-provider Stage 1 does not exist yet prints `BLOCKED ... prerequisite missing`
-— expected on a fresh tree, and exactly what the sweep needs to build first.
+Every gate must pass (simulator parity, reset bank, action contract, native
+success predicate). A failed gate blocks the sweep (plan §11 gate 9).
 
 ---
 
-## 3. Run the full final sweep
+## 3. Pre-flight (read-only)
 
 ```bash
-uv run python -m phaseforge.runner --continue-on-error
+uv run python -m phaseforge.runner \
+  --manifest experiments/five_task.json \
+  --outputs outputs_final --dry-run
+```
+
+Expect exactly **315 steps** (hand-computed: 19/task/seed × 5 tasks + 10
+BC-RNN rows = 105/seed × 3 seeds). On a fresh namespace every step is
+`pending`; the dependency graph must contain no stale provider names.
+
+---
+
+## 4. Run the full final sweep
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/five_task.json \
+  --outputs outputs_final \
+  --continue-on-error
 ```
 
 Notes:
-- **No `--seeds`/`--methods` flags.** The manifest drives seeds `[42, 43, 44]`
-  and the complete five-task method matrix.
-- Tool Hang steps are automatically routed to `.venv-toolhang` and preflighted
-  for robosuite `1.5.0`; the other four tasks use the current environment.
-- `--continue-on-error` records a failed step in the registry and keeps going;
-  re-run the failed cell afterwards (section 5).
-- **Resumable**: a completed step is skipped on re-run (state registry +
-  `<run_dir>.completed` marker). Safe to interrupt and restart.
-- Output layout: `outputs/{model}/stage{N}/seed{S}/{ts}[_{tag}]_{runid}/`
-  (eval under `outputs/eval/{model}/seed{S}/`).
+- **`--outputs outputs_final` is mandatory** — the fresh final namespace.
+  Never point the final sweep at the historical `outputs/` tree; the runner
+  additionally fail-closes on wrong-contract artifacts (6-expert check) in
+  both the stage-2 provider and evaluation funnels.
+- Tool Hang subprocesses are routed to `.venv-toolhang` automatically
+  (robosuite 1.5.0); everything else uses the active environment, so run
+  the sweep with the rollout venv's Python or ensure `.venv-rollout` is
+  importable — simplest: `.venv-rollout/Scripts/python -m phaseforge.runner ...`.
+- `--continue-on-error` records a failed step and keeps going; re-run
+  failed cells afterwards (section 6).
+- **Resumable**: completed steps are skipped on re-run (state registry +
+  `<run_dir>.completed` markers). Safe to interrupt and restart.
+- Output layout: `outputs_final/{model}/stage{N}/seed{S}/{ts}[_{tag}]_{runid}/`
+  (eval under `outputs_final/eval/{model}/seed{S}/`).
 
 ---
 
-## 4. Verify completion
+## 5. Verify completion
 
 ```bash
-uv run python -m phaseforge.runner --dry-run
+uv run python -m phaseforge.runner \
+  --manifest experiments/five_task.json \
+  --outputs outputs_final --dry-run
 ```
 
-Expect every step line `done` (no `pending`, no `failed`). Confirm the
-ledgers exist:
+Expect every step `done` (no `pending`, no `failed`), and confirm:
 
 ```powershell
-Get-Item outputs\_results\results.jsonl, outputs\_results\training_summary.jsonl
+Get-Item outputs_final\_results\results.jsonl, outputs_final\_results\training_summary.jsonl
+```
+
+Reproduce the fairness/parameter table against the migrated canonical
+method before reporting (the committed `fairness_accounting.md` still shows
+the retired 8-expert row):
+
+```bash
+uv run python scripts/analysis/fairness_accounting.py --outputs outputs_final
 ```
 
 ---
 
-## 5. Re-run a failed cell (only if needed)
+## 6. Re-run a failed cell (only if needed)
 
 Fix the cause first, then re-run the specific cell with `--force`:
 
 ```bash
-# e.g. PhaseForge (method 1), seed 42, stage 2 only, ignoring recorded status:
-uv run python -m phaseforge.runner --methods 1 --seeds 42 --stage 2 --force
+uv run python -m phaseforge.runner --manifest experiments/five_task.json \
+  --outputs outputs_final --methods 1 --seeds 42 --stage 2 --force
 ```
 
-`--force` re-runs the selected steps regardless of registry status; omit it
-to respect the registry. For a partial selection that needs a provider's
-Stage 1, add `--with-dependencies`.
-
-> **Known fixed bug (2026-08-14):** stage-2 steps for `warmstart_moe` (5) and
-> `plain_encoder_phase_bootstrap` (7) crashed with an encoder input-dimension
-> mismatch because the subprocess auto-detected the newer `bc_robot_only`
-> checkpoint (state dim 23) instead of the untagged BC checkpoint (state dim
-> 19). The runner now passes the exact untagged provider checkpoint as
-> `train.stage1_ckpt_path`. To pick up the fix, `git pull` and re-run the
-> failed cells for all seeds:
->
-> ```bash
-> uv run python -m phaseforge.runner --methods 5 --seeds 42,43,44 --stage 2 --force
-> uv run python -m phaseforge.runner --methods 7 --seeds 42,43,44 --stage 2 --force
-> # then their evals (or let the full sweep re-run them):
-> uv run python -m phaseforge.runner --continue-on-error
-> ```
+`--force` re-runs selected steps regardless of registry status. For a
+partial selection that needs a provider's Stage 1, add
+`--with-dependencies`.
 
 ---
 
-## 6. Generate paper tables (idempotent — safe to re-run after any sweep)
-
-Training side:
+## 7. Generate paper tables (all against the final namespace ONLY)
 
 ```bash
-uv run python scripts/analysis/summarize_train.py --outputs outputs --baseline phaseforge
+uv run python scripts/analysis/summarize_train.py --outputs outputs_final --baseline phaseforge
+uv run python scripts/analysis/summarize_eval.py  --outputs outputs_final --baseline phaseforge
+.venv-rollout/Scripts/phaseforge-rollout-report outputs_final
 ```
 
-Writes under `outputs/_summaries/`:
-- `training_aggregates.csv` — per (model, stage) mean/std/n over seeds
-- `training_cost.csv` — wall time, epochs, optimizer steps, params
-  (wall time = `summary.json` `wall_seconds`, training-loop only, **not**
-  `timings.json`'s full-lifecycle value — see `training_summaries.py`)
-- `training_curves.csv` — per (model, stage, epoch) curve means (plot source)
-- `rollout_success.csv` / `rollout_comparisons.csv` — written ONLY when
-  `episodes.jsonl` exists; rollout evaluation is intentionally blocked, so
-  these will not appear for the current pilot.
-
-Evaluation side:
-
-```bash
-uv run python scripts/analysis/summarize_eval.py --outputs outputs --baseline phaseforge
-```
-
-Writes under `outputs/_summaries/`:
-- `aggregates.csv` — per (model, stage) mean/std/n per metric
-- `bootstrap_ci.csv` — percentile bootstrap 95% CIs
-- `paired_wilcoxon.csv` — two-sided Wilcoxon vs `phaseforge`, paired on
-  (stage, seed)
-- `metrics.json` — per (model, stage) per-metric means for the paper text
+Report contents per `state_only_rollout_implementation_plan.md` §5: per-task
+per-seed success with Wilson intervals, paired PhaseForge-minus-baseline
+differences on identical resets (McNemar + Newcombe), the declared
+multiplicity correction over the five primary comparisons, per-task
+parameter counts (bc_large match is per-task: +0.8%…+1.8% deployed),
+routing diagnostics, training cost, and provenance hashes. Three seeds are
+descriptive only.
 
 ---
 
-## 7. Reminder of what is NOT part of this plan
+## 8. What is NOT part of this plan
 
-- No manual per-method `phaseforge-train`/`phaseforge-eval` commands — the
-  runner emits those internally with exact seed/ckpt plumbing.
-- No `scripts/run_multi_seed_train.py` — removed (superseded by the runner).
-- Rollout evaluation is blocked by design (`eval.mode=rollout` rejected) until
-  the simulator adapter and paired test runner exist; offline metrics are the
-  diagnostic sanity check only.
+- No manual per-method `phaseforge-train`/`phaseforge-eval` — the runner
+  emits those internally with exact seed/ckpt plumbing and contract checks.
+- No ablation-suite runs — `experiments/lift_ablation.json` is executed
+  separately after the main matrix (ledger D8), into its own namespace.
+- No oracle/teacher-forced evaluation until D10 is resolved (the oracle
+  dispatch path requires the soft-mapping decision).
+- Pre-final results under `outputs/` are never merged into the final tables.

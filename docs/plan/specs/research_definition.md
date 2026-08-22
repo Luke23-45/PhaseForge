@@ -87,26 +87,36 @@ PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and
 
 ## 5. Primary Confirmatory Matrix (Wave 1)
 
+> **Canonical-method lineage (2026-08-22 migration):** the proposed method is
+> the promoted **R50 configuration** under the canonical `phaseforge`
+> identity — six experts, top-2 routing, centroid router initialization,
+> **50% partial expert warm-start** (Drop-Upcycling-style, seed-dependent),
+> soft mapping disabled. The H1–H4 mechanism controls are R50-matched: they
+> share the same partial-warm expert initialization, so each isolates exactly
+> its declared factor. Pre-final results produced by the retired 8-expert /
+> soft-mapping configuration are engineering context only and are excluded
+> from the final evidence table.
+
 | EXP | Cell Name | Encoder Source | Router Init | Expert Init | Causal Contrast / Purpose |
 |---|---|---|---|---|---|
-| EXP-101 | `phaseforge` | Phase-supervised | Phase Centroid | Warmstart (0.02) | **Proposed Method (Privileged Geometry Transfer)** |
+| EXP-101 | `phaseforge` | Phase-supervised | Phase Centroid | Partial Warm (50%) | **Proposed Method (Privileged Geometry Transfer; canonical R50)** |
 | EXP-102 | `bc` | Plain (BC) | — | — | Behavior floor |
-| EXP-103 | `bc_large` | Plain (BC-Large) | — | — | Capacity control (385,855 params, 1.86× bc) |
+| EXP-103 | `bc_large` | Plain (BC-Large) | — | — | Capacity control (per-task deployed match, +0.8%…+1.8%) |
 | EXP-104 | `bc_robot_only` | Plain (BC) | — | — | Negative control (no object state) |
 | EXP-105 | `scratch_moe` | Random | Random | Random | No-pretraining baseline |
-| EXP-106 | `warmstart_moe` | Plain (BC) | Random | Warmstart (0.02) | Warm-start MoE (BC encoder × random router) |
-| EXP-107 | `phase_pretrain_random_router` | Phase-supervised | Random | Warmstart (0.02) | H1: Router init holding representation & experts fixed |
-| EXP-108 | `plain_encoder_phase_bootstrap` | Plain (BC) | Phase Centroid | Warmstart (0.02) | H2: Phase supervision holding router & experts fixed |
-| EXP-109 | `pf_spherical_kmeans` | Phase-supervised | Spherical KMeans | Warmstart (0.02) | H3: Generic clustering control (vs Cluster-aware Upcycling) |
-| EXP-110 | `pf_kmeans` | Phase-supervised | Euclidean KMeans | Warmstart (0.02) | Euclidean KMeans router initialization control |
-| EXP-111 | `pf_phase_head` | Phase-supervised | Linear Phase Head | Warmstart (0.02) | H4: Prototype vs discriminative classifier direction init |
+| EXP-106 | `warmstart_moe` | Plain (BC) | Random | Warmstart (0.02) | Warm-start MoE (BC encoder × random router; behavioral baseline, deliberately standard warm-start) |
+| EXP-107 | `phase_pretrain_random_router` | Phase-supervised | Random | Partial Warm (50%) | H1: Router init holding representation & experts fixed |
+| EXP-108 | `plain_encoder_phase_bootstrap` | Plain (BC) | Phase Centroid | Partial Warm (50%) | H2: Phase supervision holding router & experts fixed |
+| EXP-109 | `pf_spherical_kmeans` | Phase-supervised | Spherical KMeans | Partial Warm (50%) | H3: Generic clustering control (vs Cluster-aware Upcycling) |
+| EXP-110 | `pf_kmeans` | Phase-supervised | Euclidean KMeans | Partial Warm (50%) | Euclidean KMeans router initialization control |
+| EXP-111 | `pf_phase_head` | Phase-supervised | Linear Phase Head | Partial Warm (50%) | H4: Prototype vs discriminative classifier direction init |
 | EXP-112 | `pf_random_random` | Phase-supervised | Random | Random | 4-Way Matrix Cell A: Expert-init control |
 | EXP-113 | `pf_centroid_random` | Phase-supervised | Phase Centroid | Random | 4-Way Matrix Cell B: Router-init control |
-| EXP-114 | `pf_spherical` | Phase-supervised | Spherical centroid avg | Warmstart (0.02) | Spherical vs Euclidean centroid averaging ablation |
-| EXP-115 | `pf_ft` | Phase-supervised | Phase Centroid | Warmstart (0.02) | PhaseForge-FT: encoder unfrozen (LR scale 0.1) |
-| EXP-116 | `teacher_forced` | Phase-supervised | GT (train) / PhaseHead (eval) | Warmstart (0.02) | Privileged routing diagnostic & gap decomposition |
+| EXP-114 | `pf_spherical` | Phase-supervised | Spherical centroid avg | Partial Warm (50%) | Spherical vs Euclidean centroid averaging ablation |
+| EXP-115 | `pf_ft` | Phase-supervised | Phase Centroid | Partial Warm (50%) | PhaseForge-FT: encoder unfrozen (LR scale 0.1) |
+| EXP-116 | `teacher_forced` | Phase-supervised | GT (train) / PhaseHead (eval) | Warmstart (0.02) | Privileged routing diagnostic & gap decomposition (locked E8 decision; not R50-matched by design) |
 
-> **Oracle MoE** (EXP-117) is not listed as a training cell. It is an eval-time routing intervention on PhaseForge's trained expert set (see §3 H5), implemented as the `oracle_moe` baseline: phase-directed dispatch via `eval_mode="oracle"` in `phaseforge/models/phase_moe.py` (routes by $M^T \operatorname{softmax}(\text{phase\_head}(z))$ on the trained experts).
+> **Oracle MoE** (EXP-117) is not listed as a training cell. It is an eval-time routing intervention on PhaseForge's trained expert set (see §3 H5), implemented as the `oracle_moe` baseline: phase-directed dispatch via `eval_mode="oracle"` in `phaseforge/models/phase_moe.py` (routes by $M^T \operatorname{softmax}(\text{phase\_head}(z))$ on the trained experts). *Open item D10: on the canonical centroid-initialized config the soft-mapping buffer is empty, so the oracle dispatch path requires a decision (identity mapping for E==P, direct phase-mod-E dispatch, or dropping the H5 diagnostic) before any oracle evaluation is run.*
 
 ## 6. Wave 2 — Sensitivity & Scaling Ablations
 
@@ -114,13 +124,36 @@ PhaseForge rollout success rate exceeds the BC baseline (dense single-stage) and
 |---|---|---|---|
 | EXP-201 | `pf_k3` | `models.router.num_experts=3, top_k=2` | K sweep: super-prototype reduction (E=3 < P=6) |
 | EXP-202 | `pf_k12` | `models.router.num_experts=12, top_k=2` | K sweep: intra-phase sub-prototype scaling (E=12 > P=6) |
-| EXP-203 | `pf_jitter_00` | `models.expert_init.jitter_std=0.0` | Jitter sweep: zero symmetry-breaking noise |
-| EXP-204 | `pf_jitter_10` | `models.expert_init.jitter_std=0.1` | Jitter sweep: high symmetry-breaking noise |
 | EXP-205 | `pf_corrupt_25` | `data.phase_corruption_rate=0.25` | Phase noise sensitivity: 25% label corruption |
 | EXP-206 | `pf_corrupt_50` | `data.phase_corruption_rate=0.50` | Phase noise sensitivity: 50% label corruption |
 | EXP-207 | `pf_shuffle_control` | `data.phase_corruption_rate=1.0, phase_shuffle_control=true` | Phase noise: 100% permutation shuffle control |
 
+> **Removed (2026-08-22):** EXP-203 `pf_jitter_00` / EXP-204 `pf_jitter_10` —
+> jitter is inert under the canonical `partial_warm` expert init (exact copy,
+> no jitter), and the Wave-4 drop-rate sweep subsumes both endpoints
+> (drop_rate 0.0 = exact copy; 1.0 = fully reinitialized).
+
 > **Corruption semantics (EXP-205..207):** corruption applies to the **bootstrap-label signal** — the phase labels of the Stage-2 training split used to compute the router prototypes (forced-different replacement: z' = (z + U(1..P-1)) mod P). These cells reuse the **clean** phaseforge Stage-1 encoder and Stage-1 supervision (no stage-1 rerun per level); they isolate the sensitivity of the routing prior to privileged-label noise at bootstrap time. Validation labels remain clean, so routing diagnostics stay interpretable. The 100% shuffle control is a bijective permutation (preserves marginal phase counts) rather than i.i.d. noise.
+
+## 6b. Waves 3–4 — Expert-Initialization Suite (Lift)
+
+All cells run on the canonical phase-supervised encoder and centroid router;
+only the expert initialization varies.
+
+| EXP | Cell Name | Expert Init | Purpose |
+|---|---|---|---|
+| EXP-211 | `pf_one_warm_plus_random` | one warm generalist + (n−1) random, warm_idx rotated by seed | Diagnostic: is one generalist expert sufficient? |
+| EXP-212 | `pf_full_warm` | Full standard warmstart (0.02) | The pre-final initialization preserved as an ablation of the canonical partial warm-start |
+| EXP-213 | `pf_drop00` | Partial warm, drop_rate 0.0 (exact copy) | Drop-rate sweep lower endpoint |
+| EXP-214 | `pf_drop25` | Partial warm, drop_rate 0.25 | Drop-rate sweep |
+| EXP-215 | `pf_drop75` | Partial warm, drop_rate 0.75 | Drop-rate sweep |
+| EXP-216 | `pf_drop100` | Partial warm, drop_rate 1.0 (fully reinitialized) | Drop-rate sweep upper endpoint |
+
+> The 50% point of the sweep is the canonical proposed method itself
+> (EXP-101). **Removed as redundant after the canonical migration:**
+> `warmstart_r50` and `phaseforge_e6` (both recreated the canonical method
+> via now-obsolete overrides) and `pf_random_warm` (equals
+> `phase_pretrain_random_router` at partial-warm expert init).
 
 ---
 

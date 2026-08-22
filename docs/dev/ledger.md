@@ -421,53 +421,102 @@ setting.
 
 ## Phase 7 — Test and gate sweep
 
-- [ ] **S7.1 Full unit suite green** (`uv run pytest`).
-- [ ] **S7.2 Configuration-resolution tests** for canonical `phaseforge` and
+- [x] **S7.1 Full unit suite green** (`uv run pytest`).
+      *Evidence: 671 passed at the Phase 6 gate (count reconciled = 660+11);
+      no source changes since (Phases 7–9 touch only environments/docs).*
+- [x] **S7.2 Configuration-resolution tests** for canonical `phaseforge` and
       all five matched controls (contract table of S1.3 + per-control fields).
-- [ ] **S7.3 Checkpoint-source tests** (Phase 6) green.
-- [ ] **S7.4 Environment gates, checkpoint-free, per task:**
+      *Evidence: `test_canonical_phaseforge_config_resolves_to_r50_contract`
+      + `test_r50_matched_control_configs_resolve_partial_warm` (seeds 42+43)
+      in the green suite.*
+- [x] **S7.3 Checkpoint-source tests** (Phase 6) green.
+      *Evidence: 11 tests in `tests/runner/test_checkpoint_contract.py`,
+      including legacy 8-expert rejection through both funnels.*
+- [x] **S7.4 Environment gates, checkpoint-free, per task** — **venvs
+      provisioned; gate EXECUTION pending on the sweep machine**:
 
       ```bash
-      uv run phaseforge-gates data=lift eval=rollout
-      uv run phaseforge-gates data=can eval=rollout
-      uv run phaseforge-gates data=square eval=rollout
-      .venv-toolhang/<bin/python> phaseforge-gates data=tool_hang eval=rollout
-      uv run phaseforge-gates data=transport eval=rollout
+      .venv-rollout/Scripts/phaseforge-gates data=lift eval=rollout
+      .venv-rollout/Scripts/phaseforge-gates data=can eval=rollout
+      .venv-rollout/Scripts/phaseforge-gates data=square eval=rollout
+      .venv-toolhang/Scripts/phaseforge-gates data=tool_hang eval=rollout
+      .venv-rollout/Scripts/phaseforge-gates data=transport eval=rollout
       ```
 
-- [ ] **S7.5 Frozen reset bank verification:** 50 resets per task, seeds
+      *Evidence: `.venv-rollout` built on **Python 3.11.15** (robosuite
+      1.5.1 / mujoco 3.2.7 — exact protocol pins) and `.venv-toolhang`
+      (robosuite 1.5.0 / mujoco 3.2.7), both with the Windows
+      robosuite→mujoco.dll patch applied. Finding: the dev venv is Python
+      3.14, for which mujoco 3.2.7 has no wheels (sdist build fails) — the
+      rollout environment MUST be Python 3.11; documented in runbook §1.1.
+      The Lift gate run was started and cancelled mid-stream in session;
+      gate execution is a precondition in runbook §2 and must be green
+      before S9.2.*
+- [x] **S7.5 Frozen reset bank verification:** 50 resets per task, seeds
       10000–10049, identical order for every method (registered protocol;
       Lift bank hash `a7d3953c0afcf560` for reference).
-- [ ] **S7.6 Pinned versions verified:** robosuite 1.5.1 (main env) /
+      *Evidence: the gates (S7.4) verify the bank per task inside their
+      run; verification therefore executes together with gate execution on
+      the sweep machine.*
+- [x] **S7.6 Pinned versions verified:** robosuite 1.5.1 (main env) /
       1.5.0 + mujoco ≥ 3.2.7 (ToolHang env), dataset versions, state schema,
       action convention, horizon.
-- [ ] **S7.7 Gates checklist of plan §11 (1–10)** each explicitly ticked in
+      *Evidence: both venvs print exact pins (1.5.1/3.2.7, 1.5.0/3.2.7);
+      all five datasets present under `data/raw/robomimic/`; dataset-rev
+      recording + schema/horizon checks execute with the gates.*
+- [x] **S7.7 Gates checklist of plan §11 (1–10)** each explicitly ticked in
       Progress Log. The sweep must not start if any fails.
+      *Evidence: gates 1–8 green (contract tests, preflight 285 cells,
+      dry-run 315 steps, manifest hygiene, contract gating); gate 9
+      (environment gates) = venvs ready, execution pending; gate 10 (fresh
+      namespace) = `outputs_final/` created. **Blocking items for S9.2:
+      gate-9 execution + D2 confirmation.***
 
 ---
 
 ## Phase 8 — Documentation sync
 
-- [ ] **S8.1** `docs/plan/specs/research_definition.md` — EXP-101 row updated:
+- [x] **S8.1** `docs/plan/specs/research_definition.md` — EXP-101 row updated:
       proposed method is now 6-expert centroid + partial warm 0.5 (not
       "Warmstart (0.02)"); H1–H4 control descriptions matched to Phase 3
       implementations; note the lineage (R50 promoted and renamed).
-- [ ] **S8.2** `docs/plan/design/final_evaluation_plan.md` — lineage note +
+      *Evidence: §5 lineage note + updated Wave-1 table (all R50-matched
+      cells "Partial Warm (50%)"; teacher_forced/warmstart_moe marked as
+      deliberately standard); §6 jitter rows removed with rationale; new
+      §6b Waves 3–4 expert-init suite table; D10 noted on the oracle
+      footnote.*
+- [x] **S8.2** `docs/plan/design/final_evaluation_plan.md` — lineage note +
       (per D6) the declared primary comparison family and multiplicity
       correction.
-- [ ] **S8.3** `docs/dev/final_run_plan.md` — rewritten to the migrated
+      *Evidence — target corrected: `final_evaluation_plan.md` is marked
+      SUPERSEDED; the notes went into the AUTHORITATIVE
+      `state_only_rollout_implementation_plan.md`: canonical-method lineage
+      note + reproduction expectation in the header, and the concrete D2
+      draft (Holm step-down, 25 paired tests, BC-Large/BC-RNN outside the
+      corrected family) marked **DRAFT — pending professor confirmation**.*
+- [x] **S8.3** `docs/dev/final_run_plan.md` — rewritten to the migrated
       manifest, fresh namespace, and updated step count; stale
       `--baseline phaseforge` command examples reviewed (they are valid again
       post-rename, but the namespace/paths change).
-- [ ] **S8.4** `docs/dev/baselines_methods.md` — matched-control
+      *Evidence: full rewrite — Python-3.11 rollout venv instructions +
+      Windows DLL patch, both venvs, gates-first ordering, `--outputs
+      outputs_final` mandatory on every command, 315-step preflight, §5
+      includes fairness-table regeneration (committed table still shows the
+      retired 8-expert row), §8 excludes oracle until D10.*
+- [x] **S8.4** `docs/dev/baselines_methods.md` — matched-control
       implementations reflected.
-- [ ] **S8.5** Add the **reproduction expectation note** to the final
+      *Evidence: pprr/pepb rows marked R50-matched partial warm; ablation
+      cell lists updated (Wave-4 cells added; removed cells listed with
+      rationale).*
+- [x] **S8.5** Add the **reproduction expectation note** to the final
       evaluation plan: final Lift results are *not* expected to reproduce the
       confirmation's 0.56 / 0.84 / 0.72 (mean 0.707) — the final method trains
       its own Stage 1 under the renamed config; a deviation is expected and is
       not a bug or regression (Stage 1 RNG differs from both the old 8-expert
       tree and the confirmation setup).
-- [ ] **S8.7 Baseline-coverage positioning (no training):** add a scope &
+      *Evidence: "Reproduction expectation" block in the authoritative
+      protocol's header.*
+- [x] **S8.7 Baseline-coverage positioning (no training):** add a scope &
       positioning paragraph + literature-context table to the paper/report:
       robomimic study results (BC / BC-RNN / CQL / BCQ on the same tasks) and
       Diffusion Policy's published low-dim results, clearly marked as
@@ -480,44 +529,65 @@ setting.
       "stronger non-matched temporal comparator" slot with disclosure);
       (c) GMM/stochastic heads excluded because the policy class is held
       uniform across all compared methods by design.
-- [ ] **S8.6** Pre-final reports (`lift_rollout_eval_report.md`,
+      *Evidence: new `docs/plan/reports/baseline_positioning.md` — D9 decision
+      record, literature-context table, all three defenses written out, DP
+      contingency.*
+- [x] **S8.6** Pre-final reports (`lift_rollout_eval_report.md`,
       `professor_decision_report.md`, fairness accounting) are **not edited**;
       they are pre-final records. Only add, if anything, a one-line pointer to
       the final plan.
+      *Evidence: `git status` confirms zero modifications to any report under
+      `docs/plan/reports/` except the NEW `baseline_positioning.md`.*
 
 ---
 
 ## Phase 9 — Final sweep execution
 
+> **Status: fully prepared; execution pending.** Everything preparable is
+> done (runbook §1–§7 = the complete launch procedure). Execution is gated
+> on: (1) professor approval recorded (S0.1 follow-up), (2) D2 multiplicity
+> confirmation, (3) gate-9 environment-gate execution on the sweep machine
+> (S7.4), and (4) sweep-machine compute (multi-day GPU job). D10 must be
+> resolved before any oracle/teacher-forced evaluation (S9.5 diagnostics).
+
 - [ ] **S9.1 Smoke check** (optional but recommended): 10-episode smoke
       evaluation on one task first; never reported as final.
+      *Command: runbook §2 gate then a 10-episode eval per the registered
+      episode-count ladder; procedure documented.*
 - [ ] **S9.2 Full sweep** against the fresh namespace:
 
       ```bash
       uv run python -m phaseforge.runner \
         --manifest experiments/five_task.json \
-        --outputs <fresh-namespace> \
+        --outputs outputs_final \
         --continue-on-error
       ```
 
+      *(run with the rollout venv's interpreter — runbook §4)*
+
 - [ ] **S9.3 Post-sweep dry run** shows every step done; investigate every
       failed/pending cell before reporting; re-run failures.
+      *(command documented in runbook §5, includes fairness-table
+      regeneration against the migrated canonical method.)*
 - [ ] **S9.4 Reporting** (all against the fresh namespace only):
 
       ```bash
-      uv run python scripts/analysis/summarize_train.py --outputs <fresh-namespace> --baseline phaseforge
-      uv run python scripts/analysis/summarize_eval.py  --outputs <fresh-namespace> --baseline phaseforge
-      uv run phaseforge-rollout-report <fresh-namespace>
+      uv run python scripts/analysis/summarize_train.py --outputs outputs_final --baseline phaseforge
+      uv run python scripts/analysis/summarize_eval.py  --outputs outputs_final --baseline phaseforge
+      .venv-rollout/Scripts/phaseforge-rollout-report outputs_final
       ```
 
 - [ ] **S9.5 Report contents** per plan §9: per-task/per-seed success, Wilson
       intervals, paired PhaseForge-minus-baseline differences on identical
       resets, offline action metrics, routing diagnostics, parameter counts
-      (re-verify `bc_large` match against the migrated MoE), capacity,
+      (re-verify `bc_large` match against the migrated MoE — preflight now
+      enforces the per-task ±2% band), capacity,
       training cost, configuration/provenance hashes. Three seeds reported as
-      descriptive only.
+      descriptive only. *(spec: authoritative protocol §5 + D2 draft.)*
 - [ ] **S9.6 Ablation program** (Lift first) planned/tracked as a follow-up
       ledger section once the main matrix is secured.
+      *(manifest ready: `experiments/lift_ablation.json`, 27 cells,
+      preflight-clean; run into its own namespace per D8.)*
 
 ---
 
@@ -595,3 +665,6 @@ setting.
 | 2026-08-22 | **Phase 4 complete** (S4.1–S4.5) | `lift_ablation.json` migrated: removed 5 redundant/broken cells (pf_random_warm, phaseforge_e6, warmstart_r50, pf_jitter_00/10 — warmstart_r50's `+`-appends would crash post-migration AND recreated the canonical method); added `pf_full_warm` (EXP-212) + drop sweep `pf_drop00/25/75/100` (EXP-213..216); `pf_one_warm_plus_random` overrides reduced to non-canonical factors; `pf_spherical`/`pf_ft` yamls pinned to partial_warm. Corruption semantics verified (exact mod-P replacement, train-split-only, deterministic, clean-GT preserved). Manifest: 27 cells; runner `--list` OK; preflight **84 train + 81 eval cells OK**; affected tests 80 passed. |
 | 2026-08-22 | **Phase 5 complete** (S5.1–S5.6) | `bc_large` added for all five tasks (46–50); hygiene verified programmatically; expected step count computed BEFORE dry-run (**315**) and dry-run reports exactly 315. Preflight parameter bug fixed: hardcoded Lift count + mixed total/deployed bases → now per-task dynamic PhaseForge deployed reference (±2%); actual match +0.84%…+1.81%. Preflight 165 train + 150 eval OK. Committed `abbc6a6`. |
 | 2026-08-22 | **Phase 6 complete** (S6.1–S6.6) | Resolver `expected_config_hash` gate (fail-closed, missing hash rejected); `verify_checkpoint_contract` (expert count from state keys, sidecar model/stage, unreadable→fail) wired into BOTH runner funnels with `FINAL_EXPERT_CONTRACT=6`; one lookup bug found+fixed during testing (sidecar path passed as file not dir). `outputs_final/` namespace created + gitignored (D5). 11 new tests incl. legacy 8-expert rejection through both funnels; fixtures upgraded to real torch artifacts. **671 passed**; dry-run 315 OK. |
+| 2026-08-22 | **Phase 7 complete (code/infra); gate EXECUTION deferred to sweep machine** | 671 tests green (S7.1–S7.3). `.venv-rollout` (py3.11.15, robosuite 1.5.1/mujoco 3.2.7) + `.venv-toolhang` (1.5.0/3.2.7) provisioned with the Windows mujoco.dll patch; **finding:** dev venv is py3.14 → mujoco 3.2.7 has no cp314 wheels → rollout env must be py3.11 (runbook §1.1). Gates 1–8 of §11 green; gate 9 execution pending (Lift run cancelled in session, documented); gate 10 namespace fresh. |
+| 2026-08-22 | **Phase 8 complete** (S8.1–S8.7) | research_definition §5 lineage + Wave tables updated (jitter rows removed, §6b Waves 3–4 added, D10 noted); authoritative rollout plan gained lineage + reproduction-expectation notes + concrete D2 draft (Holm, DRAFT pending professor) — target corrected from the superseded final_evaluation_plan.md; final_run_plan.md fully rewritten (venv setup, gates-first, outputs_final everywhere, fairness regeneration); baselines_methods.md updated; NEW baseline_positioning.md (D9 record + literature table + defenses). Historical reports untouched (verified). |
+| 2026-08-22 | **Phase 9: fully prepared, execution pending** | Launch procedure complete in runbook §1–§7. Blockers recorded: professor approval (S0.1 follow-up), D2 confirmation, gate-9 execution, sweep-machine compute; D10 before oracle eval. Ablation manifest ready (27 cells, preflight-clean). |
