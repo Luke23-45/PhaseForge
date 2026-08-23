@@ -887,6 +887,20 @@ slow — is it headless, is everything optimized correctly?" Full record:
       file:line citations, verification plan); commands and raw numbers in
       S8d.2.*
 
+- [x] **S8d.9 Optimization rollback applied (2026-08-23).** The recorded
+      baseline comparison showed a rollout-score drop after the soft-reset
+      protocol revision, while no verified wall-time improvement was available
+      for the final experiment. The active adapter therefore restores the
+      pre-revision dataset-compatible path; the protocol-revision bank
+      identity, forced soft reset, deterministic construction wrapper, hidden
+      state canonicalization, and evaluation thread pinning were removed. The
+      T5 flat training loader was also removed because its permutation stream
+      differed from `RandomSampler` without a verified time gain; the legacy
+      `DataLoader` path is active again. Historical review documents are
+      explicitly marked historical, and the run plan points to the verified
+      legacy bank IDs. Verification after rollback: **723 tests passed** and
+      Ruff/diff checks passed.
+
 ---
 
 ## Phase 9 — Final sweep execution
@@ -958,7 +972,7 @@ slow — is it headless, is everything optimized correctly?" Full record:
 | D9 | Add external modern baseline (low-dim Diffusion Policy / BC-Transformer / GMM variants)? — **Audited 2026-08-22: default NO.** Matrix already contains the benchmark study's strongest IL baseline (BC-RNN) + capacity + architecture controls + matched mechanism controls; exclusions citable (offline RL loses on PH human demos per robomimic study; DP breaks the single-state contract). Mitigation without training: literature-context table + positioning paragraph (S8.x). Revisit only if professor/reviewers demand; then DP-lowdim as non-contract-matched reference. | S8, S9 | No new trained baselines |
 | D10 | **Found during Phase 1 (2026-08-22):** `eval_mode='oracle'` (H5) and teacher routing call `require_soft_mapping()`, which raises when the P×E soft-mapping buffer is empty — and only the `soft_mapping` router-init branch populates it. On the canonical centroid-initialized config, **oracle evaluation will fail**. Options: (a) populate M in the centroid path (identity mapping when E==P, matching research_definition H5's "e = phase mod E" description), (b) re-route oracle dispatch off the phase head directly, (c) drop the H5 oracle diagnostic for the final paper. Must be resolved before Phase 3 ends / any oracle eval. | Phase 3, S9 | Resolve with professor; (a) is the least invasive |
 | D11 | **`lar_moe_state_only` implementation — RESOLVED 2026-08-22: DEFERRED, do not implement for this paper.** Supervisory decision after full-paper review (`docs/dev/lar_moe_state_only_implementation_plan.md`, Rev. 2): (i) at n=3 seeds the testbed cannot statistically resolve another comparator in the observed band (PhaseForge std 0.122, pf_centroid_random std 0.231 pre-migration; D2 variance question still open); (ii) the comparison is low-information regardless of direction (an adapted method, not a reproduction — a win uninterpretable, a loss dismissible); (iii) no registered claim requires it (H3 already contrasts privileged vs. generic unsupervised structure via `pf_spherical_kmeans`); (iv) cost is high (new data layer + model + two trainers + four ±F/±R ablations). Revisit ONLY if all three hold post-five-task: professor approval + consistent task-repeatable PhaseForge margin over BC/Warmstart + real compute headroom; then Lift-only pilot, main method only. Escalated same day at project owner direction: **HARD-DELETED** — the plan document was removed from the active tree (verified: zero code/config/manifest references ever existed). The full Rev. 2 design remains recoverable from git history (commit `1ab35de`) if all three revisit conditions are ever met. Refines D9: the sanctioned exception is withdrawn. | — | Hard-deleted 2026-08-22; recover from `1ab35de` |
-| D12 | **Reset-path protocol revision (Phase 8c) — implemented, pending supervisor ratification before sweep numbers enter the paper.** The rollout protocol now uses the canonicalized soft reset: `hard_reset=False` + deterministic construction seeding + hidden-state canonicalization (warmstart/OSC caches/`initial_joint`/observables). Grounds: the stock hard-reset path was **episode-order-dependent** (same case twice diverged 9.6e-2; 3.8e-1 with interleaving — cross-method condition variance), while the adopted path is **bitwise-deterministic per case** (gate passed on all five tasks) and ~230× cheaper per reset. Disclosure duties: single reset path for all sweep cells (internally valid); pre-revision rollout numbers are NOT cross-version comparable; eval inference pinned to 1 torch thread; cross-machine bitwise equality is not claimed. | S9.2 reporting (sweep may run before ratification; numbers must not enter the paper unratified) | Ratify before reporting; full record in `docs/dev/rollout_performance_review.md` §7 |
+| D12 | **Reset-path protocol revision (Phase 8c) — reverted for the active final protocol on 2026-08-23.** The canonicalized soft-reset path, deterministic construction wrapper, protocol-revision bank identity, and eval thread pinning were removed after the recorded comparison showed a score regression and no verified final-experiment wall-time gain. The active run plan uses the pre-revision dataset-compatible adapter and verified legacy bank IDs. The soft-reset design remains historical and must not be mixed with final results. | S9.2 reporting and professor review of the active protocol | Current implementation and run plan are aligned; do not report mixed-protocol numbers |
 ---
 
 ## Invariants — never do these

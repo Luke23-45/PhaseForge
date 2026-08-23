@@ -1,7 +1,17 @@
-# Rollout Performance Review — Measured Findings and Optimization Plan
+# Rollout Performance Review — Historical Findings and Rejected Optimization
 
-**Status:** patches implemented and gated; corrections applied 2026-08-22 (lite_physics
-fact, residual attribution, parallel-cells reclassification, gate redefinition)
+> **Current implementation status (2026-08-23):** The canonicalized soft-reset
+> path described below was reverted. The evaluation adapter again follows the
+> dataset-compatible legacy reset path (`hard_reset` is not overridden,
+> construction uses the normal robosuite RNG path, and state restore performs
+> `sim.forward()` only). The soft-reset bank revision is no longer part of the
+> active protocol. The measurements and recommendations below are retained as
+> historical review material and must not be used to describe the active final
+> experiment.
+
+**Historical status:** patches were implemented and gated on 2026-08-22;
+corrections covered the lite_physics fact, residual attribution,
+parallel-cells reclassification, and gate redefinition.
 **Date:** 2026-08-22
 **Scope:** state-only rollout evaluation path (`phaseforge/evaluations/`), pinned rollout stack (robosuite 1.5.1 / mujoco 3.2.7 / torch 2.13+cpu, py3.11), motivated by the five-task cloud sweep.
 **Method:** every claim below was measured on the actual installed stack or verified in the installed robosuite/mujoco source; none are assumed. Harnesses: [`scripts/dev/bench_rollout_hotpath.py`](../../../scripts/dev/bench_rollout_hotpath.py), [`scripts/dev/ab_reset_equivalence.py`](../../../scripts/dev/ab_reset_equivalence.py) — both now run on the **dataset-pinned** environment (composed from the real data config), not robosuite constructor defaults.

@@ -53,7 +53,6 @@ from torch.utils.data import DataLoader
 
 from phaseforge.data.common.collator import PhaseAwareCollator
 from phaseforge.data.common.dataset import StateOnlyDataset
-from phaseforge.data.common.flat_iterator import InMemoryBatchLoader
 from phaseforge.data.common.normalizer import RunningStatNormalizer
 from phaseforge.data.ingestion.cache_manager import (
     CacheManager,
@@ -212,16 +211,12 @@ class DataPipelineStateMachine:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self) -> dict[str, DataLoader | InMemoryBatchLoader | None]:
+    def run(self) -> dict[str, DataLoader]:
         """Execute the FSM to the READY terminal state.
 
         Returns:
-            Dict of ``{"train": ..., "val": ...}`` batch sources. Single-step
-            configs (``sequence_length=1, stride=1``) receive an
-            :class:`~phaseforge.data.common.flat_iterator.InMemoryBatchLoader`
-            (bit-identical batches to the collator path, no per-item Python);
-            sequence (RNN) configs receive a ``DataLoader``. Splits that have
-            0 samples return None in their slot.
+            Dict of ``{"train": DataLoader, "val": DataLoader}``.
+            Splits that have 0 samples return None in their slot.
         """
         logger.info(f"Pipeline starting. Config hash: {self.config_hash}")
 
@@ -886,9 +881,9 @@ class DataPipelineStateMachine:
         self._train_generator = generator
         return generator
 
-    def _build_dataloaders(self) -> dict[str, DataLoader | InMemoryBatchLoader | None]:
+    def _build_dataloaders(self) -> dict[str, DataLoader | None]:
         data_cfg = self.data_cfg
-        result: dict[str, DataLoader | InMemoryBatchLoader | None] = {}
+        result: dict[str, DataLoader | None] = {}
 
         for split_name, indices in self._splits.items():
             if not indices:
@@ -922,43 +917,6 @@ class DataPipelineStateMachine:
                 phase_shuffle_control=phase_shuffle,
             )
 
-            # Loader dispatch (training review T5): single-step configs use
-            # the flat in-memory batch iterator — one randperm slice + one
-            # gather per field per batch, no per-item Python, no worker IPC,
-            # no worker spawn. Content, dtypes, batch keys and drop_last
-            # parity are identical to the collator path; the train shuffle
-            # draws from the SAME project-seed generator (a different, but
-            # seed-reproducible, permutation stream than RandomSampler's —
-            # applied identically to every cell). Sequence (RNN) configs
-            # keep the padding-collator DataLoader below.
-            # Pinned memory gating shared by BOTH loader paths (external
-            # review P1): the fast path must honor the same pin_memory
-            # contract as the legacy DataLoader — non_blocking host-to-CUDA
-            # copies only overlap from PINNED host memory, and gathered flat
-            # batches are freshly allocated pageable tensors.
-            project_cfg = self.cfg.get("project")
-            requested_device = str(
-                project_cfg.get("device", "cuda") if project_cfg is not None else "cuda"
-            )
-            pin_memory = (
-                bool(data_cfg.get("pin_memory", False))
-                and requested_device.startswith("cuda")
-                and torch.cuda.is_available()
-            )
-
-            if int(data_cfg.sequence_length) == 1 and int(data_cfg.stride) == 1:
-                loader: DataLoader | InMemoryBatchLoader = InMemoryBatchLoader.from_dataset(
-                    dataset,
-                    batch_size=int(data_cfg.batch_size),
-                    shuffle=is_train,
-                    drop_last=is_train,
-                    generator=self._train_sampler_generator() if is_train else None,
-                    pin_memory=pin_memory,
-                )
-                result[split_name] = loader
-                logger.info(f"  {split_name}: {len(dataset)} samples, {len(loader)} batches")
-                continue
-
             # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns.
             # The dataset is fully materialized in memory, so zero remains a
             # valid choice for small CPU-only pilots where worker IPC costs
@@ -968,9 +926,18 @@ class DataPipelineStateMachine:
                 num_workers = min(num_workers, os.cpu_count())
 
             # These options are intentionally derived from the effective
-            # runtime. pin_memory is computed once above and shared with the
-            # fast-path branch; prefetch_factor and persistent_workers are
-            # only legal when workers are enabled.
+            # runtime. Pinned memory is useful for CUDA host-to-device copies,
+            # but adds overhead on CPU-only runs. prefetch_factor and
+            # persistent_workers are only legal when workers are enabled.
+            project_cfg = self.cfg.get("project")
+            requested_device = str(
+                project_cfg.get("device", "cuda") if project_cfg is not None else "cuda"
+            )
+            pin_memory = (
+                bool(data_cfg.get("pin_memory", False))
+                and requested_device.startswith("cuda")
+                and torch.cuda.is_available()
+            )
             loader_options: dict[str, Any] = {
                 "pin_memory": pin_memory,
             }

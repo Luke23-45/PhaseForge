@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import random
 
 import numpy as np
@@ -11,7 +9,6 @@ import pytest
 
 from phaseforge.evaluations.envs.errors import EnvParityError
 from phaseforge.evaluations.rollout.reset_bank import (
-    RESET_BANK_PROTOCOL_REVISION,
     ResetBank,
     ResetCase,
     compute_bank_id,
@@ -153,21 +150,9 @@ class TestRoundtrip:
         loaded = ResetBank.load(tmp_path / "bank")
         assert loaded.bank_id == bank.bank_id
         assert loaded.num_cases == 3
-        assert loaded.protocol_revision == RESET_BANK_PROTOCOL_REVISION
         for original, restored in zip(bank.cases, loaded.cases):
             assert np.array_equal(original.states, restored.states)
             assert original.xml == restored.xml
-
-    def test_legacy_protocol_manifest_is_rejected(self, tmp_path) -> None:
-        bank_dir = tmp_path / "bank"
-        _tiny_bank(tmp_path)
-        manifest_path = bank_dir / "manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["protocol_revision"] = "legacy-reset-protocol"
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-
-        with pytest.raises(EnvParityError, match="protocol revision"):
-            ResetBank.load(bank_dir)
 
     def test_missing_manifest(self, tmp_path) -> None:
         with pytest.raises(EnvParityError, match="manifest"):
@@ -208,25 +193,6 @@ class TestIdentity:
         c = compute_bank_id(meta, task="Lift", seed=2027, num_cases=50, robosuite_version="1.5.1")
         assert a == b
         assert a != c
-
-    def test_protocol_revision_participates_in_bank_id(self) -> None:
-        meta = make_meta()
-        current = compute_bank_id(
-            meta, task="Lift", seed=2026, num_cases=50, robosuite_version="1.5.1"
-        )
-        legacy_payload = json.dumps(
-            {
-                "task": "Lift",
-                "seed": 2026,
-                "num_cases": 50,
-                "env_canonical": meta.canonical_json(),
-                "robosuite_version": "1.5.1",
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        legacy = hashlib.sha256(legacy_payload.encode("utf-8")).hexdigest()[:16]
-        assert current != legacy
 
     def test_case_index_range(self, tmp_path) -> None:
         bank = _tiny_bank(tmp_path)

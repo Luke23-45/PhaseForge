@@ -32,11 +32,6 @@ from phaseforge.evaluations.envs.errors import EnvParityError, InfrastructureErr
 #: Default number of reset cases (§4.3: 50 test episodes).
 DEFAULT_NUM_CASES: int = 50
 
-#: Identity for the simulator-construction and state-restore protocol used by
-#: the current adapter. Bump this whenever those semantics change; a reset
-#: bank generated under a different protocol is not a valid evaluation input.
-RESET_BANK_PROTOCOL_REVISION: str = "soft-reset-canonical-v1"
-
 #: Two cases closer than this (L2 on qpos/qvel) are duplicate resets.
 MIN_CASE_DISTANCE: float = 1e-3
 
@@ -90,7 +85,6 @@ class ResetBank:
     generated_at: str
     cases: list[ResetCase]
     case_sha256: dict[int, str] = field(default_factory=dict)
-    protocol_revision: str = RESET_BANK_PROTOCOL_REVISION
 
     # ------------------------------------------------------------------
     # Serialization
@@ -130,7 +124,6 @@ class ResetBank:
             "num_cases": self.num_cases,
             "env_canonical": self.env_canonical,
             "robosuite_version": self.robosuite_version,
-            "protocol_revision": self.protocol_revision,
             "git_commit": self.git_commit,
             "generated_at": self.generated_at,
             "cases": manifest_cases,
@@ -199,15 +192,6 @@ class ResetBank:
                 )
             )
 
-        protocol_revision = str(manifest.get("protocol_revision", ""))
-        if protocol_revision != RESET_BANK_PROTOCOL_REVISION:
-            raise EnvParityError(
-                f"Reset bank {directory} uses protocol revision "
-                f"{protocol_revision!r}; expected "
-                f"{RESET_BANK_PROTOCOL_REVISION!r}. Regenerate the bank "
-                "under the current rollout protocol."
-            )
-
         bank = cls(
             task=str(manifest["task"]),
             bank_id=str(manifest["bank_id"]),
@@ -219,7 +203,6 @@ class ResetBank:
             generated_at=str(manifest["generated_at"]),
             cases=sorted(cases, key=lambda c: c.index),
             case_sha256=case_sha256,
-            protocol_revision=protocol_revision,
         )
         if bank.num_cases != len(bank.cases):
             raise EnvParityError(
@@ -255,7 +238,7 @@ def compute_bank_id(
     num_cases: int,
     robosuite_version: str,
 ) -> str:
-    """Deterministic identity for one reset-bank protocol and configuration."""
+    """Deterministic content-based bank identity (regeneration changes it)."""
     payload = json.dumps(
         {
             "task": task,
@@ -263,7 +246,6 @@ def compute_bank_id(
             "num_cases": num_cases,
             "env_canonical": meta.canonical_json(),
             "robosuite_version": robosuite_version,
-            "protocol_revision": RESET_BANK_PROTOCOL_REVISION,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -360,7 +342,6 @@ def generate_reset_bank(
         git_commit=git_commit,
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         cases=cases,
-        protocol_revision=RESET_BANK_PROTOCOL_REVISION,
     )
 
 
@@ -376,7 +357,6 @@ __all__ = [
     "ResetCase",
     "ResetBank",
     "DEFAULT_NUM_CASES",
-    "RESET_BANK_PROTOCOL_REVISION",
     "generate_reset_bank",
     "compute_bank_id",
     "bank_dir",

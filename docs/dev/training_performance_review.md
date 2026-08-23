@@ -1,4 +1,11 @@
-# Training hot-path performance review — IMPLEMENTED (T1–T7a)
+# Training hot-path performance review — Historical review (T5 reverted)
+
+> **Current implementation status (2026-08-23):** The T5 `InMemoryBatchLoader`
+> replacement was reverted because it changed the `RandomSampler` permutation
+> stream without producing a verified wall-time improvement. The active
+> training path uses the legacy `DataLoader`/collator path. The remaining
+> behavior-preserving training changes from this review remain in the code;
+> T5-specific measurements and claims below are historical only.
 
 Date: 2026-08-22 (rev 3: implementation record added; rev 2 was the research
 pass). Scope: the training path only (`phaseforge-train` stage 1 + stage 2,
@@ -13,7 +20,8 @@ implemented and gated; T7b (stacked metric adds) was evaluated and NOT taken
 measurable gain — the plan's "optional" framing); the `get_rng_state_all`
 per-save sync stays by documented decision (resume fidelity).
 
-**Status: implemented, nothing committed** (standing instruction). The
+**Historical status: implemented in commit `7baf0ce`, then partially reverted**.
+The
 verification gates in §8 passed: bit-identity for T1–T4, determinism for T5,
 full suite 738 green, preflight 165+150, dry-runs exactly 315 and 165.
 

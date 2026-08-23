@@ -55,3 +55,5 @@ outputs_ablation
 outputs_local_train
 outputs_rerun
 outputs_smoke
+current_run
+phaseforge1

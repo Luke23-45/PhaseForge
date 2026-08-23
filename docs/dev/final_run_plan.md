@@ -6,9 +6,9 @@ Manifest `experiments/five_task.json`, namespace `outputs_final/` only.
 **Preconditions:** professor approval recorded in the ledger; D2
 multiplicity correction confirmed (draft: Holm step-down over the five
 primary comparisons per task); D10 resolved before any oracle /
-teacher-forced *diagnostic* evaluation (blocks nothing else); D12
-reset-path revision (ledger Phase 8c) ratified before sweep numbers enter
-the paper — the sweep itself may run unratified.
+teacher-forced *diagnostic* evaluation (blocks nothing else). The D12
+canonicalized soft-reset revision was rejected for the final protocol; use
+the dataset-compatible legacy evaluation path and its verified banks below.
 
 ---
 
@@ -80,20 +80,16 @@ reuse.
 
 | Task | Current bank artifact | robosuite |
 |---|---|---|
-| Lift | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
-| Can | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
-| Square | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
-| ToolHang | Generate under `soft-reset-canonical-v1` before the gates | 1.5.0 |
-| Transport | Generate under `soft-reset-canonical-v1` before the gates | 1.5.1 |
+| Lift | `a7d3953c0afcf560` (load and verify) | 1.5.1 |
+| Can | `310d9cfd3fa5e843` (load and verify) | 1.5.1 |
+| Square | `e16288589f5f69c2` (load and verify) | 1.5.1 |
+| ToolHang | `db5b4c2a5e6519d0` (load and verify) | 1.5.0 |
+| Transport | `c6683cf0dbb23876` (load and verify) | 1.5.1 |
 
-The previously recorded IDs (`a7d3953c0afcf560`, `310d9cfd3fa5e843`,
-`e16288589f5f69c2`, `db5b4c2a5e6519d0`, and `c6683cf0dbb23876`) predate the
-current reset protocol and must not be used for the final experiment. The
-current bank identity includes the protocol revision
-`soft-reset-canonical-v1`; the first gate run generates the five current
-50-case artifacts with seed 2026, and their resulting IDs must be recorded
-here and in the ledger before the sweep begins. SHA-256 verification remains
-mandatory on every later load.
+These are the legacy dataset-compatible bank IDs used by the pre-revision
+evaluation results. They must be present, SHA-256 verified, and recorded in
+the run ledger before the sweep begins. Do not mix them with banks generated
+under the rejected `soft-reset-canonical-v1` protocol.
 
 ### 2.4 Sanity: manifest loads
 

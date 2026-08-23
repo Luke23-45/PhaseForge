@@ -39,7 +39,6 @@ from phaseforge.evaluations.envs.robosuite_adapter import (
     StateSpec,
 )
 from phaseforge.evaluations.rollout.reset_bank import (
-    RESET_BANK_PROTOCOL_REVISION,
     ResetBank,
     bank_dir,
     compute_bank_id,
@@ -699,11 +698,6 @@ def load_or_generate_bank(cfg: DictConfig, meta: PinnedEnvMetadata) -> ResetBank
             mismatches.append(
                 f"robosuite_version={bank.robosuite_version!r} (expected {versions['robosuite']!r})"
             )
-        if bank.protocol_revision != RESET_BANK_PROTOCOL_REVISION:
-            mismatches.append(
-                f"protocol_revision={bank.protocol_revision!r} "
-                f"(expected {RESET_BANK_PROTOCOL_REVISION!r})"
-            )
         if mismatches:
             raise EnvParityError(
                 f"Reset bank {directory} identity mismatch; refusing to use it: "
@@ -795,14 +789,6 @@ def run_rollout_evaluation(
     cases -> strict-metric episode rows -> per-run summary.
     """
     require_rollout_eval_schema(cfg)
-    # Batch-1 policy inference runs best single-threaded: the canonical R50
-    # MLP is too small to benefit from intra-op parallelism, and on many-core
-    # cloud boxes the default thread count oversubscribes tiny ops
-    # (performance review §4, P2). Eval processes are dedicated per run, so
-    # this process-global setting has no other consumers.
-    if torch.get_num_threads() != 1:
-        logger.info("torch.set_num_threads(1) for rollout inference")
-        torch.set_num_threads(1)
     from phaseforge.data.common.normalizer import FrozenNormalizer
     from phaseforge.data.ingestion.cache_manager import CacheManager, load_phase_thresholds
     from phaseforge.data.paths import processed_cache_root

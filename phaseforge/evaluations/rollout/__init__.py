@@ -2,7 +2,6 @@
 
 from phaseforge.evaluations.rollout.report import build_rollout_report
 from phaseforge.evaluations.rollout.reset_bank import (
-    RESET_BANK_PROTOCOL_REVISION,
     ResetBank,
     ResetCase,
     bank_dir,
@@ -20,7 +19,6 @@ from phaseforge.evaluations.rollout.runner import (
 __all__ = [
     "ResetBank",
     "ResetCase",
-    "RESET_BANK_PROTOCOL_REVISION",
     "RolloutEvaluator",
     "RolloutOutcome",
     "RolloutRunInvalid",
