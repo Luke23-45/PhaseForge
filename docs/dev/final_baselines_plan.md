@@ -131,7 +131,7 @@ These controls are required to support the causal interpretation of the proposed
 
 The first two controls are the decisive H1/H2 comparisons. The clustering and phase-head controls test whether the proposed prior is specifically phase-structured rather than an incidental consequence of any router initialization.
 
-The operational final manifest therefore contains nine rows per task: `phaseforge`, `bc`, `bc_robot_only`, `scratch_moe`, `warmstart_moe`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`, `teacher_forced`, and `bc_rnn`. The first six rows form the proposed-method and primary-comparison family; the last three are a negative control, a privileged diagnostic, and a temporal comparator, respectively.
+The operational final manifest therefore contains ten rows per task: `phaseforge`, `bc`, `bc_robot_only`, `scratch_moe`, `warmstart_moe`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`, `teacher_forced`, `bc_rnn`, and `bc_large`. (Amended 2026-08-23: the original nine-row summary predated the Phase-5 addition of the parameter-matched `bc_large` rows — commit `abbc6a6`; the manifest is the authoritative list.) The first six rows form the proposed-method and primary-comparison family; the last four are a negative control, a privileged diagnostic, a temporal comparator, and a capacity control, respectively.
 
 ## 5. Required implementation corrections for valid causal controls
 
@@ -215,7 +215,7 @@ Teacher-Forced and Oracle results must not be included in the primary multiplici
 
 | Existing cell | Final disposition |
 |---|---|
-| `pf_random_warm` | Retain as a supplementary standard-warm-start random-router diagnostic, or replace with the R50-matched random-router/partial-warm control |
+| `pf_random_warm` | REMOVED (ledger Phase 4 / D3, 2026-08-22): recreated the canonical partial-warm path and would crash post-migration `+`-appends; superseded by the drop-rate sweep |
 | `pf_random_random` | Retain as the fully random expert/router control after provider and configuration migration |
 | `pf_centroid_random` | Retain as the centroid-router/random-expert control after provider and configuration migration |
 | `pf_spherical` | Retain as the spherical-centroid prototype ablation |
@@ -225,7 +225,7 @@ Teacher-Forced and Oracle results must not be included in the primary multiplici
 | `pf_ft` | Retain as the controlled Stage 2 encoder-fine-tuning ablation |
 | `pf_k3`, `pf_k12` | Retain as the expert-count/routing-scale ablation |
 | `pf_corrupt_25`, `pf_corrupt_50`, `pf_shuffle_control` | Retain as phase-bootstrap-label corruption ablations after semantics are verified |
-| `pf_jitter_00`, `pf_jitter_10` | Retain only as standard-warm-start jitter diagnostics; replace with the partial-warm drop-rate sweep for R50-specific analysis |
+| `pf_jitter_00`, `pf_jitter_10` | REMOVED (ledger Phase 4 / D4, 2026-08-22): jitter is inert under partial warm; the drop-rate sweep subsumes the endpoints |
 | `pf_one_warm_plus_random` | Retain as the one-warm-expert diagnostic |
 | `warmstart_r50` | Absorb into canonical `phaseforge`; do not publish as a duplicate method |
 | `phaseforge_e6` | Retire; its six-expert centroid condition is superseded by canonical `phaseforge` |
