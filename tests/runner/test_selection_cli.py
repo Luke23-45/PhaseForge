@@ -314,6 +314,35 @@ def test_cli_list_accepts_task_filter(tmp_path: Path, capsys) -> None:
     assert "data=lift" not in out
 
 
+def test_cli_plan_artifact_failure_aborts_before_running(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    protocol_path = _write_protocol(tmp_path, _valid_doc())
+
+    def _must_not_run(*args, **kwargs):  # pragma: no cover - refusal guard
+        raise AssertionError("an unrecordable sweep must not start")
+
+    def _fail_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runner_cli, "run_step", _must_not_run)
+    monkeypatch.setattr(runner_cli, "_write_plan_artifact", _fail_write)
+    args = runner_cli.parse_args(
+        [
+            "--manifest",
+            str(protocol_path),
+            "--outputs",
+            str(tmp_path / "outputs"),
+            "--methods",
+            "bc",
+            "--seeds",
+            "42",
+        ]
+    )
+    assert runner_cli.run(args) == 2
+    assert "cannot write plan artifact" in capsys.readouterr().err
+
+
 def test_cli_list_rejects_unknown_task(tmp_path: Path, capsys) -> None:
     protocol_path = _write_protocol(tmp_path, _multi_task_doc())
     args = runner_cli.parse_args(

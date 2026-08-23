@@ -164,6 +164,12 @@ class TestIndexToken:
         with pytest.raises(ProtocolError, match="Unknown method index '99'"):
             resolve_selection(multi, SelectionSpec(method_tokens=("99",)))
 
+    def test_superscript_digit_token_is_a_clean_error(self, multi: Protocol) -> None:
+        # '²' satisfies str.isdigit but int('²') raises a plain ValueError;
+        # the resolver must route it to the unknown-method diagnostic.
+        with pytest.raises(ProtocolError, match="Unknown method '²'"):
+            resolve_selection(multi, SelectionSpec(method_tokens=("²",)))
+
 
 class TestTaskFacet:
     def test_tasks_alone_select_every_method_on_those_tasks(self, multi: Protocol) -> None:

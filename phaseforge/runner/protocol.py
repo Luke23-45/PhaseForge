@@ -160,7 +160,9 @@ class Protocol:
         seen: set[tuple[str | None, str]] = set()
         for ref in refs:
             method: Method | None = None
-            if ref.isdigit():
+            # isdecimal, not isdigit: superscript digits satisfy isdigit but
+            # crash int() with a ValueError that is not a ProtocolError.
+            if ref.isdecimal():
                 method = self.method_by_index(int(ref))
                 if method is None:
                     raise ProtocolError(

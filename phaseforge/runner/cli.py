@@ -680,9 +680,18 @@ def run(args: argparse.Namespace) -> int:
             return 2
 
     if not args.dry_run:
-        _write_plan_artifact(
-            outputs_base, protocol, args, selection, plan, manifest_sha, commit
-        )
+        try:
+            _write_plan_artifact(
+                outputs_base, protocol, args, selection, plan, manifest_sha, commit
+            )
+        except OSError as exc:
+            # An unrecordable sweep must not start: the artifact is the
+            # provenance guarantee every later audit relies on.
+            print(
+                f"[runner] ERROR: cannot write plan artifact under {outputs_base}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
 
     counts = {"run": 0, "skip": 0, "failed": 0}
     total = len(plan)

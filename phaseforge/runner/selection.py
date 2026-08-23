@@ -29,6 +29,7 @@ any step executes.
 from __future__ import annotations
 
 import difflib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from phaseforge.runner.protocol import Method, Protocol, ProtocolError
@@ -170,12 +171,15 @@ def _resolve_token(
     protocol: Protocol,
     token: str,
     task_filter: set[str] | None,
-    in_task_filter,
+    in_task_filter: Callable[[Method], bool],
 ) -> list[Method]:
     """Resolve one ``--methods`` token to its matched rows (never empty)."""
     rows = list(protocol.methods)
 
-    if token.isdigit():
+    # isdecimal, not isdigit: superscript digits (e.g. '²') satisfy isdigit
+    # but crash int(), and that ValueError is not a ProtocolError — the
+    # token must land in the unknown-name diagnostic instead.
+    if token.isdecimal():
         method = protocol.method_by_index(int(token))
         if method is None:
             raise ProtocolError(
