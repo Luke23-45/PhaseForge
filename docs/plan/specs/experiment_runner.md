@@ -218,10 +218,10 @@ because protocol validation guarantees providers are untagged.
 
 ```
 phaseforge-sweep [--manifest PATH]
-                 [--methods IDX,NAME,...]
+                 [--methods TOKEN,...] [--tasks NAME,...]
                  [--seeds N,...]
                  [--stage 1|2] [--eval-only] [--skip-eval]
-                 [--with-dependencies]
+                 [--with-dependencies] [--expect-steps N]
                  [--force] [--continue-on-error]
                  [--dry-run] [--list]
                  [--outputs DIR] [--verbose]
@@ -229,38 +229,64 @@ phaseforge-sweep [--manifest PATH]
 
 | flag                | effect |
 |---------------------|--------|
-| `--methods`         | subset by index or name; default all |
+| `--methods`         | selection tokens (below); default all methods |
+| `--tasks`           | task facet filter (case-insensitive); intersects with `--methods` |
 | `--seeds`           | subset of protocol seeds; invalid seeds rejected |
 | `--stage 1\|2`      | train that stage only, no eval |
 | `--eval-only`       | evaluations only (final checkpoints must exist) |
 | `--skip-eval`       | all training, no evaluation |
 | `--with-dependencies` | auto-run a provider's stage 1 for partial selections |
+| `--expect-steps N`  | refuse to run unless the built plan has exactly N steps (drift guard, checked before execution) |
 | `--force`           | re-run steps the registry marks completed |
 | `--continue-on-error` | record failure, keep going; else fail fast |
 | `--dry-run`         | print plan + exact commands, execute nothing |
-| `--list`            | print the method matrix and exit |
+| `--list`            | print the (optionally filtered) method matrix and exit |
 | `--outputs`         | output base, resolved absolute from project root |
+
+**Selection grammar** (`--methods` tokens; resolved by the pure
+`phaseforge.runner.selection` resolver):
+
+| token              | meaning |
+|--------------------|---------|
+| `phaseforge`       | every cell carrying that name (all tasks), intersected with `--tasks` |
+| `phaseforge@Lift`  | one exact cell (case-insensitive task) |
+| `1`                | the manifest row with that index (legacy form) |
+
+Bare names are *filters*, not references: multi-task matches are the intended
+semantics (the old "ambiguous name" error is gone). All failures are loud and
+actionable — close-match suggestions for unknown names, the valid-task list
+for unknown tasks, an explicit diagnosis when a token lands outside the task
+filter — and exit `2` before any step runs.
+
+Every invocation first prints a **resolution preview** (resolved cells with
+`name@task`, stages, eval mode, manifest sha256) plus a step breakdown
+(`stage1=… stage2=… eval=… auto-dependencies=…`). Non-dry runs atomically
+write the resolved sweep to `<outputs>/_runner/plan.json` (manifest sha256,
+argv, resolved cells, step count) next to the `state.json` registry, so every
+sweep is reconstructible after the fact.
 
 Dry-run reports `WOULD RUN` with the exact argv, `BLOCKED` when a prerequisite
 (e.g. the eval target checkpoint) is missing, and `skip` for steps the
 registry marks complete. Exit codes: `0` all steps ok/skipped, `1` one or more
-failed, `2` usage/manifest/registry error, `130` interrupted.
+failed, `2` usage/manifest/selection error, `130` interrupted.
 
 ## 7. Usage
 
 ```bash
-phaseforge-sweep --list                               # show the matrix
-phaseforge-sweep --methods 1,2 --seeds 42 --dry-run   # preview, don't run
-phaseforge-sweep --methods 1 --seeds 42               # PhaseForge seed 42, full run
-phaseforge-sweep --with-dependencies                  # everything incl. eval
-phaseforge-sweep --stage 1                            # providers only (BC + PhaseForge stage 1)
-phaseforge-sweep --continue-on-error                  # sweep that survives one bad cell
+phaseforge-sweep --list                                        # show the matrix
+phaseforge-sweep --methods phaseforge --tasks Lift --dry-run   # preview one task's method
+phaseforge-sweep --methods phaseforge                          # the method on every task (45 steps)
+phaseforge-sweep --methods phaseforge --tasks Lift,Can --seeds 42
+phaseforge-sweep --tasks Lift                                  # every method on Lift
+phaseforge-sweep --methods phaseforge@Lift --seeds 42 --stage 2 --force  # re-run one cell's stage 2
+phaseforge-sweep --expect-steps 315 --dry-run                  # assert the full-sweep size first
+phaseforge-sweep --continue-on-error                           # sweep that survives one bad cell
 ```
 
-The full matrix is 45 methods × 3 seeds (9 per task × 5 tasks). Per task and
-seed the plan has 19 steps (`phaseforge` has 3: stage1, stage2, eval; the
-eight single-stage methods have 2 each) — 57 steps per task and 285 steps in
-total, `--with-dependencies` not required for a full selection.
+The full five-task matrix is 50 method rows × 3 seeds (10 methods × 5 tasks).
+Per task and seed the plan has 21 steps (11 training + 10 evaluations) — 315
+steps in total; `--with-dependencies` is not required for a full selection
+because every provider is itself selected.
 
 ## 8. Testing
 

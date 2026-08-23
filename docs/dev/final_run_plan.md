@@ -99,7 +99,8 @@ under the rejected `soft-reset-canonical-v1` protocol.
 ```
 
 Expect 50 method rows (10 per task), `seeds: [42, 43, 44]`, `phaseforge`
-rows with `stage1,stage2`.
+rows with `stage1,stage2`. `--list` accepts the same `--methods/--tasks`
+filters as a sweep (e.g. `--tasks Lift`).
 
 ---
 
@@ -140,7 +141,7 @@ real_pinning` must pass there (it skips on CPU-only machines).
 ```bash
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
-  --outputs outputs_final --dry-run
+  --outputs outputs_final --expect-steps 315 --dry-run
 ```
 
 Expect exactly **315 steps** = 21 per (task, seed): 11 training
@@ -161,6 +162,7 @@ authoritative signal is the numbered `done`/`pending` list.
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
   --outputs outputs_final \
+  --expect-steps 315 \
   --continue-on-error
 ```
 
@@ -181,7 +183,7 @@ authoritative signal is the numbered `done`/`pending` list.
 ```bash
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
-  --outputs outputs_final --dry-run
+  --outputs outputs_final --expect-steps 315 --dry-run
 ```
 
 Every step `done` (no `pending`, no `failed`), then:
@@ -210,7 +212,8 @@ Fix the cause first, then:
 ```bash
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
-  --outputs outputs_final --methods 1 --seeds 42 --stage 2 --force
+  --outputs outputs_final \
+  --methods phaseforge@Lift --seeds 42 --stage 2 --force
 ```
 
 `--force` re-runs regardless of registry status; add
@@ -274,6 +277,7 @@ redundant); `pf_jitter_00/10` (D4, superseded by the drop-rate sweep);
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/lift_ablation.json \
   --outputs outputs_ablation \
+  --expect-steps 165 \
   --continue-on-error
 ```
 

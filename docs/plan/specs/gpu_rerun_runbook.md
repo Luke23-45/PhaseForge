@@ -137,6 +137,7 @@ phaseforge-sweep \
   --manifest experiments/five_task.json \
   --outputs outputs_rerun \
   --with-dependencies \
+  --expect-steps 315 \
   --continue-on-error
 ```
 
@@ -157,7 +158,7 @@ phaseforge-sweep \
   fix, so per-epoch snapshots are unnecessary disk. Re-selection scripts
   (`scripts/analysis/tie_break_selector.py`) remain available for post-hoc audits.
 
-## 2. What will run (45 method rows × 3 seeds)
+## 2. What will run (50 method rows × 3 seeds)
 
 Per task, rows 1–9 repeat for Lift, Can, Square, ToolHang, Transport
 (indices in the manifest):
