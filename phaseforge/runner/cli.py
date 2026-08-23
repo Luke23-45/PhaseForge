@@ -19,14 +19,17 @@ instead of silently training.
 Examples::
 
     phaseforge-sweep                                    # full five-task matrix x seeds
-    phaseforge-sweep --methods 1,5,9                    # by method index
-    phaseforge-sweep --methods bc,warmstart_moe         # by method name
-    phaseforge-sweep --methods teacher_forced --with-dependencies
+    phaseforge-sweep --methods phaseforge               # the method on every task
+    phaseforge-sweep --methods phaseforge --tasks Lift  # method x task subset
+    phaseforge-sweep --methods phaseforge@Lift bc@Can   # exact cells by name@task
+    phaseforge-sweep --tasks Lift Can                   # every method on those tasks
+    phaseforge-sweep --methods 1,5,9                    # by manifest index (legacy)
     phaseforge-sweep --methods 1 --seeds 42
     phaseforge-sweep --stage 1                          # train stage 1 only
     phaseforge-sweep --eval-only                        # (re)run evaluations only
     phaseforge-sweep --methods 3 --dry-run              # preview commands
     phaseforge-sweep --list                             # show the method matrix
+    phaseforge-sweep --expect-steps 315 --dry-run       # assert the plan size first
 
 ``python -m phaseforge.runner --help`` is equivalent.
 
@@ -38,7 +41,12 @@ robosuite 1.5.0 interpreter; the other tasks use the current environment.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 import sys
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 from phaseforge.runner.executor import (
@@ -65,6 +73,12 @@ from phaseforge.runner.resolver import (
     resolve_stage_ckpt,
     stage_checkpoint_relative,
     verify_checkpoint_contract,
+)
+from phaseforge.runner.selection import (
+    SelectionResult,
+    SelectionSpec,
+    format_selection_table,
+    resolve_selection,
 )
 from phaseforge.utils.config import git_info
 
@@ -107,8 +121,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--methods",
         nargs="+",
         default=[],
-        help="Method indices and/or names (e.g. '1,5,9' or 'bc,warmstart_moe'). "
+        help="Method tokens: a name ('phaseforge' — every task), an exact cell "
+        "('phaseforge@Lift'), or a manifest index ('1', legacy). "
         "Default: all methods.",
+    )
+    parser.add_argument(
+        "--tasks",
+        nargs="+",
+        default=[],
+        help="Task facet filter (e.g. 'Lift Can'); intersects with --methods. "
+        "Default: no task filtering.",
     )
     parser.add_argument(
         "--seeds",
@@ -139,6 +161,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Include the required Stage 1 pretraining of a shared provider in "
         "the printed plan. The runtime auto-injects it for unscoped sweeps "
         "regardless, so this flag mainly controls plan visibility.",
+    )
+    parser.add_argument(
+        "--expect-steps",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Refuse to run unless the built plan has exactly N steps — a "
+        "machine-checked guard against manifest or selection drift, verified "
+        "before any step executes.",
     )
     parser.add_argument(
         "--force",
@@ -188,27 +219,33 @@ def _outputs_base(args: argparse.Namespace) -> Path:
     return (PROJECT_ROOT / args.outputs).resolve()
 
 
-def _build_plan(protocol: Protocol, args: argparse.Namespace) -> list[Step]:
-    methods = (
-        protocol.select_methods(_split_list(args.methods))
-        if args.methods
-        else list(protocol.methods)
+def _selection_spec(args: argparse.Namespace) -> SelectionSpec:
+    return SelectionSpec(
+        method_tokens=tuple(_split_list(args.methods)),
+        tasks=tuple(_split_list(args.tasks)),
     )
+
+
+def _build_plan(
+    protocol: Protocol, args: argparse.Namespace
+) -> tuple[list[Step], SelectionResult]:
+    selection = resolve_selection(protocol, _selection_spec(args))
     seeds: list[int] | None = None
     if args.seeds:
         try:
             seeds = [int(s) for s in _split_list(args.seeds)]
         except ValueError as exc:
             raise ProtocolError(f"--seeds must be integers: {args.seeds}") from exc
-    return build_plan(
+    plan = build_plan(
         protocol,
-        methods,
+        list(selection.methods),
         seeds=seeds,
         stage=args.stage,
         eval_only=args.eval_only,
         skip_eval=args.skip_eval,
         with_dependencies=args.with_dependencies,
     )
+    return plan, selection
 
 
 def _require_stage2_prereq(
@@ -412,6 +449,7 @@ def _print_plan(
     expected_commit: str | None = None,
 ) -> None:
     print(f"\n[runner] plan ({len(plan)} steps, outputs base: {outputs_base})")
+    print(f"[runner] steps: {_plan_breakdown(plan)}")
     for index, step in enumerate(plan, start=1):
         tag = " [dependency]" if step.dependency else ""
         status = (
@@ -420,6 +458,31 @@ def _print_plan(
             else "pending"
         )
         print(f"  {index:>3}. {step.label:<48} {status}{tag}")
+
+
+def _plan_breakdown(plan: list[Step]) -> str:
+    counts: dict[str, int] = {}
+    deps = 0
+    for step in plan:
+        if step.kind == "eval":
+            key = "eval"
+        else:
+            key = f"stage{step.stage}"
+        counts[key] = counts.get(key, 0) + 1
+        if step.dependency:
+            deps += 1
+    parts = " ".join(f"{key}={counts[key]}" for key in sorted(counts))
+    return f"{parts} auto-dependencies={deps}"
+
+
+def _print_selection(
+    protocol: Protocol, selection: SelectionResult, manifest_sha: str
+) -> None:
+    print(
+        f"\n[runner] selection: {len(selection.methods)} cells from {protocol.name} "
+        f"(manifest sha256 {manifest_sha[:12]})"
+    )
+    print(format_selection_table(selection, protocol))
 
 
 def _step_done(
@@ -438,9 +501,10 @@ def _step_done(
     )
 
 
-def _print_methods(protocol: Protocol) -> None:
+def _print_methods(protocol: Protocol, rows: list[Method] | None = None) -> None:
+    rows = list(protocol.methods) if rows is None else list(rows)
     print(f"Protocol: {protocol.name} — {protocol.task} — {protocol.description}")
-    for method in protocol.methods:
+    for method in rows:
         stages = ",".join(f"stage{s}" for s in method.stages)
         print(
             f"  {method.index:>2}  {method.name:<32} {method.model:<40} "
@@ -485,6 +549,69 @@ def _current_commit() -> str | None:
     return commit.strip() or None
 
 
+def _manifest_sha(args: argparse.Namespace) -> str:
+    """SHA-256 of the manifest file (it loaded successfully, so it exists)."""
+    return hashlib.sha256(_manifest_path(args).read_bytes()).hexdigest()
+
+
+def _write_plan_artifact(
+    outputs_base: Path,
+    protocol: Protocol,
+    args: argparse.Namespace,
+    selection: SelectionResult,
+    plan: list[Step],
+    manifest_sha: str,
+    commit: str | None,
+) -> None:
+    """Atomically write the resolved-sweep provenance record.
+
+    ``<outputs>/_runner/plan.json`` describes the *latest* invocation: what
+    was asked (argv + tokens), what it resolved to (cells, manifest hash),
+    and the expected/executed step count. Together with ``state.json`` it
+    makes every sweep reconstructible after the fact.
+    """
+    path = outputs_base / "_runner" / "plan.json"
+    payload = {
+        "version": 1,
+        "created_at": datetime.now(UTC).isoformat(),
+        "git_commit": commit or "",
+        "argv": list(sys.argv),
+        "manifest": {"path": str(_manifest_path(args)), "sha256": manifest_sha},
+        "selection": {
+            "method_tokens": list(_split_list(args.methods)),
+            "tasks": list(_split_list(args.tasks)),
+            "seeds": list(_split_list(args.seeds)),
+        },
+        "resolved_cells": [
+            {
+                "index": m.index,
+                "phase_key": m.phase_key,
+                "model": m.model,
+                "stages": list(m.stages),
+            }
+            for m in selection.methods
+        ],
+        "step_count": len(plan),
+        "expect_steps": args.expect_steps,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".plan_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    print(f"[runner] plan artifact: {path.relative_to(outputs_base).as_posix()}")
+
+
 def run(args: argparse.Namespace) -> int:
     outputs_base = _outputs_base(args)
     try:
@@ -494,7 +621,12 @@ def run(args: argparse.Namespace) -> int:
         return 2
 
     if args.list:
-        _print_methods(protocol)
+        try:
+            selection = resolve_selection(protocol, _selection_spec(args))
+        except ProtocolError as exc:
+            print(f"[runner] ERROR: {exc}", file=sys.stderr)
+            return 2
+        _print_methods(protocol, list(selection.methods))
         return 0
 
     commit = _current_commit()
@@ -515,7 +647,7 @@ def run(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        plan = _build_plan(protocol, args)
+        plan, selection = _build_plan(protocol, args)
     except ProtocolError as exc:
         print(f"[runner] ERROR: {exc}", file=sys.stderr)
         return 2
@@ -524,7 +656,17 @@ def run(args: argparse.Namespace) -> int:
         print("[runner] No steps match the current selection.", file=sys.stderr)
         return 0
 
+    manifest_sha = _manifest_sha(args)
+    _print_selection(protocol, selection, manifest_sha)
     _print_plan(plan, outputs_base, state, args, commit)
+
+    if args.expect_steps is not None and args.expect_steps != len(plan):
+        print(
+            f"[runner] ERROR: --expect-steps {args.expect_steps} but the plan has "
+            f"{len(plan)} steps — refusing to run (manifest or selection drift).",
+            file=sys.stderr,
+        )
+        return 2
 
     toolhang_python: Path | None = None
     has_toolhang = any(step.method.task == "ToolHang" for step in plan)
@@ -536,6 +678,11 @@ def run(args: argparse.Namespace) -> int:
         except CommandError as exc:
             print(f"[runner] ERROR: {exc}", file=sys.stderr)
             return 2
+
+    if not args.dry_run:
+        _write_plan_artifact(
+            outputs_base, protocol, args, selection, plan, manifest_sha, commit
+        )
 
     counts = {"run": 0, "skip": 0, "failed": 0}
     total = len(plan)
