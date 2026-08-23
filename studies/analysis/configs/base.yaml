@@ -1,0 +1,21 @@
+# studies/analysis/configs/base.yaml — pipeline configuration.
+# Paths are repo-relative; resolved against the repository root at load time.
+
+namespaces:
+  final:
+    root: outputs_final
+    manifest: experiments/five_task.json
+  ablation:
+    root: outputs_ablation
+    manifest: experiments/lift_ablation.json
+
+output:
+  paper_root: docs/publication/paper      # figures/ and tables/ are created inside
+  manifest_name: generation_manifest.json # written next to paper_root
+
+style:
+  palette: okabe_ito
+  accent: vermillion                      # PhaseForge series color
+  text_width_in: 5.5                      # NeurIPS text width
+  margin_width_in: 2.25
+  dpi: 300
