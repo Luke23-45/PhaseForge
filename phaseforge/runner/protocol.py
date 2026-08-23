@@ -126,6 +126,30 @@ class Protocol:
                 return m
         return None
 
+    @property
+    def known_tasks(self) -> tuple[str, ...]:
+        """The concrete task dimension of this protocol, in manifest order.
+
+        Returns the per-row task values when rows carry them (the five-task
+        protocol); otherwise falls back to the protocol-level task name for
+        single-task manifests (``lift_ablation``), ignoring the multi-task
+        placeholder ``"all"``. Empty when the protocol declares no task at
+        all — such manifests reject a ``--tasks`` filter loudly instead of
+        silently selecting nothing.
+        """
+        tasks: list[str] = []
+        seen: set[str] = set()
+        for m in self.methods:
+            if m.task is None or m.task.lower() in seen:
+                continue
+            seen.add(m.task.lower())
+            tasks.append(m.task)
+        if not tasks:
+            nominal = self.task.strip()
+            if nominal and nominal.lower() != "all":
+                tasks.append(nominal)
+        return tuple(tasks)
+
     def select_methods(self, refs: list[str]) -> list[Method]:
         """Resolve a list of user references to ordered :class:`Method`s.
 
