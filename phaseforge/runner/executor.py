@@ -37,7 +37,7 @@ def resolve_toolhang_python(project_root: Path, configured: str | None = None) -
         candidate = Path(requested).expanduser()
         if not candidate.is_absolute():
             candidate = project_root / candidate
-        candidate = candidate.resolve()
+        candidate = candidate.absolute()
         if not candidate.is_file():
             raise CommandError(
                 f"Configured Tool Hang Python does not exist: {candidate}. "
@@ -52,7 +52,7 @@ def resolve_toolhang_python(project_root: Path, configured: str | None = None) -
     )
     for candidate in candidates:
         if candidate.is_file():
-            return candidate.resolve()
+            return candidate.absolute()
     raise CommandError(
         "Tool Hang steps are present, but the dedicated robosuite 1.5.0 "
         "environment was not found. Create it with `uv venv --python 3.11 "

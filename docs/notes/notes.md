@@ -22,12 +22,14 @@ uv run python -m phaseforge.runner --manifest experiments/five_task.json --list
 uv run python -m phaseforge.runner \
   --manifest experiments/five_task.json \
   --outputs outputs_final \
+  --expect-steps 315 \
   --dry-run
 
 # Dry-run the full ablation suite: must be exactly 165 steps
 uv run python -m phaseforge.runner \
   --manifest experiments/lift_ablation.json \
   --outputs outputs_ablation \
+  --expect-steps 165 \
   --dry-run
 ```
 
@@ -44,6 +46,7 @@ Frozen: 10 methods × 5 tasks (Lift, Can, Square, ToolHang, Transport) ×
 uv run python -m phaseforge.runner \
   --manifest experiments/five_task.json \
   --outputs outputs_final \
+  --expect-steps 315 \
   --continue-on-error
 ```
 
@@ -69,40 +72,40 @@ Use only when splitting across jobs. Providers consumed via
 
 ```bash
 # 1 — Proposed (self-provided, no extra provider)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods phaseforge --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods phaseforge --expect-steps 45 --continue-on-error
 
 # 2 — BC floor
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc --expect-steps 30 --continue-on-error
 
 # 3 — Parameter-matched dense
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_large --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_large --expect-steps 30 --continue-on-error
 
 # 4 — Temporal history comparator
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_rnn --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_rnn --expect-steps 30 --continue-on-error
 
 # 5 — Robot-only negative control
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_robot_only --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_robot_only --expect-steps 30 --continue-on-error
 
 # 6 — Scratch MoE (no provider)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods scratch_moe --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods scratch_moe --expect-steps 30 --continue-on-error
 
 # 7 — Warm-start MoE (needs bc S1: 30 + 15 = 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods warmstart_moe --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods warmstart_moe --with-dependencies --expect-steps 45 --continue-on-error
 
 # 8 — Phase pretraining / random router (needs phaseforge S1: 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods phase_pretrain_random_router --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods phase_pretrain_random_router --with-dependencies --expect-steps 45 --continue-on-error
 
 # 9 — Plain encoder / centroid router (needs bc S1: 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods plain_encoder_phase_bootstrap --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods plain_encoder_phase_bootstrap --with-dependencies --expect-steps 45 --continue-on-error
 
 # 10 — Privileged training diagnostic (needs phaseforge S1: 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods teacher_forced --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods teacher_forced --with-dependencies --expect-steps 45 --continue-on-error
 ```
 
 Verify after:
 
 ```bash
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --dry-run
+uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --expect-steps 315 --dry-run
 # every step `done`; then results.jsonl = 150 rows, training_summary.jsonl = 165 rows
 ```
 
@@ -110,10 +113,17 @@ uv run python -m phaseforge.runner --manifest experiments/five_task.json --outpu
 
 ## 2. Ablation Runs — Lift Suite (`experiments/lift_ablation.json`)
 
-27 cells (Lift only) × 3 seeds = **165 steps** under `outputs_ablation`.
-Nine are Lift replicas of the main matrix (`bc_rnn` excluded); 18 are
-ablation-only (`pf_*`). The canonical provider is EXP-101 `phaseforge` S1,
-shared by all `pf_*` cells (auto-injected).
+27 cells (Lift only) × 3 seeds = **165 steps** under `outputs_ablation`
+(`experiments/lift_ablation.json:9`).
+
+* **9 Lift baseline replicas** (Group 0 — `bc_rnn` excluded): `phaseforge`,
+  `bc`, `bc_large`, `bc_robot_only`, `scratch_moe`, `warmstart_moe`,
+  `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`,
+  `teacher_forced` = 57 steps (`phaseforge` 9 + 8×6).
+* **18 ablation-only** (`pf_*`) = 108 steps (Groups A-D below).
+* Full suite = 57 + 108 = **165** (verified: `stage1=12 stage2=72 eval=81`).
+
+The canonical provider EXP-101 `phaseforge` S1 is shared by all `pf_*` cells.
 
 ### 2.1 Full suite — single command (recommended)
 
@@ -121,6 +131,7 @@ shared by all `pf_*` cells (auto-injected).
 uv run python -m phaseforge.runner \
   --manifest experiments/lift_ablation.json \
   --outputs outputs_ablation \
+  --expect-steps 165 \
   --continue-on-error
 ```
 
@@ -129,34 +140,39 @@ but keeps provider semantics identical).
 
 ### 2.2 Per-group decomposition (guarded)
 
-Each `pf_*` cell = Stage-2 train + eval = 2 steps/seed = 6 steps/method;
-scoped selections add the canonical `phaseforge` S1 via
-`--with-dependencies` (+3 steps).
+Each `pf_*` cell = Stage-2 train + eval = 2 steps/seed = 6 steps/method.
+Isolated `pf_*` groups need the canonical `phaseforge` S1 via
+`--with-dependencies` (+3 steps); Group 0 already contains its own provider.
 
 ```bash
-# Group A — Router initialization controls (5 methods: 30 + 3 = 33)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_spherical_kmeans pf_kmeans pf_phase_head pf_random_random pf_centroid_random --with-dependencies --continue-on-error
+# Group 0 — Lift baseline replicas (9 methods: 57 steps, no --with-dependencies needed)
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods phaseforge bc bc_large bc_robot_only scratch_moe warmstart_moe phase_pretrain_random_router plain_encoder_phase_bootstrap teacher_forced --expect-steps 57 --continue-on-error
+
+# Group A — Router initialization controls (5 methods: 30 + 3 = 33 isolated)
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_spherical_kmeans pf_kmeans pf_phase_head pf_random_random pf_centroid_random --with-dependencies --expect-steps 33 --continue-on-error
 
 # Group B — Expert initialization & warm-start drop sweep (6 methods: 36 + 3 = 39)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_full_warm pf_drop00 pf_drop25 pf_drop75 pf_drop100 pf_one_warm_plus_random --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_full_warm pf_drop00 pf_drop25 pf_drop75 pf_drop100 pf_one_warm_plus_random --with-dependencies --expect-steps 39 --continue-on-error
 
 # Group C — Representation, fine-tuning & phase noise (5 methods: 30 + 3 = 33)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_spherical pf_ft pf_corrupt_25 pf_corrupt_50 pf_shuffle_control --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_spherical pf_ft pf_corrupt_25 pf_corrupt_50 pf_shuffle_control --with-dependencies --expect-steps 33 --continue-on-error
 
 # Group D — Capacity & expert scaling, K sweep (2 methods: 12 + 3 = 15)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_k3 pf_k12 --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_k3 pf_k12 --with-dependencies --expect-steps 15 --continue-on-error
 ```
 
 Single-cell recovery (any `pf_*` alone: 6 + 3 = 9):
 
 ```bash
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_drop25 --with-dependencies --continue-on-error
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_drop25 --with-dependencies --expect-steps 9 --continue-on-error
 ```
 
 Verify after:
 
 ```bash
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --dry-run
+uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --expect-steps 165 --dry-run
+# every step `done`; full 165. If you ran Group 0 + A-D separately, the 3 provider
+# steps are counted in each isolated plan but skipped on resume — distinct total is still 165.
 ```
 
 ---

@@ -454,7 +454,7 @@ def test_toolhang_python_auto_detects_dedicated_environment(tmp_path: Path) -> N
     interpreter = tmp_path / ".venv-toolhang" / "bin" / "python"
     interpreter.parent.mkdir(parents=True)
     interpreter.write_text("", encoding="utf-8")
-    assert runner_executor.resolve_toolhang_python(tmp_path) == interpreter.resolve()
+    assert runner_executor.resolve_toolhang_python(tmp_path) == interpreter.absolute()
 
 
 def test_toolhang_python_missing_environment_fails_before_sweep(tmp_path: Path) -> None:
