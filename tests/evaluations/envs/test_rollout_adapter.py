@@ -63,6 +63,20 @@ class TestExtractState:
         with pytest.raises(StateSchemaError, match="dimension"):
             adapter.extract_state({"robot0_eef_pos": np.zeros(5), "object": np.zeros(10)})
 
+    def test_joint_pos_cos_sin_fallback(self) -> None:
+        spec = StateSpec(keys=("robot0_joint_pos", "robot0_eef_pos"), dims=(7, 3))
+        adapter = _adapter_with_spec(spec)
+        angles = np.array([0.1, -0.5, 1.2, -1.0, 0.0, 0.7, -0.3], dtype=np.float32)
+        obs = {
+            "robot0_joint_pos_cos": np.cos(angles),
+            "robot0_joint_pos_sin": np.sin(angles),
+            "robot0_eef_pos": np.zeros(3, dtype=np.float32),
+        }
+        state = adapter.extract_state(obs)
+        assert state.shape == (10,)
+        assert np.allclose(state[:7], angles, atol=1e-5)
+        assert np.allclose(state[7:], 0.0)
+
 
 class TestValidateAction:
     def setup_method(self) -> None:

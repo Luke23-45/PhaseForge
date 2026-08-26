@@ -187,6 +187,16 @@ class RobosuiteStateAdapter:
                 if alias is not None:
                     value = obs.get(alias)
             if value is None:
+                for prefix in ("robot0_", "robot1_", ""):
+                    if key == f"{prefix}joint_pos":
+                        cos_k = f"{prefix}joint_pos_cos"
+                        sin_k = f"{prefix}joint_pos_sin"
+                        if cos_k in obs and sin_k in obs:
+                            cos_val = np.asarray(obs[cos_k], dtype=np.float32).reshape(-1)
+                            sin_val = np.asarray(obs[sin_k], dtype=np.float32).reshape(-1)
+                            value = np.arctan2(sin_val, cos_val)
+                            break
+            if value is None:
                 raise StateSchemaError(
                     f"Observation is missing declared key {key!r} (available: {sorted(obs)})."
                 )
