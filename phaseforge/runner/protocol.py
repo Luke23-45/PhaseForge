@@ -102,6 +102,20 @@ class Method:
             parts.append(self.tag)
         return "__".join(parts) if parts else None
 
+    @property
+    def expected_num_experts(self) -> int:
+        """The number of MoE experts expected for this method (defaults to 6).
+
+        Parsed from ``models.router.num_experts=<N>`` in ``self.overrides`` if
+        specified (such as the K-sweep capacity ablations ``pf_k3`` -> 3 or
+        ``pf_k12`` -> 12); otherwise defaults to the canonical 6 experts.
+        Dense models skip expert verification in the verifier.
+        """
+        for ov in self.overrides:
+            if ov.startswith("models.router.num_experts="):
+                return int(ov.split("=", 1)[1])
+        return 6
+
 
 @dataclass(frozen=True)
 class Protocol:

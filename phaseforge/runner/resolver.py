@@ -380,7 +380,7 @@ def verify_checkpoint_contract(
     ckpt_path: Path,
     *,
     expected_model_name: str | None = None,
-    expected_num_experts: int | None = None,
+    expected_num_experts: int | tuple[int, ...] | set[int] | list[int] | None = None,
     expected_stage: int | None = None,
 ) -> dict[str, Any]:
     """Fail closed unless a checkpoint satisfies the requested contract.
@@ -394,8 +394,10 @@ def verify_checkpoint_contract(
     * the sidecar's ``stage`` matches ``expected_stage`` (when given);
     * the state dict's MoE expert count matches ``expected_num_experts``
       (when given and the checkpoint contains experts — dense checkpoints
-      skip this check). This is the guard against pre-final artifacts of the
-      same filesystem name (e.g. the retired 8-expert ``phaseforge``).
+      skip this check). ``expected_num_experts`` may be a single ``int`` or
+      a collection of allowed counts. This is the guard against pre-final
+      artifacts of the same filesystem name (e.g. the retired 8-expert
+      ``phaseforge``).
 
     Returns a summary dict (``num_experts``, sidecar fields) for logging.
 
@@ -421,16 +423,21 @@ def verify_checkpoint_contract(
         )
 
     num_experts = _count_experts_from_state_keys(state.keys())
-    if (
-        expected_num_experts is not None
-        and num_experts is not None
-        and num_experts != expected_num_experts
-    ):
-        raise CheckpointError(
-            f"Checkpoint {ckpt_path} has {num_experts} experts; the final "
-            f"protocol requires {expected_num_experts}. Refusing to consume a "
-            "pre-final/incompatible artifact."
-        )
+    if expected_num_experts is not None and num_experts is not None:
+        if isinstance(expected_num_experts, (tuple, set, list)):
+            allowed: set[int] = {int(x) for x in expected_num_experts}
+        else:
+            allowed = {int(expected_num_experts)}
+        if num_experts not in allowed:
+            if len(allowed) == 1:
+                need = str(next(iter(allowed)))
+            else:
+                need = f"one of {sorted(allowed)}"
+            raise CheckpointError(
+                f"Checkpoint {ckpt_path} has {num_experts} experts; the final "
+                f"protocol requires {need}. Refusing to consume a "
+                "pre-final/incompatible artifact."
+            )
 
     # run_dir/checkpoints/checkpoint_best.pt -> run_dir (the sidecar lives
     # at run_dir/run_meta.json; _read_run_meta appends the file name).

@@ -84,8 +84,8 @@ from phaseforge.utils.config import git_info
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-#: Expert-count contract for every MoE checkpoint consumed by the final
-#: protocol (the canonical method and all MoE controls are six-expert).
+#: Expert-count contract for every Stage 1 MoE checkpoint consumed by
+#: the final protocol (the canonical method and Stage 1 providers are six-expert).
 #: Dense checkpoints (BC family) carry no ``moe_layer.experts.*`` keys and
 #: skip the check inside ``verify_checkpoint_contract``. This is the
 #: fail-closed guard against pre-final artifacts that share a filesystem
@@ -414,7 +414,7 @@ def _eval_target(
     verify_checkpoint_contract(
         ckpt,
         expected_model_name=step.method.model_name,
-        expected_num_experts=FINAL_EXPERT_CONTRACT,
+        expected_num_experts=step.method.expected_num_experts,
         expected_stage=step.method.final_stage,
     )
     return ckpt

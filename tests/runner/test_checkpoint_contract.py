@@ -232,3 +232,88 @@ def test_stage2_prereq_accepts_canonical_artifact(tmp_path: Path) -> None:
     step = Step(kind="train", method=_proposed_method(), seed=42, stage=2)
     ckpt = runner_cli._require_stage2_prereq(step, tmp_path)
     assert ckpt is not None and "aaaa0001" in str(ckpt)
+
+
+# ---------------------------------------------------------------------------
+# K-sweep expert scaling contract tests (pf_k3, pf_k12)
+# ---------------------------------------------------------------------------
+
+
+def _k3_method() -> Method:
+    return Method(
+        index=17,
+        name="pf_k3",
+        role="Wave 2 K sweep: super-prototype reduction (E=3 < P=6)",
+        model="baselines/pf_spherical",
+        data="common",
+        stages=(2,),
+        stage2_source="phaseforge",
+        overrides=("models.router.num_experts=3", "models.router.top_k=2"),
+        tag="k3",
+        evaluate=True,
+    )
+
+
+def _k12_method() -> Method:
+    return Method(
+        index=18,
+        name="pf_k12",
+        role="Wave 2 K sweep: intra-phase sub-prototype scaling (E=12 > P=6)",
+        model="baselines/pf_spherical",
+        data="common",
+        stages=(2,),
+        stage2_source="phaseforge",
+        overrides=("models.router.num_experts=12", "models.router.top_k=2"),
+        tag="k12",
+        evaluate=True,
+    )
+
+
+def test_method_expected_num_experts_property() -> None:
+    assert _proposed_method().expected_num_experts == 6
+    assert _k3_method().expected_num_experts == 3
+    assert _k12_method().expected_num_experts == 12
+
+
+def test_eval_target_accepts_k3_and_k12_artifacts(tmp_path: Path) -> None:
+    _make_contract_run(
+        tmp_path, "pf_spherical", 2, "2026-08-01_10-00-00_k3_0001", 42,
+        num_experts=3, tag="k3",
+    )
+    _make_contract_run(
+        tmp_path, "pf_spherical", 2, "2026-08-01_10-00-00_k12_0001", 42,
+        num_experts=12, tag="k12",
+    )
+    state = RunnerState(RunnerState.default_path(tmp_path))
+
+    step_k3 = Step(kind="eval", method=_k3_method(), seed=42)
+    ckpt_k3 = runner_cli._eval_target(step_k3, tmp_path, state)
+    assert ckpt_k3.is_file()
+    assert "k3_0001" in str(ckpt_k3)
+
+    step_k12 = Step(kind="eval", method=_k12_method(), seed=42)
+    ckpt_k12 = runner_cli._eval_target(step_k12, tmp_path, state)
+    assert ckpt_k12.is_file()
+    assert "k12_0001" in str(ckpt_k12)
+
+
+def test_eval_target_rejects_mismatched_expert_counts_for_k_sweep(tmp_path: Path) -> None:
+    # A 6-expert artifact given to pf_k3 must be rejected (pf_k3 expects 3)
+    _make_contract_run(
+        tmp_path, "pf_spherical", 2, "2026-08-01_10-00-00_wrong001", 42,
+        num_experts=6, tag="k3",
+    )
+    state = RunnerState(RunnerState.default_path(tmp_path))
+    step_k3 = Step(kind="eval", method=_k3_method(), seed=42)
+    with pytest.raises(CheckpointError, match="has 6 experts; the final protocol requires 3"):
+        runner_cli._eval_target(step_k3, tmp_path, state)
+
+    # A 3-expert artifact given to canonical phaseforge must be rejected (phaseforge expects 6)
+    _make_contract_run(
+        tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_wrong002", 42,
+        num_experts=3, tag="Lift",
+    )
+    step_pf = Step(kind="eval", method=_proposed_method(), seed=42)
+    with pytest.raises(CheckpointError, match="has 3 experts; the final protocol requires 6"):
+        runner_cli._eval_target(step_pf, tmp_path, state)
+
