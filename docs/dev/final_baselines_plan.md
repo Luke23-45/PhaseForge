@@ -111,11 +111,10 @@ These baselines belong in the main behavioral comparison table.
 |---|---|---|---|
 | BC-MLP | `bc` | `baselines/bc` | Standard structured-state behavior cloning floor | Lower-capacity dense baseline |
 | BC-Large | `bc_large` | `baselines/bc_large` | Dense capacity control near the MoE total parameter count | Parameter-matched dense control |
-| BC-RNN | `bc_rnn` | `baselines/bc_rnn` | History-dependent behavior cloning using the declared RNN data variant | Strong temporal comparator; not history-matched to the single-state PhaseForge policy |
 | Scratch MoE | `scratch_moe` | `baselines/scratch_moe` | Tests whether the MoE architecture alone explains the result | Six experts; trainable random encoder and random experts |
 | Warm-Start MoE | `warmstart_moe` | `baselines/warmstart_moe` | Tests dense-to-MoE upcycling without phase geometry | BC encoder; random router; standard copied experts |
 
-BC-Large is required because a success difference between PhaseForge and a small BC model could otherwise be attributed to capacity. BC-RNN is required because history-dependent policies are an established strong comparator in robomimic-style manipulation. Its larger temporal model must be reported with parameter count and with the explicit limitation that it does not share PhaseForge's single-step observation contract.
+BC-Large is required because a success difference between PhaseForge and a small BC model could otherwise be attributed to capacity. The final primary comparison is intentionally restricted to the declared single-state observation contract; history-dependent BC is outside this protocol and is not used as a baseline claim.
 
 ### 4.3 Primary mechanism controls
 
@@ -131,7 +130,7 @@ These controls are required to support the causal interpretation of the proposed
 
 The first two controls are the decisive H1/H2 comparisons. The clustering and phase-head controls test whether the proposed prior is specifically phase-structured rather than an incidental consequence of any router initialization.
 
-The operational final manifest therefore contains ten rows per task: `phaseforge`, `bc`, `bc_robot_only`, `scratch_moe`, `warmstart_moe`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`, `teacher_forced`, `bc_rnn`, and `bc_large`. (Amended 2026-08-23: the original nine-row summary predated the Phase-5 addition of the parameter-matched `bc_large` rows — commit `abbc6a6`; the manifest is the authoritative list.) The first six rows form the proposed-method and primary-comparison family; the last four are a negative control, a privileged diagnostic, a temporal comparator, and a capacity control, respectively.
+The operational final manifest therefore contains nine rows per task: `phaseforge`, `bc`, `bc_robot_only`, `scratch_moe`, `warmstart_moe`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`, `teacher_forced`, and `bc_large`. The manifest is the authoritative list. The first six rows form the proposed-method and primary-comparison family; the remaining three are a privileged diagnostic, a capacity control, and a negative control already listed in the matrix.
 
 ## 5. Required implementation corrections for valid causal controls
 

@@ -14,7 +14,7 @@ bootstrapped routers from those centroids, and rollouts evaluated the
 degenerate policies. Only three methods consume phaseforge's stage-1
 (`phaseforge`, `phase_pretrain_random_router`, `teacher_forced`); the rest
 (`bc`, `bc_robot_only`, `warmstart_moe`, `plain_encoder_phase_bootstrap`,
-`scratch_moe`, `oracle_moe`, `bc_rnn`) were unaffected **training-side** but
+`scratch_moe`, `oracle_moe`) were unaffected **training-side** but
 still need a full re-run for a consistent artifact set at one git revision
 (their part-3 eval rows target old checkpoints).
 
@@ -137,7 +137,7 @@ phaseforge-sweep \
   --manifest experiments/five_task.json \
   --outputs outputs_rerun \
   --with-dependencies \
-  --expect-steps 315 \
+  --expect-steps 285 \
   --continue-on-error
 ```
 
@@ -158,22 +158,23 @@ phaseforge-sweep \
   fix, so per-epoch snapshots are unnecessary disk. Re-selection scripts
   (`scripts/analysis/tie_break_selector.py`) remain available for post-hoc audits.
 
-## 2. What will run (50 method rows × 3 seeds)
+## 2. What will run (45 method rows × 3 seeds)
 
-Per task, rows 1–9 repeat for Lift, Can, Square, ToolHang, Transport
-(indices in the manifest):
+The 45 manifest rows are grouped by the eight core rows for each task,
+followed by the five BC-Large capacity-control rows (indices in the
+manifest):
 
 | Rows | Method | Stages | Stage-1 source |
 |---|---|---|---|
-| 1,10,19,28,37 | phaseforge | 1→2→eval | self |
-| 2,11,20,29,38 | bc | 1→eval | — |
-| 3,12,21,30,39 | bc_robot_only | 1→eval | — |
-| 4,13,22,31,40 | scratch_moe | 2→eval | — (random init) |
-| 5,14,23,32,41 | warmstart_moe | 2→eval | bc stage-1 |
-| 6,15,24,33,42 | phase_pretrain_random_router | 2→eval | phaseforge stage-1 |
-| 7,16,25,34,43 | plain_encoder_phase_bootstrap | 2→eval | bc stage-1 |
-| 8,17,26,35,44 | teacher_forced | 2→eval | phaseforge stage-1 |
-| 9,18,27,36,45 | bc_rnn | 1→eval | — |
+| 1,9,17,25,33 | phaseforge | 1→2→eval | self |
+| 2,10,18,26,34 | bc | 1→eval | — |
+| 3,11,19,27,35 | bc_robot_only | 1→eval | — |
+| 4,12,20,28,36 | scratch_moe | 2→eval | — (random init) |
+| 5,13,21,29,37 | warmstart_moe | 2→eval | bc stage-1 |
+| 6,14,22,30,38 | phase_pretrain_random_router | 2→eval | phaseforge stage-1 |
+| 7,15,23,31,39 | plain_encoder_phase_bootstrap | 2→eval | bc stage-1 |
+| 8,16,24,32,40 | teacher_forced | 2→eval | phaseforge stage-1 |
+| 41,42,43,44,45 | bc_large | 1→eval | — |
 
 Eval mode: rollout for all cells. Oracle ground-truth routing is not a
 training cell in the manifest — it is an eval-time diagnostic on

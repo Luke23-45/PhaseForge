@@ -1,7 +1,0 @@
-# Temporal-history variant of the canonical Tool Hang state schema.
-defaults:
-  - tool_hang
-  - _self_
-
-sequence_length: 10
-stride: 1

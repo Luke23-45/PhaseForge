@@ -48,7 +48,7 @@ Top level:
 |   6 | `phase_pretrain_random_router` | `baselines/phase_pretrain_random_router` | `{task}` | — | 2 | `phaseforge` |
 |   7 | `plain_encoder_phase_bootstrap` | `baselines/plain_encoder_phase_bootstrap` | `{task}` | — | 2 | `bc` |
 |   8 | `teacher_forced`           | `baselines/teacher_forced`     | `{task}`   | —           | 2      | `phaseforge`  |
-|   9 | `bc_rnn`                   | `baselines/bc_rnn`             | `{task}_rnn` | —         | 1      | —             |
+|   9 | `bc_large`                 | `baselines/bc_large`           | `{task}`   | —           | 1      | —             |
 
 `Oracle MoE` is **not** a manifest cell: it is an eval-time routing
 intervention on PhaseForge's trained expert set (`phaseforge/models/phase_moe.py`,
@@ -67,8 +67,6 @@ Semantics:
   `baselines/bc` output tree, but `data=robot_only_{task}` and every run
   recorded with `project.tag=robot_only` so it can never be confused with the
   default BC cell.
-- `bc_rnn` is the matched temporal comparator (declared ten-step history
-  window, same state/action schema) on its own `{task}_rnn` data variant.
 - `evaluate: true` everywhere — one row = a complete run (train → eval).
 
 ### Validation (enforced at load time)
@@ -279,12 +277,12 @@ phaseforge-sweep --methods phaseforge                          # the method on e
 phaseforge-sweep --methods phaseforge --tasks Lift,Can --seeds 42
 phaseforge-sweep --tasks Lift                                  # every method on Lift
 phaseforge-sweep --methods phaseforge@Lift --seeds 42 --stage 2 --force  # re-run one cell's stage 2
-phaseforge-sweep --expect-steps 315 --dry-run                  # assert the full-sweep size first
+phaseforge-sweep --expect-steps 285 --dry-run                  # assert the full-sweep size first
 phaseforge-sweep --continue-on-error                           # sweep that survives one bad cell
 ```
 
-The full five-task matrix is 50 method rows × 3 seeds (10 methods × 5 tasks).
-Per task and seed the plan has 21 steps (11 training + 10 evaluations) — 315
+The full five-task matrix is 45 method rows × 3 seeds (9 methods × 5 tasks).
+Per task and seed the plan has 19 steps (10 training + 9 evaluations) — 285
 steps in total; `--with-dependencies` is not required for a full selection
 because every provider is itself selected.
 

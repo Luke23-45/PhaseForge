@@ -17,7 +17,6 @@ DISPLAY_NAMES: dict[str, str] = {
     "phaseforge": "PhaseForge",
     "bc": "BC",
     "bc_large": "BC-Large",
-    "bc_rnn": "BC-RNN",
     "bc_robot_only": "BC Robot-Only",
     "scratch_moe": "Scratch MoE",
     "warmstart_moe": "Warm-Start MoE",
@@ -54,7 +53,6 @@ MATRIX_ORDER: tuple[str, ...] = (
     "phaseforge",
     "bc",
     "bc_large",
-    "bc_rnn",
     "bc_robot_only",
     "scratch_moe",
     "warmstart_moe",
@@ -80,7 +78,7 @@ def seeds(namespace: str) -> tuple[int, ...]:
 
 
 def matrix_method_names() -> tuple[str, ...]:
-    """The 10 five-task method names in canonical paper order."""
+    """The 9 five-task method names in canonical paper order."""
     present = {m.name for m in methods("final")}
     return tuple(name for name in MATRIX_ORDER if name in present)
 
@@ -91,7 +89,7 @@ def tasks() -> tuple[str, ...]:
 
 
 def ablation_method_names() -> tuple[str, ...]:
-    """Ablation-only cells (not part of the ten-method matrix), manifest order."""
+    """Ablation-only cells (not part of the nine-method matrix), manifest order."""
     matrix = set(matrix_method_names())
     seen: list[str] = []
     for m in methods("ablation"):

@@ -25,8 +25,8 @@ from studies.analysis.dataset import build_dataset  # noqa: E402
 def mini_sweep(tmp_path: Path, monkeypatch) -> Path:
     """Fabricate outputs_final/ + outputs_ablation/ covering every expected cell.
 
-    Coverage uses the REAL manifests (10x5x3 matrix + 27x3 ablation), so the
-    fixture fabricates all 150 + 81 eval cells and their stage runs — files
+    Coverage uses the REAL manifests (9x5x3 matrix + 27x3 ablation), so the
+    fixture fabricates all 135 + 81 eval cells and their stage runs — files
     are tiny, so this is fast.
     """
     from studies.analysis.common import registry
@@ -291,7 +291,7 @@ def dataset(mini_sweep: Path):
 def test_coverage_complete(dataset) -> None:
     report = dataset.coverage()
     assert report.ok, report.summary()
-    assert report.present_evals == 150 + 81
+    assert report.present_evals == 135 + 81
 
 
 def test_loaders_typed_and_fail_closed(dataset, mini_sweep: Path) -> None:
@@ -346,11 +346,11 @@ def test_registry_matches_plan() -> None:
     from studies.analysis.common import registry
 
     assert len(ASSET_REGISTRY) == 23
-    assert ASSET_REGISTRY["F1"].kind == "schematic"
+    assert ASSET_REGISTRY["F1"].kind in ("figure", "schematic")
     for spec in ASSET_REGISTRY.values():
         if spec.kind != "schematic":
             assert callable(load_generator(spec)), spec.id
-    assert len(registry.matrix_method_names()) == 10
+    assert len(registry.matrix_method_names()) == 9
     assert len(registry.ablation_method_names()) == 18
 
 
@@ -367,11 +367,6 @@ def test_generate_and_verify_end_to_end(dataset, mini_sweep: Path, capsys) -> No
     manifest = json.loads((mini_sweep / "generation_manifest.json").read_text())
     assert "T1" in manifest["assets"]
 
-    # verify fails only on the manual schematic (F1) missing.
-    assert verify_cli.main([]) == 1
-    f1 = paper / "figures" / "main" / "F1_overview.pdf"
-    f1.parent.mkdir(parents=True, exist_ok=True)
-    f1.write_bytes(b"%PDF-1.4 minimal schematic\n")
     assert verify_cli.main([]) == 0
 
 

@@ -14,15 +14,14 @@ the dataset-compatible legacy evaluation path and its verified banks below.
 
 ## 1. Method matrix (frozen)
 
-Ten methods per task × five tasks (Lift, Can, Square, ToolHang, Transport)
-× seeds 42/43/44 = 50 cells, 315 runner steps.
+Nine methods per task × five tasks (Lift, Can, Square, ToolHang, Transport)
+× seeds 42/43/44 = 45 cells, 285 runner steps.
 
 | Method | Role | Model config | Data | Stages | S2 source |
 |---|---|---|---|---|---|
 | `phaseforge` | proposed (6 experts, centroid router, 50% partial warm-start) | `phaseforge` | `<task>` | 1, 2 | self |
 | `bc` | structured-state floor | `baselines/bc` | `<task>` | 1 | — |
 | `bc_large` | parameter-matched dense capacity control | `baselines/bc_large` | `<task>` | 1 | — |
-| `bc_rnn` | temporal comparator (10-step, same schema; not history-matched) | `baselines/bc_rnn` | `<task>_rnn` | 1 | — |
 | `bc_robot_only` | robot-only negative control (descriptive) | `baselines/bc` | `robot_only_<task>` | 1 | — |
 | `scratch_moe` | MoE architecture control (random init, no Stage 1) | `baselines/scratch_moe` | `<task>` | 2 | none |
 | `warmstart_moe` | warm-start control (plain encoder × random router) | `baselines/warmstart_moe` | `<task>` | 2 | bc |
@@ -32,8 +31,8 @@ Ten methods per task × five tasks (Lift, Can, Square, ToolHang, Transport)
 
 D2 primary family: `phaseforge` vs `bc`, `scratch_moe`, `warmstart_moe`,
 `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap` — five per
-task. `bc_large`/`bc_rnn` reported with intervals but outside the corrected
-family; `bc_robot_only`/`teacher_forced` descriptive.
+task. `bc_large` is reported with intervals as a capacity control outside the
+corrected family; `bc_robot_only`/`teacher_forced` are descriptive.
 
 The router controls `pf_spherical_kmeans`/`pf_kmeans`/`pf_phase_head` are
 not in this matrix (D1): they run in the Lift ablation (section 9) on the
@@ -98,7 +97,7 @@ under the rejected `soft-reset-canonical-v1` protocol.
   --manifest experiments/five_task.json --list
 ```
 
-Expect 50 method rows (10 per task), `seeds: [42, 43, 44]`, `phaseforge`
+Expect 45 method rows (9 per task), `seeds: [42, 43, 44]`, `phaseforge`
 rows with `stage1,stage2`. `--list` accepts the same `--methods/--tasks`
 filters as a sweep (e.g. `--tasks Lift`).
 
@@ -141,12 +140,12 @@ real_pinning` must pass there (it skips on CPU-only machines).
 ```bash
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
-  --outputs outputs_final --expect-steps 315 --dry-run
+  --outputs outputs_final --expect-steps 285 --dry-run
 ```
 
-Expect exactly **315 steps** = 21 per (task, seed): 11 training
-(`phaseforge` trains Stages 1+2, the other nine methods their final stage
-only) + 10 evaluations; × 5 tasks × 3 seeds. Every step `pending` on a
+Expect exactly **285 steps** = 19 per (task, seed): 10 training
+(`phaseforge` trains Stages 1+2, the other eight methods their final stage
+only) + 9 evaluations; × 5 tasks × 3 seeds. Every step `pending` on a
 fresh namespace.
 
 Preview caveat: the `$` echoes on a fresh namespace show `AUTO-INJECT`
@@ -162,7 +161,7 @@ authoritative signal is the numbered `done`/`pending` list.
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
   --outputs outputs_final \
-  --expect-steps 315 \
+  --expect-steps 285 \
   --continue-on-error
 ```
 
@@ -183,13 +182,13 @@ authoritative signal is the numbered `done`/`pending` list.
 ```bash
 .venv-rollout/Scripts/python -m phaseforge.runner \
   --manifest experiments/five_task.json \
-  --outputs outputs_final --expect-steps 315 --dry-run
+  --outputs outputs_final --expect-steps 285 --dry-run
 ```
 
 Every step `done` (no `pending`, no `failed`), then:
 
-- `outputs_final/_results/results.jsonl` holds **150 rows** (50 cells × 3
-  seeds); `training_summary.jsonl` holds **165 rows** (55 train cells × 3).
+- `outputs_final/_results/results.jsonl` holds **135 rows** (45 cells × 3
+  seeds); `training_summary.jsonl` holds **150 rows** (50 train cells × 3).
 - Every cache used by final evals contains `phase_thresholds.json` — a
   missing artifact silently nulls per-phase SR (S8b.6); verify none are
   null before reporting.
@@ -259,7 +258,7 @@ Contents per `state_only_rollout_implementation_plan.md` §5:
 
 `experiments/lift_ablation.json`: 27 cells, Lift only, seeds 42/43/44, own
 namespace `outputs_ablation/`, 165 steps. Nine Lift replicas of the main
-matrix (`bc_rnn` excluded; self-contained) plus 18 ablation-only cells:
+matrix (self-contained) plus 18 ablation-only cells:
 
 - **Router init** (canonical provider + 50% partial warm): `pf_spherical_kmeans`,
   `pf_kmeans`, `pf_phase_head`, `pf_random_random`, `pf_centroid_random`;

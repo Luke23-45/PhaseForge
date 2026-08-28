@@ -1,0 +1,1156 @@
+{
+  "version": 1,
+  "created_at": "2026-08-28T06:54:34.371393+00:00",
+  "argv": [
+    "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\studies\\analysis\\scripts\\generate.py",
+    "--allow-partial"
+  ],
+  "coverage": {
+    "present_evals": 132,
+    "missing_evals": [
+      [
+        null,
+        "pf_centroid_random",
+        42
+      ],
+      [
+        null,
+        "pf_centroid_random",
+        43
+      ],
+      [
+        null,
+        "pf_centroid_random",
+        44
+      ],
+      [
+        null,
+        "pf_drop100",
+        42
+      ],
+      [
+        null,
+        "pf_drop100",
+        43
+      ],
+      [
+        null,
+        "pf_drop100",
+        44
+      ],
+      [
+        null,
+        "pf_spherical",
+        42
+      ],
+      [
+        null,
+        "pf_spherical",
+        43
+      ],
+      [
+        null,
+        "pf_spherical",
+        44
+      ],
+      [
+        null,
+        "phaseforge",
+        42
+      ],
+      [
+        null,
+        "phaseforge",
+        43
+      ],
+      [
+        null,
+        "phaseforge",
+        44
+      ],
+      [
+        null,
+        "pf_phase_head",
+        42
+      ],
+      [
+        null,
+        "pf_phase_head",
+        43
+      ],
+      [
+        null,
+        "pf_phase_head",
+        44
+      ],
+      [
+        null,
+        "pf_k3",
+        42
+      ],
+      [
+        null,
+        "pf_k3",
+        43
+      ],
+      [
+        null,
+        "pf_k3",
+        44
+      ],
+      [
+        null,
+        "pf_full_warm",
+        42
+      ],
+      [
+        null,
+        "pf_full_warm",
+        43
+      ],
+      [
+        null,
+        "pf_full_warm",
+        44
+      ],
+      [
+        null,
+        "pf_corrupt_25",
+        42
+      ],
+      [
+        null,
+        "pf_corrupt_25",
+        43
+      ],
+      [
+        null,
+        "pf_corrupt_25",
+        44
+      ],
+      [
+        null,
+        "pf_drop00",
+        42
+      ],
+      [
+        null,
+        "pf_drop00",
+        43
+      ],
+      [
+        null,
+        "pf_drop00",
+        44
+      ],
+      [
+        null,
+        "pf_drop25",
+        42
+      ],
+      [
+        null,
+        "pf_drop25",
+        43
+      ],
+      [
+        null,
+        "pf_drop25",
+        44
+      ],
+      [
+        null,
+        "pf_k12",
+        42
+      ],
+      [
+        null,
+        "pf_k12",
+        43
+      ],
+      [
+        null,
+        "pf_k12",
+        44
+      ],
+      [
+        null,
+        "plain_encoder_phase_bootstrap",
+        42
+      ],
+      [
+        null,
+        "plain_encoder_phase_bootstrap",
+        43
+      ],
+      [
+        null,
+        "plain_encoder_phase_bootstrap",
+        44
+      ],
+      [
+        null,
+        "phase_pretrain_random_router",
+        42
+      ],
+      [
+        null,
+        "phase_pretrain_random_router",
+        43
+      ],
+      [
+        null,
+        "phase_pretrain_random_router",
+        44
+      ],
+      [
+        null,
+        "warmstart_moe",
+        42
+      ],
+      [
+        null,
+        "warmstart_moe",
+        43
+      ],
+      [
+        null,
+        "warmstart_moe",
+        44
+      ],
+      [
+        null,
+        "pf_one_warm_plus_random",
+        42
+      ],
+      [
+        null,
+        "pf_one_warm_plus_random",
+        43
+      ],
+      [
+        null,
+        "pf_one_warm_plus_random",
+        44
+      ],
+      [
+        null,
+        "pf_spherical_kmeans",
+        42
+      ],
+      [
+        null,
+        "pf_spherical_kmeans",
+        43
+      ],
+      [
+        null,
+        "pf_spherical_kmeans",
+        44
+      ],
+      [
+        null,
+        "bc_large",
+        42
+      ],
+      [
+        null,
+        "bc_large",
+        43
+      ],
+      [
+        null,
+        "bc_large",
+        44
+      ],
+      [
+        null,
+        "bc_robot_only",
+        42
+      ],
+      [
+        null,
+        "bc_robot_only",
+        43
+      ],
+      [
+        null,
+        "bc_robot_only",
+        44
+      ],
+      [
+        null,
+        "pf_drop75",
+        42
+      ],
+      [
+        null,
+        "pf_drop75",
+        43
+      ],
+      [
+        null,
+        "pf_drop75",
+        44
+      ],
+      [
+        null,
+        "pf_ft",
+        42
+      ],
+      [
+        null,
+        "pf_ft",
+        43
+      ],
+      [
+        null,
+        "pf_ft",
+        44
+      ],
+      [
+        null,
+        "bc",
+        42
+      ],
+      [
+        null,
+        "bc",
+        43
+      ],
+      [
+        null,
+        "bc",
+        44
+      ],
+      [
+        null,
+        "teacher_forced",
+        42
+      ],
+      [
+        null,
+        "teacher_forced",
+        43
+      ],
+      [
+        null,
+        "teacher_forced",
+        44
+      ],
+      [
+        null,
+        "pf_corrupt_50",
+        42
+      ],
+      [
+        null,
+        "pf_corrupt_50",
+        43
+      ],
+      [
+        null,
+        "pf_corrupt_50",
+        44
+      ],
+      [
+        null,
+        "pf_kmeans",
+        42
+      ],
+      [
+        null,
+        "pf_kmeans",
+        43
+      ],
+      [
+        null,
+        "pf_kmeans",
+        44
+      ],
+      [
+        null,
+        "scratch_moe",
+        42
+      ],
+      [
+        null,
+        "scratch_moe",
+        43
+      ],
+      [
+        null,
+        "scratch_moe",
+        44
+      ],
+      [
+        null,
+        "pf_random_random",
+        42
+      ],
+      [
+        null,
+        "pf_random_random",
+        43
+      ],
+      [
+        null,
+        "pf_random_random",
+        44
+      ],
+      [
+        null,
+        "pf_shuffle_control",
+        42
+      ],
+      [
+        null,
+        "pf_shuffle_control",
+        43
+      ],
+      [
+        null,
+        "pf_shuffle_control",
+        44
+      ]
+    ],
+    "missing_stage_runs": [
+      [
+        null,
+        "bc",
+        42,
+        1
+      ],
+      [
+        null,
+        "bc",
+        43,
+        1
+      ],
+      [
+        null,
+        "bc",
+        44,
+        1
+      ],
+      [
+        null,
+        "bc_large",
+        42,
+        1
+      ],
+      [
+        null,
+        "bc_large",
+        43,
+        1
+      ],
+      [
+        null,
+        "bc_large",
+        44,
+        1
+      ],
+      [
+        null,
+        "bc_robot_only",
+        42,
+        1
+      ],
+      [
+        null,
+        "bc_robot_only",
+        43,
+        1
+      ],
+      [
+        null,
+        "bc_robot_only",
+        44,
+        1
+      ],
+      [
+        null,
+        "pf_centroid_random",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_centroid_random",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_centroid_random",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_corrupt_25",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_corrupt_25",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_corrupt_25",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_corrupt_50",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_corrupt_50",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_corrupt_50",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_drop00",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_drop00",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_drop00",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_drop100",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_drop100",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_drop100",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_drop25",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_drop25",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_drop25",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_drop75",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_drop75",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_drop75",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_ft",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_ft",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_ft",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_full_warm",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_full_warm",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_full_warm",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_k12",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_k12",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_k12",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_k3",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_k3",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_k3",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_kmeans",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_kmeans",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_kmeans",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_one_warm_plus_random",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_one_warm_plus_random",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_one_warm_plus_random",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_phase_head",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_phase_head",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_phase_head",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_random_random",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_random_random",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_random_random",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_shuffle_control",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_shuffle_control",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_shuffle_control",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_spherical",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_spherical",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_spherical",
+        44,
+        2
+      ],
+      [
+        null,
+        "pf_spherical_kmeans",
+        42,
+        2
+      ],
+      [
+        null,
+        "pf_spherical_kmeans",
+        43,
+        2
+      ],
+      [
+        null,
+        "pf_spherical_kmeans",
+        44,
+        2
+      ],
+      [
+        null,
+        "phase_pretrain_random_router",
+        42,
+        2
+      ],
+      [
+        null,
+        "phase_pretrain_random_router",
+        43,
+        2
+      ],
+      [
+        null,
+        "phase_pretrain_random_router",
+        44,
+        2
+      ],
+      [
+        null,
+        "phaseforge",
+        42,
+        1
+      ],
+      [
+        null,
+        "phaseforge",
+        42,
+        2
+      ],
+      [
+        null,
+        "phaseforge",
+        43,
+        1
+      ],
+      [
+        null,
+        "phaseforge",
+        43,
+        2
+      ],
+      [
+        null,
+        "phaseforge",
+        44,
+        1
+      ],
+      [
+        null,
+        "phaseforge",
+        44,
+        2
+      ],
+      [
+        null,
+        "plain_encoder_phase_bootstrap",
+        42,
+        2
+      ],
+      [
+        null,
+        "plain_encoder_phase_bootstrap",
+        43,
+        2
+      ],
+      [
+        null,
+        "plain_encoder_phase_bootstrap",
+        44,
+        2
+      ],
+      [
+        null,
+        "scratch_moe",
+        42,
+        2
+      ],
+      [
+        null,
+        "scratch_moe",
+        43,
+        2
+      ],
+      [
+        null,
+        "scratch_moe",
+        44,
+        2
+      ],
+      [
+        null,
+        "teacher_forced",
+        42,
+        2
+      ],
+      [
+        null,
+        "teacher_forced",
+        43,
+        2
+      ],
+      [
+        null,
+        "teacher_forced",
+        44,
+        2
+      ],
+      [
+        null,
+        "warmstart_moe",
+        42,
+        2
+      ],
+      [
+        null,
+        "warmstart_moe",
+        43,
+        2
+      ],
+      [
+        null,
+        "warmstart_moe",
+        44,
+        2
+      ]
+    ]
+  },
+  "assets": {
+    "F1": {
+      "outputs": [
+        "figures\\main\\F1_overview.pdf",
+        "figures\\main\\F1_overview.png"
+      ],
+      "sha256": {
+        "figures\\main\\F1_overview.pdf": "a49d7a8093f5650f9f52f1445985545ac3edce2d0a00ef50b3ece2f694458a33",
+        "figures\\main\\F1_overview.png": "72503e070814c10c08eca9693c36ff708753c84f19628b3b6b224724a27fa758"
+      }
+    },
+    "F2": {
+      "outputs": [
+        "figures\\main\\F2_paired_deltas.pdf",
+        "figures\\main\\F2_paired_deltas.png"
+      ],
+      "sha256": {
+        "figures\\main\\F2_paired_deltas.pdf": "611853a20dd96e7f8ee127f52a4f23057450acb34b2c5a5b47448057331eff3e",
+        "figures\\main\\F2_paired_deltas.png": "8257a8514739795ec31a2954ee1a72febe6fd7d333d3fc43f2ac99893807781a"
+      }
+    },
+    "F3": {
+      "outputs": [
+        "figures\\main\\F3_specialization.pdf",
+        "figures\\main\\F3_specialization.png"
+      ],
+      "sha256": {
+        "figures\\main\\F3_specialization.pdf": "6222d61ae8dd4103eeea59c47292354e22224968770e8efd5d3bcac84cce872c",
+        "figures\\main\\F3_specialization.png": "50af9740c47f3492e857b20a25c20374d5335b2c359f0c9feb6e14b2bbb03f99"
+      }
+    },
+    "F4": {
+      "outputs": [
+        "figures\\main\\F4_drop_sweep.pdf",
+        "figures\\main\\F4_drop_sweep.png"
+      ],
+      "sha256": {
+        "figures\\main\\F4_drop_sweep.pdf": "5c0dcbaafb90cdcff378d4b1c095010e98d5e8a2287c1da8991cb5ed4cc3d225",
+        "figures\\main\\F4_drop_sweep.png": "8a082cfcfd9acfdbe2a04cf5043ec7c9b7a62d301de338552f734972ae567d9c"
+      }
+    },
+    "F5": {
+      "outputs": [
+        "figures\\main\\F5_initial_routing.pdf",
+        "figures\\main\\F5_initial_routing.png"
+      ],
+      "sha256": {
+        "figures\\main\\F5_initial_routing.pdf": "4bc426d56277bf1de4f8804552c5f5e5efb7f5a7b1f1f1140850df650f62480a",
+        "figures\\main\\F5_initial_routing.png": "03e092feaae7cb88559b895a78533ea5e3c3e54323bd0b14eb4305e8bd7d6461"
+      }
+    },
+    "T1": {
+      "outputs": [
+        "tables\\T1_success_matrix.tex",
+        "tables\\T1_success_matrix.md"
+      ],
+      "sha256": {
+        "tables\\T1_success_matrix.tex": "d5cfa21607133647983e8f2e5b8d15e9d73aa5cfd26e5966206bdb9d5eb668f9",
+        "tables\\T1_success_matrix.md": "13946c57c7d0b923b634a19d2d0d84ffa1669d5f34cb6cea30ccd51fc1d8bfe9"
+      }
+    },
+    "T2": {
+      "outputs": [
+        "tables\\T2_causal_controls.tex",
+        "tables\\T2_causal_controls.md"
+      ],
+      "sha256": {
+        "tables\\T2_causal_controls.tex": "8ce21550b96a5d2bbcd985a455e85e658bb5c5af40ca7b25d575f1b36f98d538",
+        "tables\\T2_causal_controls.md": "adf7142fa772ec2d8da70557b29a7bf791c9444ebcef46c841223ff0cfa339e2"
+      }
+    },
+    "T3": {
+      "outputs": [
+        "tables\\T3_capacity.tex",
+        "tables\\T3_capacity.md"
+      ],
+      "sha256": {
+        "tables\\T3_capacity.tex": "f9f47dab561605eab7593c61edc776524c843b0acca8ff11c22eb13560749807",
+        "tables\\T3_capacity.md": "0fe91ad163fda76213379bbd1c421a47aadd054b96a59b5fa39bc8567307f044"
+      }
+    },
+    "A1": {
+      "outputs": [
+        "tables\\A1_per_seed_raws.tex",
+        "tables\\A1_per_seed_raws.md"
+      ],
+      "sha256": {
+        "tables\\A1_per_seed_raws.tex": "1f637ffc203920a9462caae5973f151423460ab23d793a004d117d1126705286",
+        "tables\\A1_per_seed_raws.md": "0d52bc40d2dd534ccb2d023fcbb27a8b2258615630e06f3e3ab353b4ed3713e3"
+      }
+    },
+    "A2": {
+      "outputs": [
+        "tables\\A2_offline_mse.tex",
+        "tables\\A2_offline_mse.md"
+      ],
+      "sha256": {
+        "tables\\A2_offline_mse.tex": "7a38ed79176d72860d0f7f24525fa778d78e2eeecbe41c9030243bd2f518f524",
+        "tables\\A2_offline_mse.md": "9856c379543729a327985e204e7cb2f0679bf4e20e57c3999ec1d61217823d2a"
+      }
+    },
+    "A3": {
+      "outputs": [
+        "figures\\appendix\\A3_training_curves.pdf",
+        "figures\\appendix\\A3_training_curves.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A3_training_curves.pdf": "1d971ddf621f6afb0fdecf4c4730d0a922dab08df48a78a37f62bbad9e370b2a",
+        "figures\\appendix\\A3_training_curves.png": "03392abe3501c7939503b184c00b2f8f55e2f0601954fde03c0af7ee74a5b8ab"
+      }
+    },
+    "A4": {
+      "outputs": [
+        "tables\\A4_ablation_full.tex",
+        "tables\\A4_ablation_full.md"
+      ],
+      "sha256": {
+        "tables\\A4_ablation_full.tex": "c587737d2b7db779e11af11a39baf844a650f19a558be58103ea0d5f08373232",
+        "tables\\A4_ablation_full.md": "6d7838bd185bad0cabdd660bd74549c542e88197c35fd7c29ddd97e571a5ed9d"
+      }
+    },
+    "A5": {
+      "outputs": [
+        "figures\\appendix\\A5_failure_categories.pdf",
+        "figures\\appendix\\A5_failure_categories.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A5_failure_categories.pdf": "52fd8374e1c4b2d1f1bf0beb7876c01c4a68e33f3e55eace157381382ccc4e23",
+        "figures\\appendix\\A5_failure_categories.png": "feda5d7f4a9c7b0d07d41a30be71eb5a26b0afe484cf79c14c5d6154c2849745"
+      }
+    },
+    "A6": {
+      "outputs": [
+        "figures\\appendix\\A6_steps_ecdf.pdf",
+        "figures\\appendix\\A6_steps_ecdf.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A6_steps_ecdf.pdf": "ba933889327262d1f2aa2b3a58366544d0eea2ef95d79989e57d2fb918834047",
+        "figures\\appendix\\A6_steps_ecdf.png": "251d04de1d318584154719aff6cb2d2a3113175818878bc7e2e637b355cfc49c"
+      }
+    },
+    "A7": {
+      "outputs": [
+        "tables\\A7_t0_alignment.tex",
+        "tables\\A7_t0_alignment.md"
+      ],
+      "sha256": {
+        "tables\\A7_t0_alignment.tex": "040171a621b1577dbdb6f0fcf35fc5740c99cabe52e2814b5db1dd8fe7208324",
+        "tables\\A7_t0_alignment.md": "b9069b9619e49b0d73ec7e71ae7334a4c58ed69e1971bb7fd1b3d59e7c26a3fc"
+      }
+    },
+    "A8": {
+      "outputs": [
+        "figures\\appendix\\A8_balance.pdf",
+        "figures\\appendix\\A8_balance.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A8_balance.pdf": "dfd3d2f835c0f0f495a171815e0c8086dc61906d3a384b85fe51e77fffeac103",
+        "figures\\appendix\\A8_balance.png": "bb049c84286979d6b4c69e78de0348386b0d2c4dc5d3b67e08d8d87f8c2095b7"
+      }
+    },
+    "A9": {
+      "outputs": [
+        "tables\\A9_compute_cost.tex",
+        "tables\\A9_compute_cost.md"
+      ],
+      "sha256": {
+        "tables\\A9_compute_cost.tex": "2113a145b69b684e3562597329e37e777988431fd35a2c59d2d1705a7702297c",
+        "tables\\A9_compute_cost.md": "d5d9897445e43a00b71ed73b2b003761b76a2b193c140abde47066cae7929b75"
+      }
+    },
+    "A10": {
+      "outputs": [
+        "tables\\A10_provenance.tex",
+        "tables\\A10_provenance.md"
+      ],
+      "sha256": {
+        "tables\\A10_provenance.tex": "60dcd85a108314e32de3438563ca547e6f581d2a6ccd05d73c7702fabb960510",
+        "tables\\A10_provenance.md": "fa32acf213a53ced10a937c95ed085b915a6a79236eda49f6671e449fd5a428c"
+      }
+    },
+    "A11": {
+      "outputs": [
+        "figures\\appendix\\A11_router_family.pdf",
+        "figures\\appendix\\A11_router_family.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A11_router_family.pdf": "28a7a0dff574cddb1d6117396b5e3f16c4bb9bf4e7d5f766d77a90b230a66c21",
+        "figures\\appendix\\A11_router_family.png": "aa306685c0abe249148b362119e774d4110f00714adc3bc87e0f046470df9fcb"
+      }
+    },
+    "A12": {
+      "outputs": [
+        "tables\\A12_hyperparameters.tex",
+        "tables\\A12_hyperparameters.md"
+      ],
+      "sha256": {
+        "tables\\A12_hyperparameters.tex": "c5382a0835918067216e469db531aa04106804bbc3a75ccf9e5139d349c3228b",
+        "tables\\A12_hyperparameters.md": "180f37bf45d3f2ad69aa9bedef7d0db09e460f757f58dea8be8835e82b207cc0"
+      }
+    },
+    "A13": {
+      "outputs": [
+        "tables\\A13_dataset_stats.tex",
+        "tables\\A13_dataset_stats.md"
+      ],
+      "sha256": {
+        "tables\\A13_dataset_stats.tex": "964fd0e1a18a73453134e27ea1c2996ba66ec3864ff89fdcfcd8256ddb97fec8",
+        "tables\\A13_dataset_stats.md": "8d672d0a98895c84884b2d7ddd5f3ea55b79db5921dd42977508081fec27da17"
+      }
+    },
+    "A14": {
+      "outputs": [
+        "figures\\appendix\\A14_phase_depth.pdf",
+        "figures\\appendix\\A14_phase_depth.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A14_phase_depth.pdf": "728a67c354835a45734fab540517da3e65cf550c26aa77e9e1f7bb04a8b5f84c",
+        "figures\\appendix\\A14_phase_depth.png": "ae6d4f694094a8d08937f2e33aff0524336255151c2704a81214095eaffc9713"
+      }
+    },
+    "A15": {
+      "outputs": [
+        "tables\\A15_paired_tests.tex",
+        "tables\\A15_paired_tests.md"
+      ],
+      "sha256": {
+        "tables\\A15_paired_tests.tex": "d593b9d32de6791579108a5a2cc2ce01a5200e7bbb5b3a6c1e7d006a7eee0ea2",
+        "tables\\A15_paired_tests.md": "a0f31014fcfee9d9327a679ac88c3b9297665a6e6ed823d3d646ecedc7897021"
+      }
+    }
+  }
+}

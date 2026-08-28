@@ -407,10 +407,10 @@ live in the two metadata manifests rather than being duplicated into
 
 ## 6. Storage and cost estimate
 
-Training runs in the matrix: 10 runs per (task, seed) — `phaseforge` 2
+Training runs in the matrix: 9 runs per (task, seed) — `phaseforge` 2
 (stage 1 + 2), one each for `bc`, `bc_robot_only`, `scratch_moe`,
 `warmstart_moe`, `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`,
-`teacher_forced`, `bc_rnn` — × 5 tasks × 3 seeds ≈ **150 training runs**. At
+`teacher_forced`, `bc_large` — × 5 tasks × 3 seeds ≈ **135 training runs**. At
 ~100–200 epochs each and ~25 fields per full Stage 2 row:
 
 - `training_curves.jsonl`: ≈ 25–90 KB per run (a 9-field `bc` row is ~250 B;

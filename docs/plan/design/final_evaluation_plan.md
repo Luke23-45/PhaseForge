@@ -80,8 +80,9 @@ literature that are relevant to this project:
   simulator rather than treating validation loss as the task result;
   the authors explicitly report that the best validation checkpoint can be
   substantially worse in rollout performance;
-- robomimic identifies history-dependent BC-RNN as a strong baseline, so a
-  single-step BC model cannot be the only behavioral control;
+- the final protocol keeps the primary comparison under a declared
+  single-state observation contract; history-dependent policies are outside
+  the claim being tested;
 - [Diffusion Policy's official project page](https://diffusion-policy.cs.columbia.edu/)
   reports the same five robomimic simulation tasks in its
   state-based benchmark track, which supports using Lift, Can, Square, Tool
@@ -147,7 +148,10 @@ The current single-step MLP is insufficient for a claim about long-horizon or hi
 
 All main models must receive the same fixed history window, or the project must explicitly narrow its claim to instantaneous control. The initial choice should be a short fixed window, such as 5–10 observations, with the same window and padding rules for BC, MoE, and PhaseForge.
 
-A recurrent BC baseline is required because robomimic reports strong benefits from history-dependent policies. *(Implemented: `phaseforge/models/baselines/bc_rnn.py` — LSTM, declared ten-step history window on the `{task}_rnn` data variants; the five-task manifest includes it as the temporal comparator.)*
+The final protocol does not include a recurrent BC baseline: the study claim is
+restricted to the declared single-state observation contract. A history-based
+BC baseline may be added only as a separately labeled extension, not as an
+eye-to-eye baseline for this protocol.
 
 ### 3.4 Negative-control observation
 
@@ -248,12 +252,12 @@ Every model in a comparison must use the same observation schema, history, data 
 ### Required models
 
 1. **BC-MLP** — direct action regression from the structured low-dimensional input.
-2. **BC-RNN/history BC** — temporal baseline using the same observation window as the MoE models.
-3. **Scratch MoE** — randomly initialized router and experts.
-4. **Warm-Start MoE** — pretrained action encoder, randomly initialized router, and warm-started experts.
-5. **PhaseForge** — phase-supervised pretraining followed by phase-centroid router initialization.
-6. **Teacher-Forced Phase Routing** — expert assignment uses ground-truth phases during training and a learned phase predictor at inference; this is a diagnostic reference and must be labeled as privileged-training.
-7. **Robot-only BC** — proprioception-only negative control.
+2. **Scratch MoE** — randomly initialized router and experts.
+3. **Warm-Start MoE** — pretrained action encoder, randomly initialized router, and warm-started experts.
+4. **PhaseForge** — phase-supervised pretraining followed by phase-centroid router initialization.
+5. **Teacher-Forced Phase Routing** — expert assignment uses ground-truth phases during training and a learned phase predictor at inference; this is a diagnostic reference and must be labeled as privileged-training.
+6. **Robot-only BC** — proprioception-only negative control.
+7. **BC-Large** — parameter-matched dense capacity control.
 
 ### Optional reference
 
@@ -349,7 +353,7 @@ the environment or evaluator.
 
 ### Gate 2 — BC floor
 
-Train BC-MLP and BC-RNN on a small pilot subset first.
+Train BC-MLP on a small pilot subset first.
 
 Proceed only when structured-state BC produces clearly nonzero rollout success on held-out initial states and outperforms the robot-only negative control where object information is necessary.
 
@@ -598,7 +602,7 @@ Before the final matrix, the codebase must implement and test:
 3. trajectory-level train/validation/test splits;
 4. single-task training and evaluation;
 5. a common history-window interface;
-6. BC-MLP and BC-RNN baselines;
+6. BC-MLP and the declared stateless baselines;
 7. explicit task conditioning for any multitask extension;
 8. action normalization and de-normalization checks;
 9. demonstration replay and simulator parity tests;
@@ -616,7 +620,6 @@ Before the final matrix, the codebase must implement and test:
 
 The current repository satisfies this list with the exceptions noted: it has
 the Lift HDF5 ingestion pipeline, the offline single-step data path, the
-history-aware dataset/model path (`{task}_rnn` variants + `bc_rnn`), the
 simulator rollout adapter, and the task-independent gates (parity + state
 restore + action contract + native success-predicate probe). What remains is
 the complete three-seed × five-task configuration matrix execution. No final

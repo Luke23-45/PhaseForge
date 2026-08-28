@@ -12,10 +12,8 @@ matrix.** The published comparison set is:
 1. **Primary family (multiplicity-corrected):** PhaseForge vs BC-MLP,
    Scratch MoE, Warm-Start MoE, Phase-Pretrain Random-Router,
    Plain-Encoder Phase-Bootstrap.
-2. **Context rows (intervals reported, outside the corrected family):**
-   BC-Large (per-task deployed parameter match +0.8%…+1.8%), BC-RNN
-   (strongest temporal comparator; 5.6× BC parameters, not history-matched
-   to the single-state contract — disclosed).
+2. **Context row (intervals reported, outside the corrected family):**
+   BC-Large (per-task deployed parameter match +0.8%…+1.8%).
 3. **Diagnostics (never deployable-performance evidence):** robot-only BC,
    teacher-forced, oracle routing (pending D10).
 
@@ -51,29 +49,27 @@ appropriate family. Exclusion is cited, not assumed.
 The declared protocol holds the policy class fixed — deterministic,
 single-step, state-only — across every compared method so the comparison
 isolates the routing/initialization factor. Diffusion policies require
-observation history and action chunking (a different observation/action
-contract); BC-RNN already fills the "stronger, non-contract-matched
-temporal comparator" slot with disclosure. Published low-dim DP numbers are
-provided as literature context (table above).
+observation history and action chunking, which is a different
+observation/action contract and is outside the present claim. Published
+low-dim DP numbers are provided as literature context (table above).
 
 **Why no GMM / stochastic heads or BC-Transformer?**
 Stochastic policy classes would vary the output distribution family in
-addition to the studied factor; BC-RNN already represents the temporal
-family at 5.6× BC capacity with full disclosure. The uniform policy class
-is part of the registered protocol.
+addition to the studied factor. The uniform deterministic policy class is
+part of the registered protocol.
 
 **Why is this baseline set sufficient?**
-It contains the benchmark study's strongest IL baseline (BC-RNN), a
-parameter-matched dense capacity control (BC-Large, verified per task in
-preflight), an architecture control (Scratch MoE), an upcycling control
-(Warm-Start MoE), and an exactly-matched four-way mechanism factorial for
-the causal claims (H1–H4). The paper's claim is a mechanism claim under a
-controlled protocol, not a leaderboard claim.
+It contains a parameter-matched dense capacity control (BC-Large, verified
+per task in preflight), an architecture control (Scratch MoE), an upcycling
+control (Warm-Start MoE), and an exactly-matched mechanism factorial for the
+causal claims (H1–H4). The paper's claim is a mechanism claim under a
+controlled single-state protocol, not a leaderboard claim; BC-RNN remains
+literature context rather than a final-protocol comparator.
 
 ## Contingency
 
 If a reviewer explicitly demands a modern generative baseline, the
 pre-agreed fallback is a low-dim Diffusion Policy added as a clearly-labeled
-non-contract-matched reference (same disclosure status as BC-RNN). This is
+non-contract-matched reference. This is
 a post-review revision decision (ledger D9), not part of the registered
 final sweep.

@@ -44,10 +44,5 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
         headers=["Method", "Deployed params", "Active/sample", "~FLOPs/fwd", "Optimizer steps"],
         rows=rows,
         caption="Capacity and fairness accounting per method (Stage-2 deployed configuration).",
-        notes=(
-            "BC-RNN carries 1.16M parameters (5.6x the structured-state methods) and "
-            "consumes observation history — it is not history-matched to the "
-            "single-state PhaseForge contract.",
-        ),
     )
     return save_table(table, "tables/T3_capacity")

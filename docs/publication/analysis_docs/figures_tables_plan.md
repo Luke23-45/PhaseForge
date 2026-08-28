@@ -51,15 +51,15 @@ reset-case indices is the strongest allowed comparison form.
 
 | ID | Table | Columns | Source | Evidences | Pri |
 |---|---|---|---|---|---|
-| **T1** | **Five-task success matrix** | 10 methods × 5 tasks: mean SR ± Wilson CI; macro-average marked secondary; PhaseForge bolded; paired Δ vs BC with Holm markers (full tests in A15) | eval_results.json | **H6** | P0 |
+| **T1** | **Five-task success matrix** | 9 methods × 5 tasks: mean SR ± Wilson CI; macro-average marked secondary; PhaseForge bolded; paired Δ vs BC with Holm markers (full tests in A15) | eval_results.json | **H6** | P0 |
 | **T2** | **Causal mechanism controls** (Lift) | PhaseForge vs pprr (H1), pepb (H2), pf_spherical_kmeans (H3), pf_kmeans, pf_phase_head (H4): SR ± CI, paired Δ, t=0 NMI, final NMI | ablation cells + init_routing.json | **H1–H4** | P0 |
-| **T3** | Capacity & fairness accounting | total/deployed params, epochs/steps, BC-RNN 1.16M + not-history-matched disclosures | fairness_accounting.py | capacity defense | P0 |
+| **T3** | Capacity & fairness accounting | total/deployed params, epochs/steps, and capacity-control disclosures | fairness_accounting.py | capacity defense | P0 |
 
 ## 4. Appendix figures & tables
 
 | ID | Asset | Encoding | Source | Pri |
 |---|---|---|---|---|
-| A1 | Per-seed raw SR, every matrix cell (10×5×3) | numeric + seed points | eval_results.json | P0 |
+| A1 | Per-seed raw SR, every matrix cell (9×5×3) | numeric + seed points | eval_results.json | P0 |
 | A2 | Offline action MSE matrix (**eval-time MSE** primary, val loss secondary) | heatmap + numeric | eval_results + curves | P1 |
 | A3 | Training curves, all methods × tasks: val action loss; stage-1 phase loss/acc; **stage-2 loss decomposition (balance, sticky, teacher-KL) and lr schedule** | small multiples | training_curves.jsonl | P1 |
 | A4 | **Full ablation table:** factorial corners, pf_spherical, pf_ft, k3/k12, corruption 25/50/shuffle, one-warm, full-warm, drop sweep — SR ± CI, final NMI, **final collapse rate** | grouped table | ablation cells | P0 |

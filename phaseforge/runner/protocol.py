@@ -38,11 +38,6 @@ _VALID_DATA = frozenset(
         "square",
         "tool_hang",
         "transport",
-        "lift_rnn",
-        "can_rnn",
-        "square_rnn",
-        "tool_hang_rnn",
-        "transport_rnn",
     }
 )
 _VALID_EVAL_MODES = frozenset({"rollout", "offline"})

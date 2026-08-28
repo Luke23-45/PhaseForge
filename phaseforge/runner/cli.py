@@ -29,7 +29,7 @@ Examples::
     phaseforge-sweep --eval-only                        # (re)run evaluations only
     phaseforge-sweep --methods 3 --dry-run              # preview commands
     phaseforge-sweep --list                             # show the method matrix
-    phaseforge-sweep --expect-steps 315 --dry-run       # assert the plan size first
+    phaseforge-sweep --expect-steps 285 --dry-run       # assert the plan size first
 
 ``python -m phaseforge.runner --help`` is equivalent.
 

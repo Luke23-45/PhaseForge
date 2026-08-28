@@ -1,7 +1,7 @@
 """Fast smoke run for the new evaluation cells before the final matrix.
 
-Trains every new cell (Wave-1/2 lift_ablation additions + the five-task
-bc_rnn rows) for a handful of epochs on the real data and runs the offline
+Trains every new cell (Wave-1/2 lift_ablation additions) for a handful of
+epochs on the real data and runs the offline
 metric evaluator, so composition, bootstrap, checkpoint and metric-path
 errors surface in minutes instead of after the 100/200-epoch runs.
 
@@ -47,8 +47,6 @@ NEW_ABLATION = {
     "warmstart_r50",  # EXP-210 (Wave 3 expert-init)
     "pf_one_warm_plus_random",  # EXP-211 (Wave 3 expert-init)
 }
-
-NEW_BC_RNN = {"bc_rnn"}
 
 TRAIN_QUIET = (
     "data.num_workers=0",
@@ -195,7 +193,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     ablation = load_protocol(PROJECT_ROOT / "experiments" / "lift_ablation.json")
-    five = load_protocol(PROJECT_ROOT / "experiments" / "five_task.json")
     outputs = (PROJECT_ROOT / args.outputs).resolve()
     logs = outputs / "_smoke" / "logs"
     seed = args.seed
@@ -207,9 +204,6 @@ def main(argv: list[str] | None = None) -> int:
     targets: list[Method] = []
     for m in ablation.methods:
         if m.name in NEW_ABLATION and wanted(m.name):
-            targets.append(m)
-    for m in five.methods:
-        if m.name in NEW_BC_RNN and wanted(m.name):
             targets.append(m)
 
     provider = ablation.method_by_name("phaseforge")
@@ -236,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def job(method: Method) -> tuple[str, str, float]:
         t0 = time.time()
-        defaults = ablation.defaults if method.name != "bc_rnn" else five.defaults
+        defaults = ablation.defaults
         try:
             if method.stages == (1,):
                 run_dir = train_cell(

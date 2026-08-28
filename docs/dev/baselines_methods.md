@@ -9,7 +9,6 @@ Report reviewed: [DEBUG_RUN_BASELINE_COMPARISON_REPORT.md](C:/Users/Hellx/Docume
 | BC standard | [bc.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/bc.py) | Encoder → action head; no phase or routing |
 | BC Large | Same `BehaviorCloningModel`; [bc_large.yaml](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/config/models/baselines/bc_large.yaml) | Wider dense encoder/action head; not a separate Python class |
 | BC Robot Only | Same BC implementation with robot-only data | Data/schema negative control, not a separate model |
-| BC-RNN | [bc_rnn.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/bc_rnn.py) | State encoder plus recurrent LSTM/GRU history |
 | Scratch MoE | [scratch_moe.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/scratch_moe.py) | Trainable encoder, random router, randomly initialized experts; Stage 2 only |
 | Warmstart MoE | [warmstart_moe.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/warmstart_moe.py) | BC-pretrained encoder; random router; experts copied from the BC action head |
 | Phase Pretrain Random Router | [phase_pretrain_random_router.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/phase_pretrain_random_router.py) | Phase-supervised encoder; random router; **R50-matched 50% partial warm-start experts** (config-driven `expert_init` inherited from `WarmStartMoEModel`) |
@@ -42,7 +41,7 @@ drop-rate sweep subsumes the endpoints).
 
 1. The report says PhaseForge’s 74% is the highest single-seed result across all baselines. That is incorrect: `pf_centroid_random` has a reported 92% result on seed 43.
 
-2. The report’s 13-method table is not a complete inventory of repository baselines. It omits at least BC-RNN, `pf_phase_head`, `pf_ft`, and several ablation cells.
+2. The report’s 13-method table is not a complete inventory of repository methods. It omits `pf_phase_head`, `pf_ft`, and several ablation cells; the final protocol’s active baseline inventory is defined by `experiments/five_task.json` and the separate Lift ablation manifest.
 
 3. BC Large and BC Robot Only are not separate model classes. Both use the standard BC implementation; they differ through configuration/data.
 

@@ -310,7 +310,7 @@ Sources: https://api.emergentmind.com/topics/tacumi · https://arxiv.org/html/26
 6. **MoE regularization:** do not add a new load-balance auxiliary loss to the primary experiment. Keep the current PhaseForge objective fixed and report balance, entropy, collapse, and specialization diagnostics. Any new regularizer is a separate ablation.
 7. **Robustness:** defer physics perturbation and randomized-reset robustness until the nominal five-task evaluator is validated and the core result is complete.
 8. **Phase metrics:** retain NMI, balanced accuracy, boundary statistics, and routing health as secondary mechanism diagnostics. They cannot replace rollout success.
-9. **History and references:** include BC-RNN as the declared temporal control baseline for the five-task comparison. Published Lift numbers remain contextual references only; they are not pass/fail targets for any task.
+9. **History and references:** keep BC-RNN as literature context only; it is not part of the final five-task comparison because the protocol is restricted to the declared single-state observation contract. Published Lift numbers remain contextual references only; they are not pass/fail targets for any task.
 
 ---
 

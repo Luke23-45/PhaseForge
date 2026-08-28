@@ -62,7 +62,7 @@ debug. Lift-only results are not the final cross-task evaluation.
 The core Lift matrix is:
 
 - structured-state BC-MLP;
-- structured-state BC-RNN or an equivalent declared history baseline;
+- structured-state BC-MLP under the declared single-state observation contract;
 - Scratch MoE;
 - Warm-Start MoE;
 - Phase-Pretrain Random-Router;
@@ -258,8 +258,8 @@ For every task, report:
   confirmation before the sweep starts):** Holm step-down over the five
   primary comparisons within each task (25 paired McNemar tests in total,
   five per task), applied to the per-seed-aggregated paired tables; BC-Large
-  and BC-RNN are reported with intervals but sit outside the corrected
-  family (capacity and temporal context rows); across-seed direction
+  is reported with intervals but sits outside the corrected family as a
+  capacity-control row; across-seed direction
   consistency is reported descriptively;
 - infrastructure failures separately (excluded from the success denominator);
   policy-caused invalid actions/NaNs/safety violations counted as failures
@@ -281,13 +281,12 @@ outcome using this decision table:
 
 Add these only if the paper claim is intentionally broadened:
 
-### Single-task history control (implemented)
+### Single-task history control (out of scope)
 
-The BC-RNN implementation now uses the same state/action schema and a
-declared ten-step history window. It is required as a temporal comparator for
-the five-task benchmark claim. PhaseForge remains a single-state model in this
-protocol, so BC-RNN is not a history-matched ablation of PhaseForge and cannot
-be used to claim that PhaseForge itself is history-dependent.
+A history-dependent BC-RNN can be treated as a separate extension, but it is
+not part of the final single-state matrix. The final protocol does not make a
+claim about memory or history dependence and therefore keeps all primary
+comparisons under the declared single-state observation contract.
 
 ### Multitask extension
 
@@ -311,8 +310,8 @@ report if it is presented with that narrow claim.
 
 The five-task state-only rollout implementation described here is now present,
 including task-independent environment gates (parity + state restore +
-action contract + native success-predicate probe), the rollout evaluator,
-schema checks, and BC-RNN. A paper claim that PhaseForge improves
+action contract + native success-predicate probe), the rollout evaluator, and
+schema checks. A paper claim that PhaseForge improves
 manipulation behavior remains blocked until the complete three-seed
 matrix finishes successfully. It does not require images, a vision
 encoder, LIBERO, or comparison against VLA models.

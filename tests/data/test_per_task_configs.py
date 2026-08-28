@@ -27,8 +27,8 @@ from phaseforge.evaluations.envs.task_registry import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-#: Every per-task data config: the five structured schemas, their robot-only
-#: negative controls, and the BC-RNN temporal-history variants.
+#: Every per-task data config: the five structured schemas and their robot-only
+#: negative controls.
 PER_TASK_DATA_CONFIGS: tuple[str, ...] = (
     "lift",
     "can",
@@ -40,11 +40,6 @@ PER_TASK_DATA_CONFIGS: tuple[str, ...] = (
     "robot_only_square",
     "robot_only_tool_hang",
     "robot_only_transport",
-    "lift_rnn",
-    "can_rnn",
-    "square_rnn",
-    "tool_hang_rnn",
-    "transport_rnn",
 )
 
 
@@ -102,16 +97,6 @@ def test_phase_labeler_slices_align_with_key_layout(data_config: str) -> None:
     assert int(labeler.num_phases) == 6
 
 
-def test_rnn_variants_keep_structured_schema_and_add_history() -> None:
-    for task in ("lift", "can", "square", "tool_hang", "transport"):
-        base = _compose_data(task)
-        rnn = _compose_data(f"{task}_rnn")
-        assert int(rnn.data.sequence_length) == 10
-        assert int(rnn.data.state_dim) == int(base.data.state_dim)
-        assert int(rnn.data.action_dim) == int(base.data.action_dim)
-        assert str(rnn.data.source.task_name) == str(base.data.source.task_name)
-
-
 def test_registry_schema_strings_match_structured_configs() -> None:
     """Registry ``schema_version`` strings must equal the data configs' pins.
 
@@ -133,6 +118,24 @@ def test_five_task_manifest_pairs_resolve() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     assert set(manifest["tasks"]) == set(known_protocol_tasks())
+    expected_names = {
+        "phaseforge",
+        "bc",
+        "bc_robot_only",
+        "scratch_moe",
+        "warmstart_moe",
+        "phase_pretrain_random_router",
+        "plain_encoder_phase_bootstrap",
+        "teacher_forced",
+        "bc_large",
+    }
+    rows = manifest["methods"]
+    assert len(rows) == 45
+    assert [row["index"] for row in rows] == list(range(1, 46))
+    for task in manifest["tasks"]:
+        task_rows = [row for row in rows if row["task"] == task]
+        assert len(task_rows) == 9, task
+        assert {row["name"] for row in task_rows} == expected_names, task
 
     composed: dict[str, DictConfig] = {}
     for method in manifest["methods"]:

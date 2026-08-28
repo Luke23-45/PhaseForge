@@ -40,7 +40,6 @@ REPORT_JSON = "rollout_report.json"
 PRIMARY_COMPARATORS = frozenset(
     {
         "bc",
-        "bc_rnn",
         "scratch_moe",
         "warmstart_moe",
         "phase_pretrain_random_router",
