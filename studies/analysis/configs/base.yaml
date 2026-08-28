@@ -10,7 +10,7 @@ namespaces:
     manifest: experiments/lift_ablation.json
 
 output:
-  paper_root: docs/publication/paper      # figures/ and tables/ are created inside
+  paper_root: studies/analysis/outputs      # figures/ and tables/ are created inside — per request, output to studies/analysis/outputs
   manifest_name: generation_manifest.json # written next to paper_root
 
 style:

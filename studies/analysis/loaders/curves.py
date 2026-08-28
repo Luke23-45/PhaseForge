@@ -89,8 +89,12 @@ class TrainingCurve:
 
 
 def load_curve(run_dir: Path) -> TrainingCurve:
+    # Support both layouts: run_dir/training_curves.jsonl and run_dir/metrics/training_curves.jsonl (final_ouput)
+    curve_path = run_dir / "training_curves.jsonl"
+    if not curve_path.is_file():
+        curve_path = run_dir / "metrics" / "training_curves.jsonl"
     points: list[CurvePoint] = []
-    for row in cio.iter_jsonl(run_dir / "training_curves.jsonl"):
+    for row in cio.iter_jsonl(curve_path):
         missing = [k for k in _REQUIRED if k not in row]
         if missing:
             raise ValueError(f"{run_dir / 'training_curves.jsonl'}: missing {missing}")

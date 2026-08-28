@@ -73,10 +73,17 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     def sign_p(deltas: list[float]) -> float:
         plus = sum(1 for d in deltas if d > 0)
-        n = sum(1 for d in deltas if d != 0)
+        minus = sum(1 for d in deltas if d < 0)
+        n = plus + minus
         if n == 0:
             return 1.0
-        return sum(comb(n, k) for k in range(plus + 1, n + 1)) / 2**n * 2
+        # Two-sided exact sign test: 2 * min(tail)
+        tail_plus = sum(comb(n, k) for k in range(plus, n + 1)) / 2**n
+        tail_minus = sum(comb(n, k) for k in range(0, plus + 1)) / 2**n
+        # For plus > n/2 tail_plus is small, else tail_minus is small; take min
+        # Equivalent to 2* min, capped at 1.0
+        p = 2 * min(tail_plus, tail_minus)
+        return min(1.0, p)
 
     ps = [sign_p(d) for _, _, d in entries]
     adjusted = holm_adjust(ps) if ps else []

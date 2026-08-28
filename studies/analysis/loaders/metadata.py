@@ -75,17 +75,21 @@ def load_init_routing(run_dir: Path) -> InitRouting | None:
         t0_routing_entropy=float(d["t0_mean_routing_entropy"]),
         t0_normalized_routing_entropy=(
             float(d["t0_normalized_routing_entropy"])
-            if "t0_normalized_routing_entropy" in d
+            if d.get("t0_normalized_routing_entropy") is not None
             else None
         ),
-        t0_collapse_rate=float(d["t0_collapse_rate"]) if "t0_collapse_rate" in d else None,
+        t0_collapse_rate=(
+            float(d["t0_collapse_rate"]) if d.get("t0_collapse_rate") is not None else None
+        ),
         t0_dead_expert_count=(
-            int(d["t0_dead_expert_count"]) if "t0_dead_expert_count" in d else None
+            int(d["t0_dead_expert_count"]) if d.get("t0_dead_expert_count") is not None else None
         ),
         t0_phase_head_accuracy=(
-            float(d["t0_phase_head_accuracy"]) if "t0_phase_head_accuracy" in d else None
+            float(d["t0_phase_head_accuracy"])
+            if d.get("t0_phase_head_accuracy") is not None
+            else None
         ),
-        t0_top1_expert_frequencies=tuple(float(x) for x in d.get("t0_top1_expert_frequencies", [])),
+        t0_top1_expert_frequencies=tuple(float(x) for x in d.get("t0_top1_expert_frequencies", []) if x is not None),
     )
 
 

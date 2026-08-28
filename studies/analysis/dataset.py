@@ -157,8 +157,13 @@ def build_dataset(strict: bool = True, load_curves: bool = True) -> AnalysisData
 
     if load_curves:
         for key, run in dataset.train_runs.items():
-            if (run.path / "training_curves.jsonl").is_file():
-                dataset.curves[key] = load_curve(run.path)
+            # training_curves may be at run root or at metrics/training_curves.jsonl (final_ouput layout)
+            # load_curve now handles both locations
+            try:
+                c = load_curve(run.path)
+                dataset.curves[key] = c
+            except ValueError:
+                continue
 
     for key, run in dataset.train_runs.items():
         dataset.init_routing[key] = load_init_routing(run.path)
