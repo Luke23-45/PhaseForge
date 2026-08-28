@@ -1,4 +1,4 @@
-"""A11 — router-init family dynamics on Lift (entropy / NMI / switch / collapse)."""
+"""A11 — router-init family dynamics on Lift (NMI / entropy / switch rate / collapse)."""
 
 from __future__ import annotations
 
@@ -9,12 +9,18 @@ from studies.analysis.common.style import method_color, paper_style
 from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import plot_seed_trajectories, save
 
-FAMILY = ("phaseforge", "pf_spherical_kmeans", "pf_kmeans", "pf_phase_head", "pf_random_random")
+FAMILY = (
+    ("phaseforge", "PhaseForge (Centroid)"),
+    ("pf_spherical_kmeans", "Spherical K-Means"),
+    ("pf_kmeans", "Euclidean K-Means"),
+    ("pf_phase_head", "Phase Head"),
+    ("pf_random_random", "Random Router (H1)"),
+)
 FIELDS = (
-    ("nmi", "phase–expert NMI"),
-    ("routing_entropy", "routing entropy"),
-    ("switch_rate", "switch rate"),
-    ("top1_collapse", "top-1 collapse"),
+    ("nmi", "Phase–Expert NMI"),
+    ("routing_entropy", "Routing Entropy"),
+    ("switch_rate", "Switch Rate"),
+    ("top1_collapse", "Top-1 Collapse"),
 )
 
 
@@ -23,16 +29,16 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     with paper_style():
         fig, axes = plt.subplots(
-            len(FIELDS), 1, figsize=(4.4, 1.9 * len(FIELDS)), squeeze=False, sharex=True
+            len(FIELDS), 1, figsize=(5.4, 6.8), squeeze=True, sharex=True
         )
         for row, (field, ylabel) in enumerate(FIELDS):
-            ax = axes[row][0]
-            for name in FAMILY:
+            ax = axes[row]
+            for name, display in FAMILY:
                 per_seed = []
-                for seed in registry.seeds("ablation"):
-                    key = (None, name, seed, 2)
-                    if key in dataset.curves:
-                        series = dataset.curves[key].series(field)
+                for seed in sorted(set(list(registry.seeds("ablation")) + list(registry.seeds("final")))):
+                    curve = dataset.curves.get((None, name, seed, 2)) or dataset.curves.get(("Lift", name, seed, 2))
+                    if curve is not None:
+                        series = curve.series(field)
                         if series:
                             per_seed.append(series)
                 if not per_seed:
@@ -41,11 +47,20 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                     ax,
                     per_seed,
                     method_color(name),
-                    label=registry.display_name(name) if row == 0 else None,
+                    label=display if row == 0 else None,
+                    show_ribbon=True,
                 )
-            ax.set_ylabel(ylabel)
+            ax.set_ylabel(ylabel, fontsize=8.5)
+            ax.grid(True, linestyle=":", alpha=0.3)
             if row == len(FIELDS) - 1:
-                ax.set_xlabel("Stage-2 epoch")
-        axes[0][0].legend(frameon=False, fontsize=7)
-        fig.tight_layout()
+                ax.set_xlabel("Stage-2 Epoch", fontsize=8.5)
+
+        axes[0].legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.32),
+            ncol=3,
+            frameon=False,
+            fontsize=7.5,
+        )
+        fig.subplots_adjust(top=0.90, bottom=0.08, left=0.15, right=0.96, hspace=0.22)
     return save(fig, "figures/appendix/A11_router_family")

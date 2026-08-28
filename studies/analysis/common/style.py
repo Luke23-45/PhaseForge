@@ -34,8 +34,7 @@ OKABE_ITO = {
 }
 
 # Fixed method -> color mapping: PhaseForge carries the accent; controls are
-# muted; the BC family shares cool neutrals. Abllation-only cells default to
-# a grey ramp so main-matrix colors stay reserved.
+# muted; the BC family shares cool neutrals; ablation groups have distinct palettes.
 METHOD_COLORS: dict[str, str] = {
     "phaseforge": OKABE_ITO["vermillion"],
     "bc": OKABE_ITO["blue"],
@@ -47,15 +46,58 @@ METHOD_COLORS: dict[str, str] = {
     "phase_pretrain_random_router": OKABE_ITO["dark_yellow"],
     "plain_encoder_phase_bootstrap": OKABE_ITO["black"],
     "teacher_forced": OKABE_ITO["grey"],
+    # Router initialization family (Group A)
+    "pf_spherical_kmeans": OKABE_ITO["sky"],
+    "pf_kmeans": OKABE_ITO["blue"],
+    "pf_phase_head": OKABE_ITO["green"],
+    "pf_random_random": OKABE_ITO["orange"],
+    "pf_centroid_random": OKABE_ITO["purple"],
+    "pf_spherical": OKABE_ITO["vermillion"],
+    "pf_ft": OKABE_ITO["green"],
+    # Capacity scaling (Group D)
+    "pf_k3": OKABE_ITO["sky"],
+    "pf_k12": OKABE_ITO["purple"],
+    # Phase noise / corruption (Group C)
+    "pf_corrupt_25": OKABE_ITO["orange"],
+    "pf_corrupt_50": OKABE_ITO["dark_yellow"],
+    "pf_shuffle_control": OKABE_ITO["grey"],
+    # Expert init suite (Group B)
+    "pf_one_warm_plus_random": OKABE_ITO["purple"],
+    "pf_full_warm": OKABE_ITO["orange"],
+    "pf_drop00": OKABE_ITO["sky"],
+    "pf_drop25": OKABE_ITO["blue"],
+    "pf_drop50": OKABE_ITO["vermillion"],
+    "pf_drop75": OKABE_ITO["orange"],
+    "pf_drop100": OKABE_ITO["grey"],
 }
 ABLATION_COLOR = OKABE_ITO["grey"]
 SEED_POINT_COLOR = OKABE_ITO["black"]
 
-FONT_SIZES = {"title": 11, "label": 10, "tick": 9, "legend": 9, "annot": 8}
+FONT_SIZES = {"title": 10, "label": 9, "tick": 8, "legend": 8, "annot": 7.5}
 
 
 def method_color(name: str) -> str:
     return METHOD_COLORS.get(name, ABLATION_COLOR)
+
+
+METHOD_MARKERS: dict[str, str] = {
+    "phaseforge": "o",
+    "bc": "s",
+    "bc_large": "D",
+    "bc_rnn": "^",
+    "scratch_moe": "v",
+    "warmstart_moe": "P",
+    "phase_pretrain_random_router": "X",
+    "plain_encoder_phase_bootstrap": "p",
+    "pf_spherical_kmeans": "s",
+    "pf_kmeans": "^",
+    "pf_phase_head": "D",
+    "pf_random_random": "x",
+}
+
+
+def method_marker(name: str) -> str:
+    return METHOD_MARKERS.get(name, "o")
 
 
 def column_width(kind: str = "text") -> float:

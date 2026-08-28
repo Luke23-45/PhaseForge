@@ -24,6 +24,29 @@ DISPLAY_NAMES: dict[str, str] = {
     "phase_pretrain_random_router": "PP Random-Router",
     "plain_encoder_phase_bootstrap": "PE Phase-Bootstrap",
     "teacher_forced": "Teacher-Forced",
+    # Router Init Family (Group A)
+    "pf_spherical_kmeans": "Spherical K-Means",
+    "pf_kmeans": "Euclidean K-Means",
+    "pf_phase_head": "Phase-Head Directions",
+    "pf_random_random": "Random Router (H1)",
+    "pf_centroid_random": "Centroid + Rand Exp",
+    # Drop-rate Sweep (Group B)
+    "pf_drop00": "Drop 0% (Full Warm)",
+    "pf_drop25": "Drop 25%",
+    "pf_drop50": "Drop 50% (PhaseForge)",
+    "pf_drop75": "Drop 75%",
+    "pf_drop100": "Drop 100% (Scratch Exp)",
+    "pf_full_warm": "Full Warm-Start",
+    "pf_one_warm_plus_random": "One-Warm + 5-Rand",
+    # Phase Quality & Supervision (Group C)
+    "pf_corrupt_25": "25% Phase Corruption",
+    "pf_corrupt_50": "50% Phase Corruption",
+    "pf_shuffle_control": "100% Phase Shuffle",
+    # Expert Capacity & Encoder (Groups D & E)
+    "pf_k3": "K=3 Experts",
+    "pf_k12": "K=12 Experts",
+    "pf_spherical": "Spherical Latent Space",
+    "pf_ft": "Fine-Tuned Encoder",
 }
 
 #: T1/T2 row order: proposed method first, then floors, controls, diagnostics.

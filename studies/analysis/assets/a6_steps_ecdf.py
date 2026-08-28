@@ -1,47 +1,71 @@
-"""A6 — steps-to-outcome ECDFs (success and timeout episodes separated)."""
+"""A6 — steps-to-completion ECDFs on solvable tasks (Lift, Can, Square)."""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+import numpy as np
 
 from studies.analysis.common import registry
 from studies.analysis.common.style import method_color, paper_style
 from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import ecdf, save
 
+SOLVABLE_TASKS = ("Lift", "Can", "Square")
+METHODS_TO_COMPARE = (
+    ("phaseforge", "-", 2.0),
+    ("bc", "--", 1.6),
+    ("warmstart_moe", ":", 1.6),
+    ("plain_encoder_phase_bootstrap", "-.", 1.6),
+)
+
 
 def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
 
-    tasks = registry.tasks()
     with paper_style():
         fig, axes = plt.subplots(
-            1, len(tasks), figsize=(1.9 * len(tasks) + 1.2, 2.4), squeeze=False, sharey=True
+            1, len(SOLVABLE_TASKS), figsize=(7.0, 2.6), squeeze=True, sharey=True
         )
-        for col, task in enumerate(tasks):
-            ax = axes[0][col]
-            for method in ("phaseforge", "bc", "warmstart_moe"):
-                success_steps, timeout_steps = [], []
+        for col, task in enumerate(SOLVABLE_TASKS):
+            ax = axes[col]
+            for method, linestyle, linewidth in METHODS_TO_COMPARE:
+                if method not in registry.matrix_method_names():
+                    continue
+                success_steps = []
                 for seed in registry.seeds("final"):
                     for ep in dataset.episodes.get((task, method, seed), []):
-                        if not ep.valid or ep.steps <= 0:
-                            continue
-                        (success_steps if ep.success else timeout_steps).append(ep.steps)
-                color = method_color(method)
+                        if ep.valid and ep.success and ep.steps > 0:
+                            success_steps.append(ep.steps)
                 if success_steps:
+                    color = method_color(method)
+                    med = float(np.median(success_steps))
                     ecdf(
                         ax,
                         success_steps,
                         color=color,
-                        label=f"{registry.display_name(method)} (succ.)",
+                        linestyle=linestyle,
+                        linewidth=linewidth,
+                        label=f"{registry.display_name(method)} (med: {med:.0f})",
                     )
-                if timeout_steps:
-                    ecdf(ax, timeout_steps, color=color, label=None)
-                    ax.plot([], [])  # keep ordering stable
-            ax.set_title(task, fontsize=9)
-            ax.set_xlabel("steps")
+
+            ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
+            ax.set_xlabel("Completion Steps", fontsize=8.5)
+            ax.set_ylim(0.0, 1.05)
+            ax.grid(True, linestyle=":", alpha=0.3)
             if col == 0:
-                ax.set_ylabel("ECDF")
-        axes[0][0].legend(frameon=False, fontsize=7)
-        fig.tight_layout()
+                ax.set_ylabel("Empirical CDF", fontsize=8.5)
+
+        # Unified top legend
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=4,
+            frameon=False,
+            fontsize=7.5,
+        )
+        fig.subplots_adjust(top=0.82, bottom=0.18, left=0.10, right=0.96, wspace=0.18)
     return save(fig, "figures/appendix/A6_steps_ecdf")

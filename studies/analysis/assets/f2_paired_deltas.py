@@ -1,8 +1,8 @@
 """F2 — per-task paired success deltas (PhaseForge vs key baselines/controls).
 
-Forest panels, one per comparison method; rows are tasks; the point is the
-seed-mean paired delta computed per-episode on identical reset cases, the
-interval spans the per-seed deltas (seed points drawn individually).
+1x4 horizontal strip forest plot; rows are tasks; point is the paired seed-mean delta
+on identical reset cases; intervals span min-max seed deltas with distinct caps;
+individual seed deltas are vertically jittered (n=3) to prevent overplotting.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from studies.analysis.common import registry
-from studies.analysis.common.style import OKABE_ITO, method_color, paper_style
+from studies.analysis.common.style import method_color, paper_style
 from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import forest, save
 from studies.analysis.stats.paired import pair_episodes
@@ -22,21 +22,21 @@ COMPARISONS = (
     "plain_encoder_phase_bootstrap",
 )
 PANEL_TITLES = {
-    "bc": "PhaseForge − BC",
-    "warmstart_moe": "PhaseForge − Warm-Start MoE",
-    "phase_pretrain_random_router": "PhaseForge − PP Random-Router (H1)",
-    "plain_encoder_phase_bootstrap": "PhaseForge − PE Phase-Bootstrap (H2)",
+    "bc": "vs. BC",
+    "warmstart_moe": "vs. Warm-Start",
+    "phase_pretrain_random_router": "vs. Rand-Router (H1)",
+    "plain_encoder_phase_bootstrap": "vs. Phase-Boot (H2)",
 }
 
 
 def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
 
-    tasks = registry.tasks()
+    tasks = list(reversed(registry.tasks()))  # Lift at top
     with paper_style():
-        fig, axes = plt.subplots(2, 2, figsize=(7.0, 5.2), squeeze=False, sharex=True)
-        for ax, comparator in zip(axes.flat, COMPARISONS):
-            labels, means, lows, highs, seed_dots = [], [], [], [], []
+        fig, axes = plt.subplots(1, 4, figsize=(7.0, 2.5), squeeze=True, sharey=True, sharex=True)
+        for col_idx, (ax, comparator) in enumerate(zip(axes, COMPARISONS)):
+            labels, means, lows, highs, seed_points = [], [], [], [], []
             for task in tasks:
                 seed_deltas = []
                 for seed in registry.seeds("final"):
@@ -64,7 +64,8 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                 means.append(mean_delta)
                 lows.append(min(seed_deltas))
                 highs.append(max(seed_deltas))
-                seed_dots.extend((task, d) for d in seed_deltas)
+                seed_points.append(seed_deltas)
+
             color = method_color(comparator)
             forest(
                 ax,
@@ -73,22 +74,17 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                 lows,
                 highs,
                 colors=[color] * len(labels),
-                xlabel="Δ success rate",
+                seed_points=seed_points,
+                xlabel="Δ success rate" if col_idx == 0 or col_idx == 2 else "",
+                show_zero=True,
+                capsize=3.0,
             )
-            # individual seed deltas as open markers beside the mean point
-            for i, label in enumerate(labels):
-                for task_name, delta in seed_dots:
-                    if task_name == label:
-                        ax.scatter(
-                            [delta],
-                            [i],
-                            facecolors="none",
-                            edgecolors=color,
-                            s=18,
-                            linewidths=0.9,
-                            zorder=3,
-                        )
-            ax.set_title(PANEL_TITLES[comparator], fontsize=10)
-            ax.axvline(0.0, color=OKABE_ITO["grey"], linewidth=0.8, linestyle="--")
-        fig.tight_layout()
+            ax.set_title(PANEL_TITLES[comparator], fontsize=9.0, fontweight="bold", pad=6)
+            ax.set_xlim(-0.45, 0.45)
+
+            # Add subtle grid and reference lines
+            ax.set_xticks([-0.4, -0.2, 0.0, 0.2, 0.4])
+            ax.grid(axis="x", linestyle=":", alpha=0.3)
+
+        fig.subplots_adjust(top=0.86, bottom=0.18, left=0.12, right=0.98, wspace=0.18)
     return save(fig, "figures/main/F2_paired_deltas")

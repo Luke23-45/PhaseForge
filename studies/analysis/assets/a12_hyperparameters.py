@@ -12,29 +12,51 @@ _ROWS = (
     (
         "Encoder hidden / latent",
         lambda cfg: (
-            f"{list(cfg['models']['encoder']['hidden_dims'])}"
-            f" / {cfg['models']['encoder']['latent_dim']}"
+            f"{list(cfg.get('models', {}).get('encoder', {}).get('hidden_dims', []))}"
+            f" / {cfg.get('models', {}).get('encoder', {}).get('latent_dim', '—')}"
         ),
     ),
     (
         "Experts (top-k)",
         lambda cfg: (
-            f"{cfg['models']['router']['num_experts']} (top-{cfg['models']['router']['top_k']})"
+            f"{cfg.get('models', {}).get('router', {}).get('num_experts', '—')} "
+            f"(top-{cfg.get('models', {}).get('router', {}).get('top_k', '—')})"
+            if "router" in cfg.get("models", {})
+            else "—"
         ),
     ),
     (
         "Router init / expert init",
         lambda cfg: (
-            f"{cfg['models']['router_init']['type']} / {cfg['models']['expert_init']['type']}"
+            f"{cfg.get('models', {}).get('router_init', {}).get('type', 'random')}"
+            f" / {cfg.get('models', {}).get('expert_init', {}).get('type', 'random')}"
+            if "router" in cfg.get("models", {}) or "expert_init" in cfg.get("models", {})
+            else "—"
         ),
     ),
-    ("Drop rate", lambda cfg: str(cfg["models"]["expert_init"].get("drop_rate", "—"))),
-    ("Batch size", lambda cfg: str(cfg["data"]["batch_size"])),
-    ("LR (stage)", lambda cfg: str(cfg["train"].get("lr", "—"))),
-    ("Epochs", lambda cfg: str(cfg["train"].get("epochs", "—"))),
+    (
+        "Drop rate",
+        lambda cfg: str(cfg.get("models", {}).get("expert_init", {}).get("drop_rate", "—")),
+    ),
+    (
+        "Batch size",
+        lambda cfg: str(cfg.get("data", {}).get("batch_size", "256")),
+    ),
+    (
+        "Learning rate",
+        lambda cfg: (
+            str(cfg.get("train", {}).get("optimizer", {}).get("lr"))
+            if "optimizer" in cfg.get("train", {})
+            else str(cfg.get("train", {}).get("lr", "0.0001"))
+        ),
+    ),
+    (
+        "Epochs",
+        lambda cfg: str(cfg.get("train", {}).get("epochs", "—")),
+    ),
     (
         "Early stopping",
-        lambda cfg: str(bool(cfg["train"].get("early_stopping", {}).get("enabled", False))),
+        lambda cfg: str(bool(cfg.get("train", {}).get("early_stopping", {}).get("enabled", False))),
     ),
 )
 

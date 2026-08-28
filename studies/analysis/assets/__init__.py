@@ -57,12 +57,12 @@ ASSET_REGISTRY: dict[str, AssetSpec] = {}
 for spec in (
     _spec(
         "F1",
-        "schematic",
+        "figure",
         "main",
-        "Method overview (hand-drawn)",
+        "Method overview schematic",
         "P0",
         "f1_overview",
-        ("figures/main/F1_overview.pdf",),
+        ("figures/main/F1_overview.pdf", "figures/main/F1_overview.png"),
     ),
     _spec(
         "F2",

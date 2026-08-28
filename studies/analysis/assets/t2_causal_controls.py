@@ -10,23 +10,23 @@ from studies.analysis.render.tables import Table, save_table
 from studies.analysis.stats.intervals import mean
 
 CONTROLS = (
-    ("phaseforge", "—", "proposed"),
+    ("phaseforge", "—", "proposed (centroid + phase-pretrain + partial-warm)"),
     ("phase_pretrain_random_router", "H1", "random router (vs centroid)"),
     ("plain_encoder_phase_bootstrap", "H2", "BC encoder (vs phase-supervised)"),
     ("pf_spherical_kmeans", "H3", "generic spherical clustering"),
-    ("pf_kmeans", "—", "Euclidean clustering"),
+    ("pf_kmeans", "—", "generic Euclidean clustering"),
     ("pf_phase_head", "H4", "discriminative phase-head directions"),
 )
 
 
 def _sr_and_nmi(dataset: AnalysisDataset, name: str) -> tuple[float | None, float | None, float]:
     rates, nmis = [], []
-    for seed in registry.seeds("ablation"):
-        key = (None, name, seed)
-        if key not in dataset.evals:
-            continue
-        rates.append(dataset.evals[key].success_rate)
-        curve = dataset.curves.get((None, name, seed, 2))
+    seeds = sorted(set(list(registry.seeds("ablation")) + list(registry.seeds("final"))))
+    for seed in seeds:
+        ev = dataset.evals.get((None, name, seed)) or dataset.evals.get(("Lift", name, seed))
+        if ev is not None:
+            rates.append(ev.success_rate)
+        curve = dataset.curves.get((None, name, seed, 2)) or dataset.curves.get(("Lift", name, seed, 2))
         if curve is not None:
             nmi = curve.last("nmi")
             if nmi is not None:
@@ -34,9 +34,11 @@ def _sr_and_nmi(dataset: AnalysisDataset, name: str) -> tuple[float | None, floa
     sr = mean(rates) if rates else None
     nmi = mean(nmis) if nmis else None
     t0 = None
-    init = dataset.init_routing.get((None, name, registry.seeds("ablation")[0], 2))
-    if init is not None:
-        t0 = init.t0_nmi
+    for seed in seeds:
+        init = dataset.init_routing.get((None, name, seed, 2)) or dataset.init_routing.get(("Lift", name, seed, 2))
+        if init is not None and init.t0_nmi is not None:
+            t0 = init.t0_nmi
+            break
     return sr, nmi, t0 if t0 is not None else float("nan")
 
 
@@ -46,21 +48,25 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
     for name, hypothesis, contrast in CONTROLS:
         sr, nmi, t0 = _sr_and_nmi(dataset, name)
         delta = (sr - pf_sr) if (sr is not None and pf_sr is not None) else None
+        delta_str = f"{delta:+.2f}" if (delta is not None and name != "phaseforge") else "—"
+        display = registry.display_name(name)
+        if name == "phaseforge":
+            display = r"\textbf{PhaseForge}"
         rows.append(
             [
-                registry.display_name(name),
+                display,
                 hypothesis,
                 contrast,
                 f"{sr:.2f}" if sr is not None else "--",
-                f"{delta:+.2f}" if delta is not None else "--",
-                f"{t0:.3f}" if t0 == t0 else "--",  # NaN check
+                delta_str,
+                f"{t0:.3f}" if t0 == t0 else "--",
                 f"{nmi:.3f}" if nmi is not None else "--",
             ]
         )
     table = Table(
         headers=["Method", "H", "Contrast", "SR (Lift)", "Δ vs PF", "NMI t=0", "NMI final"],
         rows=rows,
-        caption="Causal mechanism controls on Lift (ablation namespace; SR mean over seeds; "
+        caption="Causal mechanism controls on Lift (isolating hypotheses H1–H4; SR mean over seeds; "
         "Δ relative to PhaseForge).",
         notes=(
             "All cells share the R50-matched partial warm-start expert initialization; "

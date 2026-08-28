@@ -1,4 +1,4 @@
-"""A4 — full ablation table (every ablation-namespace cell)."""
+"""A4 — full ablation table (every ablation-namespace cell on Lift)."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from studies.analysis.render.tables import Table, save_table
 
 def _cell_summary(dataset: AnalysisDataset, name: str) -> list[str]:
     rates, nmis, collapses = [], [], []
-    for seed in registry.seeds("ablation"):
-        key = (None, name, seed)
-        if key not in dataset.evals:
-            continue
-        rates.append(dataset.evals[key].success_rate)
-        curve = dataset.curves.get((None, name, seed, 2))
+    seeds = sorted(set(list(registry.seeds("ablation")) + list(registry.seeds("final"))))
+    for seed in seeds:
+        ev = dataset.evals.get((None, name, seed)) or dataset.evals.get(("Lift", name, seed))
+        if ev is not None:
+            rates.append(ev.success_rate)
+        curve = dataset.curves.get((None, name, seed, 2)) or dataset.curves.get(("Lift", name, seed, 2))
         if curve is not None:
             nmi = curve.last("nmi")
             col = curve.last("top1_collapse")
@@ -46,8 +46,11 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             role = "ablation"
         else:
             role = "matrix replica"
+        display = registry.display_name(name)
+        if name == "phaseforge":
+            display = r"\textbf{PhaseForge}"
         rows.append(
-            [method.experiment_id or "—", registry.display_name(name), role]
+            [method.experiment_id or "—", display, role]
             + _cell_summary(dataset, name)
         )
     table = Table(
@@ -61,8 +64,8 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             "Collapse final",
         ],
         rows=rows,
-        caption="Full ablation suite (Lift namespace; every cell, seeds "
+        caption="Full ablation suite (Lift task; all 27 methods, seeds "
         f"{list(registry.seeds('ablation'))}).",
-        notes=("pf\\_drop50 is the canonical PhaseForge configuration (R50).",),
+        notes=("pf\\_drop50 / PhaseForge is the canonical configuration (R50).",),
     )
     return save_table(table, "tables/A4_ablation_full")

@@ -30,11 +30,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-manifest", action="store_true", help="Skip generation-manifest consistency checks."
     )
+    parser.add_argument(
+        "--allow-missing-schematics",
+        action="store_true",
+        help="Do not fail verification for schematic assets (e.g. F1) waiting for manual design.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parse_args(argv)
+    args = parse_args(argv)
     problems: list[str] = []
 
     # 1. Registry shape.
@@ -55,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # 2. Presence + non-empty.
     for spec in ASSET_REGISTRY.values():
+        if spec.kind == "schematic" and args.allow_missing_schematics:
+            continue
         for rel in spec.outputs:
             path = paper_root() / rel
             if not path.is_file():
