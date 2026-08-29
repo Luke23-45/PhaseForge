@@ -1,0 +1,15 @@
+{
+  "name": "five_task_fixed",
+  "task": "all",
+  "description": "Patched PhaseForge for Can/Square (fixes 30% mirror noise, top-2 deadband, partial_warm, freeze). Use phaseforge_fixed + stage1_fixed/stage2_fixed. Expected Can 0.30->0.52, Square 0.133->0.26.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "tasks": ["Lift", "Can", "Square", "ToolHang", "Transport"],
+  "methods": [
+    {"index": 1, "name": "phaseforge_fixed", "role": "patched proposed", "model": "phaseforge_fixed", "data": "lift", "task": "Lift", "stages": [1, 2], "stage2_source": "self", "evaluate": true, "evaluate_mode": "rollout", "train_stage1": "stage1_fixed", "train_stage2": "stage2_fixed"},
+    {"index": 9, "name": "phaseforge_fixed", "role": "patched proposed", "model": "phaseforge_fixed", "data": "can", "task": "Can", "stages": [1, 2], "stage2_source": "self", "evaluate": true, "evaluate_mode": "rollout", "train_stage1": "stage1_fixed", "train_stage2": "stage2_fixed"},
+    {"index": 17, "name": "phaseforge_fixed", "role": "patched proposed", "model": "phaseforge_fixed", "data": "square", "task": "Square", "stages": [1, 2], "stage2_source": "self", "evaluate": true, "evaluate_mode": "rollout", "train_stage1": "stage1_fixed", "train_stage2": "stage2_fixed"},
+    {"index": 25, "name": "phaseforge_fixed", "role": "patched proposed", "model": "phaseforge_fixed", "data": "tool_hang", "task": "ToolHang", "stages": [1, 2], "stage2_source": "self", "evaluate": true, "evaluate_mode": "rollout", "train_stage1": "stage1_fixed", "train_stage2": "stage2_fixed"},
+    {"index": 33, "name": "phaseforge_fixed", "role": "patched proposed", "model": "phaseforge_fixed", "data": "transport", "task": "Transport", "stages": [1, 2], "stage2_source": "self", "evaluate": true, "evaluate_mode": "rollout", "train_stage1": "stage1_fixed", "train_stage2": "stage2_fixed"}
+  ]
+}
