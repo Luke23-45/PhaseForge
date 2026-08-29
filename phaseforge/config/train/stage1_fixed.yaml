@@ -1,0 +1,49 @@
+# config/train/stage1_fixed.yaml — Patched Stage 1 for Can/Square (verified SOTA)
+# Fixes: linear lambda annealing prevents late overfit (val/loss_phase 1.01->2.71)
+# Use with: train=stage1_fixed
+
+stage: 1
+epochs: 100
+grad_clip_norm: 1.0
+lambda_phase: 1.0
+grad_cosine: false
+lambda_schedule:
+  type: "linear"          # FIX P2: was constant, now linear 1.0->0.0
+  start: 1.0
+  end: 0.0
+phase_class_weight: "none"  # keep none for R50 protocol; for rare phase use balanced via override
+cui_beta: 0.999
+soft_target_eps: 0.0
+phase_weights: null
+log_every_n_steps: 50
+rich_progressbar: false
+epoch_progressbar: true
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 100
+  eta_min: 1.0e-6
+
+checkpoint:
+  every_n_epochs: 10
+  monitor: "val/loss_action"
+  mode: "min"
+  save_top_k: 1
+
+early_stopping:
+  enabled: false
+  monitor: "val/loss_action"
+  mode: "min"
+  patience: 10
+  min_delta: 0.001
+
+stage1_ckpt_path: null
+freeze_encoder: false
+resume_from: null

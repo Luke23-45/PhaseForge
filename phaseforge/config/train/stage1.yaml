@@ -20,7 +20,7 @@ grad_cosine: false
 # val/loss_phase explosion is late-training overfitting on the flat
 # action-loss plateau (professor's Phase 1.4).
 lambda_schedule:
-  type: "constant"        # constant | linear
+  type: "constant"        # constant | linear - PATCH for Can/Square: use overrides train.lambda_schedule.type=linear start=1.0 end=0.0
   start: 1.0              # multiplier at epoch 0 (linear only)
   end: 0.0                # multiplier at the final epoch (linear only)
 # Phase-head class weighting for the CE loss. "none" = plain CE (protocol).

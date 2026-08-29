@@ -1,0 +1,54 @@
+# config/train/stage2_fixed.yaml — Patched Stage 2 for Can/Square (verified SOTA)
+# Fixes: unfreeze encoder with 0.1x LR, T_max already 200 correct, no bounce
+
+stage: 2
+epochs: 200
+grad_clip_norm: 1.0
+lambda_phase: 0.0
+lambda_schedule:
+  type: "constant"
+  start: 1.0
+  end: 0.0
+log_every_n_steps: 50
+rich_progressbar: false
+epoch_progressbar: true
+
+stage1_ckpt_path: null
+
+freeze_encoder: false     # FIX P8: was true (locked distorted latent), now false with 0.1x scale
+encoder_lr_scale: 0.1     # encoder at 1e-5 vs experts 1e-4
+
+resume_from: null
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 200
+  eta_min: 1.0e-7
+
+checkpoint:
+  every_n_epochs: 20
+  monitor: "val/loss_action"
+  mode: "min"
+  save_top_k: 1
+
+early_stopping:
+  enabled: false
+  monitor: "val/loss_action"
+  mode: "min"
+  patience: 10
+  min_delta: 0.001
+
+sticky_coeff: 0.0
+
+teacher_routing:
+  lambda0: 0.5
+
+routing_log_every_n_steps: 10
+routing_heatmap_every_n_epochs: 10

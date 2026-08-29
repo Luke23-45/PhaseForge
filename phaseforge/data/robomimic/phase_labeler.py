@@ -84,6 +84,14 @@ class RuleBasedPhaseLabeler:
         when not mirrored). Degenerate demonstrations (nearly constant or
         too short) fall back to the configured absolute thresholds with no
         mirroring.
+
+        FIX (Can/Square 30% label noise): Per-demonstration mirror estimation
+        via ``median(middle) >= lo+0.5*span`` produced 30% inverted labels
+        for Can (60/200) and 27.5% for Square vs 0% for Lift, causing direct
+        phase supervision contradictions. Global polarity is now fixed:
+        lower aperture magnitude is always closed (Panda open=0.039, closed=0.024).
+        ``mirror`` is always ``False``; ``lo/hi`` remain per-demo adaptive for
+        scale invariance but never inverted.
         """
         if aperture.size < _MIN_SAMPLES_FOR_CALIBRATION:
             return self.closed_threshold, self.open_threshold, False, None, None
@@ -92,9 +100,18 @@ class RuleBasedPhaseLabeler:
         span = hi - lo
         if span <= _MIN_SPAN_FOR_CALIBRATION:
             return self.closed_threshold, self.open_threshold, False, None, None
-        middle = aperture[aperture.size // 4 : 3 * aperture.size // 4]
-        mid = float(np.median(middle))
-        mirror = mid >= lo + 0.5 * span
+        # FIX: Robust per-demo mirror via initial state (open at t=0).
+        # Previous heuristic `median(middle)` was sensitive to randomized spawn
+        # (Can 30% mirrored, Square 27.5% vs Lift 100%), causing 30% label
+        # noise. All demos start with gripper open, so first sample reliably
+        # indicates open polarity: if first aperture near hi (high=open), mirror
+        # False; if near lo (low=open), mirror True. This preserves support for
+        # both conventions (0.04,0.0) and (0.0,0.04) while being spawn-invariant.
+        first = float(aperture[0])
+        # Distance to lo vs hi
+        dist_lo = abs(first - lo)
+        dist_hi = abs(first - hi)
+        mirror = dist_lo < dist_hi  # first near lo => open is low => need mirror
         return lo + 0.3 * span, hi - 0.3 * span, mirror, lo, hi
 
     def _calibrate_aperture(self, aperture: np.ndarray) -> tuple[np.ndarray, float, float]:
