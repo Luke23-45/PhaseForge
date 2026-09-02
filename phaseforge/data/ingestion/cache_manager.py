@@ -268,6 +268,7 @@ class CacheManager:
         task_index: dict[str, int] | None = None,
         provenance: dict[str, Any] | None = None,
         phase_thresholds: dict[str, Any] | None = None,
+        dynamics_artifact: tuple[Any, ...] | None = None,
     ) -> None:
         """Atomically write all processed data to the cache.
 
@@ -288,6 +289,10 @@ class CacheManager:
                 (the rollout layer's source of truth for per-phase success
                 tracking; see
                 :func:`phaseforge.data.robomimic.phase_labeler.calibrate`).
+            dynamics_artifact: Optional pending dynamic discovery artifact
+                tuple ``(slds, report, task_name, train_labels, val_labels)``.
+                It is written inside the temporary cache before the cache is
+                marked complete, preserving atomicity for dynamics-enabled runs.
         """
         final_dir = self.cache_dir(config_hash)
         tmp_dir = self.cache_root / f"{config_hash}_tmp"
@@ -317,6 +322,24 @@ class CacheManager:
         if phase_thresholds is not None:
             (tmp_dir / "phase_thresholds.json").write_text(
                 json.dumps(phase_thresholds, indent=2), encoding="utf-8"
+            )
+
+        if dynamics_artifact is not None:
+            from phaseforge.data.dynamics.artifacts import save_discovery_artifact
+
+            slds, report, task_name, train_labels, val_labels = dynamics_artifact
+            save_discovery_artifact(
+                output_dir=tmp_dir / "dynamics_artifact",
+                slds=slds,
+                report=report,
+                task_name=task_name,
+                data_config_hash=config_hash,
+                train_labels=train_labels,
+                val_labels=val_labels,
+                extra_metadata={
+                    "num_train_trajs": len(splits.get("train", [])),
+                    "num_val_trajs": len(splits.get("val", [])),
+                },
             )
 
         # Human-readable split task names (Gate 7 audit)

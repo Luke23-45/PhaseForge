@@ -36,9 +36,7 @@ from phaseforge.models.components.soft_mapping import (
 logger = logging.getLogger(__name__)
 
 #: V2-E evaluation-time routing interventions (report1.md §V2-E).
-EVAL_ROUTER_MODES: frozenset[str] = frozenset(
-    {"learned", "sticky", "uniform", "oracle"}
-)
+EVAL_ROUTER_MODES: frozenset[str] = frozenset({"learned", "sticky", "uniform", "oracle"})
 
 
 def _hash_dropped_indices(indices: list[int]) -> str:
@@ -430,17 +428,69 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
         # 1. Collect training latents and phase labels if needed for data-driven router inits
         needs_latents = r_type in (
-            "centroid", "phase_centroid", "spherical_centroid", "spherical_kmeans", "kmeans",
+            "centroid",
+            "phase_centroid",
+            "spherical_centroid",
+            "spherical_kmeans",
+            "kmeans",
             "soft_mapping",
         )
         latents_list: list[Tensor] = []
         phases_list: list[Tensor] = []
 
+        # PhaseForge 2.0: prototype_source selects which label vocabulary the
+        # router centroids are built from. "rule" = canonical phase labels
+        # (phase_rule or phase), "dynamic" = SLDS regimes (phase_dynamic).
+        # The 1.0 default is "rule" for backward compatibility.
+        # `r_cfg` may be a plain dict (from PhaseBootstrappedMoE.__init__) or a
+        # Hydra DictConfig — handle both via duck-typed .get.
+        try:
+            proto_raw = r_cfg.get("prototype_source", "rule") if hasattr(r_cfg, "get") else "rule"
+        except Exception:
+            proto_raw = "rule"
+        proto_source = str(proto_raw).lower()
+        if proto_source not in ("rule", "dynamic", "phase", "phase_dynamic", "phase_rule"):
+            raise ValueError(
+                f"Unknown router_init.prototype_source {proto_source!r}. "
+                "Expected 'rule' (phase_rule/phase) or 'dynamic' (phase_dynamic)."
+            )
+        # Normalize aliases
+        if proto_source in ("phase", "phase_rule", "rule"):
+            proto_source_norm = "rule"
+        else:
+            proto_source_norm = "dynamic"
+
         if needs_latents:
-            logger.info("Computing latent representations across training dataloader...")
+            logger.info(
+                "Computing latent representations across training dataloader "
+                "(router prototype_source=%r)…",
+                proto_source_norm,
+            )
             for batch in dataloader:
                 state = batch["state"].to(device, non_blocking=non_blocking)
-                phase = batch["phase"].to(device, non_blocking=non_blocking)
+                # Select label source for prototype computation
+                if proto_source_norm == "dynamic":
+                    if "phase_dynamic" in batch:
+                        phase = batch["phase_dynamic"].to(device, non_blocking=non_blocking)
+                    elif "phase" in batch and batch["phase"] is not None:
+                        # Fallback check: if data was trained on dynamic, primary `phase`
+                        # already is dynamic. Detect via metadata? We fail closed
+                        # with a hint instead of silently using rule labels.
+                        raise RuntimeError(
+                            "router_init.prototype_source='dynamic' but batch has no "
+                            "'phase_dynamic' key. The dataloader was built without "
+                            "dynamics (data.dynamics.enabled=false or stale cache). "
+                            "Enable dynamics and re-ingest, or set prototype_source='rule'."
+                        )
+                    else:
+                        raise RuntimeError(
+                            "Batch missing phase labels for dynamic prototype source."
+                        )
+                else:  # rule
+                    if "phase_rule" in batch:
+                        phase = batch["phase_rule"].to(device, non_blocking=non_blocking)
+                    else:
+                        phase = batch["phase"].to(device, non_blocking=non_blocking)
 
                 if state.ndim == 3:
                     state = state.view(-1, state.size(-1))
@@ -456,7 +506,9 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             all_latents = torch.cat(latents_list, dim=0)
             all_phases = torch.cat(phases_list, dim=0)
             logger.info(
-                f"Collected {all_latents.size(0)} training latent vectors (dim={latent_dim})."
+                f"Collected {all_latents.size(0)} training latent vectors (dim={latent_dim}) "
+                f"for prototype_source={proto_source_norm} "
+                f"(unique phases: {torch.unique(all_phases).tolist()})."
             )
 
         # 2. Router Initialization
@@ -502,9 +554,9 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             from sklearn.cluster import KMeans
 
             latents_np = all_latents.cpu().numpy()
-            km = KMeans(
-                n_clusters=num_experts, random_state=cluster_seed, n_init=10
-            ).fit(latents_np)
+            km = KMeans(n_clusters=num_experts, random_state=cluster_seed, n_init=10).fit(
+                latents_np
+            )
             centroids = torch.from_numpy(km.cluster_centers_).to(
                 device=device, dtype=all_latents.dtype
             )
@@ -677,9 +729,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 "init_type": r_type,
                 "init_seed": int(cluster_seed),
                 "init_mapping_mode": (
-                    str(router_cfg.get("mapping_mode"))
-                    if "mapping_mode" in router_cfg
-                    else None
+                    str(router_cfg.get("mapping_mode")) if "mapping_mode" in router_cfg else None
                 ),
                 "init_temperature": (
                     float(router_cfg.get("temperature"))  # type: ignore[arg-type]
@@ -699,4 +749,3 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         # Transition to Stage 2
         self.stage = 2
         logger.info("MoE Bootstrapping complete. Ready for Stage 2.")
-

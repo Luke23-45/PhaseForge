@@ -1,0 +1,66 @@
+# config/models/baselines/phaseforge_rule_encoder_dynamic_router.yaml
+# Factorial cell: pf_rule_dynamic — rule-based Stage 1 representation (existing
+# phase labels) + dynamic-regime prototypes for Stage 2 router bootstrap.
+# Requires dynamics.enabled=true but train_label_field=phase (rule) via
+# override e.g. "data.dynamics.train_label_field=phase".
+# Tests the router-bootstrap effect isolated from representation.
+
+name: "phaseforge_rule_encoder_dynamic_router"
+_target_: phaseforge.models.phase_moe.PhaseBootstrappedMoE
+
+encoder:
+  _target_: phaseforge.models.components.encoder.StateEncoder
+  input_dim: ${data.state_dim}
+  hidden_dims: [256, 256, 256]
+  latent_dim: 128
+  activation: "gelu"
+  dropout: 0.1
+  use_residual: true
+
+action_head:
+  _target_: phaseforge.models.components.action_head.ActionHead
+  input_dim: 128
+  output_dim: ${data.action_dim}
+  head_type: "deterministic"
+  hidden_dim: 256
+
+phase_head:
+  _target_: phaseforge.models.components.phase_head.PhaseClassificationHead
+  latent_dim: 128
+  num_phases: 6
+
+router:
+  _target_: phaseforge.models.components.router.TopKRouter
+  latent_dim: 128
+  num_experts: 6
+  top_k: 2
+  noise_std: 0.1
+  balance_coeff: 0.01
+  normalize_input: true
+  use_history: false
+
+expert:
+  _target_: phaseforge.models.components.expert.ExpertMLP
+  input_dim: 128
+  hidden_dims: [256]
+  output_dim: ${data.action_dim}
+  activation: "gelu"
+
+soft_mapping:
+  enabled: false
+
+teacher_routing:
+  enabled: false
+
+router_init:
+  type: "centroid"
+  prototype_source: "dynamic"
+  mapping_mode: "prototype_softmax"
+  temperature: 1.0
+  seed: 42
+
+expert_init:
+  type: "partial_warm"
+  drop_rate: 0.5
+  seed: ${project.seed}
+  jitter_std: 0.0

@@ -63,6 +63,23 @@ from phaseforge.data.ingestion.hf_downloader import download_hf_file
 from phaseforge.data.ingestion.states import PipelineState
 from phaseforge.data.paths import processed_cache_root
 
+# PhaseForge 2.0 dynamics-aware discovery (optional, train-only).
+StickySLDS: Any = None
+SingleDynamicsModel: Any = None
+evaluate_discovery_quality: Any = None
+save_discovery_artifact: Any = None
+load_discovery_artifact: Any = None
+_DYNAMICS_IMPORT_ERROR: ImportError | None = None
+try:
+    from phaseforge.data.dynamics.artifacts import load_discovery_artifact, save_discovery_artifact
+    from phaseforge.data.dynamics.diagnostics import evaluate_discovery_quality
+    from phaseforge.data.dynamics.switching_linear import StickySLDS
+
+    _DYNAMICS_AVAILABLE = True
+except ImportError as exc:
+    _DYNAMICS_AVAILABLE = False
+    _DYNAMICS_IMPORT_ERROR = exc
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_VAL_RATIO = 0.1
@@ -89,6 +106,7 @@ class DataPipelineStateMachine:
         # with no validation. The phase-count ablation would silently break
         # cross_entropy / scatter_add / bincount if they diverged. Guard here.
         self._check_num_phases_consistency()
+        self._check_dynamics_consistency()
 
         # Bug 4: cache under the shared data root, NOT under outputs/.
         cache_root = processed_cache_root()
@@ -104,6 +122,7 @@ class DataPipelineStateMachine:
         self._norm_stats: dict[str, torch.Tensor] = {}
         self._splits: dict[str, list[int]] = {}
         self._raw_dir: Path | None = None
+        self._pending_dynamics_artifact: tuple | None = None
 
     # ------------------------------------------------------------------
     # Config consistency
@@ -189,6 +208,39 @@ class DataPipelineStateMachine:
                 "phase labels cannot be indexed by the classifier/router/scatter."
             )
 
+    def _check_dynamics_consistency(self) -> None:
+        """Validate the primary six-regime dynamics contract early."""
+        dyn_cfg = self._get_dynamics_cfg()
+        enabled = bool(dyn_cfg.get("enabled", False)) if hasattr(dyn_cfg, "get") else False
+        if not enabled:
+            return
+
+        num_regimes = int(dyn_cfg.get("num_regimes", 6))
+        if num_regimes != 6:
+            raise PipelineError(
+                "PhaseForge 2.0 currently requires data.dynamics.num_regimes=6; "
+                f"received {num_regimes}. Run a declared regime-count ablation separately."
+            )
+
+        models_cfg = self.cfg.get("models")
+        if models_cfg is None:
+            return
+        router = models_cfg.get("router")
+        router_experts = router.get("num_experts") if router is not None else None
+        phase_head = models_cfg.get("phase_head")
+        phase_count = phase_head.get("num_phases") if phase_head is not None else None
+        mismatches = []
+        if router_experts is not None and int(router_experts) != num_regimes:
+            mismatches.append(f"models.router.num_experts={router_experts}")
+        if phase_count is not None and int(phase_count) != num_regimes:
+            mismatches.append(f"models.phase_head.num_phases={phase_count}")
+        if mismatches:
+            raise PipelineError(
+                "Dynamic regime/expert vocabulary mismatch: "
+                + ", ".join(mismatches)
+                + f"; expected six values matching num_regimes={num_regimes}."
+            )
+
     def _model_uses_phase_labels(self) -> bool:
         """True when the selected model consumes phase labels in training.
 
@@ -207,11 +259,64 @@ class DataPipelineStateMachine:
             return True
         return models_cfg.get("num_phases") is not None
 
+    def _get_dynamics_cfg(self) -> dict[str, Any] | Any:
+        """Return dynamics config dict, supporting both `cfg.dynamics` and `cfg.data.dynamics`.
+
+        PhaseForge 1.0 configs have no dynamics block and are treated as disabled.
+        PhaseForge 2.0 configs normally carry dynamics under
+        `cfg.data.dynamics` (the explicit dynamics group is packaged at the
+        global root). Legacy explicit overrides may leave a top-level
+        `cfg.dynamics` wrapper; this helper normalizes both forms and returns
+        an empty disabled dict when absent.
+        """
+        # Top-level `dynamics` (legacy explicit override)
+        dyn = self.cfg.get("dynamics")
+        # Canonical `data.dynamics` (explicit dynamics group)
+        data_dyn = None
+        try:
+            data_dyn = self.data_cfg.get("dynamics")  # type: ignore[union-attr]
+        except Exception:
+            data_dyn = None
+        # Prefer canonical `data.dynamics` when present, else top-level.
+        if data_dyn is not None and isinstance(data_dyn, (dict, DictConfig)):
+            return data_dyn
+        if dyn is not None:
+            # A `+dynamics=...` append creates a top-level wrapper containing
+            # the packaged `dynamics` block. Normalize it so an explicit
+            # override cannot silently disable discovery.
+            if isinstance(dyn, (dict, DictConfig)) and isinstance(
+                dyn.get("dynamics"), (dict, DictConfig)
+            ):
+                return dyn["dynamics"]
+            return dyn
+        return {}
+
+    def _is_dynamics_enabled(self) -> bool:
+        """True when PhaseForge 2.0 dynamic discovery is enabled."""
+        dyn = self._get_dynamics_cfg()
+        if dyn is None:
+            return False
+        try:
+            enabled = (
+                bool(dyn.get("enabled", False))
+                if hasattr(dyn, "get")
+                else bool(getattr(dyn, "enabled", False))
+            )
+        except Exception:
+            enabled = False
+        if enabled and not _DYNAMICS_AVAILABLE:
+            raise PipelineError(
+                "data.dynamics.enabled=true but phaseforge.data.dynamics package is unavailable. "
+                "Check phaseforge/data/dynamics/__init__.py and dependencies "
+                f"(torch, numpy, sklearn): {_DYNAMICS_IMPORT_ERROR}"
+            )
+        return enabled
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self) -> dict[str, DataLoader]:
+    def run(self) -> dict[str, DataLoader | None]:
         """Execute the FSM to the READY terminal state.
 
         Returns:
@@ -227,6 +332,67 @@ class DataPipelineStateMachine:
             raise PipelineError(self._error_msg)
 
         return self._build_dataloaders()
+
+    def _dynamic_cache_is_valid(self, cache_dir: Path) -> bool:
+        """Validate dynamic labels and their matching discovery artifact."""
+        if load_discovery_artifact is None:
+            return False
+        try:
+            _, artifact_labels, metadata = load_discovery_artifact(cache_dir / "dynamics_artifact")
+            expected_k = int(self._get_dynamics_cfg().get("num_regimes", 6))
+            if metadata.get("data_config_hash") != self.config_hash:
+                logger.warning("Dynamic artifact hash does not match cache hash.")
+                return False
+            if int(metadata.get("num_regimes", -1)) != expected_k:
+                logger.warning("Dynamic artifact regime count does not match the active config.")
+                return False
+
+            expected_split_lengths = {
+                "train": len(self._splits.get("train", [])),
+                "val": len(self._splits.get("val", [])),
+            }
+            for split_name, expected_length in expected_split_lengths.items():
+                labels = artifact_labels.get(split_name)
+                if labels is None or len(labels) != expected_length:
+                    logger.warning(
+                        "Dynamic artifact %s labels do not match the cache split.", split_name
+                    )
+                    return False
+
+            for trajectory_index, trajectory in enumerate(self._trajectories):
+                labels = trajectory.get("phase_dynamic")
+                state = trajectory.get("state")
+                if labels is None or state is None:
+                    return False
+                label_array = (
+                    labels.detach().cpu().numpy()
+                    if isinstance(labels, torch.Tensor)
+                    else np.asarray(labels)
+                )
+                state_length = int(state.shape[0])
+                if label_array.shape != (state_length,) or label_array.size == 0:
+                    return False
+                if np.any(label_array < 0) or np.any(label_array >= expected_k):
+                    return False
+                artifact_split_name: str | None = next(
+                    (name for name, indices in self._splits.items() if trajectory_index in indices),
+                    None,
+                )
+                if artifact_split_name in ("train", "val"):
+                    split_position = self._splits[artifact_split_name].index(trajectory_index)
+                    artifact_array = (
+                        artifact_labels[artifact_split_name][split_position].cpu().numpy()
+                    )
+                    if not np.array_equal(label_array, artifact_array):
+                        logger.warning(
+                            "Dynamic artifact labels do not match trajectory %d.",
+                            trajectory_index,
+                        )
+                        return False
+            return True
+        except (OSError, KeyError, TypeError, ValueError, RuntimeError) as exc:
+            logger.warning("Dynamic cache validation failed: %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # State transitions
@@ -266,6 +432,24 @@ class DataPipelineStateMachine:
 
             # Use the loaded hash so it doesn't mismatch later if we need it
             self.config_hash = found_hash
+            # PhaseForge 2.0: require both labels and a matching artifact. Old
+            # caches are upgraded lazily, but a partially written artifact is
+            # never accepted as a valid cache hit.
+            if self._is_dynamics_enabled():
+                cache_dir = self.cache_manager.cache_dir(self.config_hash)
+                if not self._dynamic_cache_is_valid(cache_dir):
+                    logger.info(
+                        "Dynamics cache labels/artifact are missing or stale — running discovery."
+                    )
+                    self._run_dynamics_discovery(persist_to_cache=True)
+                    if not self._dynamic_cache_is_valid(cache_dir):
+                        raise PipelineError(
+                            "Dynamics discovery completed without a valid cache artifact."
+                        )
+                else:
+                    logger.info(
+                        "Cache hit includes validated dynamic labels and discovery artifact."
+                    )
             self._state = PipelineState.READY
         else:
             logger.info("Cache miss. Proceeding to validate source.")
@@ -395,7 +579,7 @@ class DataPipelineStateMachine:
         labeler_cfg = self.data_cfg.get("phase_labeler")
         if labeler_cfg is not None and labeler_cfg.get("num_phases") is not None:
             num_phases = int(labeler_cfg.num_phases)
-        phase_counts = None
+        phase_counts: np.ndarray | None = None
         if num_phases is not None:
             phase_counts = np.zeros(num_phases, dtype=np.int64)
         for traj in trajectories:
@@ -407,10 +591,12 @@ class DataPipelineStateMachine:
                 )
             if num_phases is not None:
                 self._validate_phase_labels(traj, traj["phase"], num_phases)
-                phase_counts += np.bincount(
+                counts = np.bincount(
                     np.asarray(traj["phase"], dtype=np.int64),
                     minlength=num_phases,
                 )
+                assert phase_counts is not None
+                phase_counts += counts
 
         if phase_counts is not None and np.any(phase_counts == 0):
             missing = np.flatnonzero(phase_counts == 0).tolist()
@@ -597,9 +783,28 @@ class DataPipelineStateMachine:
             traj["state"] = frozen_norm.normalize(state_t)
             traj["action"] = action_t
             traj["phase"] = phase_t
+            # Preserve canonical rule alias for factorial router selection
+            if "phase_rule" not in traj:
+                traj["phase_rule"] = phase_t
 
         norm_stats = {"mean": frozen_norm.mean, "std": frozen_norm.std}
+        # Materialize splits/norm before dynamics so _run_dynamics_discovery can
+        # use them (train-only fit). The trajectories are already normalized.
+        self._norm_stats = norm_stats
+        self._splits = splits
 
+        # PhaseForge 2.0: train-only dynamics discovery (opt-in). When enabled,
+        # fit StickySLDS on the normalized train split, decode every trajectory,
+        # attach `phase_dynamic`, and stage the artifact for persistence.
+        if self._is_dynamics_enabled():
+            try:
+                self._run_dynamics_discovery(persist_to_cache=False)
+            except Exception as exc:
+                # Surface as PipelineError so the FSM lands in ERROR with a
+                # diagnosable message rather than silently training on bad regimes.
+                raise PipelineError(f"Dynamics discovery failed: {exc}") from exc
+
+        pending_dynamics_artifact = self._pending_dynamics_artifact
         self.cache_manager.save(
             config_hash=self.config_hash,
             trajectories=self._trajectories,
@@ -608,9 +813,9 @@ class DataPipelineStateMachine:
             task_index=self._task_index,
             provenance=self._provenance(splits),
             phase_thresholds=self._aggregate_phase_thresholds(),
+            dynamics_artifact=pending_dynamics_artifact,
         )
-        self._norm_stats = norm_stats
-        self._splits = splits
+        self._pending_dynamics_artifact = None
         self._state = PipelineState.READY
 
     # ------------------------------------------------------------------
@@ -689,11 +894,198 @@ class DataPipelineStateMachine:
             json.dumps(aggregated, indent=2), encoding="utf-8"
         )
         logger.info(
-            "Backfilled phase_thresholds.json from per-demo artifacts "
-            "for cache %s (%d demos).",
+            "Backfilled phase_thresholds.json from per-demo artifacts for cache %s (%d demos).",
             found_hash,
             aggregated["n_demos"],
         )
+
+    def _run_dynamics_discovery(self, persist_to_cache: bool = False) -> None:
+        """Fit Sticky SLDS train-only and decode every trajectory (Section 4.1).
+
+        Attaches ``phase_dynamic`` (Tensor[T] long) to every trajectory dict and
+        persists a versioned artifact ``dynamics_artifact/`` under the cache dir
+        for audit and reuse. Train-only fitting, deterministic for a fixed
+        (task, fingerprint, seed), and validation decoding via the frozen model.
+
+        Args:
+            persist_to_cache: When True (cache-hit backfill path), overwrite
+                the trajectory ``*.pt`` files on disk and write the artifact
+                to the existing cache directory. When False (fresh ingest
+                path), the caller (``_normalize_and_save``) will persist the
+                augmented trajectories via ``CacheManager.save`` — we only write
+                the artifact to a staging area that ``_normalize_and_save`` will
+                move into the final cache.
+
+        Raises:
+            PipelineError: If discovery quality gates fail (Section 4.2) or if
+                required fields are missing.
+        """
+        assert _DYNAMICS_AVAILABLE and StickySLDS is not None
+        dyn_cfg = self._get_dynamics_cfg()
+        # Read hyper-parameters with safe defaults matching
+        # phaseforge/config/dynamics/switching_linear_k6.yaml
+        num_regimes = int(dyn_cfg.get("num_regimes", 6)) if hasattr(dyn_cfg, "get") else 6
+        sticky_kappa = float(dyn_cfg.get("sticky_kappa", 50.0)) if hasattr(dyn_cfg, "get") else 50.0
+        dirichlet_alpha = (
+            float(dyn_cfg.get("dirichlet_alpha", 1.0)) if hasattr(dyn_cfg, "get") else 1.0
+        )
+        ridge_lambda = float(dyn_cfg.get("ridge_lambda", 1e-4)) if hasattr(dyn_cfg, "get") else 1e-4
+        min_variance = float(dyn_cfg.get("min_variance", 1e-4)) if hasattr(dyn_cfg, "get") else 1e-4
+        max_em_iter = int(dyn_cfg.get("max_em_iter", 40)) if hasattr(dyn_cfg, "get") else 40
+        em_tol = float(dyn_cfg.get("em_tol", 1e-3)) if hasattr(dyn_cfg, "get") else 1e-3
+        min_duration = int(dyn_cfg.get("min_duration", 3)) if hasattr(dyn_cfg, "get") else 3
+        seed = int(dyn_cfg.get("seed", 42)) if hasattr(dyn_cfg, "get") else 42
+
+        if not hasattr(self, "_splits") or not self._splits or not self._trajectories:
+            raise PipelineError(
+                "Dynamics discovery requires splits and trajectories to be materialized."
+            )
+
+        train_trajs = [self._trajectories[i] for i in self._splits.get("train", [])]
+        val_trajs = [self._trajectories[i] for i in self._splits.get("val", [])]
+
+        if not train_trajs:
+            raise PipelineError("Dynamics discovery: train split is empty — cannot fit SLDS.")
+
+        logger.info(
+            "Dynamics discovery: fitting StickySLDS "
+            "(K=%d, kappa=%.1f, seed=%d) on %d train trajectories …",
+            num_regimes,
+            sticky_kappa,
+            seed,
+            len(train_trajs),
+        )
+
+        slds = StickySLDS(
+            num_regimes=num_regimes,
+            sticky_kappa=sticky_kappa,
+            dirichlet_alpha=dirichlet_alpha,
+            ridge_lambda=ridge_lambda,
+            min_variance=min_variance,
+            max_em_iter=max_em_iter,
+            em_tol=em_tol,
+            min_duration=min_duration,
+            seed=seed,
+        )
+        slds.fit(train_trajs)
+
+        # Quality gates (Section 4.2) — must pass before any MoE training
+        min_occ_thresh = (
+            float(dyn_cfg.get("min_occupancy_threshold", 0.02)) if hasattr(dyn_cfg, "get") else 0.02
+        )
+        max_single_regime_fraction = (
+            float(dyn_cfg.get("max_single_regime_fraction", 0.5))
+            if hasattr(dyn_cfg, "get")
+            else 0.5
+        )
+        max_switch_rate = (
+            float(dyn_cfg.get("max_switch_rate", 0.6)) if hasattr(dyn_cfg, "get") else 0.6
+        )
+        min_nll_improvement = (
+            float(dyn_cfg.get("min_nll_improvement", 0.0)) if hasattr(dyn_cfg, "get") else 0.0
+        )
+        residual_ratio = (
+            dyn_cfg.get("max_within_rule_residual_ratio") if hasattr(dyn_cfg, "get") else None
+        )
+        max_within_rule_residual_ratio = (
+            float(residual_ratio) if residual_ratio is not None else None
+        )
+        report = evaluate_discovery_quality(
+            slds,
+            train_trajectories=train_trajs,
+            val_trajectories=val_trajs if val_trajs else train_trajs,
+            min_occupancy_threshold=min_occ_thresh,
+            max_single_regime_fraction=max_single_regime_fraction,
+            max_switch_rate=max_switch_rate,
+            min_nll_improvement=min_nll_improvement,
+            max_within_rule_residual_ratio=max_within_rule_residual_ratio,
+        )
+        logger.info(
+            "Dynamics quality: passed=%s min_occ=%.2f%% "
+            "single_reg_frac=%.1f%% switch_rate=%.3f NLL_improv=%.2f",
+            report.passed_all,
+            report.min_occupancy * 100,
+            report.single_regime_fraction * 100,
+            report.mean_switch_rate,
+            report.nll_improvement,
+        )
+        if not report.passed_all:
+            raise PipelineError(
+                "Dynamics discovery failed quality gates (Section 4.2): "
+                + "; ".join(report.failure_reasons)
+                + f" [occupancy={report.occupancy} nll_improv={report.nll_improvement:.2f}]"
+            )
+
+        # Decode every trajectory (train + val) with frozen model
+        for traj in self._trajectories:
+            labels_np = slds.decode_trajectory(traj)  # (T,) int
+            labels_t = torch.from_numpy(labels_np).long()
+            # Attach alongside canonical rule labels — never overwrite traj["phase"]
+            traj["phase_dynamic"] = labels_t
+            # Also expose as generic alias for downstream consumers that read
+            # phase_field dynamically (e.g. dataset with phase_field=phase_dynamic)
+            # The canonical `phase` key remains the rule label for 1.0 compat.
+            # Keep a convenience duplicate `phase_rule` for explicit factorial code
+            if "phase_rule" not in traj:
+                # traj["phase"] at this point is already Tensor (normalized path)
+                # or ndarray (hit path) — unify to Tensor for the alias
+                rule_phase = traj.get("phase")
+                if isinstance(rule_phase, np.ndarray):
+                    rule_phase = torch.from_numpy(rule_phase).long()
+                traj["phase_rule"] = rule_phase
+
+        # Derive per-split decoded labels for artifact persistence
+        train_labels = [
+            self._trajectories[i]["phase_dynamic"].cpu().numpy()
+            for i in self._splits.get("train", [])
+        ]
+        val_labels = [
+            self._trajectories[i]["phase_dynamic"].cpu().numpy()
+            for i in self._splits.get("val", [])
+        ]
+
+        # Determine task name for artifact provenance (single-task primary)
+        task_name = "unknown"
+        try:
+            source = self.data_cfg.get("source")
+            if source is not None and source.get("task_name"):
+                task_name = str(source.get("task_name")).lower()
+            elif self._task_index:
+                # Fallback: most frequent task id's name
+                task_name = sorted(self._task_index.keys())[0].lower()
+        except Exception:
+            pass
+
+        data_config_hash = self.config_hash
+        # Decide artifact output directory
+        if persist_to_cache:
+            cache_dir = self.cache_manager.cache_dir(self.config_hash)
+            artifact_dir = cache_dir / "dynamics_artifact"
+            save_discovery_artifact(
+                output_dir=artifact_dir,
+                slds=slds,
+                report=report,
+                task_name=task_name,
+                data_config_hash=data_config_hash,
+                train_labels=train_labels,
+                val_labels=val_labels,
+                extra_metadata={
+                    "num_train_trajs": len(train_trajs),
+                    "num_val_trajs": len(val_trajs),
+                },
+            )
+            # Overwrite trajectory files on disk so future cache hits are warm
+            traj_dir = cache_dir / "trajectories"
+            for idx, traj in enumerate(self._trajectories):
+                torch.save(traj, traj_dir / f"{idx:06d}.pt")
+            logger.info(
+                "Persisted phase_dynamic augmentation and artifact to existing cache %s", cache_dir
+            )
+        else:
+            # Fresh ingest path: stage artifact alongside the tmp cache dir.
+            # _normalize_and_save will move it into the final cache after
+            # CacheManager.save atomic rename. Store in instance for later.
+            self._pending_dynamics_artifact = (slds, report, task_name, train_labels, val_labels)
 
     # ------------------------------------------------------------------
     # Splitting
@@ -753,18 +1145,18 @@ class DataPipelineStateMachine:
                             "The HDF5 dataset contains an incomplete train/valid "
                             f"filter assignment; missing trajectories: {missing[:8]}"
                         )
-                    train_idx = [i for i, split in filtered if split == "train"]
-                    val_idx = [i for i, split in filtered if split == "val"]
-                    if not train_idx or not val_idx:
+                    filtered_train_idx = [i for i, split in filtered if split == "train"]
+                    filtered_val_idx = [i for i, split in filtered if split == "val"]
+                    if not filtered_train_idx or not filtered_val_idx:
                         raise PipelineError("The HDF5 train/valid filters must both be non-empty.")
                     logger.info(
                         "  Dataset-filter split: %d train trajectories, %d val "
                         "trajectories across %d tasks",
-                        len(train_idx),
-                        len(val_idx),
+                        len(filtered_train_idx),
+                        len(filtered_val_idx),
                         len(task_ids),
                     )
-                    return {"train": train_idx, "val": val_idx}
+                    return {"train": filtered_train_idx, "val": filtered_val_idx}
 
             train_idx: list[int] = []
             val_idx: list[int] = []
@@ -812,22 +1204,22 @@ class DataPipelineStateMachine:
         val_tasks = set(task_ids[:n_val_tasks])
         train_tasks = set(task_ids[n_val_tasks:])
 
-        train_idx: list[int] = []
-        val_idx: list[int] = []
+        task_train_idx: list[int] = []
+        task_val_idx: list[int] = []
         for tid in task_ids:
             if tid in val_tasks:
-                val_idx.extend(by_task[tid])
+                task_val_idx.extend(by_task[tid])
             else:
-                train_idx.extend(by_task[tid])
+                task_train_idx.extend(by_task[tid])
 
         logger.info(
             "  Task-level split: %d train tasks (%d trajs), %d val tasks (%d trajs)",
             len(train_tasks),
-            len(train_idx),
+            len(task_train_idx),
             len(val_tasks),
-            len(val_idx),
+            len(task_val_idx),
         )
-        return {"train": train_idx, "val": val_idx}
+        return {"train": task_train_idx, "val": task_val_idx}
 
     def phase_counts(self, split: str = "train") -> dict[int, int]:
         """Per-class phase step counts over one split (for class weighting).
@@ -892,20 +1284,48 @@ class DataPipelineStateMachine:
 
             split_trajs = [self._trajectories[i] for i in indices]
             is_train = split_name == "train"
-            corruption_rate = (
-                float(data_cfg.get("phase_corruption_rate", 0.0)) if is_train else 0.0
-            )
+            corruption_rate = float(data_cfg.get("phase_corruption_rate", 0.0)) if is_train else 0.0
             default_seed = int(self.cfg.get("project", {}).get("seed", 42))
             corruption_seed = (
-                int(data_cfg.get("phase_corruption_seed", default_seed))
-                if is_train
-                else 42
+                int(data_cfg.get("phase_corruption_seed", default_seed)) if is_train else 42
             )
             labeler_cfg = data_cfg.get("phase_labeler")
+            # PhaseForge 2.0 dynamics: num_phases remains 6 for both vocabularies
+            # (regime count == expert count in primary experiment). Dynamics may
+            # carry its own num_regimes but the classifier head stays at 6.
             num_phases_val = int(labeler_cfg.get("num_phases", 6)) if labeler_cfg else 6
             phase_shuffle = (
                 bool(data_cfg.get("phase_shuffle_control", False)) if is_train else False
             )
+
+            # PhaseForge 2.0: select which label field Stage 1 trains on.
+            # Legacy 1.0 configs have no `data.dynamics` and collapse to "phase".
+            # When dynamics is enabled, `train_label_field` chooses the primary
+            # supervision target ("phase"=rule, "phase_dynamic"=dynamic). The
+            # alternate field is retained in the trajectory for router bootstrap.
+            phase_field = "phase"
+            if self._is_dynamics_enabled():
+                dyn_cfg = self._get_dynamics_cfg()
+                try:
+                    requested = (
+                        str(dyn_cfg.get("train_label_field", "phase"))
+                        if hasattr(dyn_cfg, "get")
+                        else "phase"
+                    )
+                except Exception:
+                    requested = "phase"
+                if requested not in ("phase", "phase_dynamic", "phase_rule"):
+                    raise PipelineError(
+                        "Unknown data.dynamics.train_label_field="
+                        f"{requested!r}; expected 'phase', 'phase_rule', or 'phase_dynamic'."
+                    )
+                if not all(requested in traj for traj in split_trajs):
+                    raise PipelineError(
+                        "Requested data.dynamics.train_label_field="
+                        f"{requested!r} is missing from one or more trajectories; "
+                        "refuse to fall back to rule labels. Re-ingest the cache."
+                    )
+                phase_field = requested
 
             dataset = StateOnlyDataset(
                 trajectories=split_trajs,
@@ -915,6 +1335,7 @@ class DataPipelineStateMachine:
                 phase_corruption_seed=corruption_seed,
                 num_phases=num_phases_val,
                 phase_shuffle_control=phase_shuffle,
+                phase_field=phase_field,
             )
 
             # Cap num_workers to os.cpu_count() to prevent warnings and slowdowns.
@@ -922,8 +1343,9 @@ class DataPipelineStateMachine:
             # valid choice for small CPU-only pilots where worker IPC costs
             # more than it saves.
             num_workers = max(0, int(data_cfg.num_workers))
-            if hasattr(os, "cpu_count") and os.cpu_count() is not None:
-                num_workers = min(num_workers, os.cpu_count())
+            cpu_count = os.cpu_count()
+            if cpu_count is not None:
+                num_workers = min(num_workers, cpu_count)
 
             # These options are intentionally derived from the effective
             # runtime. Pinned memory is useful for CUDA host-to-device copies,

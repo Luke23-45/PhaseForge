@@ -87,7 +87,7 @@ class StateOnlyDataset(Dataset):
         trajectories: List of trajectory dicts, each containing:
             - ``"state"``:   Tensor (T, state_dim)
             - ``"action"``:  Tensor (T, action_dim)
-            - ``"phase"``:   Tensor (T,) int64
+            - ``"phase"`` or configured ``phase_field``: Tensor (T,) int64
             - ``"task_id"``: int
         sequence_length: Number of consecutive timesteps per sample.
         stride: Step between consecutive samples within a trajectory.
@@ -95,6 +95,7 @@ class StateOnlyDataset(Dataset):
         phase_corruption_seed: RNG seed for deterministic corruption.
         num_phases: Total number of phase classes.
         phase_shuffle_control: Whether to run 100% phase permutation control.
+        phase_field: Key in trajectory dicts to read phase/regime labels from (default 'phase').
     """
 
     def __init__(
@@ -106,6 +107,7 @@ class StateOnlyDataset(Dataset):
         phase_corruption_seed: int = 42,
         num_phases: int = 6,
         phase_shuffle_control: bool = False,
+        phase_field: str = "phase",
     ) -> None:
         super().__init__()
         if int(sequence_length) < 1:
@@ -123,13 +125,30 @@ class StateOnlyDataset(Dataset):
         self.phase_corruption_seed = int(phase_corruption_seed)
         self.num_phases = int(num_phases)
         self.phase_shuffle_control = bool(phase_shuffle_control)
+        self.phase_field = str(phase_field)
 
-        # Apply phase corruption if configured
+        # Apply phase corruption if configured — strict on the requested field.
+        # If `phase_field` is missing we fail closed instead of silently
+        # corrupting a fallback field (which would mislabel dynamic vs rule).
         if self.phase_corruption_rate > 0.0:
             processed_trajectories = []
             for traj_idx, traj in enumerate(trajectories):
                 traj_copy = dict(traj)
-                clean_p = traj["phase"]
+                if self.phase_field not in traj:
+                    # Only allow implicit fallback when the requested field is
+                    # the canonical "phase" (legacy 1.0 trajectories).
+                    if self.phase_field == "phase" and "phase" in traj:
+                        clean_p = traj["phase"]
+                    else:
+                        raise KeyError(
+                            f"Trajectory {traj_idx} missing required phase field "
+                            f"{self.phase_field!r} (available: "
+                            f"{sorted(k for k in traj.keys() if 'phase' in k.lower())}). "
+                            "For PhaseForge 2.0 dynamic training ensure the cache was built with "
+                            "data.dynamics.enabled=true and re-ingested if stale."
+                        )
+                else:
+                    clean_p = traj[self.phase_field]
                 corrupted_p, clean_p = corrupt_phase_labels(
                     clean_p,
                     corruption_rate=self.phase_corruption_rate,
@@ -137,7 +156,7 @@ class StateOnlyDataset(Dataset):
                     seed=self.phase_corruption_seed + traj_idx,
                     shuffle_control=self.phase_shuffle_control,
                 )
-                traj_copy["phase"] = corrupted_p
+                traj_copy[self.phase_field] = corrupted_p
                 traj_copy["phase_gt_clean"] = clean_p
                 processed_trajectories.append(traj_copy)
             self.trajectories = processed_trajectories
@@ -165,15 +184,39 @@ class StateOnlyDataset(Dataset):
 
         state = traj["state"][start_t:end_t]  # (seq_len, S)
         action = traj["action"][start_t:end_t]  # (seq_len, A)
-        phase = traj["phase"][start_t:end_t]  # (seq_len,)
-        phase_gt = traj.get("phase_gt_clean", traj["phase"])[start_t:end_t]
+        if self.phase_field not in traj:
+            if self.phase_field == "phase" and "phase" in traj:
+                raw_phase = traj["phase"]
+            else:
+                raise KeyError(
+                    f"Trajectory {traj_idx} missing required phase field {self.phase_field!r} "
+                    f"(available: {sorted(k for k in traj.keys() if 'phase' in k.lower())})"
+                )
+        else:
+            raw_phase = traj[self.phase_field]
+        phase = raw_phase[start_t:end_t]  # (seq_len,)
+        phase_gt = traj.get("phase_gt_clean", raw_phase)[start_t:end_t]
         task_id = torch.tensor(traj["task_id"], dtype=torch.long)
 
         trajectory_id = torch.tensor(traj_idx, dtype=torch.long)
         trajectory_position = torch.tensor(start_t, dtype=torch.long)
 
+        # PhaseForge 2.0: expose alternate regime labels for bootstrap selection.
+        # When trajectories carry `phase_dynamic` / `phase_rule` (dynamics enabled),
+        # we return them alongside the primary `phase` so `bootstrap_moe` can
+        # select `prototype_source` without requiring a second data pass.
+        extras: dict[str, Tensor] = {}
+        for extra_key in ("phase_dynamic", "phase_rule"):
+            extra_raw = traj.get(extra_key)
+            if extra_raw is None:
+                continue
+            extra_slice = extra_raw[start_t:end_t]
+            if self.sequence_length == 1:
+                extra_slice = extra_slice.squeeze(0)
+            extras[extra_key] = extra_slice
+
         if self.sequence_length == 1:
-            return {
+            out: dict[str, Tensor] = {
                 "state": state.squeeze(0),  # (S,)
                 "action": action.squeeze(0),  # (A,)
                 "phase": phase.squeeze(0),  # scalar
@@ -182,7 +225,9 @@ class StateOnlyDataset(Dataset):
                 "trajectory_id": trajectory_id,
                 "trajectory_position": trajectory_position,
             }
-        return {
+            out.update(extras)
+            return out
+        out_multi: dict[str, Tensor] = {
             "state": state,
             "action": action,
             "phase": phase,
@@ -191,3 +236,5 @@ class StateOnlyDataset(Dataset):
             "trajectory_id": trajectory_id,
             "trajectory_position": trajectory_position,
         }
+        out_multi.update(extras)
+        return out_multi
