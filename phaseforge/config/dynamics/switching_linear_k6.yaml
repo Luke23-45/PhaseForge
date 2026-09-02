@@ -19,7 +19,9 @@ data:
     max_em_iter: 40
     em_tol: 0.001
     min_duration: 3
-    seed: 42
+    # Align discovery randomness with the protocol seed.  A literal 42 here
+    # would make every runner seed reuse the same fitted dynamic regimes.
+    seed: ${project.seed}
     train_label_field: "phase_dynamic"
     # Quality gates (Section 4.2) — pilot-tuned: 2% is strict for 6 regimes on
     # ~1k-step Lift (20 steps); 0.5% (≈5 steps) catches true collapse while

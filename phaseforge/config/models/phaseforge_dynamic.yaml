@@ -58,7 +58,7 @@ router_init:
   prototype_source: "dynamic"
   mapping_mode: "prototype_softmax"
   temperature: 1.0
-  seed: 42
+  seed: ${project.seed}
 
 expert_init:
   type: "partial_warm"

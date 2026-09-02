@@ -182,8 +182,18 @@ class StickySLDS:
             B[k] = W_T[:, D_x : D_x + D_a]
             b[k] = W_T[:, -1]
 
-            pred = u_all @ W
-            res = all_x_next - pred
+            # Estimate each regime's initial emission scale from the samples
+            # assigned to that regime.  Using residuals from the full dataset
+            # here gives every regime an unnecessarily broad covariance, which
+            # makes the first E-step favor a collapsed assignment.  Keep the
+            # global-model fallback only for the coefficient fit; the
+            # covariance fallback remains numerically safe for tiny clusters.
+            if np.any(mask):
+                pred = u_all[mask] @ W
+                res = all_x_next[mask] - pred
+            else:  # pragma: no cover - k-means initializes every center
+                pred = u_all @ W
+                res = all_x_next - pred
             covs[k] = np.maximum(np.var(res, axis=0), self.min_variance)
 
         self.params = SLDSParameters(
