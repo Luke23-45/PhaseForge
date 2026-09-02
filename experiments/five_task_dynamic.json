@@ -1,0 +1,75 @@
+{
+  "name": "five_task_dynamic",
+  "task": "all",
+  "description": "PhaseForge 2.0 dynamics-aware primary method. Dynamic-regime discovery is enabled through the switching-linear K=6 configuration; each selected cell runs Stage 1, Stage 2 bootstrapped from its own Stage 1 checkpoint, and final rollout evaluation.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "tasks": ["Lift", "Can", "Square", "ToolHang", "Transport"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "phaseforge_dynamic",
+      "role": "PhaseForge 2.0 dynamics-aware proposed method",
+      "model": "phaseforge_dynamic",
+      "data": "lift",
+      "task": "Lift",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    },
+    {
+      "index": 2,
+      "name": "phaseforge_dynamic",
+      "role": "PhaseForge 2.0 dynamics-aware proposed method",
+      "model": "phaseforge_dynamic",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    },
+    {
+      "index": 3,
+      "name": "phaseforge_dynamic",
+      "role": "PhaseForge 2.0 dynamics-aware proposed method",
+      "model": "phaseforge_dynamic",
+      "data": "square",
+      "task": "Square",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    },
+    {
+      "index": 4,
+      "name": "phaseforge_dynamic",
+      "role": "PhaseForge 2.0 dynamics-aware proposed method",
+      "model": "phaseforge_dynamic",
+      "data": "tool_hang",
+      "task": "ToolHang",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    },
+    {
+      "index": 5,
+      "name": "phaseforge_dynamic",
+      "role": "PhaseForge 2.0 dynamics-aware proposed method",
+      "model": "phaseforge_dynamic",
+      "data": "transport",
+      "task": "Transport",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    }
+  ]
+}
