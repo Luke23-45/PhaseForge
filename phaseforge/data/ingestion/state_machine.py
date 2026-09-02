@@ -1009,11 +1009,21 @@ class DataPipelineStateMachine:
             report.mean_switch_rate,
             report.nll_improvement,
         )
-        if not report.passed_all:
+        enforce_quality_gates = bool(
+            dyn_cfg.get("enforce_quality_gates", True) if hasattr(dyn_cfg, "get") else True
+        )
+        if not report.passed_all and enforce_quality_gates:
             raise PipelineError(
                 "Dynamics discovery failed quality gates (Section 4.2): "
                 + "; ".join(report.failure_reasons)
                 + f" [occupancy={report.occupancy} nll_improv={report.nll_improvement:.2f}]"
+            )
+        if not report.passed_all:
+            logger.warning(
+                "Dynamics discovery quality gates failed, but discovery is continuing "
+                "because data.dynamics.enforce_quality_gates=false. The failed "
+                "quality report will be persisted with the discovery artifact: %s",
+                "; ".join(report.failure_reasons),
             )
 
         # Decode every trajectory (train + val) with frozen model

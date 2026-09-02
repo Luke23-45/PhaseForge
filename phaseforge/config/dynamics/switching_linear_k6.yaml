@@ -31,3 +31,7 @@ data:
     max_switch_rate: 0.6
     min_nll_improvement: 0.0
     max_within_rule_residual_ratio: 1.0
+    # Keep the default fail-closed. Exploratory manifests may explicitly set
+    # this false to train/evaluate a degraded discovery while retaining the
+    # failed quality report in the persisted artifact.
+    enforce_quality_gates: true

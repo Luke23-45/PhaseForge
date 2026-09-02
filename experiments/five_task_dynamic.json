@@ -17,7 +17,10 @@
       "stage2_source": "self",
       "evaluate": true,
       "evaluate_mode": "rollout",
-      "overrides": ["dynamics@_global_=switching_linear_k6"]
+      "overrides": [
+        "dynamics@_global_=switching_linear_k6",
+        "data.dynamics.enforce_quality_gates=false"
+      ]
     },
     {
       "index": 2,
@@ -30,7 +33,10 @@
       "stage2_source": "self",
       "evaluate": true,
       "evaluate_mode": "rollout",
-      "overrides": ["dynamics@_global_=switching_linear_k6"]
+      "overrides": [
+        "dynamics@_global_=switching_linear_k6",
+        "data.dynamics.enforce_quality_gates=false"
+      ]
     },
     {
       "index": 3,
@@ -43,7 +49,10 @@
       "stage2_source": "self",
       "evaluate": true,
       "evaluate_mode": "rollout",
-      "overrides": ["dynamics@_global_=switching_linear_k6"]
+      "overrides": [
+        "dynamics@_global_=switching_linear_k6",
+        "data.dynamics.enforce_quality_gates=false"
+      ]
     },
     {
       "index": 4,
@@ -56,7 +65,10 @@
       "stage2_source": "self",
       "evaluate": true,
       "evaluate_mode": "rollout",
-      "overrides": ["dynamics@_global_=switching_linear_k6"]
+      "overrides": [
+        "dynamics@_global_=switching_linear_k6",
+        "data.dynamics.enforce_quality_gates=false"
+      ]
     },
     {
       "index": 5,
@@ -69,7 +81,10 @@
       "stage2_source": "self",
       "evaluate": true,
       "evaluate_mode": "rollout",
-      "overrides": ["dynamics@_global_=switching_linear_k6"]
+      "overrides": [
+        "dynamics@_global_=switching_linear_k6",
+        "data.dynamics.enforce_quality_gates=false"
+      ]
     }
   ]
 }
