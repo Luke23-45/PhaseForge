@@ -1,0 +1,26 @@
+# config/models/baselines/bc_impedance.yaml — Impedance BC baseline (WP5).
+#
+# Action-matched control for the decisive comparison (Professor §7.5):
+# identical psi -> (T, kappa) -> adapter parameterization as IS-PhaseForge,
+# but a single expert and no routing. Shares the encoder layout with the
+# canonical BC baseline; Stage 1 only.
+
+name: "bc_impedance"
+_target_: phaseforge.models.baselines.bc_impedance.BCImpedanceModel
+
+encoder:
+  _target_: phaseforge.models.components.encoder.StateEncoder
+  input_dim: ${data.state_dim}
+  hidden_dims: [256, 256, 256]
+  latent_dim: 128
+  activation: "gelu"
+  dropout: 0.1
+  use_residual: true
+
+expert:
+  _target_: phaseforge.models.components.impedance_expert.ImpedanceExpert
+  input_dim: 128
+  hidden_dim: 256
+  action_scale: 1.0
+  kappa_min: 0.1
+  kappa_max: 5.0

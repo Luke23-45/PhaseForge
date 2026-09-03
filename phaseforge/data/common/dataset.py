@@ -202,11 +202,15 @@ class StateOnlyDataset(Dataset):
         trajectory_position = torch.tensor(start_t, dtype=torch.long)
 
         # PhaseForge 2.0: expose alternate regime labels for bootstrap selection.
-        # When trajectories carry `phase_dynamic` / `phase_rule` (dynamics enabled),
+        # When trajectories carry `phase_dynamic` / `phase_rule` (dynamics enabled)
         # we return them alongside the primary `phase` so `bootstrap_moe` can
         # select `prototype_source` without requiring a second data pass.
+        # Phase 2 adds `phase_topo` (topo discovery enabled). Per-step topo
+        # confidence is intentionally not collated: segment-level confidence
+        # lives in the topo artifact manifest, keeping this batch a long
+        # tensor like the other regime labels.
         extras: dict[str, Tensor] = {}
-        for extra_key in ("phase_dynamic", "phase_rule"):
+        for extra_key in ("phase_dynamic", "phase_rule", "phase_topo"):
             extra_raw = traj.get(extra_key)
             if extra_raw is None:
                 continue

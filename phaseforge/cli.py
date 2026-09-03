@@ -399,19 +399,24 @@ def _finalize_training_run(
     except Exception:
         logger.exception("Failed to mark run %s completed.", run_id)
     try:
-        write_artifact_manifest(
-            output_dir,
-            {
-                "resolved_config.yaml": "resolved_config.yaml",
-                "run_meta.json": "run_meta.json",
-                "metadata/environment.json": "metadata/environment.json",
-                "metadata/data_provenance.json": "metadata/data_provenance.json",
-                "timings.json": "timings.json",
-                "metrics/training_curves.jsonl": "metrics/training_curves.jsonl",
-                "metrics/summary.json": "metrics/summary.json",
-                "checkpoints/checkpoint_best.pt": "checkpoints/checkpoint_best.pt",
-            },
-        )
+        # Phase 1 (WP0): preserve regime-bootstrap audit files when the run
+        # produced them (stage-2 MoE bootstraps write init_routing.json /
+        # init_expert.json into metadata/). Listed conditionally so stage-1
+        # runs without them still hash as complete.
+        manifest_inputs: dict[str, str] = {
+            "resolved_config.yaml": "resolved_config.yaml",
+            "run_meta.json": "run_meta.json",
+            "metadata/environment.json": "metadata/environment.json",
+            "metadata/data_provenance.json": "metadata/data_provenance.json",
+            "timings.json": "timings.json",
+            "metrics/training_curves.jsonl": "metrics/training_curves.jsonl",
+            "metrics/summary.json": "metrics/summary.json",
+            "checkpoints/checkpoint_best.pt": "checkpoints/checkpoint_best.pt",
+        }
+        for optional in ("metadata/init_routing.json", "metadata/init_expert.json"):
+            if (output_dir / optional).is_file():
+                manifest_inputs[optional] = optional
+        write_artifact_manifest(output_dir, manifest_inputs)
     except Exception:
         logger.exception("Failed to write the artifact manifest for run %s.", run_id)
     try:
@@ -873,6 +878,9 @@ def _finalize_eval_run(
             "episodes.jsonl",
             "rollout_summary.json",
             "metadata/data_provenance.json",
+            # Phase 5 full-trace artifact: auto-hashed when present, ignored
+            # otherwise (checked with is_file below).
+            "trace.jsonl",
         ):
             if (output_dir / extra).is_file():
                 artifact_manifest[extra] = extra

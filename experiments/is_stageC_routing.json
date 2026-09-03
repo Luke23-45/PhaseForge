@@ -1,0 +1,103 @@
+{
+  "name": "is_stageC_routing",
+  "task": "Can",
+  "description": "IS-PhaseForge Stage C: minimal routing fix (Professor §12C). Isolates discovery and routing from action representation: the action head stays direct in every cell while regimes (topo vs SLDS), representation (CE vs SupCon) and routing (soft top-2 vs hard top-1 vs margin) vary one step at a time.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "bc_direct",
+      "role": "BC-direct floor",
+      "model": "baselines/bc",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 2,
+      "name": "pf_current",
+      "role": "Current dynamic PhaseForge (SLDS + CE + soft top-2)",
+      "model": "phaseforge_dynamic",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    },
+    {
+      "index": 3,
+      "name": "pf_topo_ce",
+      "role": "Topological regimes + cross-entropy, soft top-2",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "models.router_init.prototype_source=topo"
+      ]
+    },
+    {
+      "index": 4,
+      "name": "pf_topo_supcon",
+      "role": "Topological regimes + SupCon representation, soft top-2",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "models.router_init.prototype_source=topo",
+        "models.encoder.normalize_output=true",
+        "train.supcon.enabled=true"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "pf_topo_supcon_top1",
+      "role": "Cell 4 with hard top-1 routing",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "models.router_init.prototype_source=topo",
+        "models.encoder.normalize_output=true",
+        "train.supcon.enabled=true",
+        "models.router.top_k=1"
+      ]
+    },
+    {
+      "index": 6,
+      "name": "pf_topo_supcon_margin",
+      "role": "Cell 5 with large-margin prototype routing (direct head kept)",
+      "model": "phaseforge_prototype",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    }
+  ]
+}

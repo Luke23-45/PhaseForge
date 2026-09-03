@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Any
 
 import torch.nn as nn
 from torch import Tensor
@@ -35,6 +36,17 @@ class ModelOutput:
 
     aux_losses: dict[str, Tensor] = field(default_factory=dict)
     """Auxiliary losses: keys may include ``"balance"``, ``"phase"``."""
+
+    latent: Tensor | None = None
+    """(B, Dz) — encoder latents (for contrastive losses). None when the
+    model does not expose them; trainers must fail closed in that case."""
+
+    info: dict[str, Tensor] | None = None
+    """Per-sample diagnostics for impedance experts and tracing
+    (keys may include ``"target"``, ``"gains"``, ``"task_error"``,
+    ``"pre_clip_u"``, ``"task_state"``, ``"expert_index"``). None for
+    direct-action models; consumers must fail closed when a required key
+    is absent."""
 
 
 class BaseManipulationModel(nn.Module, ABC):
@@ -95,3 +107,14 @@ class BaseManipulationModel(nn.Module, ABC):
             Dict with ``"gate_logits": Tensor(B, E)`` or None if not an MoE model.
         """
         return None
+
+    def deployment_contract(self) -> dict[str, Any]:
+        """Describe the model's deployment contract (Phase 1, WP8-infra).
+
+        The base contract carries only what holds for every model: the
+        policy is memoryless (one state in, one action out, no recurrent
+        hidden state). Subclasses with routing/action specifics (e.g.
+        :class:`PhaseBootstrappedMoE`) override and extend this dict.
+        The rollout runner logs (never enforces beyond) this contract.
+        """
+        return {"memoryless": True}

@@ -58,6 +58,12 @@ episodes:
   # phase calibration); false -> per-phase SR is reported as null when the
   # artifact is missing. Tracked whenever the artifact exists.
   require_phase_tracking: false
+  # Phase 1 scaffolding (WP0/WP8-infra): per-step trace verbosity.
+  # `minimal` = today's behavior (episodes.jsonl + rollout_summary.json).
+  # `full` = 22-field per-step trace.jsonl written alongside episodes.jsonl
+  # (WP8-full); accepted here so configs can select it per run.
+  trace_level: "minimal"
+  trace_every_n_steps: 1
 
 gates:
   # Gate 4 is the task-independent native-predicate probe: confirms that

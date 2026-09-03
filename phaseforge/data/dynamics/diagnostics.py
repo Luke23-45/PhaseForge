@@ -5,7 +5,7 @@ Implements the mandatory Section 4.2 discovery quality checks before policy trai
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -33,6 +33,11 @@ class DiscoveryQualityReport:
     within_regime_residual_var: float
     within_rule_residual_var: float | None
     failure_reasons: list[str]
+    # Phase 2 observability-audit attachments (Professor §4.4). None when
+    # the audit was not run (e.g. legacy SLDS-only reports); populated by
+    # the topo discovery path via `report.to_dict()`-compatible values.
+    audit_macro_f1: float | None = None
+    audit_merge_candidates: list[list[int]] = field(default_factory=list)
 
 
 def evaluate_discovery_quality(

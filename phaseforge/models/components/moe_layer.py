@@ -10,6 +10,8 @@ import torch.nn as nn
 from torch import Tensor
 
 from phaseforge.models.components.expert import ExpertMLP
+from phaseforge.models.components.impedance_expert import ImpedanceExpert
+from phaseforge.models.components.prototype_router import PrototypeRouter
 from phaseforge.models.components.router import RouterOutput, TopKRouter
 
 
@@ -22,25 +24,33 @@ class MoEOutput(NamedTuple):
     balance_loss: Tensor  # scalar
     gate_logits: Tensor  # (B, E)
     sticky_loss: Tensor  # scalar, raw history-stickiness loss (V2-C)
+    info: dict[str, Tensor] | None = None  # impedance diagnostics (WP5)
 
 
 class MoELayer(nn.Module):
     """Mixture-of-Experts Layer orchestrating the router and experts.
 
-    This layer takes the latent representation, uses the TopKRouter to determine
+    This layer takes the latent representation, uses the router to determine
     expert assignments and weights, dynamically dispatches inputs to the assigned
-    experts, and combines their outputs via a weighted sum.
+    experts, and combines their outputs via a weighted sum. The router is any
+    module following the ``TopKRouter`` call protocol — either ``TopKRouter``
+    (soft top-k) or ``PrototypeRouter`` (hard top-1 Voronoi); both report the
+    standard :class:`RouterOutput`, so dispatch needs no router-specific branch.
 
     Args:
-        router: Instantiated TopKRouter.
+        router: Instantiated TopKRouter or PrototypeRouter.
         experts: A list (or nn.ModuleList) of instantiated ExpertMLP networks.
             If a single ExpertMLP is provided, it will be cloned `num_experts` times.
     """
 
     def __init__(
         self,
-        router: TopKRouter,
-        experts: ExpertMLP | nn.ModuleList | list[ExpertMLP],
+        router: TopKRouter | PrototypeRouter,
+        experts: ExpertMLP
+        | ImpedanceExpert
+        | nn.ModuleList
+        | list[ExpertMLP]
+        | list[ImpedanceExpert],
     ) -> None:
         super().__init__()
         self.router = router
@@ -50,7 +60,7 @@ class MoELayer(nn.Module):
             self.experts: nn.ModuleList[ExpertMLP] = experts  # type: ignore[type-arg]
         elif isinstance(experts, list):
             self.experts = nn.ModuleList(experts)
-        elif isinstance(experts, ExpertMLP):
+        elif isinstance(experts, (ExpertMLP, ImpedanceExpert)):
             # Clone the single expert template E times.
             self.experts = nn.ModuleList(
                 [copy.deepcopy(experts) for _ in range(router.num_experts)]
@@ -60,18 +70,28 @@ class MoELayer(nn.Module):
             # (top-k weights sum to 1), so the router would receive no
             # action-based specialization signal at initialization.
             for expert in self.experts:
-                if not isinstance(expert, ExpertMLP):
+                if not isinstance(expert, (ExpertMLP, ImpedanceExpert)):
                     raise TypeError(
-                        f"All experts must be ExpertMLP instances, got {type(expert).__name__}"
+                        "All experts must be ExpertMLP or ImpedanceExpert instances, "
+                        f"got {type(expert).__name__}"
                     )
                 expert.reset_parameters()
         else:
-            raise TypeError("experts must be an ExpertMLP, list[ExpertMLP], or nn.ModuleList")
+            raise TypeError(
+                "experts must be an ExpertMLP, ImpedanceExpert, "
+                "list[ExpertMLP], list[ImpedanceExpert], or nn.ModuleList"
+            )
 
         if len(self.experts) != router.num_experts:
             raise ValueError(
                 f"Number of experts ({len(self.experts)}) does not match "
                 f"router.num_experts ({router.num_experts})"
+            )
+        flavors = {isinstance(expert, ImpedanceExpert) for expert in self.experts}
+        if len(flavors) != 1:
+            raise ValueError(
+                "MoE experts must be all direct (ExpertMLP) or all impedance "
+                "(ImpedanceExpert); mixing is not supported."
             )
 
     def forward(
@@ -79,6 +99,7 @@ class MoELayer(nn.Module):
         latent: Tensor,
         trajectory_id: Tensor | None = None,
         trajectory_position: Tensor | None = None,
+        task_state: Tensor | None = None,
         *,
         router_override: str | None = None,
         phase_logits: Tensor | None = None,
@@ -92,6 +113,9 @@ class MoELayer(nn.Module):
                 router (V2-C history routing).
             trajectory_position: Optional (B,) long tensor passed through to
                 the router (V2-C history routing).
+            task_state: Optional (B, Dy) task states ``y_t``. Required with
+                impedance experts, forbidden with direct experts (fail-closed
+                on flavor mismatch).
             router_override: V2-E evaluation-time routing intervention, one
                 of ``"sticky"`` / ``"uniform"`` / ``"oracle"`` (or ``None``
                 for the learned router). The learned gate logits are still
@@ -144,6 +168,21 @@ class MoELayer(nn.Module):
                 f"Unknown router_override {router_override!r}. Supported: "
                 "sticky, uniform, oracle."
             )
+
+        use_impedance = isinstance(self.experts[0], ImpedanceExpert)
+        if use_impedance and task_state is None:
+            raise RuntimeError(
+                "Impedance experts need task_state=y_t; pass the task state "
+                "alongside the latent (PhaseBootstrappedMoE threads it through)."
+            )
+        if not use_impedance and task_state is not None:
+            raise RuntimeError(
+                "Direct (ExpertMLP) experts received a task_state; impedance "
+                "experts are required to consume it."
+            )
+        if use_impedance:
+            assert task_state is not None
+            return self._forward_impedance(latent, weights, indices, task_state, router_out)
 
         # Retrieve the output dimension from the first expert to preallocate
         out_dim = cast(ExpertMLP, self.experts[0]).output_dim
@@ -200,4 +239,73 @@ class MoELayer(nn.Module):
             balance_loss=router_out.balance_loss,
             gate_logits=router_out.gate_logits,
             sticky_loss=router_out.sticky_loss,
+            info=None,
+        )
+
+    def _forward_impedance(
+        self,
+        latent: Tensor,
+        weights: Tensor,
+        indices: Tensor,
+        task_state: Tensor,
+        router_out: RouterOutput,
+    ) -> MoEOutput:
+        """Dispatch impedance experts and combine controller parameters.
+
+        Selected experts run ``params(z)`` to produce ``(T, κ)``; top-1
+        selection maps directly through the action adapter, while wider
+        selections (top-2 ablation, uniform override) blend parameters via
+        :func:`blend_impedance` first (Professor §7.4). The reported gate
+        logits and auxiliary losses stay the learned router's own.
+        """
+        from phaseforge.models.components.action_adapter import (
+            blend_impedance,
+            impedance_action,
+        )
+
+        batch_size = latent.size(0)
+        select = weights.size(-1)
+        first = cast(ImpedanceExpert, self.experts[0])
+        task_dim, error_dim = first.task_state_dim, first.error_dim
+        scale = float(getattr(first, "action_scale", 1.0))
+
+        targets_all = torch.zeros(
+            (batch_size, select, task_dim), dtype=latent.dtype, device=latent.device
+        )
+        gains_all = torch.zeros(
+            (batch_size, select, error_dim), dtype=latent.dtype, device=latent.device
+        )
+        for expert_idx, expert_net in enumerate(self.experts):
+            expert_net = cast(ImpedanceExpert, expert_net)
+            batch_idx, k_idx = torch.where(indices == expert_idx)
+            if batch_idx.numel() == 0:
+                continue
+            target_e, gains_e = expert_net.params(latent[batch_idx])
+            targets_all[batch_idx, k_idx] = target_e.to(targets_all.dtype)
+            gains_all[batch_idx, k_idx] = gains_e.to(gains_all.dtype)
+
+        if select == 1:
+            target_sel = targets_all[:, 0]
+            gains_sel = gains_all[:, 0]
+        else:
+            target_sel, gains_sel = blend_impedance(targets_all, gains_all, weights)
+        combined_output, parts = impedance_action(target_sel, gains_sel, task_state, scale)
+        info = {
+            # Attached (not detached): the Lipschitz loss differentiates
+            # through "target". Consumers that persist diagnostics detach.
+            "target": target_sel,
+            "gains": gains_sel,
+            "task_error": parts["task_error"],
+            "pre_clip_u": parts["pre_clip_u"],
+            "task_state": task_state,
+            "expert_index": indices[:, 0],
+        }
+        return MoEOutput(
+            combined_output=combined_output,
+            routing_weights=weights,
+            expert_indices=indices,
+            balance_loss=router_out.balance_loss,
+            gate_logits=router_out.gate_logits,
+            sticky_loss=router_out.sticky_loss,
+            info=info,
         )

@@ -1,0 +1,69 @@
+{
+  "name": "is_stageB_discovery",
+  "task": "Can",
+  "description": "IS-PhaseForge Stage B: regime discovery + observability (Professor §12B). Compares SLDS transition regimes vs PELT topological regimes at K=3/4/6/8 via observability audits (macro-F1, confusion, occupancy, duration, transition matrix, residual reduction, seed stability). Stage-1-only runs persist discovery artifacts; K is chosen by evidence (select_K), never forced to 6. Stop rule: if no candidate passes the audit, memoryless routing is reported insufficient and later stages do not run.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "slds_dynamic",
+      "role": "SLDS transition-regime reference",
+      "model": "phaseforge_dynamic",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": false,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    },
+    {
+      "index": 2,
+      "name": "topo_k6",
+      "role": "PELT topological regimes, K=6",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": false,
+      "evaluate_mode": "rollout",
+      "overrides": ["topo@_global_=topo_pelt_k6"]
+    },
+    {
+      "index": 3,
+      "name": "topo_k3",
+      "role": "PELT topological regimes, K=3",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": false,
+      "evaluate_mode": "rollout",
+      "overrides": ["topo@_global_=topo_pelt_k6", "data.topo.num_regimes=3"]
+    },
+    {
+      "index": 4,
+      "name": "topo_k4",
+      "role": "PELT topological regimes, K=4",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": false,
+      "evaluate_mode": "rollout",
+      "overrides": ["topo@_global_=topo_pelt_k6", "data.topo.num_regimes=4"]
+    },
+    {
+      "index": 5,
+      "name": "topo_k8",
+      "role": "PELT topological regimes, K=8",
+      "model": "phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": false,
+      "evaluate_mode": "rollout",
+      "overrides": ["topo@_global_=topo_pelt_k6", "data.topo.num_regimes=8"]
+    }
+  ]
+}

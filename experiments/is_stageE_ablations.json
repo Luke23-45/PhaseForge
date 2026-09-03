@@ -1,0 +1,179 @@
+{
+  "name": "is_stageE_ablations",
+  "task": "Can",
+  "description": "IS-PhaseForge Stage E: ablations (Professor §12E). One variable at a time off the full-IS reference. Screening runs use seed 42 only; surviving configurations are re-run with seeds 42/43/44 before any claim.",
+  "seeds": [42],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "is_full",
+      "role": "Full IS-PhaseForge reference for the ablations",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 2,
+      "name": "no_supcon",
+      "role": "Ablation: SupCon off, cross-entropy on (tests contrastive alignment)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 3,
+      "name": "no_margin",
+      "role": "Ablation: margin off (tests boundary chattering hypothesis)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 4,
+      "name": "top2",
+      "role": "Ablation: top-2 impedance blending vs hard top-1 (tests action blending)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "models.router.top_k=2",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "no_impedance",
+      "role": "Ablation: direct heads with prototype+margin routing (tests action parameterization)",
+      "model": "phaseforge_prototype",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    },
+    {
+      "index": 6,
+      "name": "no_contraction",
+      "role": "Ablation: contraction/gain regularization off (tests stability bias)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    },
+    {
+      "index": 7,
+      "name": "k4",
+      "role": "Ablation: regime granularity K=4 (tests granularity)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "data.topo.num_regimes=4",
+        "models.router.num_experts=4",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 8,
+      "name": "balance_high",
+      "role": "Ablation: large balance coefficient (tests utilization pressure)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "models.router.balance_coeff=0.01",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 9,
+      "name": "init_seed",
+      "role": "Ablation: alternate router prototype seed (tests init dependence)",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "models.router_init.seed=123",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    }
+  ]
+}

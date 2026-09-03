@@ -24,8 +24,10 @@ from phaseforge.models.components.expert import (
     partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
+from phaseforge.models.components.impedance_expert import ImpedanceExpert
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
+from phaseforge.models.components.prototype_router import PrototypeRouter
 from phaseforge.models.components.router import TopKRouter
 from phaseforge.models.components.soft_mapping import (
     build_hierarchical_uniform_mapping,
@@ -42,6 +44,28 @@ EVAL_ROUTER_MODES: frozenset[str] = frozenset({"learned", "sticky", "uniform", "
 def _hash_dropped_indices(indices: list[int]) -> str:
     """Backward-compatible alias of the shared audit hash."""
     return hash_dropped_indices(indices)
+
+
+def _install_router_matrix(router: Any, matrix: Tensor, description: str) -> None:
+    """Install bootstrapped directions into either router flavor (WP4).
+
+    Prototype routers store them as Voronoi prototypes; legacy TopK routers
+    store them as gate hyperplanes with a zeroed bias. Shapes must match
+    exactly — a mismatch fails closed instead of silently misrouting.
+    """
+    proto = getattr(router, "prototypes", None)
+    if isinstance(proto, torch.nn.Parameter):
+        if tuple(proto.shape) != tuple(matrix.shape):
+            raise ValueError(
+                "Cannot install bootstrapped prototypes: router expects "
+                f"{tuple(proto.shape)}, computed {tuple(matrix.shape)}."
+            )
+        proto.data.copy_(matrix)
+        logger.info("Initialized prototype router with %s", description)
+        return
+    router.gate_linear.weight.data.copy_(matrix)
+    router.gate_linear.bias.data.zero_()
+    logger.info("Initialized router weights with %s", description)
 
 
 class PhaseBootstrappedMoE(BaseManipulationModel):
@@ -67,8 +91,10 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         encoder: The StateEncoder instance.
         action_head: The ActionHead used in Stage 1.
         phase_head: The PhaseClassificationHead used in Stage 1.
-        router: The TopKRouter for Stage 2.
-        expert: A single ExpertMLP template to be cloned for Stage 2.
+        router: The TopKRouter (or PrototypeRouter) for Stage 2.
+        expert: A single ExpertMLP (or ImpedanceExpert) template to be cloned
+            for Stage 2. Impedance experts output target/gain controller
+            parameters through the action adapter instead of raw actions.
         router_init: Optional configuration dictionary for router initialization.
             Keys: 'type' ('centroid' | 'spherical_centroid' | 'spherical_kmeans' |
                   'kmeans' | 'phase_head' | 'soft_mapping' | 'random'), 'seed' (int),
@@ -96,8 +122,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         encoder: StateEncoder,
         action_head: ActionHead,
         phase_head: PhaseClassificationHead,
-        router: TopKRouter,
-        expert: ExpertMLP,
+        router: TopKRouter | PrototypeRouter,
+        expert: ExpertMLP | ImpedanceExpert,
         router_init: dict[str, Any] | None = None,
         expert_init: dict[str, Any] | None = None,
         soft_mapping: dict[str, Any] | None = None,
@@ -176,6 +202,24 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             )
         self._eval_mode = mode
 
+    def deployment_contract(self) -> dict[str, Any]:
+        """Deployment contract for the switched MoE policy (Phase 1).
+
+        Reports the live routing configuration (expert count, top-k,
+        router class). The policy itself stays memoryless: ``get_action``
+        consumes one state and returns one action with no cross-step
+        state (the sticky-EMA lives only in the legacy ``sticky`` eval
+        mode and is cleared per episode by :meth:`reset`).
+        """
+        router = self.moe_layer.router
+        return {
+            "memoryless": True,
+            "router_type": type(router).__name__,
+            "expert_type": "impedance" if self._uses_impedance_experts() else "direct",
+            "top_k": int(router.top_k),
+            "num_experts": int(router.num_experts),
+        }
+
     def reset(self) -> None:
         """Clear per-episode evaluation state (start of a new rollout episode).
 
@@ -184,6 +228,16 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         start each episode from a clean EMA.
         """
         self.moe_layer.router.reset_sticky_ema()
+
+    def _uses_impedance_experts(self) -> bool:
+        """True when the Stage 2 experts are impedance-parameterized."""
+        return isinstance(self.moe_layer.experts[0], ImpedanceExpert)
+
+    def _task_state(self, state: Tensor) -> Tensor:
+        """Extract the task state ``y = ψ(x)`` for impedance experts."""
+        from phaseforge.models.components.task_state import extract_task_state
+
+        return extract_task_state(state)
 
     @property
     def teacher_routing_enabled(self) -> bool:
@@ -261,6 +315,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 routing_weights=None,
                 expert_indices=None,
                 gate_logits=None,
+                latent=latent,
             )
 
         elif self._stage == 2:
@@ -274,10 +329,14 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 # soft-mapping persistence).
                 oracle_phase_logits = self.phase_head(latent)
                 oracle_mapping = self.require_soft_mapping()
+            task_state: Tensor | None = None
+            if self._uses_impedance_experts():
+                task_state = self._task_state(state)
             moe_out = self.moe_layer(
                 latent,
                 trajectory_id=batch.get("trajectory_id"),
                 trajectory_position=batch.get("trajectory_position"),
+                task_state=task_state,
                 router_override=override,
                 phase_logits=oracle_phase_logits,
                 mapping=oracle_mapping,
@@ -306,9 +365,111 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                     "balance": moe_out.balance_loss,
                     "sticky": moe_out.sticky_loss,
                 },
+                latent=latent,
+                info=moe_out.info,
             )
         else:
             raise RuntimeError(f"Invalid stage {self._stage}")
+
+    @torch.no_grad()
+    def describe_step(self, state: Tensor) -> dict[str, Any]:
+        """Snapshot one inference step for full rollout tracing (WP8-full).
+
+        Runs the *learned* routing path (never oracle/sticky/uniform) on a
+        single normalized state ``(1, S)`` and reports routing internals:
+        latent norm, per-expert scores, selected/top-2 experts, margin,
+        entropy (soft routers only), impedance ``(T, κ, e, u)`` when the
+        experts are impedance-parameterized, and top-1 vs top-2 action
+        disagreement. Values the active configuration cannot provide are
+        ``None`` (never fabricated). Never raises on shape-valid input;
+        callers still guard (tracing must not break rollouts).
+        """
+        report: dict[str, Any] = {
+            "latent_norm": None,
+            "dists": None,
+            "selected_expert": None,
+            "top2_expert": None,
+            "router_margin": None,
+            "router_entropy": None,
+            "task_vars": None,
+            "expert_target": None,
+            "expert_gains": None,
+            "task_error": None,
+            "pre_clip_u": None,
+            "expert_disagreement": None,
+        }
+        latent = self.encoder(state)
+        report["latent_norm"] = latent.norm(dim=-1)
+        if self._stage != 2:
+            return report
+        task_state: Tensor | None = None
+        if self._uses_impedance_experts():
+            task_state = self._task_state(state)
+            report["task_vars"] = task_state
+        moe_out = self.moe_layer(latent, task_state=task_state)
+        gate = moe_out.gate_logits
+        order = gate.argsort(dim=-1, descending=(not self._router_is_distance_based()))
+        report["selected_expert"] = moe_out.expert_indices[:, 0]
+        if gate.size(-1) > 1:
+            report["top2_expert"] = order[:, 1]
+        if self._router_is_distance_based():
+            dists = -gate
+            report["dists"] = dists
+            if gate.size(-1) > 1:
+                ranked = dists.gather(1, order)
+                report["router_margin"] = ranked[:, 1] - ranked[:, 0]
+        else:
+            probs = F.softmax(gate, dim=-1)
+            ranked = gate.gather(1, order)
+            if gate.size(-1) > 1:
+                report["router_margin"] = ranked[:, 0] - ranked[:, 1]
+            report["router_entropy"] = -(probs * (probs + 1e-12).log()).sum(dim=-1)
+        if moe_out.info is not None:
+            report["expert_target"] = moe_out.info.get("target")
+            report["expert_gains"] = moe_out.info.get("gains")
+            report["task_error"] = moe_out.info.get("task_error")
+            report["pre_clip_u"] = moe_out.info.get("pre_clip_u")
+        first, second = self._top2_expert_actions(latent, task_state, moe_out)
+        if first is not None and second is not None:
+            report["expert_disagreement"] = (first - second).norm(dim=-1)
+        return report
+
+    def _router_is_distance_based(self) -> bool:
+        """True when gate logits are negative distances (prototype router)."""
+        return isinstance(getattr(self.moe_layer.router, "prototypes", None), torch.nn.Parameter)
+
+    def _expert_action_at(
+        self, latent: Tensor, task_state: Tensor | None, index: int
+    ) -> Tensor | None:
+        """Action of one expert by index, or None when not computable."""
+        experts = self.moe_layer.experts
+        if index < 0 or index >= len(experts):
+            return None
+        expert = experts[index]
+        if isinstance(expert, ImpedanceExpert):
+            if task_state is None:
+                return None
+            from phaseforge.models.components.action_adapter import impedance_action
+
+            target, gains = expert.params(latent)
+            action, _parts = impedance_action(target, gains, task_state, expert.action_scale)
+            return action
+        try:
+            return expert(latent)
+        except Exception:
+            return None
+
+    def _top2_expert_actions(
+        self, latent: Tensor, task_state: Tensor | None, moe_out: Any
+    ) -> tuple[Tensor | None, Tensor | None]:
+        """Actions of the top-1 and runner-up experts (either may be None)."""
+        gate = moe_out.gate_logits
+        if gate.size(-1) < 2:
+            return None, None
+        order = gate.argsort(dim=-1, descending=(not self._router_is_distance_based()))
+        first = self._expert_action_at(latent, task_state, int(order[0, 0].item()))
+        second = self._expert_action_at(latent, task_state, int(order[0, 1].item()))
+        return first, second
 
     def get_action(self, state: Tensor) -> Tensor:
         """Inference path without auxiliary outputs or gradients."""
@@ -323,8 +484,12 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             if self._eval_mode == "oracle":
                 oracle_phase_logits = self.phase_head(latent)
                 oracle_mapping = self.require_soft_mapping()
+            task_state: Tensor | None = None
+            if self._uses_impedance_experts():
+                task_state = self._task_state(state)
             moe_out = self.moe_layer(
                 latent,
+                task_state=task_state,
                 router_override=override,
                 phase_logits=oracle_phase_logits,
                 mapping=oracle_mapping,
@@ -440,7 +605,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
 
         # PhaseForge 2.0: prototype_source selects which label vocabulary the
         # router centroids are built from. "rule" = canonical phase labels
-        # (phase_rule or phase), "dynamic" = SLDS regimes (phase_dynamic).
+        # (phase_rule or phase), "dynamic" = SLDS regimes (phase_dynamic),
+        # "topo" = topological regimes (phase_topo, Phase 2).
         # The 1.0 default is "rule" for backward compatibility.
         # `r_cfg` may be a plain dict (from PhaseBootstrappedMoE.__init__) or a
         # Hydra DictConfig — handle both via duck-typed .get.
@@ -449,14 +615,25 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         except Exception:
             proto_raw = "rule"
         proto_source = str(proto_raw).lower()
-        if proto_source not in ("rule", "dynamic", "phase", "phase_dynamic", "phase_rule"):
+        if proto_source not in (
+            "rule",
+            "dynamic",
+            "topo",
+            "phase",
+            "phase_dynamic",
+            "phase_rule",
+            "phase_topo",
+        ):
             raise ValueError(
                 f"Unknown router_init.prototype_source {proto_source!r}. "
-                "Expected 'rule' (phase_rule/phase) or 'dynamic' (phase_dynamic)."
+                "Expected 'rule' (phase_rule/phase), 'dynamic' (phase_dynamic), "
+                "or 'topo' (phase_topo)."
             )
         # Normalize aliases
         if proto_source in ("phase", "phase_rule", "rule"):
             proto_source_norm = "rule"
+        elif proto_source in ("phase_topo", "topo"):
+            proto_source_norm = "topo"
         else:
             proto_source_norm = "dynamic"
 
@@ -485,6 +662,16 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                     else:
                         raise RuntimeError(
                             "Batch missing phase labels for dynamic prototype source."
+                        )
+                elif proto_source_norm == "topo":
+                    if "phase_topo" in batch:
+                        phase = batch["phase_topo"].to(device, non_blocking=non_blocking)
+                    else:
+                        raise RuntimeError(
+                            "router_init.prototype_source='topo' but batch has no "
+                            "'phase_topo' key. The dataloader was built without "
+                            "topo discovery (data.topo.enabled=false or stale cache). "
+                            "Enable topo and re-ingest, or set prototype_source='rule'."
                         )
                 else:  # rule
                     if "phase_rule" in batch:
@@ -521,10 +708,10 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 seed=cluster_seed,
                 spherical=False,
             )
-            self.moe_layer.router.gate_linear.weight.data.copy_(prototypes)
-            self.moe_layer.router.gate_linear.bias.data.zero_()
-            logger.info(
-                f"Initialized router weights with {num_experts} hierarchical phase prototypes."
+            _install_router_matrix(
+                self.moe_layer.router,
+                prototypes,
+                f"{num_experts} hierarchical phase prototypes.",
             )
 
         elif r_type == "spherical_centroid":
@@ -536,18 +723,18 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 seed=cluster_seed,
                 spherical=True,
             )
-            self.moe_layer.router.gate_linear.weight.data.copy_(prototypes)
-            self.moe_layer.router.gate_linear.bias.data.zero_()
-            logger.info(
-                f"Initialized router weights with {num_experts} spherical phase prototypes."
+            _install_router_matrix(
+                self.moe_layer.router,
+                prototypes,
+                f"{num_experts} spherical phase prototypes.",
             )
 
         elif r_type == "spherical_kmeans":
             centroids, _ = spherical_kmeans(all_latents, k=num_experts, seed=cluster_seed)
-            self.moe_layer.router.gate_linear.weight.data.copy_(centroids)
-            self.moe_layer.router.gate_linear.bias.data.zero_()
-            logger.info(
-                f"Initialized router weights with {num_experts} Spherical K-Means centroids."
+            _install_router_matrix(
+                self.moe_layer.router,
+                centroids,
+                f"{num_experts} Spherical K-Means centroids.",
             )
 
         elif r_type == "kmeans":
@@ -561,20 +748,20 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 device=device, dtype=all_latents.dtype
             )
             centroids_normalized = F.normalize(centroids, p=2, dim=-1)
-            self.moe_layer.router.gate_linear.weight.data.copy_(centroids_normalized)
-            self.moe_layer.router.gate_linear.bias.data.zero_()
-            logger.info(
-                f"Initialized router weights with {num_experts} Euclidean KMeans centroids."
+            _install_router_matrix(
+                self.moe_layer.router,
+                centroids_normalized,
+                f"{num_experts} Euclidean KMeans centroids.",
             )
 
         elif r_type == "phase_head":
             phase_weight = self.phase_head.classifier.weight.data
             weights = compute_phase_head_router_weights(phase_weight, num_experts)
-            self.moe_layer.router.gate_linear.weight.data.copy_(weights)
-            self.moe_layer.router.gate_linear.bias.data.zero_()
-            logger.info(
-                "Initialized router weights with normalized phase-head directions "
-                f"({num_experts} rows)."
+            _install_router_matrix(
+                self.moe_layer.router,
+                weights,
+                "normalized phase-head directions "
+                f"({num_experts} rows).",
             )
 
         elif r_type == "soft_mapping":
@@ -595,20 +782,17 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 mapping = build_prototype_softmax_mapping(
                     phase_centroids, prototypes, temperature=temperature
                 )
-                self.moe_layer.router.gate_linear.weight.data.copy_(prototypes)
-                self.moe_layer.router.gate_linear.bias.data.zero_()
-                logger.info(
-                    "Initialized router weights with %d spherical hierarchical "
-                    "phase prototypes (soft_mapping=%s, temperature=%s).",
-                    num_experts,
-                    mapping_mode,
-                    temperature,
+                _install_router_matrix(
+                    self.moe_layer.router,
+                    prototypes,
+                    f"{num_experts} spherical hierarchical phase prototypes "
+                    f"(soft_mapping={mapping_mode}, temperature={temperature}).",
                 )
             elif mapping_mode == "hierarchical_uniform":
                 mapping = build_hierarchical_uniform_mapping(num_phases, num_experts)
                 logger.info(
                     "Soft mapping built data-free as hierarchical uniform rows "
-                    "(%d phases, %d experts); router gate weights keep random "
+                    "(%d phases, %d experts); router weights keep random "
                     "initialization.",
                     num_phases,
                     num_experts,

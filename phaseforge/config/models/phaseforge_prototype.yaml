@@ -1,0 +1,73 @@
+# config/models/phaseforge_prototype.yaml — Prototype router + direct heads.
+#
+# Routing-isolation control (Stage C/D/E): large-margin Voronoi routing with
+# hard top-1 dispatch, but the legacy direct 7D action heads. Pairs with the
+# impedance model (is_phaseforge) to isolate the action parameterization:
+# same discovery, representation, and routing — only the heads differ.
+# Prototypes bootstrap from topological regimes; experts keep the R50
+# partial warm-start (direct heads CAN warm-start from the ActionHead).
+
+name: "phaseforge_prototype"
+_target_: phaseforge.models.phase_moe.PhaseBootstrappedMoE
+
+encoder:
+  _target_: phaseforge.models.components.encoder.StateEncoder
+  input_dim: ${data.state_dim}
+  hidden_dims: [256, 256, 256]
+  latent_dim: 128
+  activation: "gelu"
+  dropout: 0.1
+  use_residual: true
+  # Required: prototype distances assume unit latents (see SupCon, WP3).
+  normalize_output: true
+
+action_head:
+  _target_: phaseforge.models.components.action_head.ActionHead
+  input_dim: 128
+  output_dim: ${data.action_dim}
+  head_type: "deterministic"
+  hidden_dim: 256
+
+phase_head:
+  _target_: phaseforge.models.components.phase_head.PhaseClassificationHead
+  latent_dim: 128
+  num_phases: 6
+
+router:
+  _target_: phaseforge.models.components.prototype_router.PrototypeRouter
+  latent_dim: 128
+  num_experts: 6
+  top_k: 1
+  margin: 0.5
+  balance_coeff: 0.0001
+
+expert:
+  _target_: phaseforge.models.components.expert.ExpertMLP
+  input_dim: 128
+  # Single hidden layer matching action_head.hidden_dim so the Stage 1
+  # ActionHead can be copied into the experts exactly (strict warm start).
+  hidden_dims: [256]
+  output_dim: ${data.action_dim}
+  activation: "gelu"
+
+# Inert for the prototype path (only used by oracle eval mode / teacher
+# routing); disabled explicitly so the resolved config carries no
+# soft-mapping machinery.
+soft_mapping:
+  enabled: false
+
+teacher_routing:
+  enabled: false
+
+router_init:
+  type: "centroid"
+  prototype_source: "topo"
+  mapping_mode: "prototype_softmax"   # unused for centroid; kept for schema
+  temperature: 1.0
+  seed: ${project.seed}
+
+expert_init:
+  type: "partial_warm"
+  drop_rate: 0.5
+  seed: ${project.seed}   # tied to the training seed (recorded per run)
+  jitter_std: 0.0        # partial_warm keeps rows as exact copies (no jitter)

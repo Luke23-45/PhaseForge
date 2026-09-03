@@ -35,6 +35,7 @@ class BehaviorCloningModel(BaseManipulationModel):
             routing_weights=None,
             expert_indices=None,
             gate_logits=None,
+            latent=latent,
         )
 
     def get_action(self, state: Tensor) -> Tensor:

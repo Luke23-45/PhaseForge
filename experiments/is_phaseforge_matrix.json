@@ -1,0 +1,84 @@
+{
+  "name": "is_phaseforge_matrix",
+  "task": "Can",
+  "description": "IS-PhaseForge action-matched comparison matrix (Professor §7.5). BC-direct vs BC-impedance vs PhaseForge-direct (+SupCon+margin) vs PhaseForge-impedance (+SupCon+margin) vs full IS-PhaseForge (+contraction). Prevents confounding routing gains with action-representation gains. Shared with Stage D (is_stageD_impedance.json), which runs this matrix as its experiment.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "bc_direct",
+      "role": "BC-direct: raw 7D action, no routing",
+      "model": "baselines/bc",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 2,
+      "name": "bc_impedance",
+      "role": "BC-impedance: target/gain adapter, no routing",
+      "model": "baselines/bc_impedance",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 3,
+      "name": "phaseforge_direct",
+      "role": "PhaseForge-direct: raw 7D action, MoE routing",
+      "model": "phaseforge_prototype",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    },
+    {
+      "index": 4,
+      "name": "phaseforge_impedance",
+      "role": "PhaseForge-impedance: target/gain adapter, MoE routing",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "is_full",
+      "role": "IS-PhaseForge full: adapter + SupCon + margin + contraction",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    }
+  ]
+}

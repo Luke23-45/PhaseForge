@@ -18,6 +18,9 @@ encoder:
   activation: "gelu"
   dropout: 0.1
   use_residual: true
+  # Contrastive/prototype path (WP3): L2-normalize latents. False preserves
+  # the legacy unnormalized path bit-for-bit; override to true with SupCon.
+  normalize_output: false
 
 action_head:
   _target_: phaseforge.models.components.action_head.ActionHead
@@ -62,6 +65,10 @@ teacher_routing:
 
 router_init:
   type: "centroid"
+  # Label vocabulary for router prototypes: "rule" (phase_rule/phase),
+  # "dynamic" (phase_dynamic) or "topo" (phase_topo). Default "rule" matches
+  # the bootstrap code default; override for topo/SLDS routing studies.
+  prototype_source: "rule"
   mapping_mode: "prototype_softmax"   # unused for centroid; kept for schema
   temperature: 1.0
   seed: 42

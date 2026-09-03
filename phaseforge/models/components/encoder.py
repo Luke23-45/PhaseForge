@@ -26,6 +26,10 @@ class StateEncoder(nn.Module):
             When ``input_dim != latent_dim`` a learned projection
             (``res_proj``) bridges the dims; ``res_proj`` is ``Identity``
             when the dims already match.
+        normalize_output: L2-normalize the output (``z / ‖z‖``). Required
+            for contrastive (SupCon) training and prototype routing whose
+            distances assume unit latents. ``False`` preserves the legacy
+            unnormalized path bit-for-bit.
     """
 
     def __init__(
@@ -36,6 +40,7 @@ class StateEncoder(nn.Module):
         activation: str = "gelu",
         dropout: float = 0.1,
         use_residual: bool = True,
+        normalize_output: bool = False,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
@@ -64,6 +69,7 @@ class StateEncoder(nn.Module):
             self.res_proj: nn.Module = nn.Linear(input_dim, latent_dim)
         else:
             self.res_proj = nn.Identity()
+        self.normalize_output = bool(normalize_output)
 
         self._init_weights()
 
@@ -80,10 +86,13 @@ class StateEncoder(nn.Module):
             state: (B, input_dim)
 
         Returns:
-            latent: (B, latent_dim)
+            latent: (B, latent_dim), L2-normalized when
+                ``normalize_output`` is True.
         """
         h = self.hidden(state)
         out = self.output_proj(h)
         if self.use_residual:
             out = out + self.res_proj(state)
+        if self.normalize_output:
+            out = nn.functional.normalize(out, p=2, dim=-1)
         return out

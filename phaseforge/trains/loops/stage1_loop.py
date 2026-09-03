@@ -236,6 +236,52 @@ class Stage1Trainer(BaseTrainer):
         # Total Loss
         total_loss = action_loss + lambda_phase * phase_loss
 
+        # Supervised contrastive regime alignment (WP3, Professor §5).
+        # Disabled by default (`train.supcon.enabled=false`): when absent or
+        # disabled this block contributes exactly 0.0 and emits no metrics,
+        # so legacy loss curves are bit-identical.
+        supcon_cfg = self.train_cfg.get("supcon", None)
+        supcon_enabled = bool(supcon_cfg.get("enabled", False)) if supcon_cfg is not None else False
+        if supcon_enabled:
+            from phaseforge.trains.losses.supcon import supcon_loss
+
+            assert supcon_cfg is not None
+            supcon_lambda = float(supcon_cfg.get("lambda_sc", 1.0))
+            temperature = float(supcon_cfg.get("temperature", 0.07))
+            label_field = str(supcon_cfg.get("label_field", "phase"))
+            if out.latent is None:
+                raise RuntimeError(
+                    "train.supcon.enabled=true but the model forward did not "
+                    "expose latents (ModelOutput.latent is None). SupCon needs "
+                    "the exact latents the action head consumed."
+                )
+            latents = out.latent
+            regime_labels = batch.get(label_field)
+            if regime_labels is None:
+                raise RuntimeError(
+                    f"train.supcon.label_field={label_field!r} is missing from "
+                    "the batch. Enable the matching discovery source "
+                    "(data.topo.enabled / data.dynamics.enabled) and re-ingest, "
+                    "or point label_field at 'phase'."
+                )
+            if mask is not None:
+                flat_latents = latents.view(-1, latents.size(-1))
+                flat_labels = regime_labels.view(-1)
+                keep = mask.view(-1).bool()
+                latents_valid = flat_latents[keep]
+                labels_valid = flat_labels[keep]
+            else:
+                latents_valid = latents.reshape(-1, latents.size(-1))
+                labels_valid = regime_labels.reshape(-1)
+            if labels_valid.numel() == 0:
+                supcon_term = torch.tensor(0.0, device=self.device)
+            else:
+                supcon_term = supcon_loss(latents_valid, labels_valid, temperature)
+            total_loss = total_loss + supcon_lambda * supcon_term
+        else:
+            supcon_lambda = 0.0
+            supcon_term = torch.tensor(0.0, device=self.device)
+
         metrics = {
             # Keep scalar metrics on-device until the trainer actually logs or
             # aggregates them. Calling .item() for every metric on every CUDA
@@ -245,6 +291,9 @@ class Stage1Trainer(BaseTrainer):
             "loss_phase": phase_loss.detach() if base_lambda_positive else 0.0,
             "lambda_phase": lambda_phase,
         }
+        if supcon_enabled:
+            metrics["loss_supcon"] = supcon_term.detach()
+            metrics["supcon_lambda"] = supcon_lambda
 
         # Optional per-step diagnostic: cosine similarity between the action
         # and phase gradient vectors (auxiliary-task conflict detector, Du et

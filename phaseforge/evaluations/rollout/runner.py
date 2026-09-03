@@ -44,6 +44,7 @@ from phaseforge.evaluations.rollout.reset_bank import (
     compute_bank_id,
     generate_reset_bank,
 )
+from phaseforge.evaluations.rollout.trace import LIP_SAMPLE_PERIOD, TraceWriter, to_jsonable
 from phaseforge.outputs_writer.episodes import (
     append_episode_record,
     summarize_episodes,
@@ -56,6 +57,11 @@ logger = logging.getLogger(__name__)
 FAILURE_TIMEOUT = "task_timeout"
 FAILURE_POLICY_INVALID_ACTION = "policy_invalid_action"
 FAILURE_POLICY_EXCEPTION = "policy_exception"
+
+#: Rollout trace verbosity (Phase 1 scaffolding, WP0/WP8-infra).
+#: ``minimal`` = today's behavior (episodes.jsonl + rollout_summary.json).
+#: ``full`` = 22-field per-step trace.jsonl (WP8-full) written next to them.
+TRACE_LEVELS: frozenset[str] = frozenset({"minimal", "full"})
 
 
 class RolloutRunInvalid(RuntimeError):
@@ -103,6 +109,9 @@ class RolloutEvaluator:
         action_tolerance: float = 1e-4,
         phase_labeler: CausalPhaseStepLabeler | None = None,
         router_mode: str = "learned",
+        trace_level: str = "minimal",
+        trace_every_n_steps: int = 1,
+        reference_states: np.ndarray | None = None,
     ) -> None:
         self.cfg = cfg
         self.policy = policy
@@ -121,7 +130,28 @@ class RolloutEvaluator:
         self.action_tolerance = float(action_tolerance)
         self.phase_labeler = phase_labeler
         self.router_mode = str(router_mode).lower()
+        self.trace_level = str(trace_level).lower()
+        if self.trace_level not in TRACE_LEVELS:
+            raise EnvParityError(
+                f"eval.episodes.trace_level={trace_level!r} is not one of "
+                + ", ".join(sorted(TRACE_LEVELS))
+                + "."
+            )
+        self.trace_every_n_steps = int(trace_every_n_steps)
+        if self.trace_every_n_steps < 1:
+            raise EnvParityError(
+                f"eval.episodes.trace_every_n_steps must be >= 1, got {trace_every_n_steps!r}."
+            )
+        self.reference_states = (
+            np.asarray(reference_states, dtype=np.float64)
+            if reference_states is not None
+            else None
+        )
         self.num_phases = phase_labeler.num_phases if phase_labeler is not None else None
+        # Active full-trace buffer, owned by _run_episode (one episode at a
+        # time, sequential execution): _episode consumes it when present.
+        # Always None outside an episode so direct _episode calls stay clean.
+        self._active_trace_rows: list[dict[str, Any]] | None = None
 
         # These values are invariant for the whole rollout. Resolving them
         # once avoids a parameter walk, an eval-mode traversal, and repeated
@@ -222,6 +252,15 @@ class RolloutEvaluator:
         if self.phase_labeler is not None:
             self.phase_labeler.reset()
         max_phase: int | None = None
+        # Full per-step tracing (WP8-full): rows cover simulator-returned
+        # steps only (state -> action pairs); failed/policy-rejected steps
+        # are captured by the episode outcome, not by a trace row.
+        trace_rows: list[dict[str, Any]] | None = (
+            [] if self.trace_level == "full" else None
+        )
+        self._active_trace_rows = trace_rows
+        prev_params: tuple[torch.Tensor, torch.Tensor] | None = None
+        episode_seq = int(case.index)
         while steps < self.horizon:
             try:
                 if self.policy is not None:
@@ -262,6 +301,9 @@ class RolloutEvaluator:
                         f"{type(exc).__name__}: {exc}"
                     ) from exc
 
+            # Pre-action observation for full tracing (the state the policy
+            # acted on; `adapter.step` rebinds `state` to the next obs below).
+            state_before_action = state
             try:
                 state, _done, success, _info = self.adapter.step(action)
             except PolicyInvalidActionError as exc:
@@ -288,6 +330,20 @@ class RolloutEvaluator:
                     RolloutOutcome(valid=False, exception=str(exc)),
                     max_phase=max_phase,
                 )
+            done_now = bool(success or steps + 1 >= self.horizon)
+            if trace_rows is not None and (
+                steps % self.trace_every_n_steps == 0 or done_now
+            ):
+                row, prev_params = self._trace_step(
+                    episode_id=episode_seq,
+                    case_id=int(case.index),
+                    timestep=steps,
+                    state=state_before_action,
+                    action=action,
+                    done=done_now,
+                    prev_params=prev_params,
+                )
+                trace_rows.append(row)
             steps += 1
             if success:
                 return self._episode(
@@ -313,26 +369,152 @@ class RolloutEvaluator:
             max_phase=max_phase,
         )
 
-    def _policy_action(self, state: np.ndarray) -> np.ndarray:
-        """Normalize + infer one action from the model (policy failures surface)."""
-        if self.normalizer is None:
-            raise PolicyInvalidActionError("No normalizer available for policy inference.")
-        if self.model is None:
-            raise PolicyInvalidActionError("No policy available.")
+    def _normalized_tensor(self, state: np.ndarray) -> tuple[torch.Tensor, torch.device]:
+        """Normalized state tensor on the model device (shared helper)."""
         device = self._model_device or torch.device("cpu")
         state_tensor = torch.as_tensor(state, dtype=torch.float32, device=device)
         if self._normalizer_mean is None or self._normalizer_std is None:
             # This fallback keeps the method safe for a custom normalizer
             # implementation while the standard FrozenNormalizer takes the
             # cached path above.
+            assert self.normalizer is not None
             normalized_state = self.normalizer.normalize(state_tensor)
         else:
             normalized_state = (state_tensor - self._normalizer_mean) / self._normalizer_std
+        return normalized_state, device
+
+    def _policy_action(self, state: np.ndarray) -> np.ndarray:
+        """Normalize + infer one action from the model (policy failures surface)."""
+        if self.normalizer is None:
+            raise PolicyInvalidActionError("No normalizer available for policy inference.")
+        if self.model is None:
+            raise PolicyInvalidActionError("No policy available.")
+        normalized_state, _device = self._normalized_tensor(state)
         normalized = normalized_state.unsqueeze(0)
         with torch.inference_mode():
             action_tensor = self.model.get_action(normalized)  # type: ignore[operator]
         action = np.asarray(action_tensor.detach().cpu().numpy()).reshape(-1)
         return self.adapter.validate_action(action, tolerance=self.action_tolerance)
+
+    def _describe_for_trace(self, state: np.ndarray) -> dict[str, Any] | None:
+        """Model introspection snapshot for tracing; None when unavailable.
+
+        Never raises: any failure degrades the affected fields to null so
+        diagnostics can never convert a rollout outcome into an error.
+        """
+        describe = getattr(self.model, "describe_step", None)
+        if self.model is None or not callable(describe):
+            return None
+        try:
+            normalized_state, _device = self._normalized_tensor(state)
+            with torch.inference_mode():
+                snapshot = describe(normalized_state.unsqueeze(0))
+            return dict(snapshot) if isinstance(snapshot, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _trace_json(value: Any) -> Any:
+        """Single value/tensor/array to a plain JSON scalar or list."""
+        if value is None:
+            return None
+        if torch.is_tensor(value):
+            flat = value.detach().cpu().flatten()
+            if flat.numel() == 1:
+                return flat.item()
+            return [float(v) for v in flat.tolist()]
+        return to_jsonable(value)
+
+    def _trace_step(
+        self,
+        *,
+        episode_id: int,
+        case_id: int,
+        timestep: int,
+        state: np.ndarray,
+        action: np.ndarray,
+        done: bool,
+        prev_params: tuple[torch.Tensor, torch.Tensor] | None,
+    ) -> tuple[dict[str, Any], tuple[torch.Tensor, torch.Tensor] | None]:
+        """Build one validated-shape trace row (WP8-full, 22 spec fields).
+
+        Returns ``(row, prev_params)`` where the second element carries the
+        current ``(target, task_state)`` clones forward for the periodic
+        Lipschitz finite-difference diagnostic.
+        """
+        state_np = np.asarray(state, dtype=np.float64)
+        action_list = [float(v) for v in np.asarray(action, dtype=np.float64).reshape(-1)]
+        try:
+            normalized, _device = self._normalized_tensor(state_np)
+            normalized_np = np.asarray(normalized.detach().cpu().numpy(), dtype=np.float64)
+        except Exception:
+            normalized_np = state_np
+        snapshot = self._describe_for_trace(state_np) or {}
+
+        def _field(name: str) -> Any:
+            return self._trace_json(snapshot.get(name))
+
+        nearest: float | None = None
+        if self.reference_states is not None:
+            try:
+                nearest = float(
+                    np.linalg.norm(self.reference_states - normalized_np, axis=-1).min()
+                )
+            except Exception:
+                nearest = None
+
+        lip: float | None = None
+        current_params: tuple[torch.Tensor, torch.Tensor] | None = None
+        target = snapshot.get("target")
+        task_vars = snapshot.get("task_vars")
+        if (
+            torch.is_tensor(target)
+            and torch.is_tensor(task_vars)
+            and target.ndim == 2
+            and task_vars.ndim == 2
+        ):
+            current_params = (target.detach().cpu().clone(), task_vars.detach().cpu().clone())
+        if (
+            timestep % LIP_SAMPLE_PERIOD == 0
+            and prev_params is not None
+            and current_params is not None
+        ):
+            prev_target, prev_task = prev_params
+            cur_target, cur_task = current_params
+            delta_target = float((cur_target - prev_target).norm().item())
+            delta_state = float((cur_task - prev_task).norm().item())
+            lip = delta_target / (delta_state + 1e-6)
+
+        eef_pos = state_np[0:3].tolist() if state_np.size >= 3 else None
+        row: dict[str, Any] = {
+            "episode_id": int(episode_id),
+            "case_id": int(case_id),
+            "timestep": int(timestep),
+            # Finalized by _episode (the outcome is known only there).
+            "termination_reason": "running",
+            "raw_obs_summary": {
+                "state_norm": float(np.linalg.norm(state_np)),
+                "eef_pos": eef_pos,
+            },
+            "normalized_state_norm": float(np.linalg.norm(normalized_np)),
+            "task_vars": _field("task_vars"),
+            "latent_norm": _field("latent_norm"),
+            "dists": _field("dists"),
+            "selected_expert": _field("selected_expert"),
+            "top2_expert": _field("top2_expert"),
+            "router_margin": _field("router_margin"),
+            "router_entropy": _field("router_entropy"),
+            "expert_target": _field("expert_target"),
+            "expert_gains": _field("expert_gains"),
+            "task_error": _field("task_error"),
+            "pre_clip_command": _field("pre_clip_u"),
+            "final_action": action_list,
+            "nearest_train_dist": nearest,
+            "expert_disagreement": _field("expert_disagreement"),
+            "lip_diagnostic": lip,
+            "done": bool(done),
+        }
+        return row, (current_params if current_params is not None else prev_params)
 
     # ------------------------------------------------------------------
     # Recording
@@ -375,6 +557,22 @@ class RolloutEvaluator:
             row["exception"] = outcome.exception or "unknown infrastructure failure"
         if outcome.extra:
             row["extra"] = {**(row.get("extra") or {}), **outcome.extra}
+        # Full-trace finalization (WP8-full): stamp thenow-known termination
+        # reason, close the last row, and append. Validation errors propagate
+        # (they indicate a tracer bug, caught by tests); filesystem errors
+        # must not invalidate an otherwise valid rollout.
+        trace_rows = self._active_trace_rows
+        self._active_trace_rows = None
+        if trace_rows is not None:
+            termination = outcome.termination_reason or "infrastructure"
+            for trace_row in trace_rows:
+                trace_row["termination_reason"] = termination
+            if trace_rows:
+                trace_rows[-1]["done"] = True
+            try:
+                TraceWriter(self.output_dir).append_episode_rows(trace_rows)
+            except OSError:
+                logger.exception("Trace append failed; continuing with episode record.")
         return outcome, row
 
     # ------------------------------------------------------------------
@@ -402,6 +600,7 @@ class RolloutEvaluator:
             "eval/rollout/reset_seed": self.bank.seed,
             "eval/rollout/task": self.task,
             "eval/rollout/router_mode": self.router_mode,
+            "eval/rollout/trace_level": self.trace_level,
         }
         if self.num_phases is not None:
             results["eval/rollout/per_phase_sr"] = _per_phase_success_rates(
@@ -603,6 +802,33 @@ def resolve_robosuite_requirement(cfg: DictConfig) -> str:
     if source_requirement is not None and str(source_requirement).strip():
         return str(source_requirement)
     return str(cfg.eval.env.get("robosuite_requirement", "==1.5.1"))
+
+
+def resolve_trace_level(cfg: DictConfig) -> str:
+    """Resolve the rollout trace verbosity (Phase 1, WP0/WP8-infra).
+
+    Reads ``eval.episodes.trace_level`` with a ``minimal`` default so
+    legacy configs and unit-test ``DictConfig`` objects without the key
+    keep today's behavior. Unknown values fail closed with
+    :class:`EnvParityError`.
+    """
+    try:
+        episodes = cfg.eval.episodes
+    except Exception:
+        return "minimal"
+    try:
+        get = getattr(episodes, "get", None)
+        raw = get("trace_level", "minimal") if callable(get) else "minimal"
+    except Exception:
+        return "minimal"
+    level = str(raw).lower()
+    if level not in TRACE_LEVELS:
+        raise EnvParityError(
+            f"eval.episodes.trace_level={raw!r} is not one of "
+            + ", ".join(sorted(TRACE_LEVELS))
+            + "."
+        )
+    return level
 
 
 # Sections the rollout evaluator requires from the ``eval=rollout``
@@ -816,6 +1042,38 @@ def run_rollout_evaluation(
         # as Tensor | Module and mypy would reject a plain str assignment.
         setattr(model, "eval_mode", router_mode)
 
+    # Phase 1 scaffolding (WP0/WP8-infra): trace verbosity + contract log.
+    # `minimal` preserves today's behavior exactly; `full` writes the
+    # 22-field per-step trace.jsonl alongside episodes.jsonl (WP8-full).
+    # A non-learned router_mode is logged (not failed): sticky /
+    # uniform / oracle are legitimate eval ablations, but only `learned`
+    # counts as the primary memoryless-contract result.
+    trace_level = resolve_trace_level(cfg)
+    try:
+        trace_every = int(cfg.eval.episodes.get("trace_every_n_steps", 1))
+    except (TypeError, ValueError):
+        raise EnvParityError(
+            "eval.episodes.trace_every_n_steps must be an int >= 1."
+        ) from None
+    if trace_every < 1:
+        raise EnvParityError(
+            f"eval.episodes.trace_every_n_steps must be >= 1, got {trace_every}."
+        )
+    contract = None
+    contract_fn = getattr(model, "deployment_contract", None)
+    if callable(contract_fn):
+        try:
+            contract = contract_fn()
+        except Exception:
+            logger.warning("deployment_contract() raised; continuing.", exc_info=True)
+            contract = None
+    if contract is not None:
+        logger.info("Deployment contract: %s (router_mode=%s).", contract, router_mode)
+    if trace_level == "full":
+        logger.info("trace_level=full: per-step trace.jsonl will be written.")
+    if router_mode != "learned":
+        logger.info("router_mode=%s is an eval ablation, not the primary result.", router_mode)
+
     # V2-E per-phase success tracking: the training cache's aggregated
     # phase-threshold calibration (median hysteresis + shared labeler
     # params) classifies the policy's own states causally during rollout.
@@ -847,6 +1105,17 @@ def run_rollout_evaluation(
             "across variants for the paired comparisons)."
         )
 
+    # Nearest-train-distance proxy (WP8-full): deterministic subsample of
+    # normalized train states from the same cache the normalizer came from.
+    # Unreadable cache -> null OOD scores (never breaks the rollout).
+    reference_states: np.ndarray | None = None
+    if trace_level == "full":
+        from phaseforge.evaluations.rollout.trace import load_reference_states
+
+        reference_states = load_reference_states(cache_dir)
+        if reference_states is None:
+            logger.info("No reference states for OOD scores; recording nulls.")
+
     evaluator = RolloutEvaluator(
         cfg=cfg,
         policy=None,
@@ -865,6 +1134,9 @@ def run_rollout_evaluation(
         action_tolerance=float(cfg.eval.episodes.get("action_tolerance", 1e-4)),
         phase_labeler=phase_labeler,
         router_mode=router_mode,
+        trace_level=trace_level,
+        trace_every_n_steps=trace_every,
+        reference_states=reference_states,
     )
     try:
         return evaluator.run()
@@ -876,6 +1148,8 @@ __all__ = [
     "RolloutEvaluator",
     "RolloutOutcome",
     "RolloutRunInvalid",
+    "TRACE_LEVELS",
+    "resolve_trace_level",
     "run_rollout_evaluation",
     "resolve_pinned_metadata",
     "resolve_robosuite_requirement",

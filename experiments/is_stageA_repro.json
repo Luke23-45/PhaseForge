@@ -1,0 +1,34 @@
+{
+  "name": "is_stageA_repro",
+  "task": "Can",
+  "description": "IS-PhaseForge Stage A: reproducibility freeze + instrumentation baseline (Professor §12A). Same-commit rerun of the Can baselines against the frozen bank (seed 2026, 50 cases) with full-trace scaffolding in place. Bank freezing is operator-side (invoke eval steps with eval.bank.auto_generate=false so a missing bank fails loudly instead of regenerating); it is not a per-cell override because train steps compose without the eval group. No architecture changes. Exit: 3-seed NMI/entropy/SR reproduce the debug baseline within Wilson overlap.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "bc_direct",
+      "role": "BC-direct baseline under the frozen bank",
+      "model": "baselines/bc",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": []
+    },
+    {
+      "index": 2,
+      "name": "phaseforge_dynamic",
+      "role": "Current dynamic PhaseForge under the frozen bank",
+      "model": "phaseforge_dynamic",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": ["dynamics@_global_=switching_linear_k6"]
+    }
+  ]
+}

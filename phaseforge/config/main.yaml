@@ -3,6 +3,7 @@
 defaults:
   - data: common
   - optional dynamics@_global_: null
+  - optional topo@_global_: null
   - models: phaseforge
   - train: stage1
   - eval: metrics

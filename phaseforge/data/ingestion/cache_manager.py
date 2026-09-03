@@ -269,6 +269,7 @@ class CacheManager:
         provenance: dict[str, Any] | None = None,
         phase_thresholds: dict[str, Any] | None = None,
         dynamics_artifact: tuple[Any, ...] | None = None,
+        topo_artifact: dict[str, Any] | None = None,
     ) -> None:
         """Atomically write all processed data to the cache.
 
@@ -293,6 +294,11 @@ class CacheManager:
                 tuple ``(slds, report, task_name, train_labels, val_labels)``.
                 It is written inside the temporary cache before the cache is
                 marked complete, preserving atomicity for dynamics-enabled runs.
+            topo_artifact: Optional pending topological discovery payload
+                dict with ``save_kwargs`` for
+                :func:`phaseforge.data.topo.artifacts.save_topo_artifact`
+                (``output_dir`` is filled in here as ``topo_artifact/``).
+                Written atomically alongside the dynamics bundle.
         """
         final_dir = self.cache_dir(config_hash)
         tmp_dir = self.cache_root / f"{config_hash}_tmp"
@@ -341,6 +347,14 @@ class CacheManager:
                     "num_val_trajs": len(splits.get("val", [])),
                 },
             )
+
+        if topo_artifact is not None:
+            from phaseforge.data.topo.artifacts import save_topo_artifact
+
+            topo_kwargs = dict(topo_artifact.get("save_kwargs", {}))
+            topo_kwargs["output_dir"] = tmp_dir / "topo_artifact"
+            topo_kwargs.setdefault("data_config_hash", config_hash)
+            save_topo_artifact(**topo_kwargs)
 
         # Human-readable split task names (Gate 7 audit)
         split_task_names = (provenance or {}).get("split_task_names") if provenance else None

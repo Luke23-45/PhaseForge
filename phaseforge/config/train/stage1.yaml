@@ -4,6 +4,16 @@ stage: 1
 epochs: 100
 grad_clip_norm: 1.0
 lambda_phase: 1.0         # Weight on the auxiliary phase classification loss
+# Supervised contrastive regime alignment (WP3, Professor §5). Disabled by
+# default: `enabled=false` contributes exactly 0.0 with no extra metrics,
+# preserving the frozen protocol bit-for-bit. Enable with
+# `train.supcon.enabled=true` (optionally `label_field=phase_topo` once
+# topo discovery labels exist; `phase` is always present).
+supcon:
+  enabled: false
+  lambda_sc: 1.0
+  temperature: 0.07
+  label_field: "phase"
 # Per-step diagnostic: log cos(grad L_action, grad L_phase) as the
 # train/grad_cos_action_phase curve (auxiliary-task conflict detector,
 # Du et al. 2018 / PCGrad). Diagnostic only — never part of the loss, and
@@ -40,6 +50,24 @@ soft_target_eps: 0.0
 # Computed automatically when phase_class_weight is "balanced"/"cui"
 # (training-split weights). Leave null otherwise.
 phase_weights: null
+# Inert mirrors of the Stage 2 IS blocks (margin/lipschitz/gain_reg live in
+# train/stage2.yaml). Present so manifest-level overrides compose for every
+# cell regardless of stage — Stage 1 training never reads them (Stage1Trainer
+# has its own _compute_loss), mirroring the stage2.yaml lambda_schedule
+# precedent in reverse.
+margin:
+  enabled: false
+  lambda_margin: 1.0
+  margin: 0.5
+lipschitz:
+  enabled: false
+  lambda_lip: 0.1
+  rho: 0.8
+  num_pairs: 256
+gain_reg:
+  enabled: false
+  lambda_gain: 1.0e-4
+  kappa_nominal: 1.0
 log_every_n_steps: 50
 rich_progressbar: false
 # One compact progress line for epochs; the batch-level bar above remains

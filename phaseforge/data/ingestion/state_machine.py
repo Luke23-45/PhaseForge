@@ -80,6 +80,30 @@ except ImportError as exc:
     _DYNAMICS_AVAILABLE = False
     _DYNAMICS_IMPORT_ERROR = exc
 
+# Phase 2 topological discovery (optional, train-only). Same lazy pattern:
+# the topo package needs only numpy/sklearn/scipy/torch, but a broken
+# install must degrade to a loud opt-in error, never a silent skip.
+audit_regimes: Any = None
+cluster_segments: Any = None
+concat_task_matrix: Any = None
+extract_task_vars: Any = None
+load_topo_artifact: Any = None
+run_pelt: Any = None
+save_topo_artifact: Any = None
+segment_features: Any = None
+_TOPO_IMPORT_ERROR: ImportError | None = None
+try:
+    from phaseforge.data.topo.artifacts import load_topo_artifact, save_topo_artifact
+    from phaseforge.data.topo.cluster import cluster_segments, segment_features
+    from phaseforge.data.topo.observability import audit_regimes
+    from phaseforge.data.topo.pelt import run_pelt
+    from phaseforge.data.topo.task_vars import concat_task_matrix, extract_task_vars
+
+    _TOPO_AVAILABLE = True
+except ImportError as exc:
+    _TOPO_AVAILABLE = False
+    _TOPO_IMPORT_ERROR = exc
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_VAL_RATIO = 0.1
@@ -107,6 +131,7 @@ class DataPipelineStateMachine:
         # cross_entropy / scatter_add / bincount if they diverged. Guard here.
         self._check_num_phases_consistency()
         self._check_dynamics_consistency()
+        self._check_topo_consistency()
 
         # Bug 4: cache under the shared data root, NOT under outputs/.
         cache_root = processed_cache_root()
@@ -123,6 +148,7 @@ class DataPipelineStateMachine:
         self._splits: dict[str, list[int]] = {}
         self._raw_dir: Path | None = None
         self._pending_dynamics_artifact: tuple | None = None
+        self._pending_topo_artifact: dict[str, Any] | None = None
 
     # ------------------------------------------------------------------
     # Config consistency
@@ -312,6 +338,82 @@ class DataPipelineStateMachine:
             )
         return enabled
 
+    def _check_topo_consistency(self) -> None:
+        """Validate the Phase 2 topological discovery contract early."""
+        topo_cfg = self._get_topo_cfg()
+        enabled = False
+        try:
+            enabled = (
+                bool(topo_cfg.get("enabled", False))
+                if hasattr(topo_cfg, "get")
+                else bool(getattr(topo_cfg, "enabled", False))
+            )
+        except Exception:
+            enabled = False
+        if not enabled:
+            return
+        num_regimes = topo_cfg.get("num_regimes", 6) if hasattr(topo_cfg, "get") else 6
+        try:
+            num_regimes_int = int(num_regimes)
+        except (TypeError, ValueError) as exc:
+            raise PipelineError(
+                f"data.topo.num_regimes={num_regimes!r} is not an integer."
+            ) from exc
+        if not 2 <= num_regimes_int <= 12:
+            raise PipelineError(
+                f"data.topo.num_regimes={num_regimes_int} is outside [2, 12]. "
+                "Run a declared regime-count ablation separately."
+            )
+        method = str(topo_cfg.get("method", "pelt")) if hasattr(topo_cfg, "get") else "pelt"
+        if method.lower() != "pelt":
+            raise PipelineError(
+                f"Unknown data.topo.method={method!r}; expected 'pelt'."
+            )
+        cost = str(topo_cfg.get("cost", "l2")) if hasattr(topo_cfg, "get") else "l2"
+        if cost.lower() != "l2":
+            raise PipelineError(f"Unknown data.topo.cost={cost!r}; expected 'l2'.")
+        if self._is_dynamics_enabled():
+            raise PipelineError(
+                "data.topo and data.dynamics are both enabled; enable at most one "
+                "discovery source so the primary supervision target stays unambiguous."
+            )
+
+    def _get_topo_cfg(self) -> dict[str, Any] | Any:
+        """Return the topo config dict (``cfg.data.topo``); disabled when absent.
+
+        Phase 1.0/2.0 configs carry no topo block and are treated as
+        disabled — mirroring :meth:`_get_dynamics_cfg` without the legacy
+        top-level wrapper (topo was never a top-level override).
+        """
+        try:
+            data_topo = self.data_cfg.get("topo")  # type: ignore[union-attr]
+        except Exception:
+            data_topo = None
+        if data_topo is not None and isinstance(data_topo, (dict, DictConfig)):
+            return data_topo
+        return {}
+
+    def _is_topo_enabled(self) -> bool:
+        """True when Phase 2 topological discovery is enabled."""
+        topo = self._get_topo_cfg()
+        if topo is None:
+            return False
+        try:
+            enabled = (
+                bool(topo.get("enabled", False))
+                if hasattr(topo, "get")
+                else bool(getattr(topo, "enabled", False))
+            )
+        except Exception:
+            enabled = False
+        if enabled and not _TOPO_AVAILABLE:
+            raise PipelineError(
+                "data.topo.enabled=true but phaseforge.data.topo package is unavailable. "
+                "Check phaseforge/data/topo/__init__.py and dependencies "
+                f"(numpy, sklearn, scipy, torch): {_TOPO_IMPORT_ERROR}"
+            )
+        return enabled
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -394,6 +496,40 @@ class DataPipelineStateMachine:
             logger.warning("Dynamic cache validation failed: %s", exc)
             return False
 
+    def _topo_cache_is_valid(self, cache_dir: Path) -> bool:
+        """Validate topo labels and their matching discovery artifact."""
+        if load_topo_artifact is None:
+            return False
+        try:
+            topo_cfg = self._get_topo_cfg()
+            expected_k = int(topo_cfg.get("num_regimes", 6)) if hasattr(topo_cfg, "get") else 6
+            _, _, metadata = load_topo_artifact(cache_dir / "topo_artifact")
+            if metadata.get("data_config_hash") != self.config_hash:
+                logger.warning("Topo artifact hash does not match cache hash.")
+                return False
+            if int(metadata.get("num_regimes", -1)) != expected_k:
+                logger.warning("Topo artifact regime count does not match the active config.")
+                return False
+            for trajectory_index, trajectory in enumerate(self._trajectories):
+                labels = trajectory.get("phase_topo")
+                state = trajectory.get("state")
+                if labels is None or state is None:
+                    return False
+                label_array = (
+                    labels.detach().cpu().numpy()
+                    if isinstance(labels, torch.Tensor)
+                    else np.asarray(labels)
+                )
+                state_length = int(state.shape[0])
+                if label_array.shape != (state_length,) or label_array.size == 0:
+                    return False
+                if np.any(label_array < 0) or np.any(label_array >= expected_k):
+                    return False
+            return True
+        except (OSError, KeyError, TypeError, ValueError, RuntimeError) as exc:
+            logger.warning("Topo cache validation failed: %s", exc)
+            return False
+
     # ------------------------------------------------------------------
     # State transitions
     # ------------------------------------------------------------------
@@ -450,6 +586,17 @@ class DataPipelineStateMachine:
                     logger.info(
                         "Cache hit includes validated dynamic labels and discovery artifact."
                     )
+            if self._is_topo_enabled():
+                cache_dir = self.cache_manager.cache_dir(self.config_hash)
+                if not self._topo_cache_is_valid(cache_dir):
+                    logger.info("Topo cache is missing or stale; running discovery.")
+                    self._run_topo_discovery(persist_to_cache=True)
+                    if not self._topo_cache_is_valid(cache_dir):
+                        raise PipelineError(
+                            "Topo discovery completed without a valid cache artifact."
+                        )
+                else:
+                    logger.info("Cache hit includes validated topo labels and discovery artifact.")
             self._state = PipelineState.READY
         else:
             logger.info("Cache miss. Proceeding to validate source.")
@@ -804,7 +951,16 @@ class DataPipelineStateMachine:
                 # diagnosable message rather than silently training on bad regimes.
                 raise PipelineError(f"Dynamics discovery failed: {exc}") from exc
 
+        # Phase 2: train-only topological discovery (opt-in). Independent of
+        # dynamics (the consistency guard forbids enabling both at once).
+        if self._is_topo_enabled():
+            try:
+                self._run_topo_discovery(persist_to_cache=False)
+            except Exception as exc:
+                raise PipelineError(f"Topo discovery failed: {exc}") from exc
+
         pending_dynamics_artifact = self._pending_dynamics_artifact
+        pending_topo_artifact = self._pending_topo_artifact
         self.cache_manager.save(
             config_hash=self.config_hash,
             trajectories=self._trajectories,
@@ -814,8 +970,10 @@ class DataPipelineStateMachine:
             provenance=self._provenance(splits),
             phase_thresholds=self._aggregate_phase_thresholds(),
             dynamics_artifact=pending_dynamics_artifact,
+            topo_artifact=pending_topo_artifact,
         )
         self._pending_dynamics_artifact = None
+        self._pending_topo_artifact = None
         self._state = PipelineState.READY
 
     # ------------------------------------------------------------------
@@ -1097,6 +1255,206 @@ class DataPipelineStateMachine:
             # CacheManager.save atomic rename. Store in instance for later.
             self._pending_dynamics_artifact = (slds, report, task_name, train_labels, val_labels)
 
+    def _run_topo_discovery(self, persist_to_cache: bool = False) -> None:
+        """Fit topological regimes train-only and label every trajectory.
+
+        For each trajectory: extract task-space variables
+        (:mod:`phaseforge.data.topo.task_vars`), segment with PELT
+        (:mod:`phaseforge.data.topo.pelt`), featurize segments and cluster
+        them across the training split
+        (:mod:`phaseforge.data.topo.cluster`), then audit the resulting
+        labels from ``x_t`` alone
+        (:mod:`phaseforge.data.topo.observability`). Attaches
+        ``phase_topo`` (Tensor[T] long) to every trajectory dict and stages
+        a versioned ``topo_artifact/`` for persistence.
+
+        Args:
+            persist_to_cache: When True (cache-hit backfill path), write the
+                artifact to the existing cache directory and overwrite the
+                trajectory ``*.pt`` files on disk. When False (fresh ingest
+                path), stage the artifact payload in
+                ``self._pending_topo_artifact`` for ``CacheManager.save``.
+
+        Raises:
+            PipelineError: If the observability audit fails while
+                ``data.topo.enforce_observability`` is true, or if required
+                fields are missing.
+        """
+        assert _TOPO_AVAILABLE and run_pelt is not None
+        topo_cfg = self._get_topo_cfg()
+        get = topo_cfg.get if hasattr(topo_cfg, "get") else (lambda _k, _d=None: _d)
+        num_regimes = int(get("num_regimes", 6))
+        penalty_beta = float(get("penalty_beta", 10.0))
+        min_segment_len = int(get("min_segment_len", 5))
+        cost = str(get("cost", "l2"))
+        method = str(get("clustering", "kmeans"))
+        seed = int(get("seed", 42))
+        enforce = bool(get("enforce_observability", True))
+        audit_f1 = float(get("audit_min_macro_f1", 0.6))
+        audit_occ = float(get("audit_min_occupancy", 0.01))
+
+        if not hasattr(self, "_splits") or not self._splits or not self._trajectories:
+            raise PipelineError(
+                "Topo discovery requires splits and trajectories to be materialized."
+            )
+        try:
+            state_keys = [str(e["key"]) for e in self.data_cfg.state_keys]
+            state_dims = [int(e["dim"]) for e in self.data_cfg.state_keys]
+        except Exception as exc:
+            raise PipelineError(
+                "Topo discovery needs data.state_keys as [{key, dim}] entries."
+            ) from exc
+
+        def _to_numpy(traj: dict[str, Any], key: str) -> np.ndarray:
+            value = traj[key]
+            if isinstance(value, torch.Tensor):
+                return value.detach().cpu().numpy()
+            return np.asarray(value)
+
+        # Per-trajectory PELT segmentation on task-space variables.
+        boundaries_per_traj: list[np.ndarray] = []
+        segments: list[np.ndarray] = []
+        segment_traj: list[int] = []
+        for traj_idx, traj in enumerate(self._trajectories):
+            state_np = _to_numpy(traj, "state")
+            if state_np.ndim != 2:
+                raise PipelineError(f"Trajectory {traj_idx} state must be (T, S).")
+            task_matrix = concat_task_matrix(
+                extract_task_vars(state_np, state_keys, state_dims)
+            )
+            bounds = run_pelt(
+                task_matrix,
+                penalty_beta=penalty_beta,
+                min_segment_len=min_segment_len,
+                cost=cost,
+            )
+            boundaries_per_traj.append(np.asarray(bounds, dtype=np.int64))
+            for seg_idx in range(len(bounds) - 1):
+                segments.append(task_matrix[bounds[seg_idx] : bounds[seg_idx + 1]])
+                segment_traj.append(traj_idx)
+
+        # Cluster segment prototypes across the training split only.
+        train_idx_set = set(self._splits.get("train", []))
+        train_positions = [i for i, t in enumerate(segment_traj) if t in train_idx_set]
+        if not train_positions:
+            raise PipelineError("Topo discovery: no training segments — cannot cluster.")
+        train_feats = segment_features([segments[i] for i in train_positions])
+        seg_labels_train = cluster_segments(
+            train_feats, num_clusters=num_regimes, method=method, seed=seed
+        )
+        # Label every segment (train + val) by nearest training centroid.
+        centroids = np.stack(
+            [
+                train_feats[seg_labels_train == k].mean(axis=0)
+                if np.any(seg_labels_train == k)
+                else train_feats.mean(axis=0)
+                for k in range(num_regimes)
+            ]
+        )
+        all_feats = segment_features(segments)
+        dists = np.linalg.norm(all_feats[:, None, :] - centroids[None, :, :], axis=-1)
+        seg_labels_all = np.argmin(dists, axis=1).astype(np.int64)
+
+        # Scatter segment labels back to per-step trajectory labels.
+        per_traj_labels: list[np.ndarray] = [
+            np.zeros(_to_numpy(traj, "state").shape[0], dtype=np.int64)
+            for traj in self._trajectories
+        ]
+        for pos, traj_idx in enumerate(segment_traj):
+            bounds = boundaries_per_traj[traj_idx]
+            # Position of this segment within its trajectory's boundary list.
+            seg_idx_in_traj = sum(1 for t in segment_traj[:pos] if t == traj_idx)
+            start, stop = int(bounds[seg_idx_in_traj]), int(bounds[seg_idx_in_traj + 1])
+            per_traj_labels[traj_idx][start:stop] = int(seg_labels_all[pos])
+        for traj, labels_np in zip(self._trajectories, per_traj_labels):
+            traj["phase_topo"] = torch.from_numpy(labels_np).long()
+
+        # Mandatory observability audit from x_t alone (Professor §4.4).
+        flat_states = np.concatenate(
+            [_to_numpy(traj, "state") for traj in self._trajectories], axis=0
+        )
+        flat_labels = np.concatenate(per_traj_labels, axis=0)
+        flat_traj_ids = np.concatenate(
+            [
+                np.full(_to_numpy(traj, "state").shape[0], idx, dtype=np.int64)
+                for idx, traj in enumerate(self._trajectories)
+            ]
+        )
+        report = audit_regimes(
+            flat_states,
+            flat_labels,
+            flat_traj_ids,
+            num_regimes,
+            min_macro_f1=audit_f1,
+            min_occupancy=audit_occ,
+        )
+        logger.info(
+            "Topo audit: passed=%s macro_f1=%.4f min_occ=%.4f mean_dur=%.1f",
+            report.passed,
+            report.macro_f1,
+            report.min_occupancy,
+            report.mean_duration,
+        )
+        if not report.passed and enforce:
+            raise PipelineError(
+                "Topo discovery failed the observability audit (Professor §4.4): "
+                + "; ".join(report.failure_reasons)
+                + ". Merge confused regimes or set "
+                "data.topo.enforce_observability=false to persist labels anyway."
+            )
+        if not report.passed:
+            logger.warning(
+                "Topo audit failed but continuing because "
+                "data.topo.enforce_observability=false: %s",
+                "; ".join(report.failure_reasons),
+            )
+
+        try:
+            source = self.data_cfg.get("source")
+            task_name = str(source.get("task_name")).lower() if source is not None else "unknown"
+        except Exception:
+            task_name = "unknown"
+        train_labels = [
+            per_traj_labels[i] for i in self._splits.get("train", []) if i < len(per_traj_labels)
+        ]
+        val_labels = [
+            per_traj_labels[i] for i in self._splits.get("val", []) if i < len(per_traj_labels)
+        ]
+        save_kwargs = {
+            "method": "pelt",
+            "task_name": task_name,
+            "num_regimes": num_regimes,
+            "hyper_params": {
+                "penalty_beta": penalty_beta,
+                "min_segment_len": min_segment_len,
+                "cost": cost,
+                "clustering": method,
+                "seed": seed,
+            },
+            "train_labels": train_labels,
+            "val_labels": val_labels,
+            "train_boundaries": [
+                boundaries_per_traj[i]
+                for i in self._splits.get("train", [])
+                if i < len(boundaries_per_traj)
+            ],
+            "val_boundaries": [
+                boundaries_per_traj[i]
+                for i in self._splits.get("val", [])
+                if i < len(boundaries_per_traj)
+            ],
+            "report": report.to_dict(),
+        }
+        if persist_to_cache:
+            cache_dir = self.cache_manager.cache_dir(self.config_hash)
+            save_topo_artifact(output_dir=cache_dir / "topo_artifact", **save_kwargs)
+            traj_dir = cache_dir / "trajectories"
+            for idx, traj in enumerate(self._trajectories):
+                torch.save(traj, traj_dir / f"{idx:06d}.pt")
+            logger.info("Persisted phase_topo augmentation and artifact to cache %s", cache_dir)
+        else:
+            self._pending_topo_artifact = {"save_kwargs": save_kwargs}
+
     # ------------------------------------------------------------------
     # Splitting
     # ------------------------------------------------------------------
@@ -1313,6 +1671,8 @@ class DataPipelineStateMachine:
             # When dynamics is enabled, `train_label_field` chooses the primary
             # supervision target ("phase"=rule, "phase_dynamic"=dynamic). The
             # alternate field is retained in the trajectory for router bootstrap.
+            # Phase 2 adds the topo source ("phase_topo"); dynamics and topo
+            # are mutually exclusive (see _check_topo_consistency).
             phase_field = "phase"
             if self._is_dynamics_enabled():
                 dyn_cfg = self._get_dynamics_cfg()
@@ -1336,6 +1696,28 @@ class DataPipelineStateMachine:
                         "refuse to fall back to rule labels. Re-ingest the cache."
                     )
                 phase_field = requested
+            if self._is_topo_enabled():
+                topo_cfg = self._get_topo_cfg()
+                try:
+                    topo_requested = (
+                        str(topo_cfg.get("train_label_field", "phase"))
+                        if hasattr(topo_cfg, "get")
+                        else "phase"
+                    )
+                except Exception:
+                    topo_requested = "phase"
+                if topo_requested not in ("phase", "phase_rule", "phase_topo"):
+                    raise PipelineError(
+                        "Unknown data.topo.train_label_field="
+                        f"{topo_requested!r}; expected 'phase', 'phase_rule', or 'phase_topo'."
+                    )
+                if not all(topo_requested in traj for traj in split_trajs):
+                    raise PipelineError(
+                        "Requested data.topo.train_label_field="
+                        f"{topo_requested!r} is missing from one or more trajectories; "
+                        "refuse to fall back to rule labels. Re-ingest the cache."
+                    )
+                phase_field = topo_requested
 
             dataset = StateOnlyDataset(
                 trajectories=split_trajs,

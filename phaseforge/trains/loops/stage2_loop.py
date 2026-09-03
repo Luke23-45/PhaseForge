@@ -124,6 +124,28 @@ class Stage2Trainer(BaseTrainer):
 
         self.scheduler = instantiate(self.train_cfg.scheduler, optimizer=self.optimizer)
 
+        # IS-path guardrail (Professor §9): λ_bal ≪ 1 so the balance term
+        # cannot override the discovered regime structure. Warn once here
+        # (not per batch) when any IS loss is enabled with a large balance
+        # coefficient on the active router.
+        is_term_keys = ("margin", "lipschitz", "gain_reg")
+        is_path = any(
+            bool((self.train_cfg.get(key, {}) or {}).get("enabled", False))
+            for key in is_term_keys
+        )
+        if is_path:
+            router = getattr(getattr(self.model, "moe_layer", None), "router", None)
+            try:
+                balance_coeff = float(getattr(router, "balance_coeff", 0.0))
+            except (TypeError, ValueError):
+                balance_coeff = 0.0
+            if balance_coeff > 1e-3:
+                logger.warning(
+                    "IS-path losses are enabled with router balance_coeff=%.4g > 1e-3; "
+                    "the balance term may override regime structure. Prefer λ_bal ≪ 1.",
+                    balance_coeff,
+                )
+
         active_params = [p for p in self.model.parameters() if p.requires_grad]
         n_params = sum(p.numel() for p in active_params)
         logger.info(f"Stage 2 initialized. Trainable parameters: {n_params}")
@@ -218,6 +240,45 @@ class Stage2Trainer(BaseTrainer):
             + teacher_lambda * teacher_kl
         )
 
+        # Large-margin prototype routing (WP4, Professor §6.2). Disabled by
+        # default (`train.margin.enabled=false`): absent/disabled contributes
+        # exactly 0.0 and emits no metrics, so legacy loss curves and the
+        # exact metric-key assertion in test_compute_loss_accepts_reused_output
+        # are bit-identical. Enabled only with a prototype router, whose
+        # gate logits are negative distances (see PrototypeRouter).
+        margin_cfg = self.train_cfg.get("margin", None)
+        if margin_cfg is None:
+            margin_enabled = False
+        else:
+            margin_enabled = bool(margin_cfg.get("enabled", False))
+        if margin_enabled:
+            assert margin_cfg is not None
+            margin_lambda = float(margin_cfg.get("lambda_margin", 1.0))
+            margin_value = float(margin_cfg.get("margin", 0.5))
+            router = getattr(getattr(self.model, "moe_layer", None), "router", None)
+            margin_fn = getattr(router, "margin_loss_from_logits", None)
+            if margin_fn is None or out.gate_logits is None:
+                raise RuntimeError(
+                    "train.margin.enabled=true requires a prototype router "
+                    "(PrototypeRouter.margin_loss_from_logits) emitting gate "
+                    "logits; the active model provides neither."
+                )
+            targets = batch["phase"]
+            if mask is not None:
+                flat_logits = out.gate_logits.view(-1, out.gate_logits.size(-1))
+                flat_targets = targets.view(-1)
+                keep = mask.view(-1).bool()
+                margin_logits = flat_logits[keep]
+                margin_targets = flat_targets[keep]
+            else:
+                margin_logits = out.gate_logits
+                margin_targets = targets
+            if margin_targets.numel() == 0:
+                loss_margin = _zero_scalar(self.device)
+            else:
+                loss_margin = margin_fn(margin_logits, margin_targets, margin_value)
+            total_loss = total_loss + margin_lambda * loss_margin
+
         metrics = {
             # Defer .item() until the trainer logs/aggregates the metric so
             # the hot training loop does not synchronize CUDA every batch.
@@ -228,6 +289,63 @@ class Stage2Trainer(BaseTrainer):
             "loss_teacher_kl": (teacher_lambda * teacher_kl).detach(),
             "teacher_lambda": teacher_lambda,
         }
+        if margin_enabled:
+            metrics["loss_margin"] = loss_margin.detach()
+            metrics["margin_lambda"] = margin_lambda
+
+        # Local contraction + gain regularization (WP6, Professor §8–§9).
+        # Disabled by default (absent/disabled contributes exactly 0.0 and
+        # emits no metrics). Enabled only with impedance experts, whose
+        # forward exposes per-sample (target, gains, task_state) in
+        # `out.info`; anything else fails closed.
+        lip_cfg = self.train_cfg.get("lipschitz", None)
+        lip_enabled = bool(lip_cfg.get("enabled", False)) if lip_cfg is not None else False
+        if lip_enabled:
+            from phaseforge.trains.losses.lipschitz import lip_penalty
+
+            assert lip_cfg is not None
+            info = out.info or {}
+            try:
+                lip_targets = info["target"]
+                lip_states = info["task_state"]
+                lip_experts = info["expert_index"]
+            except KeyError as exc:
+                raise RuntimeError(
+                    "train.lipschitz.enabled=true requires impedance experts "
+                    f"exposing per-sample diagnostics; missing info key {exc}."
+                ) from exc
+            lip_lambda = float(lip_cfg.get("lambda_lip", 0.1))
+            lip_rho = float(lip_cfg.get("rho", 0.8))
+            lip_pairs = int(lip_cfg.get("num_pairs", 256))
+            loss_lip = lip_penalty(
+                lip_targets, lip_states, lip_experts, rho=lip_rho, num_pairs=lip_pairs
+            )
+            total_loss = total_loss + lip_lambda * loss_lip
+            metrics["loss_lip"] = loss_lip.detach()
+            metrics["lip_lambda"] = lip_lambda
+
+        gain_cfg = self.train_cfg.get("gain_reg", None)
+        gain_enabled = bool(gain_cfg.get("enabled", False)) if gain_cfg is not None else False
+        if gain_enabled:
+            from phaseforge.trains.losses.lipschitz import gain_penalty
+
+            assert gain_cfg is not None
+            info = out.info or {}
+            if "gains" not in info:
+                raise RuntimeError(
+                    "train.gain_reg.enabled=true requires impedance experts "
+                    "exposing per-sample gains in `out.info`."
+                )
+            gain_lambda = float(gain_cfg.get("lambda_gain", 1.0e-4))
+            gain_nominal = float(gain_cfg.get("kappa_nominal", 1.0))
+            loss_gain = gain_penalty(info["gains"], kappa_nominal=gain_nominal)
+            total_loss = total_loss + gain_lambda * loss_gain
+            metrics["loss_gain"] = loss_gain.detach()
+            metrics["gain_lambda"] = gain_lambda
+
+        # Re-materialize the total after the optional terms above: the
+        # metrics dict snapshotted it before they were added.
+        metrics["loss_total"] = total_loss.detach()
 
         return total_loss, metrics
 

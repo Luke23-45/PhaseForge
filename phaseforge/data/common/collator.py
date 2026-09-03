@@ -40,7 +40,7 @@ class PhaseAwareCollator:
                     [torch.as_tensor(b["trajectory_position"], dtype=torch.long) for b in batch]
                 )
             # PhaseForge 2.0 extras: preserve alternate regime labels and clean GT when present
-            for extra_key in ("phase_dynamic", "phase_rule", "phase_gt_clean"):
+            for extra_key in ("phase_dynamic", "phase_rule", "phase_topo", "phase_gt_clean"):
                 if extra_key in first:
                     out[extra_key] = torch.stack(
                         [torch.as_tensor(b[extra_key], dtype=torch.long) for b in batch]
@@ -82,7 +82,7 @@ class PhaseAwareCollator:
             out["trajectory_position"] = torch.stack(
                 [torch.as_tensor(b["trajectory_position"], dtype=torch.long) for b in batch]
             )
-        for extra_key in ("phase_dynamic", "phase_rule", "phase_gt_clean"):
+        for extra_key in ("phase_dynamic", "phase_rule", "phase_topo", "phase_gt_clean"):
             if extra_key in first:
                 # Pad like phase (long)
                 extra_padded = torch.zeros(B, max_T, dtype=torch.long)

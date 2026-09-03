@@ -1,0 +1,84 @@
+{
+  "name": "is_stageD_impedance",
+  "task": "Can",
+  "description": "IS-PhaseForge Stage D: impedance action parameterization (Professor §12D, the §7.5 action-matched matrix). Isolates the expert action parameterization: BC-direct vs BC-impedance vs PhaseForge-direct (+SupCon+margin) vs PhaseForge-impedance (+SupCon+margin) vs full IS-PhaseForge (+contraction). Cells 1-2/4-5 are the controlled §7.5 comparison.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "bc_direct",
+      "role": "BC-direct floor",
+      "model": "baselines/bc",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 2,
+      "name": "bc_impedance",
+      "role": "BC-impedance action-matched control",
+      "model": "baselines/bc_impedance",
+      "data": "can",
+      "task": "Can",
+      "stages": [1],
+      "evaluate": true,
+      "evaluate_mode": "rollout"
+    },
+    {
+      "index": 3,
+      "name": "pf_direct_supcon_margin",
+      "role": "PhaseForge-direct with SupCon + margin prototype routing",
+      "model": "phaseforge_prototype",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    },
+    {
+      "index": 4,
+      "name": "pf_impedance_supcon_margin",
+      "role": "PhaseForge-impedance with SupCon + margin routing",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "is_full",
+      "role": "Full IS-PhaseForge with contraction regularization",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    }
+  ]
+}
