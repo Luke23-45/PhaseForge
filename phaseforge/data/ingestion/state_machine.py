@@ -1311,6 +1311,16 @@ class DataPipelineStateMachine:
                 return value.detach().cpu().numpy()
             return np.asarray(value)
 
+        norm_mean = None
+        norm_std = None
+        if hasattr(self, "_norm_stats") and self._norm_stats:
+            m = self._norm_stats.get("mean")
+            s = self._norm_stats.get("std")
+            if m is not None:
+                norm_mean = m.detach().cpu().numpy() if isinstance(m, torch.Tensor) else np.asarray(m)
+            if s is not None:
+                norm_std = s.detach().cpu().numpy() if isinstance(s, torch.Tensor) else np.asarray(s)
+
         # Per-trajectory PELT segmentation on task-space variables.
         boundaries_per_traj: list[np.ndarray] = []
         segments: list[np.ndarray] = []
@@ -1320,7 +1330,9 @@ class DataPipelineStateMachine:
             if state_np.ndim != 2:
                 raise PipelineError(f"Trajectory {traj_idx} state must be (T, S).")
             task_matrix = concat_task_matrix(
-                extract_task_vars(state_np, state_keys, state_dims)
+                extract_task_vars(
+                    state_np, state_keys, state_dims, mean=norm_mean, std=norm_std
+                )
             )
             bounds = run_pelt(
                 task_matrix,

@@ -146,7 +146,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         self.expert_init_cfg = (
             dict(expert_init)
             if expert_init is not None
-            else {"type": "warmstart", "jitter_std": 0.02}
+            else (
+                {"type": "random"}
+                if self._uses_impedance_experts()
+                else {"type": "warmstart", "jitter_std": 0.02}
+            )
         )
         self.soft_mapping_cfg = dict(soft_mapping) if soft_mapping is not None else {}
         self.teacher_routing_cfg = dict(teacher_routing) if teacher_routing is not None else {}
@@ -237,7 +241,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         """Extract the task state ``y = ψ(x)`` for impedance experts."""
         from phaseforge.models.components.task_state import extract_task_state
 
-        return extract_task_state(state)
+        mean, std = self.get_normalizer_stats()
+        return extract_task_state(state, mean=mean, std=std)
 
     @property
     def teacher_routing_enabled(self) -> bool:
@@ -698,12 +703,22 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 f"(unique phases: {torch.unique(all_phases).tolist()})."
             )
 
+            if proto_source_norm in ("topo", "dynamic"):
+                unique_labels, inverse_indices = torch.unique(all_phases, return_inverse=True)
+                effective_num_phases = len(unique_labels)
+                all_phases = inverse_indices
+                logger.info(
+                    f"Dynamic/topo regimes mapped to {effective_num_phases} contiguous clusters: {unique_labels.tolist()}"
+                )
+            else:
+                effective_num_phases = num_phases
+
         # 2. Router Initialization
         if r_type in ("centroid", "phase_centroid"):
             prototypes = compute_hierarchical_phase_prototypes(
                 all_latents,
                 all_phases,
-                num_phases,
+                effective_num_phases,
                 num_experts,
                 seed=cluster_seed,
                 spherical=False,
@@ -718,7 +733,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             prototypes = compute_hierarchical_phase_prototypes(
                 all_latents,
                 all_phases,
-                num_phases,
+                effective_num_phases,
                 num_experts,
                 seed=cluster_seed,
                 spherical=True,
@@ -771,13 +786,13 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 prototypes = compute_hierarchical_phase_prototypes(
                     all_latents,
                     all_phases,
-                    num_phases,
+                    effective_num_phases,
                     num_experts,
                     seed=cluster_seed,
                     spherical=True,
                 )
                 phase_centroids = compute_phase_centroids(
-                    all_latents, all_phases, num_phases, spherical=True
+                    all_latents, all_phases, effective_num_phases, spherical=True
                 )
                 mapping = build_prototype_softmax_mapping(
                     phase_centroids, prototypes, temperature=temperature
@@ -789,12 +804,12 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                     f"(soft_mapping={mapping_mode}, temperature={temperature}).",
                 )
             elif mapping_mode == "hierarchical_uniform":
-                mapping = build_hierarchical_uniform_mapping(num_phases, num_experts)
+                mapping = build_hierarchical_uniform_mapping(effective_num_phases, num_experts)
                 logger.info(
                     "Soft mapping built data-free as hierarchical uniform rows "
                     "(%d phases, %d experts); router weights keep random "
                     "initialization.",
-                    num_phases,
+                    effective_num_phases,
                     num_experts,
                 )
             else:
@@ -803,8 +818,9 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                     "prototype_softmax, hierarchical_uniform."
                 )
             validate_soft_mapping(mapping)
-            self.soft_mapping.copy_(
-                mapping.to(device=self.soft_mapping.device, dtype=self.soft_mapping.dtype)
+            self.register_buffer(
+                "soft_mapping",
+                mapping.to(device=self.soft_mapping.device, dtype=self.soft_mapping.dtype),
             )
             logger.info(
                 "Persisted soft phase->expert mapping M of shape %s "

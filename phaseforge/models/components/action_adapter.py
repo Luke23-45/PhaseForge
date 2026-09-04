@@ -81,7 +81,9 @@ def rotation_error(target_quat: Tensor, current_quat: Tensor) -> Tensor:
     """3D rotation error taking ``current`` toward ``target``."""
     if target_quat.shape[-1] != 4 or current_quat.shape[-1] != 4:
         raise ValueError("Quaternion inputs must have width 4.")
-    error_quat = quat_multiply(target_quat, quat_conjugate(current_quat))
+    t_norm = target_quat / target_quat.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+    c_norm = current_quat / current_quat.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+    error_quat = quat_multiply(t_norm, quat_conjugate(c_norm))
     return quat_log_map(error_quat)
 
 

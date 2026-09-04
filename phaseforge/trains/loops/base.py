@@ -76,6 +76,12 @@ class _PhaseAccumulator:
         if self.num_phases is None:
             self.num_phases = int(logits.size(-1))
         n_classes = self.num_phases
+        if (targets >= n_classes).any() or (targets < 0).any():
+            valid_idx = (targets >= 0) & (targets < n_classes)
+            if not valid_idx.any():
+                return
+            logits = logits[valid_idx]
+            targets = targets[valid_idx]
         if self._correct is None:
             self._correct = torch.zeros(n_classes, device=logits.device)
             self._total = torch.zeros(n_classes, device=logits.device)

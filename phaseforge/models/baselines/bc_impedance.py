@@ -41,7 +41,8 @@ class BCImpedanceModel(BaseManipulationModel):
         self, state: Tensor
     ) -> tuple[Tensor, Tensor, Tensor, dict[str, Tensor]]:
         latent = self.encoder(state)
-        task_state = extract_task_state(state)
+        mean, std = self.get_normalizer_stats()
+        task_state = extract_task_state(state, mean=mean, std=std)
         target, gains = self.expert.params(latent)
         action, parts = impedance_action(target, gains, task_state, self.expert.action_scale)
         info = {
@@ -80,7 +81,8 @@ class BCImpedanceModel(BaseManipulationModel):
         no routing fields (all ``None``), impedance ``(T, κ, e, u)`` filled.
         """
         latent = self.encoder(state)
-        task_state = extract_task_state(state)
+        mean, std = self.get_normalizer_stats()
+        task_state = extract_task_state(state, mean=mean, std=std)
         target, gains = self.expert.params(latent)
         _action, parts = impedance_action(target, gains, task_state, self.expert.action_scale)
         return {

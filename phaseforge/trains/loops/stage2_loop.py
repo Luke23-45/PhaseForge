@@ -318,7 +318,12 @@ class Stage2Trainer(BaseTrainer):
             lip_rho = float(lip_cfg.get("rho", 0.8))
             lip_pairs = int(lip_cfg.get("num_pairs", 256))
             loss_lip = lip_penalty(
-                lip_targets, lip_states, lip_experts, rho=lip_rho, num_pairs=lip_pairs
+                lip_targets,
+                lip_states,
+                lip_experts,
+                trajectory_ids=batch.get("trajectory_id"),
+                rho=lip_rho,
+                num_pairs=lip_pairs,
             )
             total_loss = total_loss + lip_lambda * loss_lip
             metrics["loss_lip"] = loss_lip.detach()

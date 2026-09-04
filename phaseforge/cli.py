@@ -613,6 +613,11 @@ def _train_body(
     # 4. Model
     logger.info("Initializing Model...")
     model = build_model(cfg)
+    if hasattr(model, "set_normalizer_stats") and getattr(pipeline, "_norm_stats", None):
+        norm_stats = pipeline._norm_stats
+        if "mean" in norm_stats and "std" in norm_stats:
+            model.set_normalizer_stats(norm_stats["mean"], norm_stats["std"])
+            logger.info("Configured model normalizer statistics for physical task reconstruction.")
 
     stage = cfg.train.get("stage", 1)
 

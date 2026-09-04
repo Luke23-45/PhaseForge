@@ -211,19 +211,38 @@ def audit_regimes(
     conf = confusion_matrix(labels_arr, predicted, labels=list(range(regimes)))
     confusion = [[int(v) for v in row] for row in conf.tolist()]
 
-    # Pairwise confusion -> merge candidates: for pair (a, b), the F1 of the
-    # binary "a vs b" restriction of (true, predicted) below threshold.
+    # Pairwise confusion -> merge candidates:
+    # A pair (a, b) is an aliasing candidate only if there is direct mutual confusion
+    # between them (samples of a predicted as b or vice versa) and the pairwise F1
+    # on the restricted decision {a, b} drops below threshold with significant mutual confusion.
     merge_candidates: list[list[int]] = []
     for first in range(regimes):
         for second in range(first + 1, regimes):
-            mask = (labels_arr == first) | (labels_arr == second)
-            if np.sum(mask) == 0:
+            n_first = counts[first]
+            n_second = counts[second]
+            if n_first == 0 or n_second == 0:
                 continue
-            pair_f1 = float(
-                f1_score(labels_arr[mask], predicted[mask], average="macro", zero_division=0)
+            misclass_first_as_second = conf[first, second]
+            misclass_second_as_first = conf[second, first]
+            mutual_misclass = misclass_first_as_second + misclass_second_as_first
+            if mutual_misclass == 0:
+                continue
+            pair_mask = ((labels_arr == first) | (labels_arr == second)) & (
+                (predicted == first) | (predicted == second)
             )
-            if pair_f1 < merge_f1_threshold:
-                merge_candidates.append([first, second])
+            if np.sum(pair_mask) > 0:
+                pair_f1 = float(
+                    f1_score(
+                        labels_arr[pair_mask],
+                        predicted[pair_mask],
+                        labels=[first, second],
+                        average="macro",
+                        zero_division=0,
+                    )
+                )
+                confusion_rate = mutual_misclass / float(n_first + n_second)
+                if pair_f1 < merge_f1_threshold and confusion_rate > 0.15:
+                    merge_candidates.append([first, second])
     if merge_candidates:
         failures.append(
             "Aliased regime pairs (merge or redefine): "

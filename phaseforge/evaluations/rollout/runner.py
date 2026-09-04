@@ -168,6 +168,8 @@ class RolloutEvaluator:
             if self.normalizer is not None:
                 self._normalizer_mean = self.normalizer.mean.to(self._model_device)
                 self._normalizer_std = self.normalizer.std.to(self._model_device)
+                if hasattr(self.model, "set_normalizer_stats"):
+                    self.model.set_normalizer_stats(self._normalizer_mean, self._normalizer_std)
 
     # ------------------------------------------------------------------
     # Public entry point

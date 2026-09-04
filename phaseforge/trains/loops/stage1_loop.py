@@ -126,8 +126,11 @@ class Stage1Trainer(BaseTrainer):
           gradient-conflict fixes (PCGrad/CAGrad/Du-adaptive) because the
           Phase 1.1 measurement showed cos(∇L_action, ∇L_phase) ≈ 0 — there
           is no conflict to resolve; the val/loss_phase explosion is
-          late-training overfitting on the flat action-loss plateau.
         """
+        supcon_cfg = self.train_cfg.get("supcon") or {}
+        if bool(supcon_cfg.get("enabled", False)):
+            if bool(supcon_cfg.get("zero_ce", True)):
+                return 0.0
         base = float(self.train_cfg.get("lambda_phase", 1.0))
         schedule = self.train_cfg.get("lambda_schedule") or {}
         sched_type = str(schedule.get("type", "constant"))
@@ -209,9 +212,12 @@ class Stage1Trainer(BaseTrainer):
 
         # Phase Loss (Cross Entropy)
         phase_loss = torch.tensor(0.0, device=self.device)
-        if out.phase_logits is not None and base_lambda_positive:
+        if out.phase_logits is not None and base_lambda_positive and lambda_phase > 0.0:
             logits = out.phase_logits
-            if mask is not None:
+            num_classes = logits.size(-1)
+            if (target_phase >= num_classes).any() or (target_phase < 0).any():
+                phase_loss = torch.tensor(0.0, device=self.device)
+            elif mask is not None:
                 # Reshape for CE: (B*T, num_classes) and (B*T,)
                 logits_flat = logits.view(-1, logits.size(-1))
                 targets_flat = target_phase.view(-1)

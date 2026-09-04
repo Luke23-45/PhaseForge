@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+import torch
 import torch.nn as nn
 from torch import Tensor
 
@@ -99,6 +101,32 @@ class BaseManipulationModel(nn.Module, ABC):
 
         Override in models that have a distinct encoder attribute.
         """
+
+    def set_normalizer_stats(
+        self,
+        mean: Tensor | np.ndarray | None,
+        std: Tensor | np.ndarray | None,
+    ) -> None:
+        """Set normalizer statistics for physical task-space reconstruction."""
+        if mean is not None:
+            if not isinstance(mean, torch.Tensor):
+                mean = torch.as_tensor(mean, dtype=torch.float32)
+            self.register_buffer("normalizer_mean", mean.detach().clone(), persistent=True)
+        elif hasattr(self, "normalizer_mean"):
+            delattr(self, "normalizer_mean")
+
+        if std is not None:
+            if not isinstance(std, torch.Tensor):
+                std = torch.as_tensor(std, dtype=torch.float32)
+            self.register_buffer("normalizer_std", std.detach().clone(), persistent=True)
+        elif hasattr(self, "normalizer_std"):
+            delattr(self, "normalizer_std")
+
+    def get_normalizer_stats(self) -> tuple[Tensor | None, Tensor | None]:
+        """Return cached normalizer statistics ``(mean, std)``, if registered."""
+        mean = getattr(self, "normalizer_mean", None)
+        std = getattr(self, "normalizer_std", None)
+        return mean, std
 
     def get_routing_info(self) -> dict[str, Tensor] | None:
         """Return the most recent routing state for metric logging.

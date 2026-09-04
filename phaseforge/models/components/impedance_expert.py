@@ -91,7 +91,18 @@ class ImpedanceExpert(nn.Module):
     def params(self, latent: Tensor) -> tuple[Tensor, Tensor]:
         """Predict ``(target (..., Dy), gains (..., De))`` with ``κ > 0``."""
         hidden = self.trunk(latent)
-        target = self.target_head(hidden)
+        raw_target = self.target_head(hidden)
+        if self.task_state_dim >= 8:
+            pos = raw_target[..., 0:3]
+            raw_quat = raw_target[..., 3:7]
+            quat_norm = raw_quat.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+            quat = raw_quat / quat_norm
+            sign = torch.where(quat[..., 0:1] < 0.0, -1.0, 1.0)
+            quat = quat * sign
+            rest = raw_target[..., 7:]
+            target = torch.cat([pos, quat, rest], dim=-1)
+        else:
+            target = raw_target
         gains = torch.nn.functional.softplus(self.gain_head(hidden))
         gains = gains.clamp(min=self.kappa_min, max=self.kappa_max)
         return target, gains

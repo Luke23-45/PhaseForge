@@ -58,24 +58,58 @@ def gripper_aperture(gripper_qpos: Tensor) -> Tensor:
     return gripper_qpos.abs().amax(dim=-1, keepdim=True)
 
 
-def extract_task_state(state: Tensor) -> Tensor:
-    """Extract the task state ``y = ψ(x)`` of shape ``(..., 8)``."""
+def extract_task_state(
+    state: Tensor,
+    mean: Tensor | None = None,
+    std: Tensor | None = None,
+) -> Tensor:
+    """Extract the task state ``y = ψ(x)`` of shape ``(..., 8)`` in physical units.
+
+    If ``mean`` and ``std`` are provided, ``state`` is first denormalized back
+    to physical space (meters, unit quaternions, joint positions) so that
+    Cartesian displacement and $SO(3)$ rotation errors are physically meaningful.
+    """
     if state.shape[-1] not in _SINGLE_ARM_WIDTHS:
         _check_width(int(state.shape[-1]))
-    eef_pos = state[..., _EEF_SLICE[0] : _EEF_SLICE[1]]
-    quat = state[..., _QUAT_SLICE[0] : _QUAT_SLICE[1]]
-    aperture = gripper_aperture(state[..., _GRIP_SLICE[0] : _GRIP_SLICE[1]])
+    if mean is not None and std is not None:
+        if isinstance(mean, np.ndarray):
+            mean = torch.from_numpy(mean)
+        if isinstance(std, np.ndarray):
+            std = torch.from_numpy(std)
+        raw_state = state * std.to(device=state.device, dtype=state.dtype) + mean.to(device=state.device, dtype=state.dtype)
+    else:
+        raw_state = state
+    eef_pos = raw_state[..., _EEF_SLICE[0] : _EEF_SLICE[1]]
+    raw_quat = raw_state[..., _QUAT_SLICE[0] : _QUAT_SLICE[1]]
+    quat_norm = raw_quat.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+    quat = raw_quat / quat_norm
+    sign = torch.where(quat[..., 0:1] < 0.0, -1.0, 1.0)
+    quat = quat * sign
+    aperture = gripper_aperture(raw_state[..., _GRIP_SLICE[0] : _GRIP_SLICE[1]])
     return torch.cat([eef_pos, quat, aperture], dim=-1)
 
 
-def extract_task_state_numpy(state: np.ndarray) -> np.ndarray:
+def extract_task_state_numpy(
+    state: np.ndarray,
+    mean: np.ndarray | None = None,
+    std: np.ndarray | None = None,
+) -> np.ndarray:
     """Numpy twin of :func:`extract_task_state` (offline diagnostics)."""
     arr = np.asarray(state, dtype=np.float64)
     if arr.shape[-1] not in _SINGLE_ARM_WIDTHS:
         _check_width(int(arr.shape[-1]))
-    eef_pos = arr[..., 0:3]
-    quat = arr[..., 3:7]
-    aperture = np.max(np.abs(arr[..., 7:9]), axis=-1, keepdims=True)
+    if mean is not None and std is not None:
+        raw_arr = arr * np.asarray(std, dtype=np.float64) + np.asarray(mean, dtype=np.float64)
+    else:
+        raw_arr = arr
+    eef_pos = raw_arr[..., 0:3]
+    raw_quat = raw_arr[..., 3:7]
+    norm = np.linalg.norm(raw_quat, axis=-1, keepdims=True)
+    norm = np.maximum(norm, 1e-12)
+    quat = raw_quat / norm
+    sign = np.where(quat[..., 0:1] < 0.0, -1.0, 1.0)
+    quat = quat * sign
+    aperture = np.max(np.abs(raw_arr[..., 7:9]), axis=-1, keepdims=True)
     return np.concatenate([eef_pos, quat, aperture], axis=-1)
 
 

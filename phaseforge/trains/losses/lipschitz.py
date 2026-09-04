@@ -23,9 +23,12 @@ def lip_penalty(
     targets: Tensor,
     task_states: Tensor,
     expert_index: Tensor,
+    trajectory_ids: Tensor | None = None,
     rho: float = 0.8,
     eps: float = 1e-6,
     num_pairs: int = 256,
+    max_ratio: float = 10.0,
+    min_delta_state: float = 1e-4,
 ) -> Tensor:
     """Lipschitz penalty over deterministic within-expert pairs.
 
@@ -33,14 +36,14 @@ def lip_penalty(
         targets: Per-sample expert targets ``(B, Dy)``.
         task_states: Per-sample task states ``(B, Dy)``.
         expert_index: Per-sample predicted expert ``(B,)`` long.
-        rho: Contraction target (must satisfy ``0 < rho < 1``... validated
-            as ``0 <= rho < 1`` so ``rho=0`` stays expressible in sweeps).
+        trajectory_ids: Optional per-sample trajectory index ``(B,)``. When provided,
+            pairs are formed strictly within the same episode to avoid evaluating
+            finite differences across diverging environmental contexts.
+        rho: Contraction target (must satisfy ``0 <= rho < 1``).
         eps: Floor avoiding division by zero.
-        num_pairs: Cap on evaluated pairs (first-N deterministic order).
-
-    Pairs are consecutive samples sharing an expert (batch order), so the
-    result is exactly reproducible with no RNG. Fewer than one pair (or no
-    finite ratio) returns exactly ``0.0``.
+        num_pairs: Cap on evaluated pairs.
+        max_ratio: Maximum clamped ratio to prevent gradient explosions.
+        min_delta_state: Minimum task-state displacement to avoid singular division.
     """
     if float(rho) < 0.0 or float(rho) >= 1.0:
         raise ValueError(f"rho must satisfy 0 <= rho < 1, got {rho}.")
@@ -52,18 +55,45 @@ def lip_penalty(
     if flat_experts.numel() != targets.size(0):
         raise ValueError("expert_index must have one entry per sample.")
     cap = max(0, int(num_pairs))
+    if cap == 0:
+        return torch.zeros((), device=targets.device, dtype=targets.dtype)
+
+    flat_trajs: Tensor | None = None
+    if trajectory_ids is not None:
+        flat_trajs = trajectory_ids.reshape(-1).long()
+
     ratios: list[Tensor] = []
     for regime in torch.unique(flat_experts).tolist():
-        positions = (flat_experts == int(regime)).nonzero().flatten()
-        for first, second in zip(positions[:-1:2], positions[1::2]):
-            delta_target = (targets[first] - targets[second]).norm()
-            delta_state = (task_states[first] - task_states[second]).norm()
-            ratios.append(delta_target / (delta_state + float(eps)))
-            if len(ratios) >= cap > 0:
-                break
-        if len(ratios) >= cap > 0:
+        expert_mask = flat_experts == int(regime)
+        if flat_trajs is not None:
+            for tid in torch.unique(flat_trajs[expert_mask]).tolist():
+                positions = (expert_mask & (flat_trajs == int(tid))).nonzero().flatten()
+                for first, second in zip(positions[:-1:2], positions[1::2]):
+                    delta_state = (task_states[first] - task_states[second]).norm()
+                    if delta_state < float(min_delta_state):
+                        continue
+                    delta_target = (targets[first] - targets[second]).norm()
+                    ratio = torch.clamp(delta_target / (delta_state + float(eps)), max=float(max_ratio))
+                    ratios.append(ratio)
+                    if len(ratios) >= cap:
+                        break
+                if len(ratios) >= cap:
+                    break
+        else:
+            positions = expert_mask.nonzero().flatten()
+            for first, second in zip(positions[:-1:2], positions[1::2]):
+                delta_state = (task_states[first] - task_states[second]).norm()
+                if delta_state < float(min_delta_state):
+                    continue
+                delta_target = (targets[first] - targets[second]).norm()
+                ratio = torch.clamp(delta_target / (delta_state + float(eps)), max=float(max_ratio))
+                ratios.append(ratio)
+                if len(ratios) >= cap:
+                    break
+        if len(ratios) >= cap:
             break
-    if not ratios or cap == 0:
+
+    if not ratios:
         return torch.zeros((), device=targets.device, dtype=targets.dtype)
     stacked = torch.stack(ratios)
     if not torch.isfinite(stacked).all():

@@ -60,13 +60,20 @@ def extract_task_vars(
     state: np.ndarray,
     state_keys: list[str],
     state_dims: list[int],
+    mean: np.ndarray | None = None,
+    std: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
-    """Extract topological task variables from instantaneous states.
+    """Extract topological task variables from instantaneous states in physical coordinates.
+
+    If ``mean`` and ``std`` are provided, ``state`` is first denormalized back to
+    physical units (meters, canonical $S^3$ quaternions, joint angles).
 
     Args:
         state: Array of shape ``(T, S)`` (one trajectory) or ``(S,)``.
         state_keys: Ordered observation keys (``data.state_keys``).
         state_dims: Per-key dimensions (``data.state_keys`` dims).
+        mean: Optional normalizer mean for denormalization to physical units.
+        std: Optional normalizer std for denormalization to physical units.
 
     Returns:
         Dict with one ``(T, D)`` (or ``(D,)``) float64 array per name in
@@ -79,6 +86,8 @@ def extract_task_vars(
     single = arr.ndim == 1
     if single:
         arr = arr[np.newaxis, :]
+    if mean is not None and std is not None:
+        arr = arr * np.asarray(std, dtype=np.float64) + np.asarray(mean, dtype=np.float64)
     offsets = _offsets(list(state_keys), list(state_dims))
     total = sum(int(d) for d in state_dims)
     if arr.shape[-1] != total:
@@ -102,7 +111,11 @@ def extract_task_vars(
         return arr[..., start:stop]
 
     eef_pos = _slice("robot0_eef_pos")
-    eef_quat = _slice("robot0_eef_quat")
+    raw_quat = _slice("robot0_eef_quat")
+    quat_norm = np.maximum(np.linalg.norm(raw_quat, axis=-1, keepdims=True), 1e-12)
+    eef_quat = raw_quat / quat_norm
+    sign = np.where(eef_quat[..., 0:1] < 0.0, -1.0, 1.0)
+    eef_quat = eef_quat * sign
     gripper = _slice("robot0_gripper_qpos")
     obj = _slice("object")
     if eef_pos.shape[-1] != 3 or eef_quat.shape[-1] != 4 or gripper.shape[-1] != 2:
