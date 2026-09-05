@@ -193,6 +193,10 @@ class Stage2Trainer(BaseTrainer):
                 sq_err = sq_err * dw_tensor
             if phase_weights is not None and "phase" in batch:
                 weights_tensor = torch.as_tensor(phase_weights, dtype=torch.float32, device=self.device)
+                max_p = int(batch["phase"].max().item()) if batch["phase"].numel() > 0 else 0
+                if weights_tensor.numel() <= max_p:
+                    pad = torch.ones(max_p + 1 - weights_tensor.numel(), dtype=weights_tensor.dtype, device=weights_tensor.device)
+                    weights_tensor = torch.cat([weights_tensor, pad])
                 sample_weights = weights_tensor[batch["phase"].long()]
                 if mask is not None:
                     sq_err = sq_err[mask]

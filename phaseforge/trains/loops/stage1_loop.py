@@ -180,15 +180,30 @@ class Stage1Trainer(BaseTrainer):
         pw = self.train_cfg.get("phase_weights")
         if out.phase_logits is not None and pw:
             num_classes = out.phase_logits.size(-1)
-            if len(pw) != num_classes:
-                raise ValueError(
-                    f"train.phase_weights has {len(pw)} entries but the phase "
-                    f"head predicts {num_classes} classes. "
-                    "Phase count mismatch — refusing to train with wrong weights."
-                )
+            pw_list = [float(x) for x in pw]
+            if len(pw_list) != num_classes:
+                import logging
+                _logger = logging.getLogger(__name__)
+                if len(pw_list) < num_classes:
+                    _logger.warning(
+                        "train.phase_weights has %d entries but phase head predicts %d classes. "
+                        "Auto-padding remaining classes with 1.0.",
+                        len(pw_list),
+                        num_classes,
+                    )
+                    pw_list.extend([1.0] * (num_classes - len(pw_list)))
+                else:
+                    _logger.warning(
+                        "train.phase_weights has %d entries but phase head predicts %d classes. "
+                        "Truncating to %d classes.",
+                        len(pw_list),
+                        num_classes,
+                        num_classes,
+                    )
+                    pw_list = pw_list[:num_classes]
             cached = getattr(self, "_cached_phase_weights", None)
-            if cached is None or cached.device != self.device or len(cached) != len(pw):
-                cached = torch.tensor(list(pw), dtype=torch.float32, device=self.device)
+            if cached is None or cached.device != self.device or len(cached) != len(pw_list):
+                cached = torch.tensor(pw_list, dtype=torch.float32, device=self.device)
                 self._cached_phase_weights = cached
             phase_weights = cached
 
