@@ -72,7 +72,7 @@ def train_command(
         cmd.append(f"train.stage1_ckpt_path={ckpt_path}")
     cmd.extend(defaults)
     if method.overrides:
-        cmd.extend(method.overrides)
+        cmd.extend([o for o in method.overrides if not o.startswith("eval.")])
     return cmd
 
 

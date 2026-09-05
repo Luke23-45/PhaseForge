@@ -89,7 +89,3 @@ task:
     enabled: false            # Expensive; enable only for dedicated ablation runs
     fractions: [0.25, 0.50, 0.75, 1.00]
 
-# Inert mirror of rollout.yaml episodes block so eval.episodes overrides compose across all stages.
-episodes:
-  trace_level: "minimal"
-  trace_every_n_steps: 1
