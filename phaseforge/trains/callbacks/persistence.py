@@ -50,6 +50,11 @@ _VAL_KEY_MAP = {
     "loss_margin": "val/loss_margin",
     "loss_lip": "val/loss_lip",
     "loss_gain": "val/loss_gain",
+    "loss_release": "val/loss_release",
+    "loss_action_pos": "val/loss_action_pos",
+    "loss_action_rot": "val/loss_action_rot",
+    "loss_action_grip": "val/loss_action_grip",
+    "loss_action_place": "val/loss_action_place",
 }
 
 _EMPTY_SOURCE_STAGE1 = {

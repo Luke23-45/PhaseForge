@@ -870,6 +870,41 @@ class TestPersistenceCallback:
         assert "val/mystery" not in rows[0]
         assert "val/loss_action" in rows[0]
 
+    def test_precision_residual_metrics_persisted_to_curves(self, tmp_path: Path) -> None:
+        cfg = _persistence_cfg(2, "precision_residual_phaseforge")
+        run_dir = tmp_path / "run"
+        model = _FakeModel(with_phase_head=True)
+        metrics = {
+            "loss_total": torch.tensor(0.041),
+            "loss_action": torch.tensor(0.040),
+            "loss_release": torch.tensor(0.005),
+            "loss_action_pos": torch.tensor(0.010),
+            "loss_action_rot": torch.tensor(0.020),
+            "loss_action_grip": torch.tensor(0.001),
+            "loss_action_place": torch.tensor(0.015),
+        }
+        val_metrics = {
+            "loss_total": 0.043,
+            "loss_action": 0.042,
+            "loss_release": 0.006,
+            "loss_action_pos": 0.012,
+            "loss_action_rot": 0.022,
+            "loss_action_grip": 0.002,
+            "loss_action_place": 0.018,
+        }
+        _run_callback(cfg, model, run_dir, metrics, val_metrics)
+        rows = TrainingCurveWriter(run_dir).read_curves()
+        assert rows[0]["train/loss_release"] == pytest.approx(0.005)
+        assert rows[0]["val/loss_release"] == pytest.approx(0.006)
+        assert rows[0]["train/loss_action_pos"] == pytest.approx(0.010)
+        assert rows[0]["val/loss_action_pos"] == pytest.approx(0.012)
+        assert rows[0]["train/loss_action_rot"] == pytest.approx(0.020)
+        assert rows[0]["val/loss_action_rot"] == pytest.approx(0.022)
+        assert rows[0]["train/loss_action_grip"] == pytest.approx(0.001)
+        assert rows[0]["val/loss_action_grip"] == pytest.approx(0.002)
+        assert rows[0]["train/loss_action_place"] == pytest.approx(0.015)
+        assert rows[0]["val/loss_action_place"] == pytest.approx(0.018)
+
     def test_prefixed_monitor_value_resolved(self, tmp_path: Path) -> None:
         # Stage 2 returns already-prefixed keys (e.g. ``val/routing_entropy``);
         # the curve row's checkpoint_monitor_value must still be populated.

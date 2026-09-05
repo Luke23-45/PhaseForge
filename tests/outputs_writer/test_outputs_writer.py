@@ -288,6 +288,25 @@ class TestCurveSchema:
         )
         validate_curve_row(row)
 
+    def test_precision_residual_stage2_fields_pass(self) -> None:
+        row = self._core()
+        row.update(
+            {
+                "train/loss_release": 0.005,
+                "train/release_lambda": 0.1,
+                "val/loss_release": 0.006,
+                "train/loss_action_pos": 0.01,
+                "val/loss_action_pos": 0.012,
+                "train/loss_action_rot": 0.02,
+                "val/loss_action_rot": 0.022,
+                "train/loss_action_grip": 0.001,
+                "val/loss_action_grip": 0.002,
+                "train/loss_action_place": 0.015,
+                "val/loss_action_place": 0.018,
+            }
+        )
+        validate_curve_row(row)
+
     def test_missing_required_key_fails(self) -> None:
         row = self._core()
         del row["val/loss_action"]

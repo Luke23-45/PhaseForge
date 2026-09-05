@@ -85,6 +85,19 @@ CURVE_OPTIONAL_NUMERIC: tuple[str, ...] = (
     "train/loss_gain",
     "train/gain_lambda",
     "val/loss_gain",
+    # Precision-Residual PhaseForge Stage 2: Release kinematics auxiliary loss
+    "train/loss_release",
+    "train/release_lambda",
+    "val/loss_release",
+    # Precision-Residual PhaseForge Stage 2: Fine-grained subspace action MSEs
+    "train/loss_action_pos",
+    "val/loss_action_pos",
+    "train/loss_action_rot",
+    "val/loss_action_rot",
+    "train/loss_action_grip",
+    "val/loss_action_grip",
+    "train/loss_action_place",
+    "val/loss_action_place",
 )
 
 _CURVE_INT_FIELDS = ("epoch", "global_step")
