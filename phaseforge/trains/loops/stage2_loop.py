@@ -181,8 +181,20 @@ class Stage2Trainer(BaseTrainer):
         target_action = batch["action"]  # (B, A) or (B, T, A)
         mask = batch.get("padding_mask")  # (B, T) boolean or None
 
-        # Action Loss (MSE)
-        if mask is not None:
+        # Action Loss (MSE, optionally weighted per phase)
+        phase_weights = self.train_cfg.get("phase_weights", None)
+        if phase_weights is not None and "phase" in batch:
+            weights_tensor = torch.as_tensor(phase_weights, dtype=torch.float32, device=self.device)
+            sample_weights = weights_tensor[batch["phase"].long()]
+            sq_err = F.mse_loss(out.action_pred, target_action, reduction="none")
+            if mask is not None:
+                sq_err = sq_err[mask]
+                sample_weights = sample_weights[mask]
+            if sq_err.ndim > 1:
+                action_loss = (sq_err.mean(dim=-1) * sample_weights).mean()
+            else:
+                action_loss = (sq_err * sample_weights).mean()
+        elif mask is not None:
             action_loss = F.mse_loss(out.action_pred, target_action, reduction="none")
             action_loss = action_loss[mask].mean()
         else:
@@ -289,6 +301,22 @@ class Stage2Trainer(BaseTrainer):
             "loss_teacher_kl": (teacher_lambda * teacher_kl).detach(),
             "teacher_lambda": teacher_lambda,
         }
+        if self.train_cfg.get("log_dimension_mse", False):
+            with torch.no_grad():
+                diff_sq = (out.action_pred - target_action) ** 2
+                if mask is not None:
+                    diff_sq = diff_sq[mask]
+                if diff_sq.ndim > 1 and diff_sq.size(-1) >= 7:
+                    metrics["loss_action_pos"] = diff_sq[:, 0:3].mean().detach()
+                    metrics["loss_action_rot"] = diff_sq[:, 3:6].mean().detach()
+                    metrics["loss_action_grip"] = diff_sq[:, 6].mean().detach()
+                    if "phase" in batch:
+                        p_flat = batch["phase"]
+                        if mask is not None:
+                            p_flat = p_flat[mask]
+                        p4 = p_flat == 4
+                        if p4.any():
+                            metrics["loss_action_place"] = diff_sq[p4].mean().detach()
         if margin_enabled:
             metrics["loss_margin"] = loss_margin.detach()
             metrics["margin_lambda"] = margin_lambda

@@ -10,7 +10,10 @@ import torch.nn as nn
 from torch import Tensor
 
 from phaseforge.models.components.expert import ExpertMLP
-from phaseforge.models.components.impedance_expert import ImpedanceExpert
+from phaseforge.models.components.impedance_expert import (
+    ImpedanceExpert,
+    ResidualImpedanceExpert,
+)
 from phaseforge.models.components.prototype_router import PrototypeRouter
 from phaseforge.models.components.router import RouterOutput, TopKRouter
 
@@ -48,9 +51,11 @@ class MoELayer(nn.Module):
         router: TopKRouter | PrototypeRouter,
         experts: ExpertMLP
         | ImpedanceExpert
+        | ResidualImpedanceExpert
         | nn.ModuleList
         | list[ExpertMLP]
-        | list[ImpedanceExpert],
+        | list[ImpedanceExpert]
+        | list[ResidualImpedanceExpert],
     ) -> None:
         super().__init__()
         self.router = router
@@ -60,7 +65,7 @@ class MoELayer(nn.Module):
             self.experts: nn.ModuleList[ExpertMLP] = experts  # type: ignore[type-arg]
         elif isinstance(experts, list):
             self.experts = nn.ModuleList(experts)
-        elif isinstance(experts, (ExpertMLP, ImpedanceExpert)):
+        elif isinstance(experts, (ExpertMLP, ImpedanceExpert, ResidualImpedanceExpert)):
             # Clone the single expert template E times.
             self.experts = nn.ModuleList(
                 [copy.deepcopy(experts) for _ in range(router.num_experts)]
@@ -70,16 +75,16 @@ class MoELayer(nn.Module):
             # (top-k weights sum to 1), so the router would receive no
             # action-based specialization signal at initialization.
             for expert in self.experts:
-                if not isinstance(expert, (ExpertMLP, ImpedanceExpert)):
+                if not isinstance(expert, (ExpertMLP, ImpedanceExpert, ResidualImpedanceExpert)):
                     raise TypeError(
-                        "All experts must be ExpertMLP or ImpedanceExpert instances, "
+                        "All experts must be ExpertMLP, ImpedanceExpert, or ResidualImpedanceExpert instances, "
                         f"got {type(expert).__name__}"
                     )
                 expert.reset_parameters()
         else:
             raise TypeError(
-                "experts must be an ExpertMLP, ImpedanceExpert, "
-                "list[ExpertMLP], list[ImpedanceExpert], or nn.ModuleList"
+                "experts must be an ExpertMLP, ImpedanceExpert, ResidualImpedanceExpert, "
+                "list[ExpertMLP], list[ImpedanceExpert], list[ResidualImpedanceExpert], or nn.ModuleList"
             )
 
         if len(self.experts) != router.num_experts:
@@ -87,11 +92,11 @@ class MoELayer(nn.Module):
                 f"Number of experts ({len(self.experts)}) does not match "
                 f"router.num_experts ({router.num_experts})"
             )
-        flavors = {isinstance(expert, ImpedanceExpert) for expert in self.experts}
-        if len(flavors) != 1:
+        expert_types = {type(expert) for expert in self.experts}
+        if len(expert_types) != 1:
             raise ValueError(
-                "MoE experts must be all direct (ExpertMLP) or all impedance "
-                "(ImpedanceExpert); mixing is not supported."
+                "MoE experts must all share the same class (ExpertMLP, ImpedanceExpert, "
+                f"or ResidualImpedanceExpert); mixing is not supported. Got: {[t.__name__ for t in expert_types]}"
             )
 
     def forward(

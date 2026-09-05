@@ -25,7 +25,10 @@ from phaseforge.models.components.expert import (
     partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
-from phaseforge.models.components.impedance_expert import ImpedanceExpert
+from phaseforge.models.components.impedance_expert import (
+    ImpedanceExpert,
+    ResidualImpedanceExpert,
+)
 from phaseforge.models.components.moe_layer import MoELayer
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.prototype_router import PrototypeRouter
@@ -124,7 +127,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         action_head: ActionHead,
         phase_head: PhaseClassificationHead,
         router: TopKRouter | PrototypeRouter,
-        expert: ExpertMLP | ImpedanceExpert,
+        expert: ExpertMLP | ImpedanceExpert | ResidualImpedanceExpert,
         router_init: dict[str, Any] | None = None,
         expert_init: dict[str, Any] | None = None,
         soft_mapping: dict[str, Any] | None = None,
@@ -220,7 +223,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         return {
             "memoryless": True,
             "router_type": type(router).__name__,
-            "expert_type": "impedance" if self._uses_impedance_experts() else "direct",
+            "expert_type": (
+                "residual_impedance"
+                if isinstance(self.moe_layer.experts[0], ResidualImpedanceExpert)
+                else ("impedance" if self._uses_impedance_experts() else "direct")
+            ),
             "top_k": int(router.top_k),
             "num_experts": int(router.num_experts),
         }

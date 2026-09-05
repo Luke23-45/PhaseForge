@@ -148,7 +148,8 @@ def warm_start_experts_from_action_head(
     }
 
     for expert in experts:
-        expert_sd = expert.state_dict()
+        target_expert = getattr(expert, "base_expert", expert)
+        expert_sd = target_expert.state_dict()
 
         new_dict: dict[str, Tensor] = {}
         for src_key, dst_key in mapping.items():
@@ -172,10 +173,10 @@ def warm_start_experts_from_action_head(
                 "ExpertMLP must match the ActionHead's single-hidden-layer "
                 "structure: use expert.hidden_dims=[<action_head.hidden_dim>]."
             )
-        expert.load_state_dict(new_dict, strict=True)
+        target_expert.load_state_dict(new_dict, strict=True)
 
         if jitter_std > 0.0:
-            for param in expert.parameters():
+            for param in target_expert.parameters():
                 param.data.add_(torch.randn_like(param.data) * jitter_std)
 
 
@@ -244,7 +245,7 @@ def partial_reinit_experts_from_action_head(
     if num_experts == 0:
         return []
 
-    first_expert: ExpertMLP = cast(ExpertMLP, experts[0])
+    first_expert: ExpertMLP = cast(ExpertMLP, getattr(experts[0], "base_expert", experts[0]))
     hidden_weight: Tensor = first_expert.hidden[0].weight  # type: ignore[assignment]
     output_weight: Tensor = first_expert.output_proj.weight  # type: ignore[assignment]
     hidden_dim, input_dim = hidden_weight.shape
@@ -265,7 +266,7 @@ def partial_reinit_experts_from_action_head(
     bound_o = math.sqrt(3.0) / math.sqrt(float(hidden_dim))
 
     for expert_idx, expert in enumerate(experts):
-        typed_expert = cast(ExpertMLP, expert)
+        typed_expert = cast(ExpertMLP, getattr(expert, "base_expert", expert))
         hw: Tensor = typed_expert.hidden[0].weight  # type: ignore[assignment]
         hb: Tensor = typed_expert.hidden[0].bias  # type: ignore[assignment]
         ow: Tensor = typed_expert.output_proj.weight  # type: ignore[assignment]

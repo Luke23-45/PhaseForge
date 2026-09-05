@@ -152,4 +152,87 @@ class ImpedanceExpert(nn.Module):
         return action
 
 
-__all__ = ["ImpedanceExpert"]
+class ResidualImpedanceExpert(nn.Module):
+    """Precision-Residual Expert (Professor §4.4, §10).
+
+    Combines:
+    1. Direct base action head matching ActionHead / ExpertMLP architecture
+       (warm-started via partial_reinit_experts_from_action_head).
+    2. Residual impedance compliance branch (delta, kappa) initialized with beta=0.0.
+    3. Direct gripper channel (un-lagged by impedance).
+
+    When beta == 0.0, output is strictly the warm-started direct action.
+    """
+
+    IS_IMPEDANCE = False
+    IS_RESIDUAL = True
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dims: list[int] | None = None,
+        hidden_dim: int = 256,
+        output_dim: int = ACTION_DIM,
+        action_scale: float | Sequence[float] | Tensor = (0.05, 0.05, 0.05, 0.5, 0.5, 0.5, 0.04),
+        kappa_min: float = 0.1,
+        kappa_max: float = 5.0,
+        beta: float = 0.0,
+    ) -> None:
+        super().__init__()
+        from phaseforge.models.components.expert import ExpertMLP
+
+        h_dim = hidden_dims[0] if (hidden_dims and len(hidden_dims) > 0) else hidden_dim
+        self.base_expert = ExpertMLP(input_dim=input_dim, hidden_dims=[h_dim], output_dim=output_dim)
+
+        self.input_dim = int(input_dim)
+        self.hidden_dim = int(h_dim)
+        self.output_dim = int(output_dim)
+        self.kappa_min = float(kappa_min)
+        self.kappa_max = float(kappa_max)
+        self.beta = float(beta)
+        if isinstance(action_scale, (int, float)):
+            self.action_scale = (float(action_scale),) * 7
+        else:
+            self.action_scale = tuple(float(v) for v in action_scale)
+
+        # Residual compliance heads (operational space 6D: translation + rotation)
+        self.delta_head = nn.Linear(self.hidden_dim, 6)
+        self.gain_head = nn.Linear(self.hidden_dim, 6)
+        self._init_residual_weights()
+
+    @property
+    def hidden(self):
+        return self.base_expert.hidden
+
+    @property
+    def output_proj(self):
+        return self.base_expert.output_proj
+
+    def _init_residual_weights(self) -> None:
+        nn.init.normal_(self.delta_head.weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(self.delta_head.bias)
+        nn.init.normal_(self.gain_head.weight, mean=0.0, std=1e-3)
+        nn.init.constant_(self.gain_head.bias, 0.54132485)
+
+    def reset_parameters(self) -> None:
+        self.base_expert.reset_parameters()
+        self._init_residual_weights()
+
+    def forward(self, latent: Tensor, task_state: Tensor | None = None) -> Tensor:
+        base_action = self.base_expert(latent)
+        if self.beta == 0.0:
+            return base_action
+
+        h = self.base_expert.hidden(latent)
+        delta = self.delta_head(h)
+        kappa = torch.nn.functional.softplus(self.gain_head(h)).clamp(
+            min=self.kappa_min, max=self.kappa_max
+        )
+        scale_6d = torch.as_tensor(self.action_scale[:6], dtype=latent.dtype, device=latent.device)
+        u_imp = torch.clamp((kappa * delta) / scale_6d, -1.0, 1.0)
+
+        a_trans_rot = torch.clamp(base_action[..., :6] + self.beta * u_imp, -1.0, 1.0)
+        return torch.cat([a_trans_rot, base_action[..., 6:7]], dim=-1)
+
+
+__all__ = ["ImpedanceExpert", "ResidualImpedanceExpert"]
