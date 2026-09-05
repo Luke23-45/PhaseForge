@@ -732,6 +732,203 @@ def state_spec_from_config(cfg: DictConfig) -> StateSpec:
     return spec
 
 
+def resolve_cache_dir(cfg: DictConfig) -> Path:
+    """Resolve the processed dataset cache directory for evaluation.
+
+    The cache contains ``norm_stats.pt``, ``trajectories/``, and optionally
+    ``phase_thresholds.json``. Because ``CacheManager.compute_hash`` includes
+    the git commit, checking out a fix or moving commits across training and
+    evaluation causes the newly computed hash to differ from the cache directory
+    created during training.
+
+    This function recovers the authentic cache directory by checking:
+    1. The exact directory ``processed_cache_root() / compute_hash(cfg.data)``.
+    2. The training run's recorded ``data_config_hash`` from ``run_meta.json``
+       or ``environment.json`` sibling to the evaluation checkpoint.
+    3. The repo-relative cache root ``PROJECT_ROOT / data / processed / cache``.
+    4. Any valid cache directory in the cache root whose ``task_index.json`` or
+       ``manifest.json`` matches the task name.
+    5. Falls back to ``processed_cache_root() / compute_hash(cfg.data)``.
+    """
+    from phaseforge.data.ingestion.cache_manager import CacheManager
+    from phaseforge.data.paths import DEFAULT_DATA_DIR, processed_cache_root
+
+    data_cfg = cfg.get("data") if hasattr(cfg, "get") else getattr(cfg, "data", None)
+    primary_root = processed_cache_root()
+    if data_cfg is None:
+        return primary_root
+
+    current_hash = CacheManager.compute_hash(data_cfg)
+    roots = [primary_root]
+
+    # If primary root is the default ./data/processed/cache and doesn't exist,
+    # also search repo-relative data root if it exists.
+    default_root = (Path(DEFAULT_DATA_DIR) / "processed" / "cache").resolve()
+    repo_cache_root = Path(__file__).resolve().parents[3] / "data" / "processed" / "cache"
+    if (
+        primary_root.resolve() == default_root
+        and not primary_root.exists()
+        and repo_cache_root.exists()
+        and repo_cache_root.resolve() != primary_root.resolve()
+    ):
+        roots.append(repo_cache_root)
+
+    # 1. Exact match for current hash
+    for root in roots:
+        cand = root / current_hash
+        if (cand / "norm_stats.pt").is_file() or (cand / "trajectories").is_dir():
+            return cand
+
+    # 2. Checkpoint provenance: read data_config_hash recorded by training
+    train_cfg = cfg.get("train") if hasattr(cfg, "get") else getattr(cfg, "train", None)
+    ckpt_path = train_cfg.get("stage1_ckpt_path") if train_cfg is not None and hasattr(train_cfg, "get") else None
+    if ckpt_path:
+        ckpt = Path(str(ckpt_path))
+        if not ckpt.is_absolute():
+            for base in [Path.cwd(), Path(__file__).resolve().parents[3]]:
+                if (base / ckpt).is_file():
+                    ckpt = base / ckpt
+                    break
+        search_dirs = [ckpt.parent, ckpt.parent.parent]
+        for sdir in search_dirs:
+            for meta_name in (
+                "run_meta.json",
+                "metadata/environment.json",
+                "metadata/data_provenance.json",
+            ):
+                meta_file = sdir / meta_name
+                if meta_file.is_file():
+                    try:
+                        data = json.loads(meta_file.read_text(encoding="utf-8"))
+                        train_hash = (
+                            data.get("data_config_hash")
+                            or data.get("config_hash")
+                            or (data.get("provenance") or {}).get("config_hash")
+                        )
+                        if train_hash:
+                            for root in roots:
+                                cand = root / str(train_hash)
+                                if (cand / "norm_stats.pt").is_file() or (cand / "trajectories").is_dir():
+                                    logger.info(
+                                        "Resolved cache dir from checkpoint provenance (%s): %s",
+                                        meta_name,
+                                        cand,
+                                    )
+                                    return cand
+                    except Exception:
+                        pass
+
+    # 3. Task matching across available caches
+    source_cfg = data_cfg.get("source") if hasattr(data_cfg, "get") else None
+    project_cfg = cfg.get("project") if hasattr(cfg, "get") else getattr(cfg, "project", None)
+
+    task_name = ""
+    if source_cfg is not None and hasattr(source_cfg, "get"):
+        task_name = str(source_cfg.get("task_name") or "")
+    if not task_name and project_cfg is not None and hasattr(project_cfg, "get"):
+        task_name = str(project_cfg.get("tag") or "")
+    if not task_name and hasattr(data_cfg, "get"):
+        task_name = str(data_cfg.get("task") or "")
+    task_name = task_name.strip().lower()
+
+    if task_name:
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for subdir in sorted(root.iterdir()):
+                if not subdir.is_dir() or subdir.name.endswith("_tmp"):
+                    continue
+                ti_file = subdir / "task_index.json"
+                if ti_file.is_file():
+                    try:
+                        ti = json.loads(ti_file.read_text(encoding="utf-8"))
+                        if any(task_name in k.lower() or k.lower() in task_name for k in ti.keys()):
+                            logger.info(
+                                "Resolved cache dir by task match (%r in task_index.json): %s",
+                                task_name,
+                                subdir,
+                            )
+                            return subdir
+                    except Exception:
+                        pass
+                man_file = subdir / "manifest.json"
+                if man_file.is_file():
+                    try:
+                        man = json.loads(man_file.read_text(encoding="utf-8"))
+                        prov = man.get("provenance") or {}
+                        split_names = prov.get("split_task_names") or {}
+                        all_names = [n.lower() for names in split_names.values() for n in names]
+                        if any(task_name in n or n in task_name for n in all_names):
+                            logger.info(
+                                "Resolved cache dir by task match in manifest.json: %s",
+                                subdir,
+                            )
+                            return subdir
+                        raw_files = prov.get("raw_files") or []
+                        if any(task_name in str(rf.get("name", "")).lower() for rf in raw_files):
+                            logger.info(
+                                "Resolved cache dir by raw file match in manifest.json: %s",
+                                subdir,
+                            )
+                            return subdir
+                    except Exception:
+                        pass
+
+    return primary_root / current_hash
+
+
+def resolve_rollout_normalizer(
+    cfg: DictConfig,
+    model: torch.nn.Module | None = None,
+    cache_dir: Path | None = None,
+) -> FrozenNormalizer:
+    """Resolve the FrozenNormalizer for rollout evaluation.
+
+    Resolution order:
+    1. Model persistent buffers (`model.get_normalizer_stats()`).
+       When the model already has ``normalizer_mean`` and ``normalizer_std``
+       buffers (restored from the checkpoint), this returns the exact statistics
+       the model was trained on, completely independent of disk cache state or git commit.
+    2. Explicit ``cache_dir / "norm_stats.pt"`` if provided and present.
+    3. Resolved cache directory from :func:`resolve_cache_dir`.
+    """
+    from phaseforge.data.common.normalizer import FrozenNormalizer
+
+    # 1. Model buffers (highest authority: exact training statistics)
+    target_model = getattr(model, "module", model)
+    if target_model is not None and hasattr(target_model, "get_normalizer_stats"):
+        mean, std = target_model.get_normalizer_stats()
+        if mean is not None and std is not None:
+            logger.info("Using normalizer statistics cached in model checkpoint buffers.")
+            return FrozenNormalizer(mean=mean.cpu().detach(), std=std.cpu().detach())
+
+    # 2. Provided cache_dir
+    if cache_dir is not None:
+        norm_file = Path(cache_dir) / "norm_stats.pt"
+        if norm_file.is_file():
+            return FrozenNormalizer.load(norm_file)
+        try:
+            return FrozenNormalizer.load(norm_file)
+        except (FileNotFoundError, OSError):
+            pass
+
+    # 3. Resolved cache directory
+    resolved = resolve_cache_dir(cfg)
+    norm_file = resolved / "norm_stats.pt"
+    if norm_file.is_file():
+        return FrozenNormalizer.load(norm_file)
+    try:
+        return FrozenNormalizer.load(norm_file)
+    except (FileNotFoundError, OSError):
+        pass
+
+    raise FileNotFoundError(
+        f"Could not load normalizer statistics: model has no registered "
+        f"normalizer buffers, and norm_stats.pt was not found at {norm_file} "
+        f"(nor in any resolved cache directory for data config)."
+    )
+
+
 def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
     """Recover the pinned env metadata from the cache (or raw HDF5, or dev).
 
@@ -746,14 +943,10 @@ def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
     looking but invalid results. Callers that genuinely want the fallback
     (local self-tests / gates) must opt in via ``eval.env.allow_dev_fallback``.
     """
-    from phaseforge.data.ingestion.cache_manager import CacheManager
-    from phaseforge.data.paths import processed_cache_root
-
-    hash_val = CacheManager.compute_hash(cfg.data)
-    cache_dir = processed_cache_root() / hash_val
+    cache_dir = resolve_cache_dir(cfg)
     if (cache_dir / "trajectories").is_dir():
         meta = env_metadata_from_cache(cache_dir)
-        logger.info("Pinned env metadata recovered from cache %s", hash_val)
+        logger.info("Pinned env metadata recovered from cache %s", cache_dir.name)
         return meta
 
     raw_dir = cfg.data.source.get("dir")
@@ -773,7 +966,7 @@ def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
     if not allow_dev:
         task_name = str(cfg.data.source.get("task_name") or "Lift")
         raise RuntimeError(
-            f"No processed cache (hash {hash_val}) and no raw HDF5 found for "
+            f"No processed cache (hash {cache_dir.name}) and no raw HDF5 found for "
             f"task {task_name!r} — the pinned environment metadata cannot be "
             "recovered, so a rollout would silently run against the wrong "
             "environment. Copy the dataset/cache to this machine (or re-ingest "
@@ -1005,9 +1198,9 @@ def _adapter_from_config(
 def run_rollout_evaluation(
     cfg: DictConfig,
     model: torch.nn.Module,
-    output_dir: str | Path,
-    run_id: str,
+    output_dir: Path,
     *,
+    run_id: str,
     checkpoint_sha256: str = "",
 ) -> dict[str, Any]:
     """Full rollout evaluation for one model checkpoint (called by the CLI).
@@ -1017,16 +1210,13 @@ def run_rollout_evaluation(
     cases -> strict-metric episode rows -> per-run summary.
     """
     require_rollout_eval_schema(cfg)
-    from phaseforge.data.common.normalizer import FrozenNormalizer
     from phaseforge.data.ingestion.cache_manager import CacheManager, load_phase_thresholds
-    from phaseforge.data.paths import processed_cache_root
 
     meta = resolve_pinned_metadata(cfg)
     bank = load_or_generate_bank(cfg, meta)
     adapter = _adapter_from_config(cfg, meta)
-    hash_val = CacheManager.compute_hash(cfg.data)
-    cache_dir = processed_cache_root() / hash_val
-    normalizer = FrozenNormalizer.load(cache_dir / "norm_stats.pt")
+    cache_dir = resolve_cache_dir(cfg)
+    normalizer = resolve_rollout_normalizer(cfg, model=model, cache_dir=cache_dir)
 
     # V2-E: evaluation-time routing intervention (learned/sticky/uniform/
     # oracle). Baselines that are not PhaseBootstrappedMoE have no eval_mode
@@ -1093,7 +1283,7 @@ def run_rollout_evaluation(
         )
     elif require_tracking:
         raise EnvParityError(
-            f"eval.episodes.require_phase_tracking=true but cache {hash_val} "
+            f"eval.episodes.require_phase_tracking=true but cache {cache_dir.name} "
             "has no phase_thresholds.json (it predates per-demo phase "
             "calibration). Re-ingest the raw HDF5 before per-phase success "
             "tracking can run."
@@ -1153,6 +1343,8 @@ __all__ = [
     "TRACE_LEVELS",
     "resolve_trace_level",
     "run_rollout_evaluation",
+    "resolve_cache_dir",
+    "resolve_rollout_normalizer",
     "resolve_pinned_metadata",
     "resolve_robosuite_requirement",
     "require_rollout_eval_schema",

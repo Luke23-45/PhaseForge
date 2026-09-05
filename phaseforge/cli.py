@@ -823,6 +823,18 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
             std = state_dict.get("normalizer_std")
             if mean is not None or std is not None:
                 model.set_normalizer_stats(mean, std)
+            else:
+                try:
+                    from phaseforge.evaluations.rollout.runner import resolve_cache_dir
+
+                    c_dir = resolve_cache_dir(cfg)
+                    norm_file = c_dir / "norm_stats.pt"
+                    if norm_file.is_file():
+                        norm_data = torch.load(norm_file, map_location="cpu", weights_only=False)
+                        if "mean" in norm_data and "std" in norm_data:
+                            model.set_normalizer_stats(norm_data["mean"], norm_data["std"])
+                except Exception:
+                    pass
         # ``soft_mapping`` is allowed to be missing (checkpoints predating
         # V2-B persistence load with the zero-initialized buffer; its
         # consumers fail closed on all-zero M rather than route silently).

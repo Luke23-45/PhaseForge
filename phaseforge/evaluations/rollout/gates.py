@@ -639,13 +639,10 @@ def gate_checkpoint_smoke(
     if num_episodes > len(bank.cases):
         num_episodes = len(bank.cases)
 
-    from phaseforge.data.common.normalizer import FrozenNormalizer
-    from phaseforge.data.ingestion.cache_manager import CacheManager
-    from phaseforge.data.paths import processed_cache_root
+    from phaseforge.evaluations.rollout.runner import resolve_rollout_normalizer
 
     try:
-        hash_val = CacheManager.compute_hash(cfg.data)
-        normalizer = FrozenNormalizer.load(processed_cache_root() / hash_val / "norm_stats.pt")
+        normalizer = resolve_rollout_normalizer(cfg, model=model)
     except Exception as exc:  # noqa: BLE001
         return GateResult(
             gate="6_checkpoint_smoke",
