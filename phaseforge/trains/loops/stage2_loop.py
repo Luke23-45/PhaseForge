@@ -179,26 +179,54 @@ class Stage2Trainer(BaseTrainer):
 
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
-        mask = batch.get("padding_mask")  # (B, T) boolean or None
-
-        # Action Loss (MSE, optionally weighted per phase)
+        mask = batch.get("padding_mask")  # (B, T)
+        # Action Loss (MSE, optionally weighted per dimension and/or per phase)
         phase_weights = self.train_cfg.get("phase_weights", None)
-        if phase_weights is not None and "phase" in batch:
-            weights_tensor = torch.as_tensor(phase_weights, dtype=torch.float32, device=self.device)
-            sample_weights = weights_tensor[batch["phase"].long()]
+        dim_weights = self.train_cfg.get("dim_weights", None)
+
+        if dim_weights is not None or phase_weights is not None:
             sq_err = F.mse_loss(out.action_pred, target_action, reduction="none")
-            if mask is not None:
-                sq_err = sq_err[mask]
-                sample_weights = sample_weights[mask]
-            if sq_err.ndim > 1:
-                action_loss = (sq_err.mean(dim=-1) * sample_weights).mean()
+            if dim_weights is not None:
+                dw_tensor = torch.as_tensor(dim_weights, dtype=torch.float32, device=self.device)
+                sq_err = sq_err * dw_tensor
+            if phase_weights is not None and "phase" in batch:
+                weights_tensor = torch.as_tensor(phase_weights, dtype=torch.float32, device=self.device)
+                sample_weights = weights_tensor[batch["phase"].long()]
+                if mask is not None:
+                    sq_err = sq_err[mask]
+                    sample_weights = sample_weights[mask]
+                if sq_err.ndim > 1:
+                    action_loss = (sq_err.mean(dim=-1) * sample_weights).mean()
+                else:
+                    action_loss = (sq_err * sample_weights).mean()
+            elif mask is not None:
+                action_loss = sq_err[mask].mean()
             else:
-                action_loss = (sq_err * sample_weights).mean()
+                action_loss = sq_err.mean()
         elif mask is not None:
             action_loss = F.mse_loss(out.action_pred, target_action, reduction="none")
             action_loss = action_loss[mask].mean()
         else:
             action_loss = F.mse_loss(out.action_pred, target_action)
+
+        # Release Kinematics Auxiliary Loss (Professor §4 Intervention C).
+        # When gripper is commanded to open during Place, penalizes lateral command
+        # drift (x, y velocities) to enforce "stop-then-drop" release stability.
+        release_loss = _zero_scalar(self.device)
+        rel_cfg = self.train_cfg.get("release_loss", None)
+        rel_enabled = bool(rel_cfg.get("enabled", False)) if rel_cfg is not None else False
+        if rel_enabled and target_action.size(-1) >= 7:
+            lambda_rel = float(rel_cfg.get("lambda_rel", 0.1))
+            grip_threshold = float(rel_cfg.get("gripper_threshold", 0.0))
+            is_releasing = target_action[..., 6] > grip_threshold
+            if "phase" in batch:
+                place_phase = int(rel_cfg.get("place_phase", 4))
+                is_releasing = is_releasing & (batch["phase"] == place_phase)
+            if mask is not None:
+                is_releasing = is_releasing & mask
+            if is_releasing.any():
+                lat_pred = out.action_pred[is_releasing, 0:2]
+                release_loss = lambda_rel * (lat_pred ** 2).sum(dim=-1).mean()
 
         # Balance Loss
         balance_loss = out.aux_losses.get("balance", _zero_scalar(self.device))
@@ -247,6 +275,7 @@ class Stage2Trainer(BaseTrainer):
         # Total Loss
         total_loss = (
             action_loss
+            + release_loss
             + balance_loss
             + sticky_coeff * sticky_loss
             + teacher_lambda * teacher_kl
@@ -301,6 +330,8 @@ class Stage2Trainer(BaseTrainer):
             "loss_teacher_kl": (teacher_lambda * teacher_kl).detach(),
             "teacher_lambda": teacher_lambda,
         }
+        if rel_enabled:
+            metrics["loss_release"] = release_loss.detach()
         if self.train_cfg.get("log_dimension_mse", False):
             with torch.no_grad():
                 diff_sq = (out.action_pred - target_action) ** 2

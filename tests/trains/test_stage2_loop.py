@@ -20,10 +20,10 @@ from phaseforge.trains.loops.stage2_loop import Stage2Trainer
 
 
 class _DictDataset(Dataset):
-    def __init__(self, num: int = 32, num_phases: int = 3, seed: int = 0) -> None:
+    def __init__(self, num: int = 32, num_phases: int = 3, seed: int = 0, action_dim: int = 2) -> None:
         gen = torch.Generator().manual_seed(seed)
         self.states = torch.randn(num, 4, generator=gen)
-        self.actions = torch.randn(num, 2, generator=gen)
+        self.actions = torch.randn(num, action_dim, generator=gen)
         self.phases = torch.randint(0, num_phases, (num,), generator=gen)
 
     def __len__(self) -> int:
@@ -51,12 +51,13 @@ class CountingMoEModel(torch.nn.Module):
         self.forward_calls += 1
         phase = batch["phase"]
         B = phase.size(0)
+        A = batch["action"].size(-1)
         indices = phase.unsqueeze(-1)
         weights = torch.ones(B, 1)
         gate = torch.zeros(B, self.num_experts)
         gate.scatter_(1, indices, 100.0)
         return ModelOutput(
-            action_pred=self.probe * torch.zeros(B, 2),
+            action_pred=self.probe * torch.zeros(B, A),
             phase_logits=None,
             routing_weights=weights,
             expert_indices=indices,
@@ -123,24 +124,28 @@ def _make_trainer(
     model: torch.nn.Module,
     val_loader: DataLoader,
     models_cfg: dict | None = None,
+    train_cfg: dict | None = None,
 ) -> Stage2Trainer:
+    base_train = {
+        "epochs": 1,
+        "grad_clip_norm": 0.0,
+        "log_every_n_steps": 1,
+        "freeze_encoder": False,
+        "optimizer": {
+            "_target_": "torch.optim.AdamW",
+            "lr": 1.0e-4,
+        },
+        "scheduler": {
+            "_target_": "torch.optim.lr_scheduler.CosineAnnealingLR",
+            "T_max": 1,
+        },
+    }
+    if train_cfg:
+        base_train.update(train_cfg)
     cfg = DictConfig(
         {
             "project": {"device": "cpu"},
-            "train": {
-                "epochs": 1,
-                "grad_clip_norm": 0.0,
-                "log_every_n_steps": 1,
-                "freeze_encoder": False,
-                "optimizer": {
-                    "_target_": "torch.optim.AdamW",
-                    "lr": 1.0e-4,
-                },
-                "scheduler": {
-                    "_target_": "torch.optim.lr_scheduler.CosineAnnealingLR",
-                    "T_max": 1,
-                },
-            },
+            "train": base_train,
             **({"models": models_cfg} if models_cfg else {}),
         }
     )
@@ -555,3 +560,78 @@ def test_validate_aggregation_exact_python_float_math() -> None:
     for k, v in expected.items():
         assert k in val_metrics, f"metric {k} missing from validation output"
         assert val_metrics[k] == v, f"{k}: {val_metrics[k]!r} != {v!r}"
+
+
+def test_dim_weights_scales_action_loss() -> None:
+    """Verifies that train.dim_weights correctly scales the per-dimension action MSE."""
+    model = CountingMoEModel(num_experts=3)
+    dataset = _DictDataset(num=8, seed=50, action_dim=2)
+    loader = DataLoader(dataset, batch_size=8)
+    weights = [1.0, 4.0]
+    trainer = _make_trainer(model, loader, train_cfg={"dim_weights": weights})
+
+    batch = next(iter(loader))
+    out = model(batch)
+    _, metrics = trainer._compute_loss(batch, out=out)
+
+    sq_diff = (out.action_pred - batch["action"]) ** 2
+    expected_loss = (sq_diff * torch.tensor(weights, dtype=torch.float32)).mean()
+    assert torch.isclose(metrics["loss_action"], expected_loss, atol=1e-6)
+
+
+def test_release_loss_active_on_gripper_opening() -> None:
+    """Verifies that train.release_loss penalizes lateral velocity only during place with gripper opening."""
+    model = CountingMoEModel(num_experts=5)
+    dataset = _DictDataset(num=4, seed=60, action_dim=7)
+    # Set phase=4 (place phase), gripper > 0 (releasing)
+    dataset.phases = torch.tensor([4, 4, 1, 4])
+    dataset.actions[:, 6] = torch.tensor([1.0, 0.5, 1.0, -1.0])
+    loader = DataLoader(dataset, batch_size=4)
+
+    rel_cfg = {
+        "release_loss": {
+            "enabled": True,
+            "lambda_rel": 0.5,
+            "gripper_threshold": 0.0,
+            "place_phase": 4,
+        }
+    }
+    trainer = _make_trainer(model, loader, train_cfg=rel_cfg)
+    batch = next(iter(loader))
+    out = model(batch)
+    # Set non-zero predicted actions on lateral components
+    out.action_pred = torch.tensor([
+        [0.2, 0.3, 0.0, 0.0, 0.0, 0.0, 1.0],
+        [0.1, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0],
+        [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0],  # phase 1, should be ignored
+        [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, -1.0], # gripper <= 0, should be ignored
+    ])
+
+    _, metrics = trainer._compute_loss(batch, out=out)
+    assert "loss_release" in metrics
+    # Samples 0 and 1:
+    # Sample 0: 0.2^2 + 0.3^2 = 0.04 + 0.09 = 0.13
+    # Sample 1: 0.1^2 + 0.2^2 = 0.01 + 0.04 = 0.05
+    # Mean: (0.13 + 0.05) / 2 = 0.09
+    # Scaled by lambda_rel (0.5) = 0.045
+    expected_rel = 0.5 * 0.09
+    assert torch.isclose(metrics["loss_release"], torch.tensor(expected_rel), atol=1e-5)
+
+
+def test_log_dimension_mse_subspace_metrics() -> None:
+    """Verifies that train.log_dimension_mse logs fine-grained subspace action MSEs."""
+    model = CountingMoEModel(num_experts=5)
+    dataset = _DictDataset(num=4, seed=70, action_dim=7)
+    dataset.phases = torch.tensor([4, 4, 2, 3])
+    loader = DataLoader(dataset, batch_size=4)
+    trainer = _make_trainer(model, loader, train_cfg={"log_dimension_mse": True})
+
+    batch = next(iter(loader))
+    out = model(batch)
+    _, metrics = trainer._compute_loss(batch, out=out)
+
+    assert "loss_action_pos" in metrics
+    assert "loss_action_rot" in metrics
+    assert "loss_action_grip" in metrics
+    assert "loss_action_place" in metrics
+
