@@ -207,6 +207,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Python interpreter for Tool Hang steps (also PHASEFORGE_TOOLHANG_PYTHON). "
         "Defaults to .venv-toolhang/bin/python or .venv-toolhang/Scripts/python.exe.",
     )
+    parser.add_argument(
+        "--no-commit-gate",
+        action="store_true",
+        help="Disable git commit gating: allow reusing completed checkpoints from previous git commits.",
+    )
     return parser.parse_args(argv)
 
 
@@ -634,14 +639,21 @@ def run(args: argparse.Namespace) -> int:
         _print_methods(protocol, list(selection.methods))
         return 0
 
-    commit = _current_commit()
+    commit = None if args.no_commit_gate else _current_commit()
     if commit is None:
-        print(
-            "[runner] WARNING: git unavailable — commit gating disabled; stale "
-            "pre-fix checkpoints will NOT be filtered. Verify the tree is clean "
-            "at the intended revision before trusting results.",
-            file=sys.stderr,
-        )
+        if args.no_commit_gate:
+            print(
+                "[runner] commit gating disabled via --no-commit-gate; reusing "
+                "completed checkpoints from previous revisions.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "[runner] WARNING: git unavailable — commit gating disabled; stale "
+                "pre-fix checkpoints will NOT be filtered. Verify the tree is clean "
+                "at the intended revision before trusting results.",
+                file=sys.stderr,
+            )
     else:
         print(f"[runner] commit gate: {commit}")
 

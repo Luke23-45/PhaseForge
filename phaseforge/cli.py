@@ -658,6 +658,11 @@ def _train_body(
 
             logger.info(f"Loading Stage 1 checkpoint from {ckpt_path}...")
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            if hasattr(model, "set_normalizer_stats"):
+                mean = ckpt["model_state_dict"].get("normalizer_mean")
+                std = ckpt["model_state_dict"].get("normalizer_std")
+                if (mean is not None or std is not None) and not hasattr(model, "normalizer_mean"):
+                    model.set_normalizer_stats(mean, std)
             _load_state_dict_checked(
                 model,
                 ckpt["model_state_dict"],
@@ -669,6 +674,9 @@ def _train_body(
                     # lack the key (zeros stay until bootstrap fills it), and
                     # baseline architectures legitimately drop it.
                     "soft_mapping",
+                    # Persistent normalizer buffers saved with Stage 1 are loaded
+                    # into models with set_normalizer_stats; baselines legitimately drop them.
+                    "normalizer_",
                 )
                 + _unused_stage1_head_prefixes(model),
             )
@@ -809,14 +817,21 @@ def build_eval_model(cfg: DictConfig) -> torch.nn.Module:
     if ckpt_path:
         logger.info(f"Loading checkpoint from {ckpt_path}...")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state_dict = ckpt["model_state_dict"]
+        if hasattr(model, "set_normalizer_stats"):
+            mean = state_dict.get("normalizer_mean")
+            std = state_dict.get("normalizer_std")
+            if mean is not None or std is not None:
+                model.set_normalizer_stats(mean, std)
         # ``soft_mapping`` is allowed to be missing (checkpoints predating
         # V2-B persistence load with the zero-initialized buffer; its
         # consumers fail closed on all-zero M rather than route silently).
+        # ``normalizer_`` covers models that legitimately do not track normalizer buffers.
         _load_state_dict_checked(
             model,
-            ckpt["model_state_dict"],
+            state_dict,
             "Evaluation checkpoint load",
-            expected_unexpected_prefixes=("soft_mapping",),
+            expected_unexpected_prefixes=("soft_mapping", "normalizer_"),
         )
         # Restore the stage attribute — it is a plain Python int, NOT in state_dict(),
         # so load_state_dict() leaves it at the __init__ default (1).

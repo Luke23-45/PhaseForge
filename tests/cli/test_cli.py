@@ -272,3 +272,94 @@ def test_phase_head_required_when_target_uses_it() -> None:
             "teacher_forced <- bc bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
+
+
+def test_load_state_dict_checked_normalizer_stats() -> None:
+    """Checkpoints containing normalizer buffers load cleanly into models with and without normalizer support."""
+    # Model without set_normalizer_stats legitimately drops normalizer_ keys when allowed
+    dummy = _DummyModel()
+    sd = dict(dummy.state_dict())
+    sd["normalizer_mean"] = torch.zeros(4)
+    sd["normalizer_std"] = torch.ones(4)
+    cli._load_state_dict_checked(
+        dummy,
+        sd,
+        "Evaluation checkpoint load",
+        expected_unexpected_prefixes=("soft_mapping", "normalizer_"),
+    )
+
+    # Model with set_normalizer_stats has the buffers registered and matches exactly
+    pf = _build_model_for_test("phaseforge")
+    dim = pf.encoder.hidden[0].in_features
+    mean = torch.randn(dim)
+    std = torch.ones(dim)
+    pf.set_normalizer_stats(mean, std)
+    sd_pf = pf.state_dict()
+    assert "normalizer_mean" in sd_pf
+    assert "normalizer_std" in sd_pf
+
+    fresh_pf = _build_model_for_test("phaseforge")
+    fresh_pf.set_normalizer_stats(sd_pf["normalizer_mean"], sd_pf["normalizer_std"])
+    cli._load_state_dict_checked(
+        fresh_pf,
+        sd_pf,
+        "Evaluation checkpoint load",
+        expected_unexpected_prefixes=("soft_mapping", "normalizer_"),
+    )
+    m_ret, s_ret = fresh_pf.get_normalizer_stats()
+    assert torch.allclose(m_ret, mean)
+    assert torch.allclose(s_ret, std)
+
+
+def test_build_eval_model_restores_normalizer_stats(tmp_path) -> None:
+    """build_eval_model automatically restores normalizer stats from checkpoint."""
+    from omegaconf import DictConfig, OmegaConf
+
+    data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+    model_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    cfg = DictConfig(
+        {"models": model_cfg, "data": data_cfg, "project": {"seed": 42}, "train": {}}
+    )
+    model = cli.build_model(cfg)
+    dim = model.encoder.hidden[0].in_features
+    mean = torch.randn(dim)
+    std = torch.ones(dim) * 2.0
+    model.set_normalizer_stats(mean, std)
+
+    ckpt_path = tmp_path / "checkpoint_best.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "stage": 2,
+        },
+        ckpt_path,
+    )
+
+    cfg.train.stage1_ckpt_path = str(ckpt_path)
+    eval_model = cli.build_eval_model(cfg)
+    assert getattr(eval_model, "stage", None) == 2
+    m_ret, s_ret = eval_model.get_normalizer_stats()
+    assert m_ret is not None and torch.allclose(m_ret, mean)
+    assert s_ret is not None and torch.allclose(s_ret, std)
+
+
+def test_build_eval_model_fails_closed_on_corrupt_unexpected_key(tmp_path) -> None:
+    """build_eval_model still hard-fails on truly unexpected keys."""
+    from omegaconf import DictConfig, OmegaConf
+
+    data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
+    model_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    cfg = DictConfig(
+        {"models": model_cfg, "data": data_cfg, "project": {"seed": 42}, "train": {}}
+    )
+    model = cli.build_model(cfg)
+    sd = dict(model.state_dict())
+    sd["corrupt_head_extra_param"] = torch.zeros(4)
+
+    ckpt_path = tmp_path / "checkpoint_best.pt"
+    torch.save({"model_state_dict": sd, "stage": 2}, ckpt_path)
+
+    cfg.train.stage1_ckpt_path = str(ckpt_path)
+    with pytest.raises(RuntimeError, match="corrupt_head_extra_param"):
+        cli.build_eval_model(cfg)
+

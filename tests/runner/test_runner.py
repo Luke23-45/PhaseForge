@@ -547,6 +547,17 @@ def test_registry_commit_gate_disabled_when_git_unavailable(tmp_path: Path) -> N
     assert state_ungated.get_ckpt("bc", 42, 1) == "p/bc/c.pt"
 
 
+def test_runner_no_commit_gate_flag() -> None:
+    from phaseforge.runner.cli import parse_args
+
+    args_default = parse_args([])
+    assert not args_default.no_commit_gate
+
+    args_flag = parse_args(["--no-commit-gate"])
+    assert args_flag.no_commit_gate is True
+
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
