@@ -29,6 +29,7 @@ def lip_penalty(
     num_pairs: int = 256,
     max_ratio: float = 10.0,
     min_delta_state: float = 1e-4,
+    coord_slice: tuple[int, int] | None = None,
 ) -> Tensor:
     """Lipschitz penalty over deterministic within-expert pairs.
 
@@ -44,6 +45,10 @@ def lip_penalty(
         num_pairs: Cap on evaluated pairs.
         max_ratio: Maximum clamped ratio to prevent gradient explosions.
         min_delta_state: Minimum task-state displacement to avoid singular division.
+        coord_slice: Optional slice ``(start, end)`` of coordinates over which to
+            evaluate contraction. Defaults to ``(0, 3)`` (Cartesian position)
+            when ``Dy >= 8`` to avoid non-Euclidean quaternion double-cover and
+            discrete gripper switching artifacts.
     """
     if float(rho) < 0.0 or float(rho) >= 1.0:
         raise ValueError(f"rho must satisfy 0 <= rho < 1, got {rho}.")
@@ -57,6 +62,17 @@ def lip_penalty(
     cap = max(0, int(num_pairs))
     if cap == 0:
         return torch.zeros((), device=targets.device, dtype=targets.dtype)
+
+    if coord_slice is not None:
+        s0, s1 = coord_slice
+        eval_targets = targets[:, s0:s1]
+        eval_states = task_states[:, s0:s1]
+    elif targets.shape[-1] >= 8:
+        eval_targets = targets[:, :3]
+        eval_states = task_states[:, :3]
+    else:
+        eval_targets = targets
+        eval_states = task_states
 
     flat_trajs: Tensor | None = None
     if trajectory_ids is not None:
@@ -88,7 +104,7 @@ def lip_penalty(
     second_idx = torch.cat(second_list)
 
     # Batched vector difference & norms across all candidate pairs
-    delta_state = torch.linalg.vector_norm(task_states[first_idx] - task_states[second_idx], dim=-1)
+    delta_state = torch.linalg.vector_norm(eval_states[first_idx] - eval_states[second_idx], dim=-1)
     valid_mask = delta_state >= float(min_delta_state)
 
     if not bool(valid_mask.any()):
@@ -98,7 +114,7 @@ def lip_penalty(
     second_valid = second_idx[valid_mask][:cap]
     valid_delta_state = delta_state[valid_mask][:cap]
 
-    delta_target = torch.linalg.vector_norm(targets[first_valid] - targets[second_valid], dim=-1)
+    delta_target = torch.linalg.vector_norm(eval_targets[first_valid] - eval_targets[second_valid], dim=-1)
     ratios = torch.clamp(delta_target / (valid_delta_state + float(eps)), max=float(max_ratio))
 
     if not torch.isfinite(ratios).all():

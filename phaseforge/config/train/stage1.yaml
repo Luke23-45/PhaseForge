@@ -64,6 +64,7 @@ lipschitz:
   lambda_lip: 0.1
   rho: 0.8
   num_pairs: 256
+  coord_slice: [0, 3]
 gain_reg:
   enabled: false
   lambda_gain: 1.0e-4

@@ -21,6 +21,6 @@ expert:
   _target_: phaseforge.models.components.impedance_expert.ImpedanceExpert
   input_dim: 128
   hidden_dim: 256
-  action_scale: 1.0
+  action_scale: [0.05, 0.05, 0.05, 0.5, 0.5, 0.5, 0.04]
   kappa_min: 0.1
   kappa_max: 5.0

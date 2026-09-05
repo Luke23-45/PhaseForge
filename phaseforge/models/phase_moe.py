@@ -4,6 +4,7 @@ import logging
 from typing import Any, cast
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -597,6 +598,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         non_blocking = torch.device(device).type == "cuda"
 
         # 1. Collect training latents and phase labels if needed for data-driven router inits
+        # and task states for impedance experts.
         needs_latents = r_type in (
             "centroid",
             "phase_centroid",
@@ -605,8 +607,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             "kmeans",
             "soft_mapping",
         )
+        needs_task_states = self._uses_impedance_experts()
+        needs_data = needs_latents or needs_task_states
         latents_list: list[Tensor] = []
         phases_list: list[Tensor] = []
+        task_states_list: list[Tensor] = []
 
         # PhaseForge 2.0: prototype_source selects which label vocabulary the
         # router centroids are built from. "rule" = canonical phase labels
@@ -642,11 +647,14 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
         else:
             proto_source_norm = "dynamic"
 
-        if needs_latents:
+        all_phases: Tensor | None = None
+        if needs_data:
             logger.info(
-                "Computing latent representations across training dataloader "
-                "(router prototype_source=%r)…",
+                "Scanning training dataloader for bootstrap "
+                "(router prototype_source=%r, needs_latents=%s, needs_task_states=%s)…",
                 proto_source_norm,
+                needs_latents,
+                needs_task_states,
             )
             for batch in dataloader:
                 state = batch["state"].to(device, non_blocking=non_blocking)
@@ -664,54 +672,77 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                             "dynamics (data.dynamics.enabled=false or stale cache). "
                             "Enable dynamics and re-ingest, or set prototype_source='rule'."
                         )
-                    else:
+                    elif needs_latents:
                         raise RuntimeError(
                             "Batch missing phase labels for dynamic prototype source."
                         )
+                    else:
+                        phase = None
                 elif proto_source_norm == "topo":
                     if "phase_topo" in batch:
                         phase = batch["phase_topo"].to(device, non_blocking=non_blocking)
-                    else:
+                    elif needs_latents:
                         raise RuntimeError(
                             "router_init.prototype_source='topo' but batch has no "
                             "'phase_topo' key. The dataloader was built without "
                             "topo discovery (data.topo.enabled=false or stale cache). "
                             "Enable topo and re-ingest, or set prototype_source='rule'."
                         )
+                    else:
+                        phase = None
                 else:  # rule
                     if "phase_rule" in batch:
                         phase = batch["phase_rule"].to(device, non_blocking=non_blocking)
-                    else:
+                    elif "phase" in batch and batch["phase"] is not None:
                         phase = batch["phase"].to(device, non_blocking=non_blocking)
+                    elif needs_latents:
+                        raise RuntimeError("Batch missing phase labels for rule prototype source.")
+                    else:
+                        phase = None
 
                 if state.ndim == 3:
                     state = state.view(-1, state.size(-1))
-                    phase = phase.view(-1)
+                    if phase is not None:
+                        phase = phase.view(-1)
 
-                latent = self.encoder(state)
-                latents_list.append(latent)
-                phases_list.append(phase)
+                if needs_latents:
+                    latent = self.encoder(state)
+                    latents_list.append(latent)
+                    if phase is not None:
+                        phases_list.append(phase)
 
-            if not latents_list:
-                raise ValueError("Bootstrap dataloader is empty. Cannot compute prototypes.")
+                if needs_task_states:
+                    try:
+                        t_state = self._task_state(state)
+                        task_states_list.append(t_state)
+                        if not needs_latents and phase is not None:
+                            phases_list.append(phase)
+                    except Exception as exc:
+                        logger.warning("Could not extract task state in bootstrap_moe: %s", exc)
 
-            all_latents = torch.cat(latents_list, dim=0)
-            all_phases = torch.cat(phases_list, dim=0)
-            logger.info(
-                f"Collected {all_latents.size(0)} training latent vectors (dim={latent_dim}) "
-                f"for prototype_source={proto_source_norm} "
-                f"(unique phases: {torch.unique(all_phases).tolist()})."
-            )
+            if needs_latents:
+                if not latents_list:
+                    raise ValueError("Bootstrap dataloader is empty. Cannot compute prototypes.")
 
-            if proto_source_norm in ("topo", "dynamic"):
-                unique_labels, inverse_indices = torch.unique(all_phases, return_inverse=True)
-                effective_num_phases = len(unique_labels)
-                all_phases = inverse_indices
+                all_latents = torch.cat(latents_list, dim=0)
+                all_phases = torch.cat(phases_list, dim=0)
                 logger.info(
-                    f"Dynamic/topo regimes mapped to {effective_num_phases} contiguous clusters: {unique_labels.tolist()}"
+                    f"Collected {all_latents.size(0)} training latent vectors (dim={latent_dim}) "
+                    f"for prototype_source={proto_source_norm} "
+                    f"(unique phases: {torch.unique(all_phases).tolist()})."
                 )
-            else:
-                effective_num_phases = num_phases
+
+                if proto_source_norm in ("topo", "dynamic"):
+                    unique_labels, inverse_indices = torch.unique(all_phases, return_inverse=True)
+                    effective_num_phases = len(unique_labels)
+                    all_phases = inverse_indices
+                    logger.info(
+                        f"Dynamic/topo regimes mapped to {effective_num_phases} contiguous clusters: {unique_labels.tolist()}"
+                    )
+                else:
+                    effective_num_phases = num_phases
+            elif phases_list:
+                all_phases = torch.cat(phases_list, dim=0)
 
         # 2. Router Initialization
         if r_type in ("centroid", "phase_centroid"):
@@ -842,7 +873,50 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             "type": e_type,
             "jitter_std": jitter_std,
         }
-        if e_type == "warmstart":
+        if self._uses_impedance_experts():
+            logger.info(
+                f"Initializing {num_experts} ImpedanceExperts with task-space centroids..."
+            )
+            if task_states_list:
+                all_task_states = torch.cat(task_states_list, dim=0)
+                global_task_mean = all_task_states.mean(dim=0)
+                if global_task_mean.shape[-1] >= 8:
+                    q = global_task_mean[3:7]
+                    q = q / q.norm().clamp(min=1e-12)
+                    if q[0] < 0:
+                        q = -q
+                    global_task_mean[3:7] = q
+
+                for k, expert in enumerate(self.moe_layer.experts):
+                    expert_typed = cast(ImpedanceExpert, expert)
+                    expert_typed.reset_parameters()
+                    mask = (all_phases == k) if all_phases is not None else torch.tensor([], dtype=torch.bool)
+                    if mask.sum() > 0:
+                        k_mean = all_task_states[mask].mean(dim=0)
+                        if k_mean.shape[-1] >= 8:
+                            q = k_mean[3:7]
+                            q = q / q.norm().clamp(min=1e-12)
+                            if q[0] < 0:
+                                q = -q
+                            k_mean[3:7] = q
+                        centroid_k = k_mean
+                    else:
+                        centroid_k = global_task_mean.clone()
+
+                    expert_typed.target_init_bias = centroid_k.detach().cpu()
+                    expert_typed.target_head.bias.data.copy_(
+                        centroid_k.to(
+                            device=expert_typed.target_head.bias.device,
+                            dtype=expert_typed.target_head.bias.dtype,
+                        )
+                    )
+                    nn.init.constant_(expert_typed.gain_head.bias, 0.54132485)
+                expert_init_info["task_centroids_initialized"] = True
+            else:
+                for expert in self.moe_layer.experts:
+                    cast(ImpedanceExpert, expert).reset_parameters()
+                expert_init_info["task_centroids_initialized"] = False
+        elif e_type == "warmstart":
             warm_start_experts_from_action_head(
                 self.moe_layer.experts, self.action_head, jitter_std=jitter_std
             )

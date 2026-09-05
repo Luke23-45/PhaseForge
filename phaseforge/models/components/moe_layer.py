@@ -280,7 +280,7 @@ class MoELayer(nn.Module):
         select = weights.size(-1)
         first = cast(ImpedanceExpert, self.experts[0])
         task_dim, error_dim = first.task_state_dim, first.error_dim
-        scale = float(getattr(first, "action_scale", 1.0))
+        scale = getattr(first, "action_scale", 1.0)
 
         # Fast-path for single-sample top-1 evaluation/rollout (B=1, select=1)
         if batch_size == 1 and select == 1:

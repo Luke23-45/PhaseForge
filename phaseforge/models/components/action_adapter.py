@@ -29,6 +29,8 @@ quaternions). The primary top-1 path is exact.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import torch
 from torch import Tensor
 
@@ -102,16 +104,26 @@ def impedance_action(
     target: Tensor,
     gains: Tensor,
     task_state: Tensor,
-    scale: float = 1.0,
+    scale: float | Sequence[float] | Tensor = 1.0,
 ) -> tuple[Tensor, dict[str, Tensor]]:
     """Map one expert's ``(T, κ)`` and ``y`` to a clipped action.
 
     Returns ``(action (..., 7), {"task_error": e, "pre_clip_u": u})`` with
-    ``u = κ ⊙ e`` and ``a = tanh(u / s)``. Gains must be finite;
+    ``u = κ ⊙ e`` and ``a = tanh(u / s)``. Scale ``s`` may be a positive
+    scalar or a per-dimension positive scale vector (e.g. matching the OSC
+    controller's physical command bounds). Gains must be finite;
     non-positive gains fail closed (they would flip the feedback sign).
     """
-    if float(scale) <= 0.0:
-        raise ValueError(f"Action scale must be > 0.0, got {scale}.")
+    if isinstance(scale, (int, float)):
+        if float(scale) <= 0.0:
+            raise ValueError(f"Action scale must be > 0.0, got {scale}.")
+        scale_factor: float | Tensor = float(scale)
+    else:
+        scale_tensor = torch.as_tensor(scale, dtype=target.dtype, device=target.device)
+        if bool((scale_tensor <= 0.0).any()):
+            raise ValueError(f"Action scale elements must be strictly positive, got {scale}.")
+        scale_factor = scale_tensor
+
     error = task_error(target, task_state)
     if gains.shape != error.shape:
         raise ValueError(
@@ -123,7 +135,7 @@ def impedance_action(
     if bool((gains <= 0.0).any()):
         raise ValueError("Impedance gains must be strictly positive.")
     command = gains * error
-    action = torch.tanh(command / float(scale))
+    action = torch.tanh(command / scale_factor)
     return action, {"task_error": error, "pre_clip_u": command}
 
 

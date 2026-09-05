@@ -18,6 +18,8 @@ keeps its direct action head for warm-starting the shared encoder only.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -35,9 +37,10 @@ class ImpedanceExpert(nn.Module):
         task_state_dim: Target task-state width (default 8).
         error_dim: Gain/error width (default 7).
         action_dim: Environment action width (default 7).
-        action_scale: Command scale ``s`` in ``a = tanh(u / s)`` (> 0).
+        action_scale: Command scale ``s`` in ``a = tanh(u / s)`` (> 0, scalar or per-dim vector).
         kappa_min: Lower gain clamp (must be > 0).
         kappa_max: Upper gain clamp (>= kappa_min).
+        target_init_bias: Optional initial bias for the target task state head.
     """
 
     IS_IMPEDANCE = True
@@ -49,17 +52,31 @@ class ImpedanceExpert(nn.Module):
         task_state_dim: int = TASK_STATE_DIM,
         error_dim: int = TASK_ERROR_DIM,
         action_dim: int = ACTION_DIM,
-        action_scale: float = 1.0,
+        action_scale: float | Sequence[float] | Tensor = 1.0,
         kappa_min: float = 0.1,
         kappa_max: float = 5.0,
+        target_init_bias: Sequence[float] | Tensor | None = None,
     ) -> None:
         super().__init__()
         if hidden_dim < 1:
             raise ValueError(f"hidden_dim must be >= 1, got {hidden_dim}")
         if task_state_dim < 1 or error_dim < 1 or action_dim < 1:
             raise ValueError("task/error/action dims must be positive.")
-        if float(action_scale) <= 0.0:
-            raise ValueError(f"action_scale must be > 0.0, got {action_scale}.")
+        if isinstance(action_scale, (int, float)):
+            if float(action_scale) <= 0.0:
+                raise ValueError(f"action_scale must be > 0.0, got {action_scale}.")
+            self.action_scale: float | tuple[float, ...] = float(action_scale)
+        else:
+            try:
+                scale_seq = tuple(float(v) for v in action_scale)
+            except Exception as exc:
+                raise ValueError(
+                    f"action_scale must be a float or sequence of floats, got {action_scale}."
+                ) from exc
+            if any(v <= 0.0 for v in scale_seq):
+                raise ValueError(f"action_scale elements must be > 0.0, got {action_scale}.")
+            self.action_scale = scale_seq
+
         kappa_lo, kappa_hi = float(kappa_min), float(kappa_max)
         if kappa_lo <= 0.0 or kappa_hi < kappa_lo:
             raise ValueError(f"Require 0 < kappa_min <= kappa_max, got {kappa_lo, kappa_hi}.")
@@ -68,9 +85,13 @@ class ImpedanceExpert(nn.Module):
         self.task_state_dim = int(task_state_dim)
         self.error_dim = int(error_dim)
         self.output_dim = int(action_dim)
-        self.action_scale = float(action_scale)
         self.kappa_min = kappa_lo
         self.kappa_max = kappa_hi
+        self.target_init_bias = (
+            torch.as_tensor(target_init_bias, dtype=torch.float32).clone()
+            if target_init_bias is not None
+            else None
+        )
 
         self.trunk = nn.Sequential(nn.Linear(self.input_dim, self.hidden_dim), nn.GELU())
         self.target_head = nn.Linear(self.hidden_dim, self.task_state_dim)
@@ -83,6 +104,14 @@ class ImpedanceExpert(nn.Module):
             if isinstance(module, nn.Linear):
                 nn.init.kaiming_uniform_(module.weight, nonlinearity="linear")
                 nn.init.zeros_(module.bias)
+        if hasattr(self, "target_head"):
+            nn.init.normal_(self.target_head.weight, mean=0.0, std=1e-3)
+            if self.target_init_bias is not None:
+                self.target_head.bias.data.copy_(self.target_init_bias.to(self.target_head.bias.dtype))
+        if hasattr(self, "gain_head"):
+            nn.init.normal_(self.gain_head.weight, mean=0.0, std=1e-3)
+            # softplus(x) = ln(1 + e^x) = 1.0 => x = ln(e - 1) ≈ 0.54132485 gives exact nominal stiffness
+            nn.init.constant_(self.gain_head.bias, 0.54132485)
 
     def reset_parameters(self) -> None:
         """Re-initialize all weights (symmetry-breaking, MoE template clones)."""

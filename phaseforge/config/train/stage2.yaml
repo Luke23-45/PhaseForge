@@ -89,6 +89,7 @@ lipschitz:
   lambda_lip: 0.1
   rho: 0.8
   num_pairs: 256
+  coord_slice: [0, 3]
 
 # Gain regularization (Professor §9): E||kappa - kappa_nominal||^2 against
 # pathological stiffness. Disabled by default; impedance experts only.
