@@ -15,7 +15,7 @@ required pretraining stages injected first when ``with_dependencies`` is set.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -301,6 +301,10 @@ def load_protocol(path: str | Path) -> Protocol:
         OSError: The file cannot be read.
     """
     p = Path(path)
+    if p.is_dir():
+        main_json = p / "main.json"
+        if main_json.exists():
+            p = main_json
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -330,10 +334,39 @@ def load_protocol(path: str | Path) -> Protocol:
     defaults = tuple(defaults_raw)
 
     methods_raw = raw.get("methods")
-    if not isinstance(methods_raw, list) or not methods_raw:
-        raise ProtocolError(f"Protocol {name!r}: 'methods' must be a non-empty list.")
+    manifests_ref = raw.get("manifests") or raw.get("includes")
 
-    methods: list[Method] = [_parse_method(m) for m in methods_raw]
+    if not methods_raw and not manifests_ref:
+        raise ProtocolError(f"Protocol {name!r}: either 'methods' or 'manifests' must be provided.")
+
+    if manifests_ref and not methods_raw:
+        if isinstance(manifests_ref, dict):
+            sub_paths = list(manifests_ref.values())
+        elif isinstance(manifests_ref, list):
+            sub_paths = manifests_ref
+        else:
+            raise ProtocolError(f"Protocol {name!r}: 'manifests' must be a list or dict of paths.")
+
+        sub_methods: list[Method] = []
+        sub_dir = p.parent
+        global_idx = 1
+        for sub_p_str in sub_paths:
+            sub_p = Path(sub_p_str)
+            if not sub_p.is_absolute():
+                sub_p = sub_dir / sub_p
+            if not sub_p.exists():
+                raise ProtocolError(f"Protocol {name!r}: referenced manifest {sub_p} does not exist.")
+            sub_proto = load_protocol(sub_p)
+            for m in sub_proto.methods:
+                eff_task = m.task or (sub_proto.task if sub_proto.task != "all" else None)
+                m_updated = replace(m, index=global_idx, task=eff_task)
+                global_idx += 1
+                sub_methods.append(m_updated)
+        methods = sub_methods
+    else:
+        if not isinstance(methods_raw, list) or not methods_raw:
+            raise ProtocolError(f"Protocol {name!r}: 'methods' must be a non-empty list.")
+        methods = [_parse_method(m) for m in methods_raw]
     seen_indices: dict[tuple[str | None, int], str] = {}
     seen_names: set[tuple[str | None, str]] = set()
     for m in methods:

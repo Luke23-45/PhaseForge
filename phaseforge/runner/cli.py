@@ -217,7 +217,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _manifest_path(args: argparse.Namespace) -> Path:
     p = Path(args.manifest)
-    return p if p.is_absolute() else PROJECT_ROOT / p
+    target = p if p.is_absolute() else PROJECT_ROOT / p
+    if target.is_dir():
+        main_json = target / "main.json"
+        if main_json.exists():
+            return main_json
+    return target
 
 
 def _outputs_base(args: argparse.Namespace) -> Path:

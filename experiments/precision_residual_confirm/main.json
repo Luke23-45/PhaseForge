@@ -6,10 +6,10 @@
   "defaults": ["train.early_stopping.enabled=false"],
   "tasks": ["Lift", "Can", "Square", "ToolHang", "Transport"],
   "manifests": [
-    "precision_residual_confirm/precision_residual_confirm_lift.json",
-    "precision_residual_confirm/precision_residual_confirm_can.json",
-    "precision_residual_confirm/precision_residual_confirm_square.json",
-    "precision_residual_confirm/precision_residual_confirm_tool_hang.json",
-    "precision_residual_confirm/precision_residual_confirm_transport.json"
+    "precision_residual_confirm_lift.json",
+    "precision_residual_confirm_can.json",
+    "precision_residual_confirm_square.json",
+    "precision_residual_confirm_tool_hang.json",
+    "precision_residual_confirm_transport.json"
   ]
 }

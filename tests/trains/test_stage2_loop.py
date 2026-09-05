@@ -635,3 +635,65 @@ def test_log_dimension_mse_subspace_metrics() -> None:
     assert "loss_action_grip" in metrics
     assert "loss_action_place" in metrics
 
+
+def test_dim_weights_auto_tile_dual_arm() -> None:
+    """Verifies that 7-dim dim_weights auto-tiles to 14 dims for dual-arm Transport without error."""
+    model = CountingMoEModel(num_experts=3)
+    dataset = _DictDataset(num=4, seed=80, action_dim=14)
+    loader = DataLoader(dataset, batch_size=4)
+
+    # 7-element dimension weights (e.g. z-dim and gripper 2x)
+    dim_weights_7d = [1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0]
+    trainer = _make_trainer(model, loader, train_cfg={"dim_weights": dim_weights_7d})
+
+    batch = next(iter(loader))
+    out = model(batch)
+    out.action_pred = torch.zeros_like(batch["action"])
+
+    # Compute expected loss with tiled weights
+    tiled_weights = torch.tensor(dim_weights_7d * 2, dtype=torch.float32)
+    expected_loss = ((batch["action"] ** 2) * tiled_weights).mean()
+
+    total_loss, metrics = trainer._compute_loss(batch, out=out)
+    assert "loss_action" in metrics
+    assert torch.isclose(metrics["loss_action"], expected_loss, atol=1e-5)
+
+
+def test_dual_arm_release_loss() -> None:
+    """Verifies that release_loss evaluates both arm 0 (dim 6) and arm 1 (dim 13) independently for dual-arm."""
+    model = CountingMoEModel(num_experts=5)
+    dataset = _DictDataset(num=2, seed=90, action_dim=14)
+    dataset.phases = torch.tensor([4, 4])
+    # Sample 0: arm 0 releasing, arm 1 holding
+    # Sample 1: arm 0 holding, arm 1 releasing
+    dataset.actions[0, 6] = 1.0
+    dataset.actions[0, 13] = -1.0
+    dataset.actions[1, 6] = -1.0
+    dataset.actions[1, 13] = 1.0
+    loader = DataLoader(dataset, batch_size=2)
+
+    rel_cfg = {
+        "release_loss": {
+            "enabled": True,
+            "lambda_rel": 1.0,
+            "gripper_threshold": 0.0,
+            "place_phase": 4,
+        }
+    }
+    trainer = _make_trainer(model, loader, train_cfg=rel_cfg)
+    batch = next(iter(loader))
+    out = model(batch)
+    # Set lateral commands: arm 0 lateral is 0:2, arm 1 lateral is 7:9
+    pred = torch.zeros(2, 14)
+    pred[0, 0:2] = torch.tensor([0.3, 0.4])  # arm 0 lateral (norm^2 = 0.09 + 0.16 = 0.25)
+    pred[1, 7:9] = torch.tensor([0.6, 0.8])  # arm 1 lateral (norm^2 = 0.36 + 0.64 = 1.00)
+    out.action_pred = pred
+
+    _, metrics = trainer._compute_loss(batch, out=out)
+    assert "loss_release" in metrics
+    # arm 0 loss = 0.25 (sample 0 only), arm 1 loss = 1.00 (sample 1 only)
+    # sum = 1.25 * lambda_rel (1.0) = 1.25
+    expected_rel = 1.25
+    assert torch.isclose(metrics["loss_release"], torch.tensor(expected_rel), atol=1e-5)
+
+

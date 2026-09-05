@@ -188,6 +188,8 @@ class Stage2Trainer(BaseTrainer):
             sq_err = F.mse_loss(out.action_pred, target_action, reduction="none")
             if dim_weights is not None:
                 dw_tensor = torch.as_tensor(dim_weights, dtype=torch.float32, device=self.device)
+                if dw_tensor.numel() == 7 and target_action.size(-1) == 14:
+                    dw_tensor = dw_tensor.repeat(2)
                 sq_err = sq_err * dw_tensor
             if phase_weights is not None and "phase" in batch:
                 weights_tensor = torch.as_tensor(phase_weights, dtype=torch.float32, device=self.device)
@@ -218,15 +220,29 @@ class Stage2Trainer(BaseTrainer):
         if rel_enabled and target_action.size(-1) >= 7:
             lambda_rel = float(rel_cfg.get("lambda_rel", 0.1))
             grip_threshold = float(rel_cfg.get("gripper_threshold", 0.0))
-            is_releasing = target_action[..., 6] > grip_threshold
-            if "phase" in batch:
-                place_phase = int(rel_cfg.get("place_phase", 4))
-                is_releasing = is_releasing & (batch["phase"] == place_phase)
-            if mask is not None:
-                is_releasing = is_releasing & mask
-            if is_releasing.any():
-                lat_pred = out.action_pred[is_releasing, 0:2]
-                release_loss = lambda_rel * (lat_pred ** 2).sum(dim=-1).mean()
+            if target_action.size(-1) >= 14:
+                is_rel_0 = target_action[..., 6] > grip_threshold
+                is_rel_1 = target_action[..., 13] > grip_threshold
+                if "phase" in batch:
+                    place_phase = int(rel_cfg.get("place_phase", 4))
+                    is_rel_0 = is_rel_0 & (batch["phase"] == place_phase)
+                    is_rel_1 = is_rel_1 & (batch["phase"] == place_phase)
+                if mask is not None:
+                    is_rel_0 = is_rel_0 & mask
+                    is_rel_1 = is_rel_1 & mask
+                loss_0 = (out.action_pred[is_rel_0, 0:2] ** 2).sum(dim=-1).mean() if is_rel_0.any() else _zero_scalar(self.device)
+                loss_1 = (out.action_pred[is_rel_1, 7:9] ** 2).sum(dim=-1).mean() if is_rel_1.any() else _zero_scalar(self.device)
+                release_loss = lambda_rel * (loss_0 + loss_1)
+            else:
+                is_releasing = target_action[..., 6] > grip_threshold
+                if "phase" in batch:
+                    place_phase = int(rel_cfg.get("place_phase", 4))
+                    is_releasing = is_releasing & (batch["phase"] == place_phase)
+                if mask is not None:
+                    is_releasing = is_releasing & mask
+                if is_releasing.any():
+                    lat_pred = out.action_pred[is_releasing, 0:2]
+                    release_loss = lambda_rel * (lat_pred ** 2).sum(dim=-1).mean()
 
         # Balance Loss
         balance_loss = out.aux_losses.get("balance", _zero_scalar(self.device))

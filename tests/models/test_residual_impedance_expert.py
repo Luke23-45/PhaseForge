@@ -84,3 +84,26 @@ class TestResidualImpedanceExpert:
         assert torch.allclose(out_expert[:, 6], out_base[:, 6], atol=1e-7)
         # Arm channels (channels 0:6) should reflect the residual
         assert not torch.allclose(out_expert[:, :6], out_base[:, :6], atol=1e-4)
+
+    def test_multi_arm_transport_dual_arm_geometry(self):
+        """When output_dim=14 (Transport task), residual compliance affects both arms (0:6, 7:13) while leaving grippers (6, 13) unlagged."""
+        expert = ResidualImpedanceExpert(input_dim=16, hidden_dim=32, output_dim=14, beta=0.5)
+        assert expert.num_arms == 2
+        assert expert.pose_dim == 12
+        assert len(expert.action_scale) == 14
+
+        nn.init.constant_(expert.delta_head.weight, 1.0)
+        nn.init.constant_(expert.gain_head.weight, 1.0)
+
+        latent = torch.randn(8, 16)
+        out_expert = expert(latent)
+        out_base = expert.base_expert(latent)
+
+        assert out_expert.shape == (8, 14)
+        # Both grippers (channel 6 for arm 0 and channel 13 for arm 1) must match base_expert bit-for-bit
+        assert torch.allclose(out_expert[:, 6], out_base[:, 6], atol=1e-7)
+        assert torch.allclose(out_expert[:, 13], out_base[:, 13], atol=1e-7)
+        # Both pose blocks (0:6 and 7:13) must reflect the residual compliance
+        assert not torch.allclose(out_expert[:, :6], out_base[:, :6], atol=1e-4)
+        assert not torch.allclose(out_expert[:, 7:13], out_base[:, 7:13], atol=1e-4)
+

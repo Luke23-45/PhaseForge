@@ -190,14 +190,38 @@ class ResidualImpedanceExpert(nn.Module):
         self.kappa_min = float(kappa_min)
         self.kappa_max = float(kappa_max)
         self.beta = float(beta)
-        if isinstance(action_scale, (int, float)):
-            self.action_scale = (float(action_scale),) * 7
-        else:
-            self.action_scale = tuple(float(v) for v in action_scale)
 
-        # Residual compliance heads (operational space 6D: translation + rotation)
-        self.delta_head = nn.Linear(self.hidden_dim, 6)
-        self.gain_head = nn.Linear(self.hidden_dim, 6)
+        # Multi-arm geometry decomposition:
+        # Standard Robosuite operational-space controllers allocate 7 dims per arm (6 pose + 1 gripper).
+        if self.output_dim % 7 == 0:
+            self.num_arms = self.output_dim // 7
+            self.pose_dim = 6 * self.num_arms
+        else:
+            self.num_arms = 1
+            self.pose_dim = max(1, self.output_dim - 1)
+
+        # Action scale expansion for multi-arm tasks (e.g. Transport has 14 dims)
+        if isinstance(action_scale, (int, float)):
+            self.action_scale = (float(action_scale),) * self.output_dim
+        else:
+            scales = tuple(float(v) for v in action_scale)
+            if len(scales) == 7 and self.num_arms > 1:
+                scales = scales * self.num_arms
+            self.action_scale = scales
+
+        # Extract pose scale components corresponding to translation + rotation for each arm
+        if self.output_dim % 7 == 0:
+            pose_scale_list = []
+            for arm in range(self.num_arms):
+                start = arm * 7
+                pose_scale_list.extend(self.action_scale[start : start + 6])
+            self.pose_action_scale = tuple(pose_scale_list)
+        else:
+            self.pose_action_scale = self.action_scale[: self.pose_dim]
+
+        # Residual compliance heads (operational space pose: translation + rotation)
+        self.delta_head = nn.Linear(self.hidden_dim, self.pose_dim)
+        self.gain_head = nn.Linear(self.hidden_dim, self.pose_dim)
         self._init_residual_weights()
 
     @property
@@ -228,11 +252,31 @@ class ResidualImpedanceExpert(nn.Module):
         kappa = torch.nn.functional.softplus(self.gain_head(h)).clamp(
             min=self.kappa_min, max=self.kappa_max
         )
-        scale_6d = torch.as_tensor(self.action_scale[:6], dtype=latent.dtype, device=latent.device)
-        u_imp = torch.clamp((kappa * delta) / scale_6d, -1.0, 1.0)
+        scale_pose = torch.as_tensor(self.pose_action_scale, dtype=latent.dtype, device=latent.device)
+        u_imp = torch.clamp((kappa * delta) / scale_pose, -1.0, 1.0)
 
-        a_trans_rot = torch.clamp(base_action[..., :6] + self.beta * u_imp, -1.0, 1.0)
-        return torch.cat([a_trans_rot, base_action[..., 6:7]], dim=-1)
+        if self.output_dim % 7 == 0:
+            arm_actions = []
+            for arm in range(self.num_arms):
+                act_start = arm * 7
+                pose_start = arm * 6
+                a_pose = torch.clamp(
+                    base_action[..., act_start : act_start + 6]
+                    + self.beta * u_imp[..., pose_start : pose_start + 6],
+                    -1.0,
+                    1.0,
+                )
+                a_grip = base_action[..., act_start + 6 : act_start + 7]
+                arm_actions.extend([a_pose, a_grip])
+            return torch.cat(arm_actions, dim=-1)
+        else:
+            a_pose = torch.clamp(
+                base_action[..., : self.pose_dim] + self.beta * u_imp,
+                -1.0,
+                1.0,
+            )
+            a_rest = base_action[..., self.pose_dim :]
+            return torch.cat([a_pose, a_rest], dim=-1)
 
 
 __all__ = ["ImpedanceExpert", "ResidualImpedanceExpert"]

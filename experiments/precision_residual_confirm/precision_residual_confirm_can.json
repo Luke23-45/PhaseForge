@@ -1,0 +1,52 @@
+{
+  "name": "precision_residual_confirm",
+  "task": "Can",
+  "description": "Precision-Residual PhaseForge Confirmation (Professor Suggestion §4, §5, §10). Memoryless dual-stream policy: warm-started direct action base (partial_warm, drop_rate=0.5) + residual compliance branch (beta=0.0) + direct gripper head + unfrozen encoder (encoder_lr_scale=0.1) + margin prototype routing (margin=0.5, lambda_margin=0.05). Lipschitz and gain regularization disabled for baseline recovery. Gated on validation action MSE <= 0.032 before rollout evaluation.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "precision_residual_phaseforge",
+      "role": "Precision-Residual PhaseForge proposed method",
+      "model": "precision_residual_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.margin.lambda_margin=0.05",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "train.dim_weights=[1.0,1.0,2.0,1.0,1.0,1.0,2.0]",
+        "train.phase_weights=[1.0,1.0,1.0,1.0,1.5]",
+        "train.release_loss.enabled=true",
+        "train.release_loss.lambda_rel=0.1",
+        "train.log_dimension_mse=true",
+        "eval.episodes.trace_level=full"
+      ]
+    },
+    {
+      "index": 2,
+      "name": "pf_direct_supcon_margin",
+      "role": "PhaseForge-direct control with SupCon + margin routing",
+      "model": "phaseforge_prototype",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true"
+      ]
+    }
+  ]
+}
