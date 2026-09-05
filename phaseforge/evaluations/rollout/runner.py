@@ -395,7 +395,7 @@ class RolloutEvaluator:
         normalized = normalized_state.unsqueeze(0)
         with torch.inference_mode():
             action_tensor = self.model.get_action(normalized)  # type: ignore[operator]
-        action = np.asarray(action_tensor.detach().cpu().numpy()).reshape(-1)
+        action = action_tensor.squeeze(0).cpu().numpy()
         return self.adapter.validate_action(action, tolerance=self.action_tolerance)
 
     def _describe_for_trace(self, state: np.ndarray) -> dict[str, Any] | None:
@@ -929,7 +929,9 @@ def resolve_rollout_normalizer(
     )
 
 
-def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
+def resolve_pinned_metadata(
+    cfg: DictConfig, cache_dir: Path | None = None
+) -> PinnedEnvMetadata:
     """Recover the pinned env metadata from the cache (or raw HDF5, or dev).
 
     Priority (fail-closed): processed cache trajectory -> raw HDF5
@@ -943,7 +945,8 @@ def resolve_pinned_metadata(cfg: DictConfig) -> PinnedEnvMetadata:
     looking but invalid results. Callers that genuinely want the fallback
     (local self-tests / gates) must opt in via ``eval.env.allow_dev_fallback``.
     """
-    cache_dir = resolve_cache_dir(cfg)
+    if cache_dir is None:
+        cache_dir = resolve_cache_dir(cfg)
     if (cache_dir / "trajectories").is_dir():
         meta = env_metadata_from_cache(cache_dir)
         logger.info("Pinned env metadata recovered from cache %s", cache_dir.name)

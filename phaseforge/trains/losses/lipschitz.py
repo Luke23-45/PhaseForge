@@ -62,43 +62,49 @@ def lip_penalty(
     if trajectory_ids is not None:
         flat_trajs = trajectory_ids.reshape(-1).long()
 
-    ratios: list[Tensor] = []
+    first_list: list[Tensor] = []
+    second_list: list[Tensor] = []
+
     for regime in torch.unique(flat_experts).tolist():
         expert_mask = flat_experts == int(regime)
         if flat_trajs is not None:
             for tid in torch.unique(flat_trajs[expert_mask]).tolist():
                 positions = (expert_mask & (flat_trajs == int(tid))).nonzero().flatten()
-                for first, second in zip(positions[:-1:2], positions[1::2]):
-                    delta_state = (task_states[first] - task_states[second]).norm()
-                    if delta_state < float(min_delta_state):
-                        continue
-                    delta_target = (targets[first] - targets[second]).norm()
-                    ratio = torch.clamp(delta_target / (delta_state + float(eps)), max=float(max_ratio))
-                    ratios.append(ratio)
-                    if len(ratios) >= cap:
-                        break
-                if len(ratios) >= cap:
-                    break
+                if positions.numel() >= 2:
+                    k = (positions.numel() // 2) * 2
+                    first_list.append(positions[:k:2])
+                    second_list.append(positions[1:k:2])
         else:
             positions = expert_mask.nonzero().flatten()
-            for first, second in zip(positions[:-1:2], positions[1::2]):
-                delta_state = (task_states[first] - task_states[second]).norm()
-                if delta_state < float(min_delta_state):
-                    continue
-                delta_target = (targets[first] - targets[second]).norm()
-                ratio = torch.clamp(delta_target / (delta_state + float(eps)), max=float(max_ratio))
-                ratios.append(ratio)
-                if len(ratios) >= cap:
-                    break
-        if len(ratios) >= cap:
-            break
+            if positions.numel() >= 2:
+                k = (positions.numel() // 2) * 2
+                first_list.append(positions[:k:2])
+                second_list.append(positions[1:k:2])
 
-    if not ratios:
+    if not first_list:
         return torch.zeros((), device=targets.device, dtype=targets.dtype)
-    stacked = torch.stack(ratios)
-    if not torch.isfinite(stacked).all():
+
+    first_idx = torch.cat(first_list)
+    second_idx = torch.cat(second_list)
+
+    # Batched vector difference & norms across all candidate pairs
+    delta_state = torch.linalg.vector_norm(task_states[first_idx] - task_states[second_idx], dim=-1)
+    valid_mask = delta_state >= float(min_delta_state)
+
+    if not bool(valid_mask.any()):
         return torch.zeros((), device=targets.device, dtype=targets.dtype)
-    excess = torch.clamp(stacked - float(rho), min=0.0)
+
+    first_valid = first_idx[valid_mask][:cap]
+    second_valid = second_idx[valid_mask][:cap]
+    valid_delta_state = delta_state[valid_mask][:cap]
+
+    delta_target = torch.linalg.vector_norm(targets[first_valid] - targets[second_valid], dim=-1)
+    ratios = torch.clamp(delta_target / (valid_delta_state + float(eps)), max=float(max_ratio))
+
+    if not torch.isfinite(ratios).all():
+        return torch.zeros((), device=targets.device, dtype=targets.dtype)
+
+    excess = torch.clamp(ratios - float(rho), min=0.0)
     return (excess * excess).mean()
 
 

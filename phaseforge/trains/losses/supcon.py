@@ -51,16 +51,17 @@ def supcon_loss(latents: Tensor, labels: Tensor, temperature: float = 0.07) -> T
     pos_mask = targets.unsqueeze(1) == targets.unsqueeze(0)
     pos_mask = pos_mask & ~self_mask
     pos_counts = pos_mask.sum(dim=-1)
-    has_pos = pos_counts > 0
-    if not bool(has_pos.any()):
-        return torch.zeros((), device=latents.device, dtype=latents.dtype)
     log_prob = logits - log_denom.unsqueeze(-1)
     # The self entries are -inf (masked above); zero them *after* the
     # log-softmax so the `log_prob * pos_mask` product below is 0 there
     # instead of `-inf * 0 = NaN`.
     log_prob = log_prob.masked_fill(self_mask, 0.0)
     per_sample = -(log_prob * pos_mask.float()).sum(dim=-1) / pos_counts.clamp(min=1)
-    return per_sample[has_pos].mean()
+    valid_weight = (pos_counts > 0).to(latents.dtype)
+    valid_count = valid_weight.sum()
+    # Fused zero-sync reduction: when valid_count == 0, numerator is 0 and
+    # clamped denominator produces exactly 0.0 without host-device synchronization.
+    return (per_sample * valid_weight).sum() / valid_count.clamp(min=1.0)
 
 
 def pairwise_distances(latents: Tensor) -> Tensor:

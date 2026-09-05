@@ -44,17 +44,11 @@ def quat_conjugate(quat: Tensor) -> Tensor:
 
 def quat_multiply(left: Tensor, right: Tensor) -> Tensor:
     """Hamilton product of ``(..., 4)`` quaternions in ``(w, x, y, z)`` order."""
-    w1, x1, y1, z1 = left.unbind(-1)
-    w2, x2, y2, z2 = right.unbind(-1)
-    return torch.stack(
-        [
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        ],
-        dim=-1,
-    )
+    w1, v1 = left[..., :1], left[..., 1:]
+    w2, v2 = right[..., :1], right[..., 1:]
+    w = w1 * w2 - (v1 * v2).sum(dim=-1, keepdim=True)
+    v = w1 * v2 + w2 * v1 + torch.linalg.cross(v1, v2, dim=-1)
+    return torch.cat([w, v], dim=-1)
 
 
 def quat_log_map(quat: Tensor) -> Tensor:

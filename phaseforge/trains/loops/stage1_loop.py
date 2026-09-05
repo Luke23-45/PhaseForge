@@ -186,9 +186,11 @@ class Stage1Trainer(BaseTrainer):
                     f"head predicts {num_classes} classes. "
                     "Phase count mismatch — refusing to train with wrong weights."
                 )
-            phase_weights = torch.tensor(
-                list(pw), dtype=torch.float32, device=self.device
-            )
+            cached = getattr(self, "_cached_phase_weights", None)
+            if cached is None or cached.device != self.device or len(cached) != len(pw):
+                cached = torch.tensor(list(pw), dtype=torch.float32, device=self.device)
+                self._cached_phase_weights = cached
+            phase_weights = cached
 
         # Optional label smoothing on the phase targets (V2-A): the head is
         # discouraged from saturating, which keeps the phase logits soft for

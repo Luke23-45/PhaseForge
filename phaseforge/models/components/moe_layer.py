@@ -184,9 +184,22 @@ class MoELayer(nn.Module):
             assert task_state is not None
             return self._forward_impedance(latent, weights, indices, task_state, router_out)
 
-        # Retrieve the output dimension from the first expert to preallocate
-        out_dim = cast(ExpertMLP, self.experts[0]).output_dim
+        # Fast-path for single-sample top-1 evaluation/rollout (B=1, K=1)
+        if B == 1 and indices.size(-1) == 1:
+            expert_idx = int(indices[0, 0].item())
+            expert_out = self.experts[expert_idx](latent)
+            combined_output = expert_out * weights[..., :1]
+            return MoEOutput(
+                combined_output=combined_output,
+                routing_weights=weights,
+                expert_indices=indices,
+                balance_loss=router_out.balance_loss,
+                gate_logits=router_out.gate_logits,
+                sticky_loss=router_out.sticky_loss,
+                info=None,
+            )
 
+        out_dim = cast(ExpertMLP, self.experts[0]).output_dim
         # Final combined output tensor: (B, out_dim)
         combined_output = torch.zeros((B, out_dim), dtype=latent.dtype, device=latent.device)
 
@@ -268,6 +281,30 @@ class MoELayer(nn.Module):
         first = cast(ImpedanceExpert, self.experts[0])
         task_dim, error_dim = first.task_state_dim, first.error_dim
         scale = float(getattr(first, "action_scale", 1.0))
+
+        # Fast-path for single-sample top-1 evaluation/rollout (B=1, select=1)
+        if batch_size == 1 and select == 1:
+            expert_idx = int(indices[0, 0].item())
+            selected_expert = cast(ImpedanceExpert, self.experts[expert_idx])
+            target_sel, gains_sel = selected_expert.params(latent)
+            combined_output, parts = impedance_action(target_sel, gains_sel, task_state, scale)
+            info = {
+                "target": target_sel,
+                "gains": gains_sel,
+                "task_error": parts["task_error"],
+                "pre_clip_u": parts["pre_clip_u"],
+                "task_state": task_state,
+                "expert_index": indices[:, 0],
+            }
+            return MoEOutput(
+                combined_output=combined_output,
+                routing_weights=weights,
+                expert_indices=indices,
+                balance_loss=router_out.balance_loss,
+                gate_logits=router_out.gate_logits,
+                sticky_loss=router_out.sticky_loss,
+                info=info,
+            )
 
         targets_all = torch.zeros(
             (batch_size, select, task_dim), dtype=latent.dtype, device=latent.device
