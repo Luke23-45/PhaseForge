@@ -46,6 +46,10 @@ _VAL_KEY_MAP = {
     "loss_total": "val/loss_total",
     "loss_action": "val/loss_action",
     "loss_phase": "val/loss_phase",
+    "loss_supcon": "val/loss_supcon",
+    "loss_margin": "val/loss_margin",
+    "loss_lip": "val/loss_lip",
+    "loss_gain": "val/loss_gain",
 }
 
 _EMPTY_SOURCE_STAGE1 = {

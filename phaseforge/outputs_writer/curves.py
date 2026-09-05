@@ -69,6 +69,22 @@ CURVE_OPTIONAL_NUMERIC: tuple[str, ...] = (
     "train/teacher_lambda",
     "val/routing_switch_rate",
     "checkpoint_monitor_value",
+    # IS-PhaseForge Stage 1: Supervised Contrastive learning
+    "train/loss_supcon",
+    "train/supcon_lambda",
+    "val/loss_supcon",
+    # IS-PhaseForge Stage 2: Large-margin prototype router
+    "train/loss_margin",
+    "train/margin_lambda",
+    "val/loss_margin",
+    # IS-PhaseForge Stage 2: Local contraction / Lipschitz regularizer
+    "train/loss_lip",
+    "train/lip_lambda",
+    "val/loss_lip",
+    # IS-PhaseForge Stage 2: Gain regularization
+    "train/loss_gain",
+    "train/gain_lambda",
+    "val/loss_gain",
 )
 
 _CURVE_INT_FIELDS = ("epoch", "global_step")

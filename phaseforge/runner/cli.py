@@ -290,10 +290,15 @@ def _require_stage2_prereq(
         ) from exc
     # Fail closed on contract violations (wrong model tree, wrong expert
     # count, wrong stage) before the subprocess consumes the artifact.
+    expected_experts = (
+        step.method.expected_num_experts
+        if step.method.stage2_source == "self"
+        else FINAL_EXPERT_CONTRACT
+    )
     verify_checkpoint_contract(
         ckpt,
         expected_model_name=model,
-        expected_num_experts=FINAL_EXPERT_CONTRACT,
+        expected_num_experts=expected_experts,
         expected_stage=stage,
     )
     return ckpt

@@ -1,0 +1,105 @@
+{
+  "name": "five_task_is",
+  "task": "all",
+  "description": "IS-PhaseForge primary proposed method across benchmark tasks. Memoryless observation-consistent topological regime discovery (topo_pelt_k6) + SupCon + margin prototype routing + impedance action adapter + Lipschitz contraction regularization. Each selected cell runs Stage 1, Stage 2 bootstrapped from its own Stage 1 checkpoint, and final rollout evaluation.",
+  "seeds": [42, 43, 44],
+  "defaults": ["train.early_stopping.enabled=false"],
+  "tasks": ["Lift", "Can", "Square", "ToolHang", "Transport"],
+  "methods": [
+    {
+      "index": 1,
+      "name": "is_full",
+      "role": "IS-PhaseForge full proposed method",
+      "model": "is_phaseforge",
+      "data": "lift",
+      "task": "Lift",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 2,
+      "name": "is_full",
+      "role": "IS-PhaseForge full proposed method",
+      "model": "is_phaseforge",
+      "data": "can",
+      "task": "Can",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 3,
+      "name": "is_full",
+      "role": "IS-PhaseForge full proposed method",
+      "model": "is_phaseforge",
+      "data": "square",
+      "task": "Square",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 4,
+      "name": "is_full",
+      "role": "IS-PhaseForge full proposed method",
+      "model": "is_phaseforge",
+      "data": "tool_hang",
+      "task": "ToolHang",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "is_full",
+      "role": "IS-PhaseForge full proposed method",
+      "model": "is_phaseforge",
+      "data": "transport",
+      "task": "Transport",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.supcon.enabled=true",
+        "train.margin.enabled=true",
+        "train.lipschitz.enabled=true",
+        "train.gain_reg.enabled=true"
+      ]
+    }
+  ]
+}

@@ -196,6 +196,8 @@ def _resolve_token(
 
     if "@" in token:
         name, _, task = token.partition("@")
+        if name == "is_phaseforge" and not any(r.name == "is_phaseforge" for r in rows) and any(r.name == "is_full" for r in rows):
+            name = "is_full"
         wanted = _canonical(task)
         matched = [
             r
@@ -220,7 +222,10 @@ def _resolve_token(
             )
         return matched
 
-    matched = [r for r in rows if r.name == token and in_task_filter(r)]
+    lookup_token = token
+    if token == "is_phaseforge" and not any(r.name == "is_phaseforge" for r in rows) and any(r.name == "is_full" for r in rows):
+        lookup_token = "is_full"
+    matched = [r for r in rows if r.name == lookup_token and in_task_filter(r)]
     if not matched:
         same_name = [r for r in rows if r.name == token]
         if same_name:
