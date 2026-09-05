@@ -218,6 +218,7 @@ class Stage2Trainer(BaseTrainer):
         # Release Kinematics Auxiliary Loss (Professor §4 Intervention C).
         # When gripper is commanded to open during Place, penalizes lateral command
         # drift (x, y velocities) to enforce "stop-then-drop" release stability.
+        # Robosuite convention: -1.0 is open (releasing), +1.0 is closed (holding).
         release_loss = _zero_scalar(self.device)
         rel_cfg = self.train_cfg.get("release_loss", None)
         rel_enabled = bool(rel_cfg.get("enabled", False)) if rel_cfg is not None else False
@@ -225,8 +226,8 @@ class Stage2Trainer(BaseTrainer):
             lambda_rel = float(rel_cfg.get("lambda_rel", 0.1))
             grip_threshold = float(rel_cfg.get("gripper_threshold", 0.0))
             if target_action.size(-1) >= 14:
-                is_rel_0 = target_action[..., 6] > grip_threshold
-                is_rel_1 = target_action[..., 13] > grip_threshold
+                is_rel_0 = target_action[..., 6] < grip_threshold
+                is_rel_1 = target_action[..., 13] < grip_threshold
                 if "phase" in batch:
                     place_phase = int(rel_cfg.get("place_phase", 4))
                     is_rel_0 = is_rel_0 & (batch["phase"] == place_phase)
@@ -238,7 +239,7 @@ class Stage2Trainer(BaseTrainer):
                 loss_1 = (out.action_pred[is_rel_1, 7:9] ** 2).sum(dim=-1).mean() if is_rel_1.any() else _zero_scalar(self.device)
                 release_loss = lambda_rel * (loss_0 + loss_1)
             else:
-                is_releasing = target_action[..., 6] > grip_threshold
+                is_releasing = target_action[..., 6] < grip_threshold
                 if "phase" in batch:
                     place_phase = int(rel_cfg.get("place_phase", 4))
                     is_releasing = is_releasing & (batch["phase"] == place_phase)

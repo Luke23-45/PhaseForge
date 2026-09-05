@@ -583,9 +583,9 @@ def test_release_loss_active_on_gripper_opening() -> None:
     """Verifies that train.release_loss penalizes lateral velocity only during place with gripper opening."""
     model = CountingMoEModel(num_experts=5)
     dataset = _DictDataset(num=4, seed=60, action_dim=7)
-    # Set phase=4 (place phase), gripper > 0 (releasing)
+    # Set phase=4 (place phase), gripper < 0 (releasing in Robosuite convention)
     dataset.phases = torch.tensor([4, 4, 1, 4])
-    dataset.actions[:, 6] = torch.tensor([1.0, 0.5, 1.0, -1.0])
+    dataset.actions[:, 6] = torch.tensor([-1.0, -0.5, -1.0, 1.0])
     loader = DataLoader(dataset, batch_size=4)
 
     rel_cfg = {
@@ -601,10 +601,10 @@ def test_release_loss_active_on_gripper_opening() -> None:
     out = model(batch)
     # Set non-zero predicted actions on lateral components
     out.action_pred = torch.tensor([
-        [0.2, 0.3, 0.0, 0.0, 0.0, 0.0, 1.0],
-        [0.1, 0.2, 0.0, 0.0, 0.0, 0.0, 1.0],
-        [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0],  # phase 1, should be ignored
-        [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, -1.0], # gripper <= 0, should be ignored
+        [0.2, 0.3, 0.0, 0.0, 0.0, 0.0, -1.0],
+        [0.1, 0.2, 0.0, 0.0, 0.0, 0.0, -1.0],
+        [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, -1.0],  # phase 1, should be ignored
+        [0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0],   # gripper >= 0, should be ignored
     ])
 
     _, metrics = trainer._compute_loss(batch, out=out)
@@ -664,12 +664,12 @@ def test_dual_arm_release_loss() -> None:
     model = CountingMoEModel(num_experts=5)
     dataset = _DictDataset(num=2, seed=90, action_dim=14)
     dataset.phases = torch.tensor([4, 4])
-    # Sample 0: arm 0 releasing, arm 1 holding
-    # Sample 1: arm 0 holding, arm 1 releasing
-    dataset.actions[0, 6] = 1.0
-    dataset.actions[0, 13] = -1.0
-    dataset.actions[1, 6] = -1.0
-    dataset.actions[1, 13] = 1.0
+    # Sample 0: arm 0 releasing (-1.0), arm 1 holding (1.0)
+    # Sample 1: arm 0 holding (1.0), arm 1 releasing (-1.0)
+    dataset.actions[0, 6] = -1.0
+    dataset.actions[0, 13] = 1.0
+    dataset.actions[1, 6] = 1.0
+    dataset.actions[1, 13] = -1.0
     loader = DataLoader(dataset, batch_size=2)
 
     rel_cfg = {

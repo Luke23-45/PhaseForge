@@ -23,9 +23,6 @@
         "train.margin.lambda_margin=0.05",
         "train.lipschitz.enabled=false",
         "train.gain_reg.enabled=false",
-        "train.dim_weights=[1.0,1.0,2.0,1.0,1.0,1.0,2.0]",
-        "train.release_loss.enabled=false",
-        "train.log_dimension_mse=true",
         "eval.episodes.trace_level=full"
       ]
     },
