@@ -55,6 +55,7 @@ class CheckpointCallback(Callback):
         monitor: str = "val/loss_total",
         mode: str = "min",
         save_top_k: int = 1,
+        min_epoch: int = 0,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -62,6 +63,7 @@ class CheckpointCallback(Callback):
         self.monitor = monitor
         self.mode = mode
         self.save_top_k = max(1, int(save_top_k))
+        self.min_epoch = max(0, int(min_epoch))
 
         self.best_score = float("inf") if mode == "min" else float("-inf")
         self.best_ckpt_path: Path | None = None
@@ -87,6 +89,12 @@ class CheckpointCallback(Callback):
 
     def _update_topk(self, trainer: BaseTrainer, epoch: int, score: float) -> None:
         """Insert the epoch into the top-k collection and prune evicted files."""
+        # When min_epoch is configured, skip top-k selection for earlier epochs
+        # so early transient noise dips cannot permanently freeze the best checkpoint
+        # before the learning rate schedule has annealed into fine-tuning.
+        if epoch < self.min_epoch:
+            return
+
         # Never admit a non-finite score: when the top-k collection is not
         # yet full, an early NaN monitor value would otherwise be pinned as
         # "best" (float-NaN comparisons are False in both directions, so a

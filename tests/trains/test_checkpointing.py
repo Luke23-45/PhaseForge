@@ -188,3 +188,47 @@ def test_resume_rejects_missing_file(tmp_path: Path) -> None:
     trainer = _make_trainer()
     with pytest.raises(FileNotFoundError, match="not found"):
         trainer.resume(tmp_path / "does_not_exist.pt")
+
+
+def test_min_epoch_ignores_early_epochs(tmp_path: Path) -> None:
+    """Scores before min_epoch must never enter the top-k collection.
+
+    This prevents transient noise dips during high-LR training from
+    permanently locking checkpoint_best.pt — the exact mechanism that
+    caused Seed 43 to freeze at epoch 50 on NutAssemblySquare.
+    """
+    cb = CheckpointCallback(
+        output_dir=tmp_path,
+        every_n_epochs=100,  # never trigger periodic snapshots
+        monitor="loss_total",
+        mode="min",
+        save_top_k=1,
+        min_epoch=50,
+    )
+    trainer = _make_trainer()
+
+    # A very good score *before* min_epoch: must be ignored.
+    trainer.current_epoch = 10
+    cb.on_epoch_end(trainer, {"loss_total": 0.001})
+    assert cb.best_ckpt_path is None
+    assert not (tmp_path / "checkpoint_best.pt").exists()
+
+    # Another early epoch, right before the cutoff.
+    trainer.current_epoch = 49
+    cb.on_epoch_end(trainer, {"loss_total": 0.0005})
+    assert cb.best_ckpt_path is None
+
+    # At min_epoch: this score should be accepted.
+    trainer.current_epoch = 50
+    cb.on_epoch_end(trainer, {"loss_total": 0.5})
+    assert cb.best_ckpt_path is not None
+    assert cb.best_score == pytest.approx(0.5)
+    assert (tmp_path / "checkpoint_best.pt").exists()
+
+    # A later, better score replaces it normally.
+    trainer.current_epoch = 100
+    cb.on_epoch_end(trainer, {"loss_total": 0.3})
+    assert cb.best_score == pytest.approx(0.3)
+    alias = torch.load(tmp_path / "checkpoint_best.pt", weights_only=False)
+    assert alias["epoch"] == 100
+

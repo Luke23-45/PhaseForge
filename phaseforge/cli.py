@@ -775,6 +775,7 @@ def _train_body(
             monitor=cfg.train.checkpoint.monitor,
             mode=cfg.train.checkpoint.mode,
             save_top_k=cfg.train.checkpoint.save_top_k,
+            min_epoch=int(cfg.train.checkpoint.get("min_epoch", 0)),
         )
     )
 

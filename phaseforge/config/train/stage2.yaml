@@ -52,6 +52,9 @@ checkpoint:
   monitor: "val/loss_action"
   mode: "min"
   save_top_k: 1
+  min_epoch: 0             # Skip best-checkpoint selection before this epoch;
+                           # prevents transient early noise dips from permanently
+                           # locking checkpoint_best.pt (see §4.4 stabilization).
 
 early_stopping:
   enabled: false          # Locked protocol (A4/C5): full-length 200-epoch runs;

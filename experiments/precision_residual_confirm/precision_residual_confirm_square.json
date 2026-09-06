@@ -23,6 +23,7 @@
         "train.margin.lambda_margin=0.05",
         "train.lipschitz.enabled=false",
         "train.gain_reg.enabled=false",
+        "train.checkpoint.min_epoch=100",
         "eval.episodes.trace_level=full"
       ]
     },
@@ -40,7 +41,8 @@
       "overrides": [
         "topo@_global_=topo_pelt_k6",
         "train.supcon.enabled=true",
-        "train.margin.enabled=true"
+        "train.margin.enabled=true",
+        "train.checkpoint.min_epoch=100"
       ]
     }
   ]

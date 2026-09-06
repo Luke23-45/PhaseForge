@@ -99,6 +99,7 @@ checkpoint:
   monitor: "val/loss_action"
   mode: "min"             # Save when val loss decreases
   save_top_k: 1
+  min_epoch: 0
 
 early_stopping:
   enabled: false          # Locked protocol (A4/C5): full-length 100-epoch runs;
