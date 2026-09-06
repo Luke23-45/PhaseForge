@@ -1,12 +1,15 @@
 """Exhaustive mathematical and physical correctness test suite for PhaseForge.
 
 Tests the core mathematical foundations directly:
-1. Physical coordinate denormalization in task_state.py (preserves meters, S^3 canonical quaternions, aperture).
+1. Physical coordinate denormalization in task_state.py (preserves meters, S^3 canonical
+quaternions, aperture).
 2. Action adapter quaternion error invariance under non-unit scaling.
 3. Impedance expert projection to S^3 with canonical w >= 0.
 4. Dynamic regime count K != 6 in PhaseBootstrappedMoE.bootstrap_moe (K=4, K=8).
-5. Observability audit: well-separated regimes with 0 mutual confusion are never falsely flagged as merge candidates.
-6. Lipschitz contraction regularization: numerical stability, trajectory grouping, gradient boundedness.
+5. Observability audit: well-separated regimes with 0 mutual confusion are never falsely flagged as
+merge candidates.
+6. Lipschitz contraction regularization: numerical stability, trajectory grouping, gradient
+boundedness.
 7. Stage 1 trainer: SupCon activation and out-of-range phase label resilience.
 """
 
@@ -15,14 +18,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 from phaseforge.data.topo.observability import audit_regimes
 from phaseforge.data.topo.task_vars import extract_task_vars
-from phaseforge.models.base import ModelOutput
 from phaseforge.models.baselines.bc_impedance import BCImpedanceModel
-from phaseforge.models.components.action_adapter import impedance_action, rotation_error
+from phaseforge.models.components.action_adapter import rotation_error
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.impedance_expert import ImpedanceExpert
@@ -39,7 +40,6 @@ class TestPhysicalTaskStateExtraction:
 
     def test_denormalization_reconstruction(self):
         # 19D state: 0:3 eef_pos, 3:7 eef_quat, 7:9 gripper_qpos, 9:19 object
-        state_dim = 19
         true_pos = torch.tensor([0.15, -0.25, 0.85], dtype=torch.float32)
         true_quat = torch.tensor([0.70710678, 0.0, 0.70710678, 0.0], dtype=torch.float32)
         true_grip = torch.tensor([-0.035, 0.035], dtype=torch.float32)
@@ -48,8 +48,14 @@ class TestPhysicalTaskStateExtraction:
         raw_state = torch.cat([true_pos, true_quat, true_grip, true_obj], dim=0)
 
         # Realistic normalizer stats
-        mean = torch.tensor([0.1, -0.2, 0.8] + [0.5, 0.1, 0.5, 0.1] + [0.0, 0.0] + [0.0] * 10, dtype=torch.float32)
-        std = torch.tensor([0.05, 0.05, 0.05] + [0.3, 0.2, 0.3, 0.2] + [0.02, 0.02] + [1.0] * 10, dtype=torch.float32)
+        mean = torch.tensor(
+        [0.1, -0.2, 0.8] + [0.5, 0.1, 0.5, 0.1] + [0.0, 0.0] + [0.0] * 10,
+        dtype=torch.float32,
+    )
+        std = torch.tensor(
+        [0.05, 0.05, 0.05] + [0.3, 0.2, 0.3, 0.2] + [0.02, 0.02] + [1.0] * 10,
+        dtype=torch.float32,
+    )
 
         normalized_state = (raw_state - mean) / std
 
@@ -152,7 +158,10 @@ class TestDynamicRegimeBootstrapping:
             phases_topo[r] = r
 
         loader = DataLoader(
-            [{"state": s, "action": a, "phase_topo": p} for s, a, p in zip(states, actions, phases_topo)],
+            [
+        {"state": s, "action": a, "phase_topo": p}
+        for s, a, p in zip(states, actions, phases_topo)
+    ],
             batch_size=10,
         )
 
@@ -264,8 +273,14 @@ class TestBCImpedancePhysicalIntegration:
         model = BCImpedanceModel(encoder=encoder, expert=expert)
 
         # Set normalizer stats
-        mean = torch.tensor([0.1, -0.2, 0.8] + [0.5, 0.1, 0.5, 0.1] + [0.0, 0.0] + [0.0] * 10, dtype=torch.float32)
-        std = torch.tensor([0.05, 0.05, 0.05] + [0.3, 0.2, 0.3, 0.2] + [0.02, 0.02] + [1.0] * 10, dtype=torch.float32)
+        mean = torch.tensor(
+        [0.1, -0.2, 0.8] + [0.5, 0.1, 0.5, 0.1] + [0.0, 0.0] + [0.0] * 10,
+        dtype=torch.float32,
+    )
+        std = torch.tensor(
+        [0.05, 0.05, 0.05] + [0.3, 0.2, 0.3, 0.2] + [0.02, 0.02] + [1.0] * 10,
+        dtype=torch.float32,
+    )
         model.set_normalizer_stats(mean, std)
 
         m_ret, s_ret = model.get_normalizer_stats()

@@ -3,7 +3,8 @@
 Validates that:
 1. Every manifest in the directory is well-formed JSON conforming to the protocol schema.
 2. Per-task manifests isolate tasks correctly without cross-task leakage.
-3. If a master `main.json` is present, all referenced sub-manifests exist and match the master's definitions.
+3. If a master `main.json` is present, all referenced sub-manifests exist and match the master's
+definitions.
 4. Every cell composes cleanly under Hydra (Stage 1, Stage 2, Rollout Eval).
 5. The runner can construct execution plans without missing prerequisite warnings.
 
@@ -17,6 +18,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from hydra import compose, initialize
 
@@ -45,7 +47,10 @@ def verify_directory(dir_path: Path) -> int:
         try:
             proto = load_protocol(f)
             manifests[f.name] = proto
-            print(f"[OK] {f.name}: task='{proto.task}', methods={len(proto.methods)}, seeds={list(proto.seeds)}")
+            print(
+        f"[OK] {f.name}: task='{proto.task}', methods={len(proto.methods)}, "
+        f"seeds={list(proto.seeds)}"
+    )
         except (ProtocolError, OSError) as exc:
             errors.append(f"{f.name}: {exc}")
             print(f"[FAIL] {f.name}: {exc}")
@@ -57,7 +62,10 @@ def verify_directory(dir_path: Path) -> int:
     # 2. Check master main.json consistency if present
     if "main.json" in manifests:
         main_proto = manifests["main.json"]
-        print(f"\n[preflight] Verifying master main.json consistency ({len(main_proto.methods)} total methods)...")
+        print(
+        f"\n[preflight] Verifying master main.json consistency "
+        f"({len(main_proto.methods)} total methods)..."
+    )
         tasks_in_main = {m.task for m in main_proto.methods}
         print(f"  Tasks covered in main.json: {sorted(tasks_in_main)}")
         expected_benchmark_tasks = {"Lift", "Can", "Square", "ToolHang", "Transport"}
@@ -120,7 +128,9 @@ def verify_directory(dir_path: Path) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Strict preflight verification for experiment manifests.")
+    parser = argparse.ArgumentParser(
+        description="Strict preflight verification for experiment manifests."
+    )
     parser.add_argument(
         "dir",
         nargs="?",

@@ -1,22 +1,25 @@
-"""Unit test auditing action adapter scaling and response characteristics (Professor Suggestion §1.1).
+"""Unit test auditing action adapter scaling and response characteristics (Professor Suggestion
+§1.1).
 
 Validates:
 1. Zero error -> zero normalized action.
-2. Half-limit physical displacement -> expected normalized action (~0.5 under linear clip, ~0.462 under tanh).
-3. Full-limit physical displacement -> expected normalized action (1.0 under linear clip, ~0.762 under tanh).
-4. Negative full-limit displacement -> expected normalized action (-1.0 under linear clip, -0.762 under tanh).
+2. Half-limit physical displacement -> expected normalized action (~0.5 under linear clip, ~0.462
+under tanh).
+3. Full-limit physical displacement -> expected normalized action (1.0 under linear clip, ~0.762
+under tanh).
+4. Negative full-limit displacement -> expected normalized action (-1.0 under linear clip, -0.762
+under tanh).
 5. Comparison between tanh soft-clipping and linear saturation clipping.
 """
 
 from __future__ import annotations
 
 import math
-import pytest
+
 import torch
 
 from phaseforge.models.components.action_adapter import (
     impedance_action,
-    task_error,
 )
 
 ROBOSUITE_OSC_SCALE = (0.05, 0.05, 0.05, 0.5, 0.5, 0.5, 0.04)
@@ -49,14 +52,18 @@ class TestActionAdapterScalingAudit:
             # Half displacement
             target_half = base_state.clone()
             target_half[0, dim] = 0.5 * limit
-            act_half, _ = impedance_action(target_half, gains, base_state, scale=ROBOSUITE_OSC_SCALE)
+            act_half, _ = impedance_action(
+        target_half, gains, base_state, scale=ROBOSUITE_OSC_SCALE
+    )
             expected_half_tanh = math.tanh(0.5)  # ~0.4621
             assert math.isclose(act_half[0, dim].item(), expected_half_tanh, rel_tol=1e-4)
 
             # Full displacement
             target_full = base_state.clone()
             target_full[0, dim] = limit
-            act_full, _ = impedance_action(target_full, gains, base_state, scale=ROBOSUITE_OSC_SCALE)
+            act_full, _ = impedance_action(
+        target_full, gains, base_state, scale=ROBOSUITE_OSC_SCALE
+    )
             expected_full_tanh = math.tanh(1.0)  # ~0.7616
             assert math.isclose(act_full[0, dim].item(), expected_full_tanh, rel_tol=1e-4)
 
@@ -71,12 +78,15 @@ class TestActionAdapterScalingAudit:
         # Gripper open at 0.04m, target closed at 0.0m -> error = -0.04m
         grip_state = torch.tensor([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.04]])
         grip_target_closed = torch.tensor([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.00]])
-        act_grip, _ = impedance_action(grip_target_closed, gains, grip_state, scale=ROBOSUITE_OSC_SCALE)
+        act_grip, _ = impedance_action(
+        grip_target_closed, gains, grip_state, scale=ROBOSUITE_OSC_SCALE
+    )
         # Full stroke displacement with kappa=1.0 gives tanh(-1.0) = -0.7616
         assert math.isclose(act_grip[0, 6].item(), math.tanh(-1.0), rel_tol=1e-4)
 
     def test_tanh_saturation_deficit_vs_linear_clipping(self):
-        """Demonstrate the 24% command deficit of tanh(u/s) at boundary limit compared to linear clip."""
+        """Demonstrate the 24% command deficit of tanh(u/s) at boundary limit compared to linear
+        clip."""
         # At boundary limit error = scale:
         # linear clip gives exactly 1.0
         # tanh gives tanh(1.0) = 0.7616 (23.8% deficit)

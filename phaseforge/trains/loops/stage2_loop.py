@@ -192,10 +192,16 @@ class Stage2Trainer(BaseTrainer):
                     dw_tensor = dw_tensor.repeat(2)
                 sq_err = sq_err * dw_tensor
             if phase_weights is not None and "phase" in batch:
-                weights_tensor = torch.as_tensor(phase_weights, dtype=torch.float32, device=self.device)
+                weights_tensor = torch.as_tensor(
+                    phase_weights, dtype=torch.float32, device=self.device
+                )
                 max_p = int(batch["phase"].max().item()) if batch["phase"].numel() > 0 else 0
                 if weights_tensor.numel() <= max_p:
-                    pad = torch.ones(max_p + 1 - weights_tensor.numel(), dtype=weights_tensor.dtype, device=weights_tensor.device)
+                    pad = torch.ones(
+                        max_p + 1 - weights_tensor.numel(),
+                        dtype=weights_tensor.dtype,
+                        device=weights_tensor.device,
+                    )
                     weights_tensor = torch.cat([weights_tensor, pad])
                 sample_weights = weights_tensor[batch["phase"].long()]
                 if mask is not None:
@@ -235,8 +241,16 @@ class Stage2Trainer(BaseTrainer):
                 if mask is not None:
                     is_rel_0 = is_rel_0 & mask
                     is_rel_1 = is_rel_1 & mask
-                loss_0 = (out.action_pred[is_rel_0, 0:2] ** 2).sum(dim=-1).mean() if is_rel_0.any() else _zero_scalar(self.device)
-                loss_1 = (out.action_pred[is_rel_1, 7:9] ** 2).sum(dim=-1).mean() if is_rel_1.any() else _zero_scalar(self.device)
+                loss_0 = (
+                    (out.action_pred[is_rel_0, 0:2] ** 2).sum(dim=-1).mean()
+                    if is_rel_0.any()
+                    else _zero_scalar(self.device)
+                )
+                loss_1 = (
+                    (out.action_pred[is_rel_1, 7:9] ** 2).sum(dim=-1).mean()
+                    if is_rel_1.any()
+                    else _zero_scalar(self.device)
+                )
                 release_loss = lambda_rel * (loss_0 + loss_1)
             else:
                 is_releasing = target_action[..., 6] < grip_threshold

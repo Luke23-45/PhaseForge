@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +34,7 @@ def analyze_traces(trace_path: Path) -> dict[str, Any]:
         raise FileNotFoundError(f"Trace file not found: {trace_path}")
 
     episodes: dict[int, list[dict[str, Any]]] = {}
-    with open(trace_path, "r", encoding="utf-8") as f:
+    with open(trace_path, encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
@@ -63,10 +62,20 @@ def analyze_traces(trace_path: Path) -> dict[str, Any]:
         steps = episodes[ep_id]
         terminal_window = steps[-50:]  # last 50 steps
 
-        z_cmds = [s.get("final_action", [0, 0, 0])[2] for s in terminal_window if s.get("final_action")]
-        z_pre = [s.get("pre_clip_command", [0, 0, 0])[2] for s in terminal_window if s.get("pre_clip_command")]
-        margins = [s.get("router_margin", 0.0) for s in terminal_window if s.get("router_margin") is not None]
-        experts = [s.get("selected_expert") for s in terminal_window if s.get("selected_expert") is not None]
+        z_cmds = [
+        s.get("final_action", [0, 0, 0])[2] for s in terminal_window if s.get("final_action")
+    ]
+        z_pre = [
+        s.get("pre_clip_command", [0, 0, 0])[2]
+        for s in terminal_window
+        if s.get("pre_clip_command")
+    ]
+        margins = [
+        s.get("router_margin", 0.0) for s in terminal_window if s.get("router_margin") is not None
+    ]
+        experts = [
+        s.get("selected_expert") for s in terminal_window if s.get("selected_expert") is not None
+    ]
 
         mean_z_cmd = sum(z_cmds) / len(z_cmds) if z_cmds else 0.0
         mean_z_pre = sum(z_pre) / len(z_pre) if z_pre else 0.0
@@ -76,8 +85,11 @@ def analyze_traces(trace_path: Path) -> dict[str, Any]:
         for exp in experts:
             expert_counts[exp] = expert_counts.get(exp, 0) + 1
 
-        print(f"Episode {ep_id:2d}: Total Steps={len(steps)} | Terminal Z-cmd mean={mean_z_cmd:+.4f}, "
-              f"Pre-clip={mean_z_pre:+.4f} | Margin={mean_margin:.4f} | Experts={expert_counts}")
+        print(
+            f"Episode {ep_id:2d}: Total Steps={len(steps)} | "
+            f"Terminal Z-cmd mean={mean_z_cmd:+.4f}, Pre-clip={mean_z_pre:+.4f} | "
+            f"Margin={mean_margin:.4f} | Experts={expert_counts}"
+        )
 
         report["hover_failures"][ep_id] = {
             "steps": len(steps),
@@ -108,7 +120,6 @@ def analyze_traces(trace_path: Path) -> dict[str, Any]:
 
         t_rel = release_step.get("timestep", 0)
         action_rel = release_step.get("final_action", [0] * 7)
-        task_vars = release_step.get("task_vars", {})
         raw_obs = release_step.get("raw_obs_summary", {})
 
         eef_pos = raw_obs.get("robot0_eef_pos", [0, 0, 0])
@@ -118,9 +129,12 @@ def analyze_traces(trace_path: Path) -> dict[str, Any]:
         # Estimate lateral velocity at release from final_action or task vars
         v_lateral = (action_rel[0] ** 2 + action_rel[1] ** 2) ** 0.5
 
-        print(f"Episode {ep_id:2d}: Release at t={t_rel:3d} | GripCmd={action_rel[6]:+.3f} | "
-              f"EEF Z={z_eef:.4f} (Rel to rim: {z_rel_rim:+.4f}m) | "
-              f"Lat-Action-Norm={v_lateral:.4f} | Lat-Cmd=({action_rel[0]:+.3f}, {action_rel[1]:+.3f})")
+        print(
+            f"Episode {ep_id:2d}: Release at t={t_rel:3d} | GripCmd={action_rel[6]:+.3f} | "
+            f"EEF Z={z_eef:.4f} (Rel to rim: {z_rel_rim:+.4f}m) | "
+            f"Lat-Action-Norm={v_lateral:.4f} | "
+            f"Lat-Cmd=({action_rel[0]:+.3f}, {action_rel[1]:+.3f})"
+        )
 
         report["rim_failures"][ep_id] = {
             "release_timestep": t_rel,
@@ -135,9 +149,13 @@ def analyze_traces(trace_path: Path) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Analyze trace.jsonl for failure episode forensics.")
+    parser = argparse.ArgumentParser(
+        description="Analyze trace.jsonl for failure episode forensics."
+    )
     parser.add_argument("--trace", type=str, required=True, help="Path to trace.jsonl")
-    parser.add_argument("--output", type=str, default=None, help="Optional output path for json summary")
+    parser.add_argument(
+        "--output", type=str, default=None, help="Optional output path for json summary"
+    )
     args = parser.parse_args()
 
     trace_file = Path(args.trace)

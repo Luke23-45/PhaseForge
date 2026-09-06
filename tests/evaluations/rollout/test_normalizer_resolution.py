@@ -97,7 +97,8 @@ def test_resolve_rollout_normalizer_from_cache_dir(tmp_path: Path) -> None:
 def test_resolve_cache_dir_recovers_from_checkpoint_run_meta(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """When git revision causes hash mismatch, cache is recovered from checkpoint's run_meta.json."""
+    """When git revision causes hash mismatch, cache is recovered from checkpoint's
+    run_meta.json."""
     cache_root = tmp_path / "processed_cache"
     cache_root.mkdir(parents=True)
     monkeypatch.setattr(
@@ -112,7 +113,9 @@ def test_resolve_cache_dir_recovers_from_checkpoint_run_meta(
     (train_cache / "trajectories").mkdir()
 
     # Create run output directory with run_meta.json
-    run_dir = tmp_path / "outputs" / "my_model" / "stage2" / "seed42" / "2026-09-05_06-00-00_Can_c8463149"
+    run_dir = (
+        tmp_path / "outputs" / "my_model" / "stage2" / "seed42" / "2026-09-05_06-00-00_Can_c8463149"
+    )
     checkpoints_dir = run_dir / "checkpoints"
     checkpoints_dir.mkdir(parents=True)
     ckpt_path = checkpoints_dir / "checkpoint_best.pt"
@@ -202,7 +205,8 @@ def test_resolve_rollout_normalizer_fails_closed_when_nothing_found(
 def test_run_rollout_evaluation_succeeds_with_missing_disk_cache(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Full rollout evaluation succeeds even when disk cache is completely missing, using model buffers."""
+    """Full rollout evaluation succeeds even when disk cache is completely missing, using model
+    buffers."""
     empty_root = tmp_path / "missing_cache"
     empty_root.mkdir(parents=True)
     monkeypatch.setattr(

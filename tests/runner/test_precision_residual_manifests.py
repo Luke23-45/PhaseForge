@@ -2,8 +2,10 @@
 
 Verifies that:
 1. Each individual task manifest (Lift, Can, Square, ToolHang, Transport) loads cleanly.
-2. The master manifest `main.json` and the directory path load cleanly and match expected task specifications.
-3. Every cell across all manifests composes successfully under Hydra (Stage 1, Stage 2, Rollout Eval).
+2. The master manifest `main.json` and the directory path load cleanly and match expected task
+specifications.
+3. Every cell across all manifests composes successfully under Hydra (Stage 1, Stage 2, Rollout
+Eval).
 4. Sweep execution plans can be generated for all 5 tasks without prerequisite or structural errors.
 """
 

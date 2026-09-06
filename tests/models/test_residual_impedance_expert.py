@@ -9,8 +9,6 @@ Validates:
 
 from __future__ import annotations
 
-import math
-import pytest
 import torch
 import torch.nn as nn
 
@@ -57,7 +55,9 @@ class TestResidualImpedanceExpert:
         expert2 = ResidualImpedanceExpert(input_dim=16, hidden_dim=32, output_dim=7, beta=0.0)
         experts = nn.ModuleList([expert1, expert2])
 
-        dropped = partial_reinit_experts_from_action_head(experts, action_head, drop_rate=0.5, seed=42)
+        dropped = partial_reinit_experts_from_action_head(
+        experts, action_head, drop_rate=0.5, seed=42
+    )
         assert len(dropped) == 16  # 50% of 32 hidden neurons
 
         # Kept neurons must match action_head exactly
@@ -70,7 +70,8 @@ class TestResidualImpedanceExpert:
             )
 
     def test_gripper_channel_is_unaffected_by_residual(self):
-        """When beta > 0, residual impedance acts on dims 0:6 while gripper (dim 6) is unaffected."""
+        """When beta > 0, residual impedance acts on dims 0:6 while gripper (dim 6) is
+        unaffected."""
         expert = ResidualImpedanceExpert(input_dim=16, hidden_dim=32, output_dim=7, beta=0.5)
         # Set large delta and kappa to produce strong residual
         nn.init.constant_(expert.delta_head.weight, 1.0)
@@ -86,7 +87,8 @@ class TestResidualImpedanceExpert:
         assert not torch.allclose(out_expert[:, :6], out_base[:, :6], atol=1e-4)
 
     def test_multi_arm_transport_dual_arm_geometry(self):
-        """When output_dim=14 (Transport task), residual compliance affects both arms (0:6, 7:13) while leaving grippers (6, 13) unlagged."""
+        """When output_dim=14 (Transport task), residual compliance affects both arms (0:6, 7:13)
+        while leaving grippers (6, 13) unlagged."""
         expert = ResidualImpedanceExpert(input_dim=16, hidden_dim=32, output_dim=14, beta=0.5)
         assert expert.num_arms == 2
         assert expert.pose_dim == 12
@@ -100,7 +102,8 @@ class TestResidualImpedanceExpert:
         out_base = expert.base_expert(latent)
 
         assert out_expert.shape == (8, 14)
-        # Both grippers (channel 6 for arm 0 and channel 13 for arm 1) must match base_expert bit-for-bit
+        # Both grippers (channel 6 for arm 0 and channel 13 for arm 1) must match
+    # base_expert bit-for-bit
         assert torch.allclose(out_expert[:, 6], out_base[:, 6], atol=1e-7)
         assert torch.allclose(out_expert[:, 13], out_base[:, 13], atol=1e-7)
         # Both pose blocks (0:6 and 7:13) must reflect the residual compliance

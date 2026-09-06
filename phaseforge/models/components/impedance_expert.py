@@ -18,7 +18,7 @@ keeps its direct action head for warm-starting the shared encoder only.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
 import torch.nn as nn
@@ -110,7 +110,8 @@ class ImpedanceExpert(nn.Module):
                 self.target_head.bias.data.copy_(self.target_init_bias.to(self.target_head.bias.dtype))
         if hasattr(self, "gain_head"):
             nn.init.normal_(self.gain_head.weight, mean=0.0, std=1e-3)
-            # softplus(x) = ln(1 + e^x) = 1.0 => x = ln(e - 1) ≈ 0.54132485 gives exact nominal stiffness
+            # softplus(x) = ln(1 + e^x) = 1.0 => x = ln(e - 1) ≈ 0.54132485
+            # gives exact nominal stiffness
             nn.init.constant_(self.gain_head.bias, 0.54132485)
 
     def reset_parameters(self) -> None:
@@ -182,7 +183,9 @@ class ResidualImpedanceExpert(nn.Module):
         from phaseforge.models.components.expert import ExpertMLP
 
         h_dim = hidden_dims[0] if (hidden_dims and len(hidden_dims) > 0) else hidden_dim
-        self.base_expert = ExpertMLP(input_dim=input_dim, hidden_dims=[h_dim], output_dim=output_dim)
+        self.base_expert = ExpertMLP(
+            input_dim=input_dim, hidden_dims=[h_dim], output_dim=output_dim
+        )
 
         self.input_dim = int(input_dim)
         self.hidden_dim = int(h_dim)
@@ -192,7 +195,8 @@ class ResidualImpedanceExpert(nn.Module):
         self.beta = float(beta)
 
         # Multi-arm geometry decomposition:
-        # Standard Robosuite operational-space controllers allocate 7 dims per arm (6 pose + 1 gripper).
+        # Standard Robosuite operational-space controllers allocate 7 dims per arm
+        # (6 pose + 1 gripper).
         if self.output_dim % 7 == 0:
             self.num_arms = self.output_dim // 7
             self.pose_dim = 6 * self.num_arms
@@ -252,7 +256,9 @@ class ResidualImpedanceExpert(nn.Module):
         kappa = torch.nn.functional.softplus(self.gain_head(h)).clamp(
             min=self.kappa_min, max=self.kappa_max
         )
-        scale_pose = torch.as_tensor(self.pose_action_scale, dtype=latent.dtype, device=latent.device)
+        scale_pose = torch.as_tensor(
+            self.pose_action_scale, dtype=latent.dtype, device=latent.device
+        )
         u_imp = torch.clamp((kappa * delta) / scale_pose, -1.0, 1.0)
 
         if self.output_dim % 7 == 0:

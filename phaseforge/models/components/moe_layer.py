@@ -77,14 +77,16 @@ class MoELayer(nn.Module):
             for expert in self.experts:
                 if not isinstance(expert, (ExpertMLP, ImpedanceExpert, ResidualImpedanceExpert)):
                     raise TypeError(
-                        "All experts must be ExpertMLP, ImpedanceExpert, or ResidualImpedanceExpert instances, "
+                        "All experts must be ExpertMLP, ImpedanceExpert, "
+                        "or ResidualImpedanceExpert instances, "
                         f"got {type(expert).__name__}"
                     )
                 expert.reset_parameters()
         else:
             raise TypeError(
                 "experts must be an ExpertMLP, ImpedanceExpert, ResidualImpedanceExpert, "
-                "list[ExpertMLP], list[ImpedanceExpert], list[ResidualImpedanceExpert], or nn.ModuleList"
+                "list[ExpertMLP], list[ImpedanceExpert], "
+                "list[ResidualImpedanceExpert], or nn.ModuleList"
             )
 
         if len(self.experts) != router.num_experts:
@@ -96,7 +98,8 @@ class MoELayer(nn.Module):
         if len(expert_types) != 1:
             raise ValueError(
                 "MoE experts must all share the same class (ExpertMLP, ImpedanceExpert, "
-                f"or ResidualImpedanceExpert); mixing is not supported. Got: {[t.__name__ for t in expert_types]}"
+                f"or ResidualImpedanceExpert); mixing is not supported. "
+                f"Got: {[t.__name__ for t in expert_types]}"
             )
 
     def forward(

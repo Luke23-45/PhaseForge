@@ -1,4 +1,5 @@
-"""Diagnostic tool: per-dimension and per-phase action MSE breakdown (Professor Suggestion §1.9, §6.0.1, §6.0.2).
+"""Diagnostic tool: per-dimension and per-phase action MSE breakdown (Professor Suggestion §1.9,
+§6.0.1, §6.0.2).
 
 Computes:
 1. Per-dimension MSE: pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, gripper.
@@ -8,14 +9,9 @@ Computes:
 
 from __future__ import annotations
 
-import argparse
-import sys
-from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 
 DIM_NAMES = ["pos_x", "pos_y", "pos_z", "rot_x", "rot_y", "rot_z", "gripper"]
 PHASE_NAMES = ["0_Approach", "1_PreGrasp", "2_Grasp", "3_Transport", "4_Place", "5_Retract"]
@@ -111,7 +107,10 @@ def format_breakdown_table(breakdown: dict[str, Any]) -> str:
     lines.append(f"  Gripper             : {breakdown['per_dimension']['gripper']:.5f}")
 
     lines.append("\n2. Per-Phase MSE:")
-    lines.append(f"  {'Phase':<14} | {'Count':<7} | {'Overall MSE':<12} | {'Trans MSE':<10} | {'Rot MSE':<10} | {'Grip MSE':<10}")
+    lines.append(
+        f"  {'Phase':<14} | {'Count':<7} | {'Overall MSE':<12} | "
+        f"{'Trans MSE':<10} | {'Rot MSE':<10} | {'Grip MSE':<10}"
+    )
     lines.append("  " + "-" * 74)
     for p_name, data in breakdown["per_phase"].items():
         if data["count"] > 0:

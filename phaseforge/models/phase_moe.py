@@ -744,7 +744,8 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                     effective_num_phases = len(unique_labels)
                     all_phases = inverse_indices
                     logger.info(
-                        f"Dynamic/topo regimes mapped to {effective_num_phases} contiguous clusters: {unique_labels.tolist()}"
+                        f"Dynamic/topo regimes mapped to {effective_num_phases} "
+                        f"contiguous clusters: {unique_labels.tolist()}"
                     )
                 else:
                     effective_num_phases = num_phases
@@ -897,7 +898,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 for k, expert in enumerate(self.moe_layer.experts):
                     expert_typed = cast(ImpedanceExpert, expert)
                     expert_typed.reset_parameters()
-                    mask = (all_phases == k) if all_phases is not None else torch.tensor([], dtype=torch.bool)
+                    mask = (
+                        (all_phases == k)
+                        if all_phases is not None
+                        else torch.tensor([], dtype=torch.bool)
+                    )
                     if mask.sum() > 0:
                         k_mean = all_task_states[mask].mean(dim=0)
                         if k_mean.shape[-1] >= 8:

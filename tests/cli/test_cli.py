@@ -275,7 +275,8 @@ def test_phase_head_required_when_target_uses_it() -> None:
 
 
 def test_load_state_dict_checked_normalizer_stats() -> None:
-    """Checkpoints containing normalizer buffers load cleanly into models with and without normalizer support."""
+    """Checkpoints containing normalizer buffers load cleanly into models with and without
+    normalizer support."""
     # Model without set_normalizer_stats legitimately drops normalizer_ keys when allowed
     dummy = _DummyModel()
     sd = dict(dummy.state_dict())

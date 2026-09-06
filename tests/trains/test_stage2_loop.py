@@ -20,7 +20,9 @@ from phaseforge.trains.loops.stage2_loop import Stage2Trainer
 
 
 class _DictDataset(Dataset):
-    def __init__(self, num: int = 32, num_phases: int = 3, seed: int = 0, action_dim: int = 2) -> None:
+    def __init__(
+        self, num: int = 32, num_phases: int = 3, seed: int = 0, action_dim: int = 2
+    ) -> None:
         gen = torch.Generator().manual_seed(seed)
         self.states = torch.randn(num, 4, generator=gen)
         self.actions = torch.randn(num, action_dim, generator=gen)
@@ -580,7 +582,8 @@ def test_dim_weights_scales_action_loss() -> None:
 
 
 def test_release_loss_active_on_gripper_opening() -> None:
-    """Verifies that train.release_loss penalizes lateral velocity only during place with gripper opening."""
+    """Verifies that train.release_loss penalizes lateral velocity only during place with gripper
+    opening."""
     model = CountingMoEModel(num_experts=5)
     dataset = _DictDataset(num=4, seed=60, action_dim=7)
     # Set phase=4 (place phase), gripper < 0 (releasing in Robosuite convention)
@@ -637,7 +640,8 @@ def test_log_dimension_mse_subspace_metrics() -> None:
 
 
 def test_dim_weights_auto_tile_dual_arm() -> None:
-    """Verifies that 7-dim dim_weights auto-tiles to 14 dims for dual-arm Transport without error."""
+    """Verifies that 7-dim dim_weights auto-tiles to 14 dims for dual-arm Transport without
+    error."""
     model = CountingMoEModel(num_experts=3)
     dataset = _DictDataset(num=4, seed=80, action_dim=14)
     loader = DataLoader(dataset, batch_size=4)
@@ -660,7 +664,8 @@ def test_dim_weights_auto_tile_dual_arm() -> None:
 
 
 def test_dual_arm_release_loss() -> None:
-    """Verifies that release_loss evaluates both arm 0 (dim 6) and arm 1 (dim 13) independently for dual-arm."""
+    """Verifies that release_loss evaluates both arm 0 (dim 6) and arm 1 (dim 13) independently for
+    dual-arm."""
     model = CountingMoEModel(num_experts=5)
     dataset = _DictDataset(num=2, seed=90, action_dim=14)
     dataset.phases = torch.tensor([4, 4])

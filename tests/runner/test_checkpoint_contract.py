@@ -24,7 +24,6 @@ from phaseforge.runner.protocol import Method, Step
 from phaseforge.runner.registry import RunnerState
 from phaseforge.runner.resolver import (
     CheckpointError,
-    resolve_checkpoint_path,
     resolve_stage_ckpt,
     verify_checkpoint_contract,
 )

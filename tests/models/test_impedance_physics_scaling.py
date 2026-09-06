@@ -17,23 +17,19 @@ Validates:
 from __future__ import annotations
 
 import math
-import pytest
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from phaseforge.utils.registry import build_model
-from phaseforge.models.baselines.bc_impedance import BCImpedanceModel
 from phaseforge.models.components.action_adapter import impedance_action
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.impedance_expert import ImpedanceExpert
 from phaseforge.models.components.phase_head import PhaseClassificationHead
 from phaseforge.models.components.prototype_router import PrototypeRouter
-from phaseforge.models.components.task_state import extract_task_state
 from phaseforge.models.phase_moe import PhaseBootstrappedMoE
-from phaseforge.trains.losses.lipschitz import lip_penalty, gain_penalty
-
+from phaseforge.trains.losses.lipschitz import lip_penalty
 
 ROBOSUITE_OSC_SCALE = (0.05, 0.05, 0.05, 0.5, 0.5, 0.5, 0.04)
 
@@ -42,7 +38,8 @@ class TestImpedancePhysicsScaling:
     """Test physical scale matching against Robosuite operational space controller."""
 
     def test_vector_scale_vs_scalar_scale_force_deficit(self):
-        """Demonstrate that scalar s=1.0 causes a 15x force deficit while vector scale delivers full authority."""
+        """Demonstrate that scalar s=1.0 causes a 15x force deficit while vector scale delivers full
+        authority."""
         # 5 cm position displacement (typical manipulation reach)
         # Identity quaternion, 0 gripper aperture
         task_state = torch.tensor([[0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]])
@@ -87,9 +84,12 @@ class TestImpedancePhysicsScaling:
         # Clamping command magnitude > 0.96
         assert abs(grip_grasp) > 0.96
 
-        # With scalar 1.0, even with max kappa=5.0, max command was tanh(5 * 0.04) = tanh(0.20) = 0.197
+        # With scalar 1.0, even with max kappa=5.0, max command was
+    # tanh(5 * 0.04) = tanh(0.20) = 0.197
         act_scalar_max, _ = impedance_action(target, torch.full((1, 7), 5.0), task_state, scale=1.0)
-        assert abs(act_scalar_max[0, 6].item()) < 0.20, "Scalar scale can never produce grasp force!"
+        assert abs(act_scalar_max[0, 6].item()) < 0.20, (
+        "Scalar scale can never produce grasp force!"
+    )
 
     def test_impedance_expert_with_vector_scale(self):
         """ImpedanceExpert propagates vector action_scale correctly through params and forward."""
@@ -113,7 +113,8 @@ class TestImpedancePhysicsScaling:
 
 
 class TestColdStartCentroidBootstrapping:
-    """Verify task-space centroid initialization prevents initial saturation and vanishing gradients."""
+    """Verify task-space centroid initialization prevents initial saturation and vanishing
+    gradients."""
 
     def test_nominal_stiffness_initialization(self):
         """Verify gain_head.bias init gives exact nominal stiffness kappa = 1.0 at step 0."""
@@ -124,7 +125,8 @@ class TestColdStartCentroidBootstrapping:
         torch.testing.assert_close(stiffness, torch.ones_like(stiffness), atol=1e-5, rtol=1e-5)
 
     def test_centroid_bias_init_prevents_saturation(self):
-        """Verify expert target initialized at centroid has near-zero initial error and non-zero gradient."""
+        """Verify expert target initialized at centroid has near-zero initial error and non-zero
+        gradient."""
         # Can task: table at z ~ 0.8-1.0m, EEF at z ~ 1.0m
         centroid = torch.tensor([0.0, -0.2, 1.0, 1.0, 0.0, 0.0, 0.0, 0.04])
         expert = ImpedanceExpert(
@@ -175,10 +177,12 @@ class TestColdStartCentroidBootstrapping:
 
 
 class TestCartesianPositionContraction:
-    """Verify Lipschitz contraction regularization operates on Cartesian position without discrete gripper artifacts."""
+    """Verify Lipschitz contraction regularization operates on Cartesian position without discrete
+    gripper artifacts."""
 
     def test_gripper_switch_does_not_trigger_lipschitz_penalty(self):
-        """A discrete gripper toggle (aperture 0.04 -> 0.0) with contractive position must NOT violate Lipschitz."""
+        """A discrete gripper toggle (aperture 0.04 -> 0.0) with contractive position must NOT
+        violate Lipschitz."""
         # 4 state pairs where position is strictly contractive (norm(dT) = 0.5 * norm(dy)),
         # but gripper snaps from 0.04 to 0.0 (discrete contact closure).
         y1 = torch.tensor([
@@ -204,10 +208,13 @@ class TestCartesianPositionContraction:
 
         # coord_slice=(0, 3) restricts contraction check to Cartesian position
         loss = lip_penalty(targets, states, experts, rho=0.8, coord_slice=(0, 3), num_pairs=16)
-        assert loss.item() == 0.0, f"Expected 0 penalty for position-contractive states, got {loss.item()}"
+        assert loss.item() == 0.0, (
+        f"Expected 0 penalty for position-contractive states, got {loss.item()}"
+    )
 
     def test_position_expansion_triggers_lipschitz_penalty(self):
-        """When position expansion exceeds rho=0.8, lip_penalty correctly penalizes the violation."""
+        """When position expansion exceeds rho=0.8, lip_penalty correctly penalizes the
+        violation."""
         # dT_pos = 2.0 * dy_pos
         y = torch.tensor([
             [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
@@ -224,7 +231,8 @@ class TestCartesianPositionContraction:
 
 
 class TestEndToEndMoEBootstrapping:
-    """Verify PhaseBootstrappedMoE bootstrapping initializes per-regime centroids into ImpedanceExperts."""
+    """Verify PhaseBootstrappedMoE bootstrapping initializes per-regime centroids into
+    ImpedanceExperts."""
 
     def test_bootstrap_initializes_expert_centroids_from_regimes(self):
         """Verify each expert receives its regime's task centroid upon bootstrapping."""

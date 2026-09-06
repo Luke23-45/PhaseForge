@@ -29,7 +29,7 @@ quaternions). The primary top-1 path is exact.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import torch
 from torch import Tensor

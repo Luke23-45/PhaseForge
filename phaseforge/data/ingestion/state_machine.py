@@ -1317,9 +1317,13 @@ class DataPipelineStateMachine:
             m = self._norm_stats.get("mean")
             s = self._norm_stats.get("std")
             if m is not None:
-                norm_mean = m.detach().cpu().numpy() if isinstance(m, torch.Tensor) else np.asarray(m)
+                norm_mean = (
+                    m.detach().cpu().numpy() if isinstance(m, torch.Tensor) else np.asarray(m)
+                )
             if s is not None:
-                norm_std = s.detach().cpu().numpy() if isinstance(s, torch.Tensor) else np.asarray(s)
+                norm_std = (
+                    s.detach().cpu().numpy() if isinstance(s, torch.Tensor) else np.asarray(s)
+                )
 
         # Per-trajectory PELT segmentation on task-space variables.
         boundaries_per_traj: list[np.ndarray] = []

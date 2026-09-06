@@ -78,7 +78,9 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         self.moe_layer = MoELayer(router=router, experts=expert)
         self.num_phases = num_phases
         self.expert_init_cfg: dict[str, Any] = (
-            dict(expert_init) if expert_init is not None else {"type": "warmstart", "jitter_std": 0.02}
+            dict(expert_init)
+            if expert_init is not None
+            else {"type": "warmstart", "jitter_std": 0.02}
         )
         self._expert_init_info: dict[str, Any] | None = None
         self._stage = 1

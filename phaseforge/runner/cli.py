@@ -210,7 +210,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-commit-gate",
         action="store_true",
-        help="Disable git commit gating: allow reusing completed checkpoints from previous git commits.",
+        help="Disable git commit gating: "
+        "allow reusing completed checkpoints from previous git commits.",
     )
     return parser.parse_args(argv)
 

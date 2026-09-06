@@ -1,4 +1,5 @@
-"""Trace Robosuite PickPlaceCan success predicate metrics during rollout (Professor Suggestion §1.10, §6.0.3).
+"""Trace Robosuite PickPlaceCan success predicate metrics during rollout (Professor Suggestion
+§1.10, §6.0.3).
 
 Logs:
 1. Object position at release vs target bin bounding box.
@@ -8,10 +9,8 @@ Logs:
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -84,5 +83,7 @@ if __name__ == "__main__":
     bin_size = np.array([0.2, 0.2, 0.05])
     # Place can dead center in bin 0
     test_obj_center = np.array([0.05, 0.20, 0.83])
-    res = evaluate_predicate_geometry(test_obj_center, bin2_pos, bin_size, bin_id=0, eef_pos=np.array([0.05, 0.20, 0.95]))
+    res = evaluate_predicate_geometry(
+        test_obj_center, bin2_pos, bin_size, bin_id=0, eef_pos=np.array([0.05, 0.20, 0.95])
+    )
     print("Predicate Test (Center):", json.dumps(res, indent=2))

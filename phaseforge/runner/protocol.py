@@ -355,7 +355,9 @@ def load_protocol(path: str | Path) -> Protocol:
             if not sub_p.is_absolute():
                 sub_p = sub_dir / sub_p
             if not sub_p.exists():
-                raise ProtocolError(f"Protocol {name!r}: referenced manifest {sub_p} does not exist.")
+                raise ProtocolError(
+                    f"Protocol {name!r}: referenced manifest {sub_p} does not exist."
+                )
             sub_proto = load_protocol(sub_p)
             for m in sub_proto.methods:
                 eff_task = m.task or (sub_proto.task if sub_proto.task != "all" else None)

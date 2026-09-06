@@ -781,7 +781,11 @@ def resolve_cache_dir(cfg: DictConfig) -> Path:
 
     # 2. Checkpoint provenance: read data_config_hash recorded by training
     train_cfg = cfg.get("train") if hasattr(cfg, "get") else getattr(cfg, "train", None)
-    ckpt_path = train_cfg.get("stage1_ckpt_path") if train_cfg is not None and hasattr(train_cfg, "get") else None
+    ckpt_path = (
+        train_cfg.get("stage1_ckpt_path")
+        if train_cfg is not None and hasattr(train_cfg, "get")
+        else None
+    )
     if ckpt_path:
         ckpt = Path(str(ckpt_path))
         if not ckpt.is_absolute():
@@ -808,7 +812,10 @@ def resolve_cache_dir(cfg: DictConfig) -> Path:
                         if train_hash:
                             for root in roots:
                                 cand = root / str(train_hash)
-                                if (cand / "norm_stats.pt").is_file() or (cand / "trajectories").is_dir():
+                                if (
+                                    (cand / "norm_stats.pt").is_file()
+                                    or (cand / "trajectories").is_dir()
+                                ):
                                     logger.info(
                                         "Resolved cache dir from checkpoint provenance (%s): %s",
                                         meta_name,
@@ -1213,7 +1220,7 @@ def run_rollout_evaluation(
     cases -> strict-metric episode rows -> per-run summary.
     """
     require_rollout_eval_schema(cfg)
-    from phaseforge.data.ingestion.cache_manager import CacheManager, load_phase_thresholds
+    from phaseforge.data.ingestion.cache_manager import load_phase_thresholds
 
     meta = resolve_pinned_metadata(cfg)
     bank = load_or_generate_bank(cfg, meta)

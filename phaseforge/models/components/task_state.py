@@ -76,7 +76,10 @@ def extract_task_state(
             mean = torch.from_numpy(mean)
         if isinstance(std, np.ndarray):
             std = torch.from_numpy(std)
-        raw_state = state * std.to(device=state.device, dtype=state.dtype) + mean.to(device=state.device, dtype=state.dtype)
+        raw_state = (
+            state * std.to(device=state.device, dtype=state.dtype)
+            + mean.to(device=state.device, dtype=state.dtype)
+        )
     else:
         raw_state = state
     eef_pos = raw_state[..., _EEF_SLICE[0] : _EEF_SLICE[1]]

@@ -53,7 +53,9 @@ def download_datasets(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download raw robomimic datasets from HuggingFace.")
+    parser = argparse.ArgumentParser(
+        description="Download raw robomimic datasets from HuggingFace."
+    )
     parser.add_argument(
         "--tasks",
         nargs="+",

@@ -114,7 +114,9 @@ def lip_penalty(
     second_valid = second_idx[valid_mask][:cap]
     valid_delta_state = delta_state[valid_mask][:cap]
 
-    delta_target = torch.linalg.vector_norm(eval_targets[first_valid] - eval_targets[second_valid], dim=-1)
+    delta_target = torch.linalg.vector_norm(
+        eval_targets[first_valid] - eval_targets[second_valid], dim=-1
+    )
     ratios = torch.clamp(delta_target / (valid_delta_state + float(eps)), max=float(max_ratio))
 
     if not torch.isfinite(ratios).all():
