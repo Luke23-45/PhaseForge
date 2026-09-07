@@ -1,462 +1,545 @@
-# Precision-Residual PhaseForge: Final Baseline and Ablation Research Protocol
+# Precision-Residual PhaseForge: Final Baseline and Ablation Execution Plan
 
-**Status:** Design specification — no final baseline training or deletion is authorized until the gates in this document pass.
+**Status:** Final research-definition plan. This document is the execution authority for the final baseline matrix. It does not authorize training, deletion, or movement of artifacts until the validation gates pass.
 
-**Scope:** The final proposed method is `precision_residual_phaseforge`. This document defines the controls required to explain why it works, how each control must differ, which historical implementations are no longer valid for the final comparison, and the exact sequence from implementation through reporting.
+**Proposed-method identity:** `precision_residual_phaseforge`
 
-## 1. Executive decision
+**Scope:** This plan consolidates the five professor reports and the repository audit. It fixes the label taxonomy, action-path semantics, baseline identities, checkpoint provenance, implementation work, validation gates, training sequence, and reporting rules.
 
-The four existing cells below must not be deleted as research questions:
+## 1. Final decisions
 
-1. `warmstart_moe`
-2. `plain_encoder_phase_bootstrap`
-3. `phase_pretrain_random_router`
-4. `teacher_forced`
+The project is now locked to one proposed-method identity: `precision_residual_phaseforge`.
 
-They are necessary because the proposed method is an MoE and its claimed contribution is decomposable. However, their current implementations were written for the older direct-action `phaseforge` family. They cannot be used unchanged as final-method ablations.
+The paper's primary claim is **not** a residual-compliance claim. The current final configuration sets `ResidualImpedanceExpert.beta = 0.0`; the residual branch therefore does not affect the action and receives no action-loss gradient. The paper will describe the executed method as a memoryless, topology-initialized, hard prototype-routed direct-action MoE with a phase/topology-supervised representation. The residual expert remains an architectural capability, not a demonstrated source of improvement in this paper.
 
-The correct treatment is:
+The final label policy is canonical:
 
-- preserve their historical code, checkpoints, and results as historical records;
-- create final-aligned versions with explicit identities;
-- keep the original research questions;
-- never silently relabel old outputs as results for `precision_residual_phaseforge`;
-- retain `teacher_forced` as a privileged diagnostic, not as a deployable baseline;
-- do not delete the ablation family until the final comparison and provenance record are complete.
-
-The final method is the only proposed method. The controls are not competing PhaseForge versions; they are controlled experiments that remove or replace one component of the final method.
-
-## 2. Current implementation facts
-
-The current final configuration is [precision_residual_phaseforge.yaml](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/config/models/precision_residual_phaseforge.yaml). It specifies:
-
-- normalized state encoder output;
-- a six-expert `PrototypeRouter`;
-- hard top-1 routing;
-- topology-based prototype initialization;
-- a `ResidualImpedanceExpert`;
-- 50% partial warm-start from the Stage 1 action head;
-- Stage 2 encoder fine-tuning with `encoder_lr_scale: 0.1`;
-- SupCon and margin-routing losses enabled by the confirmation manifest.
-
-The current old controls do not share that complete contract:
-
-| Cell | Current implementation | Current mismatch |
+| Function | Proposed method and topology controls | Static-rule comparison |
 |---|---|---|
-| `warmstart_moe` | `TopKRouter` + direct `ExpertMLP` | Old top-2/direct-action path; random router and standard warm-start semantics |
-| `plain_encoder_phase_bootstrap` | BC encoder + centroid `TopKRouter` + direct experts | Old router/expert path; no final residual expert or final prototype geometry |
-| `phase_pretrain_random_router` | `WarmStartMoEModel` with direct experts | Its provider resolves to old `phaseforge` through [config.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/utils/config.py) |
-| `teacher_forced` | Direct experts and `TopKRouter` structural parity | Its provider resolves to old `phaseforge`; encoder is frozen under its old diagnostic contract |
+| Stage 1 SupCon | `phase_topo` | `phase` |
+| Stage 1 auxiliary phase classification | `phase_topo` | `phase` |
+| Stage 2 prototype initialization | `phase_topo` | `phase` |
+| Stage 2 margin-routing loss | `phase_topo` | `phase` |
+| Routing diagnostics/targets | the declared method label field | the declared method label field |
 
-The old cells therefore answer historical questions about the old architecture. They do not yet answer the corresponding questions about the final architecture.
+This is an explicit project decision. It is not a claim that `phase_topo` is ground-truth annotation. `phase_topo` is a train-only, topology-derived regime label produced by the repository's PELT pipeline. It must be called a topology-derived or privileged discovered label in the paper.
 
-## 3. The critical semantic gate: is the residual branch active?
+All final tasks use `beta = 0.0`: Lift, Can, Square, ToolHang, and Transport. No beta schedule is allowed in the final matrix. Activating beta is a separate future experiment with a new identity and new ablations.
 
-Before implementing final-aligned controls, the final method's semantic identity must be resolved.
+## 2. Repository facts that constrain the plan
 
-The current final config sets:
+The current final model configuration is [precision_residual_phaseforge.yaml](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/config/models/precision_residual_phaseforge.yaml). Its relevant contract is:
+
+- normalized `StateEncoder` output;
+- six experts and a hard top-1 `PrototypeRouter`;
+- topology prototype source when `router_init.prototype_source=topo`;
+- `ResidualImpedanceExpert` with `beta: 0.0`;
+- 50% partial expert warm-start;
+- Stage 2 encoder fine-tuning with the configured encoder learning-rate scale;
+- SupCon and margin losses enabled only by explicit manifest overrides.
+
+The residual expert returns its `base_expert` action immediately at beta zero. The final action path is therefore direct-action, although the residual module is present in the model graph.
+
+The current training code still hardcodes `batch["phase"]` in several places. The final plan therefore requires configurable label fields, not only manifest overrides:
+
+- Stage 1 phase-classification loss currently uses `batch["phase"]` in [stage1_loop.py:165](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/trains/loops/stage1_loop.py:165).
+- Stage 1 SupCon already has a configurable label field in [stage1_loop.py:274](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/trains/loops/stage1_loop.py:274).
+- Stage 2 margin loss currently uses `batch["phase"]` in [stage2_loop.py:342](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/trains/loops/stage2_loop.py:342).
+- The current plain encoder control uses the old `TopKRouter` and reads `batch["phase"]` for bootstrap in [plain_encoder_phase_bootstrap.py:204](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/plain_encoder_phase_bootstrap.py:204).
+
+The current runner's protocol schema accepts only `stage2_source` values `self`, `bc`, and `phaseforge`; this is enforced in [protocol.py:241](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/runner/protocol.py:241). Final provider identities must therefore be added to the existing runner rather than written into a manifest and assumed to work.
+
+The existing runner already has strict seed-aware run resolution in [resolver.py:259](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/runner/resolver.py:259). The final implementation must extend and reuse that mechanism.
+
+## 3. Label and data contract
+
+### 3.1 Label definitions
+
+`phase`/`phase_rule` is the existing human-defined or rule-derived phase vocabulary.
+
+`phase_topo` is produced by the PELT topology pipeline. The final protocol uses `topo_pelt_k6`, so the expected topology regime count is six. The artifact is train-only for representation and router initialization; it must not enter the proposed policy's deployable rollout input.
+
+The final data configuration must include the topology artifact and labels for every task used by the final matrix. The topology configuration is [topo_pelt_k6.yaml](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/config/topo/topo_pelt_k6.yaml), which declares six regimes and `train_label_field: phase_topo`.
+
+Before training, validate that every required split contains `phase_topo`, that labels are integer-valued, contiguous after the repository's documented remapping, and compatible with the six-class phase head and six experts. A K-sweep or a different topology regime count is outside this locked matrix.
+
+### 3.2 Canonical loss-field configuration
+
+Add explicit fields to the existing Stage 1/Stage 2 configuration structure. Do not invent a nested `train.stage1`/`train.stage2` schema because the repository selects `train=stage1` and `train=stage2`.
+
+The required resolved fields are:
 
 ```yaml
-expert:
-  _target_: phaseforge.models.components.impedance_expert.ResidualImpedanceExpert
-  beta: 0.0
+# train=stage1
+phase_label_field: "phase_topo"
+supcon:
+  enabled: true
+  label_field: "phase_topo"
+
+# train=stage2
+phase_label_field: "phase_topo"
+margin:
+  enabled: true
+  label_field: "phase_topo"
 ```
 
-The current [ResidualImpedanceExpert](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/components/impedance_expert.py) returns the direct base action immediately when `beta == 0.0`:
+For the Static Rule MoE, the corresponding fields are `phase`.
 
-```python
-if self.beta == 0.0:
-    return base_action
-```
+The trainer must fail closed when a requested label field is absent. The resolved label fields must be written to run metadata and included in the configuration hash.
 
-Therefore, at `beta: 0.0`:
+The phase-classification loss, SupCon loss, prototype initialization, Stage 2 margin loss, and routing diagnostics must use the resolved label field appropriate to the method. Phase-specific optional losses such as release loss remain disabled in this matrix; if enabled in future, they require their own declared label-field contract.
 
-- the residual compliance output does not affect the action;
-- the residual branch receives no action-loss gradient;
-- the final policy behaves as a direct-action expert MoE with prototype routing;
-- calling the method “precision-residual” describes an installed component, not an active learned mechanism.
+## 4. Action-path contract
 
-This is not a minor implementation detail. It determines what the baselines must isolate.
+The final matrix uses `ResidualImpedanceExpert` with `beta=0.0` for every MoE row. At beta zero:
 
-### Required decision
+- action output is the warm-started direct base action;
+- residual pose heads do not affect the output;
+- residual heads receive no action-loss gradient;
+- the gripper channel remains the base expert's direct channel;
+- no task-state feedback impedance controller is active.
 
-Choose exactly one of the following before the final baseline run:
+The separate `ImpedanceExpert` path used by `bc_impedance` is not an exact control for the latent-conditioned residual module and is not part of the core causal matrix. It may be retained as a secondary action-space reference with separate labeling.
 
-**Decision A — active residual method.** The residual branch is part of the claim. Then the implementation must define and test a nonzero or scheduled `beta`, pass task state correctly, and demonstrate that residual parameters receive gradients. The schedule or value must be fixed before final evaluation.
+The final resolver must reject any final-matrix configuration whose resolved beta is not exactly zero or whose beta schedule is non-null. The validation belongs at the experiment/manifest layer, not inside the expert class, because the model class does not know the experiment identity.
 
-**Decision B — zero-residual direct method.** `beta: 0.0` is intentional and the final claim is actually normalized prototype-routed direct-action MoE. Then the paper and manifests must describe the method that is executed, and the residual branch must not be presented as a demonstrated source of improvement.
+## 5. Final experimental matrix
 
-Both decisions are scientifically valid. They are not interchangeable. No baseline matrix can be finalized until this decision is recorded.
+All final rows use the same task data, state/action conventions, training/evaluation protocol, six-expert capacity, and beta-zero action contract unless explicitly stated otherwise.
 
-### Required implementation checks for Decision A
+### 5.1 Proposed method
 
-If the residual branch is active, the following must be fixed before training:
+| Identity | Stage 1 provider | Stage 1 labels | Router | Router init | Expert init | Role |
+|---|---|---|---|---|---|---|
+| `precision_residual_phaseforge` | self | `phase_topo` for phase CE and SupCon | `PrototypeRouter`, top-1 | topology prototypes from `phase_topo` | 50% partial warm-start | Sole proposed method |
 
-1. `PhaseBootstrappedMoE._uses_impedance_experts()` must recognize `ResidualImpedanceExpert` when its forward path requires task state.
-2. `MoELayer` must pass the normalized task state to residual experts.
-3. `ResidualImpedanceExpert` must expose a testable residual contribution and gradient path.
-4. `beta` initialization and any beta schedule must be stored in resolved configuration and run metadata.
-5. A unit test must prove that `beta > 0` changes the pose action while leaving the gripper channel on the declared direct path.
-6. A training-step test must prove nonzero gradients reach `delta_head` and `gain_head` when the residual path is enabled.
+This is the only row that may be called the proposed method.
 
-The existing zero-initialization idea is compatible with a safe recovery schedule, but “initialized at zero” and “zero for the entire run” are different experiments.
+### 5.2 Single-factor causal controls
 
-## 4. Research question and causal decomposition
-
-The final method can be represented as:
-
-```text
-F = P + T + R + W + U
-```
-
-where:
-
-- `P` = phase/SupCon-shaped representation;
-- `T` = topology-derived prototype routing;
-- `R` = residual impedance action representation;
-- `W` = 50% partial warm-start expert initialization;
-- `U` = final Stage 2 encoder update policy, currently low-rate unfreezing.
-
-The baseline program must test these factors without changing unrelated factors.
-
-The central causal chain is:
-
-```text
-phase supervision
-  -> structured latent geometry
-  -> useful prototype routing
-  -> expert specialization
-  -> precision-preserving action adaptation
-  -> closed-loop success
-```
-
-This is why deleting the controls would weaken the research. A single success-rate table can show that the final method wins; it cannot show which part of the method caused the win.
-
-MoE studies treat routing, expert specialization, and representation as coupled but separable design dimensions. The relevant literature also distinguishes dense-to-MoE initialization from routing and expert behavior: [Towards Understanding Mixture of Experts](https://arxiv.org/abs/2208.02813), [Sparse Upcycling](https://arxiv.org/abs/2212.05055), and [Drop-Upcycling](https://arxiv.org/abs/2502.19261).
-
-## 5. Final-aligned factorial matrix
-
-The following matrix is the required design after the residual semantic gate is resolved.
-
-| Method identity | Representation | Router | Expert/action path | Initialization | Scientific question |
+| Identity | Stage 1 provider | Representation | Router/init | Expert init | Factor tested |
 |---|---|---|---|---|---|
-| `precision_residual_phaseforge` | final phase/SupCon encoder | topology prototypes, learned routing | residual impedance expert | partial warm | Proposed method |
-| `precision_residual_plain_encoder` | normalized BC encoder | topology prototypes, learned routing | same residual expert | partial warm | Does phase-supervised representation help? |
-| `precision_residual_phase_random_router` | final phase/SupCon encoder | random prototype router | same residual expert | partial warm | Does topology/centroid router initialization help? |
-| `precision_residual_warmstart_moe` | normalized BC encoder | random prototype router | same residual expert | partial warm | Plain 2×2 factorial corner; does the phase pathway matter jointly with routing? |
-| `precision_residual_teacher_forced` | final phase/SupCon encoder | ground-truth phase during training; predicted phase at evaluation | same residual expert | partial warm | Privileged routing upper bound; not a deployable method |
-| `phaseforge_prototype` / `pr_direct_action` | final phase/SupCon encoder | topology prototypes, learned routing | direct `ExpertMLP` | partial warm | Does the residual action representation help? |
-| `bc_impedance` / `pr_bc_impedance` | normalized BC encoder | no router | single impedance expert | ordinary BC training | Does action representation help without MoE routing? |
-| `bc` | ordinary BC encoder | none | direct action head | ordinary BC | Dense imitation floor |
-| `bc_large` | wider dense encoder | none | direct action head | ordinary BC | Capacity control |
-| `precision_residual_scratch_moe` | normalized scratch encoder | random prototype router | same residual expert | random | Is partial warm-start necessary? Secondary control |
+| `precision_residual_plain_encoder` | final-aligned normalized BC | no SupCon and no phase head; BC representation | `PrototypeRouter`, top-1; prototypes from `phase_topo` in the BC latent space | 50% partial warm-start | Representation |
+| `precision_residual_phase_random_router` | proposed method Stage 1 | `phase_topo` | `PrototypeRouter`, top-1; deterministic random initialization | 50% partial warm-start | Router initialization |
+| `precision_residual_scratch_moe` | proposed method Stage 1 | `phase_topo` | topology-initialized `PrototypeRouter`, top-1 | independent random experts | Expert initialization |
 
-The four requested cells are not redundant:
+The plain encoder is not allowed to reuse prototypes computed from the SupCon encoder. Its bootstrap must compute prototypes from its own BC latent vectors and the declared `phase_topo` labels.
 
-- `precision_residual_plain_encoder` and the final method differ in representation.
-- `precision_residual_phase_random_router` and the final method differ in router initialization.
-- `precision_residual_warmstart_moe` completes the representation × router factorial.
-- `precision_residual_teacher_forced` estimates the value of privileged phase routing and must be reported separately.
+### 5.3 Factorial corner
 
-## 6. Exact definition of each requested control
+| Identity | Stage 1 provider | Representation | Router/init | Expert init | Factors tested |
+|---|---|---|---|---|---|
+| `precision_residual_factorial_floor` | final-aligned normalized BC | no SupCon and no phase head; BC representation | `PrototypeRouter`, top-1; random initialization | 50% partial warm-start | Representation + router initialization |
 
-### 6.1 `precision_residual_warmstart_moe`
+This row is intentionally a two-factor 2×2 corner. It must not be described as a single-factor ablation.
 
-**Purpose:** Test the final MoE/action machinery without phase-supervised representation or phase-informed router initialization.
+### 5.4 Major external baselines
 
-Required properties:
+| Identity | Stage 1 provider | Router | Expert | Role |
+|---|---|---|---|---|
+| `bc` | itself | none | direct action head | Dense imitation floor |
+| `final_aligned_softmax_top1` | proposed method Stage 1 | learned softmax-scored top-1 `TopKRouter` | same residual expert, beta zero | Pre-registered router-package comparison |
+| `final_aligned_static_rule` | its own Stage 1 | `PrototypeRouter`, top-1 | same residual expert, beta zero | Integrated rule-label versus topology-label comparison |
 
-- normalized BC Stage 1 encoder;
-- no phase-supervised Stage 1 loss;
-- same latent dimension, expert count, action scale, residual expert, and Stage 2 optimizer as the final method;
-- random final-family prototype router;
-- same 50% partial warm-start from the BC action head;
-- same Stage 2 encoder update policy as the final method unless the final decision explicitly defines frozen encoders;
-- no ground-truth phase at inference.
+The Static Rule MoE uses `phase` consistently for SupCon, phase classification, prototype initialization, and margin targets. It is an integrated comparison, not a router-only ablation.
 
-It must not use the old direct `ExpertMLP` if the final method's active claim is residual action control.
+The final `PrototypeRouter` configuration uses `balance_coeff=0.0001`, as specified by the locked proposed-model configuration. This is a small auxiliary dead-expert penalty; topology initialization and the margin objective remain the primary prototype-router mechanisms. The softmax control uses `balance_coeff=0.01`, as specified below, because the learned softmax gate has a separate registered anti-collapse regularizer. This coefficient difference is deliberate and must be reported. Consequently, `final_aligned_softmax_top1` is a pre-registered router-package comparison, not a mathematically pure one-factor gate-only ablation. A pure gate-only claim would require an additional matched-balance study and is outside this locked matrix.
 
-### 6.2 `precision_residual_plain_encoder`
+The softmax row uses these pre-registered settings:
 
-**Purpose:** Isolate the contribution of the phase/SupCon representation while holding final routing, expert structure, and initialization fixed.
-
-Required properties:
-
-- normalized BC Stage 1 encoder trained with the same state and action protocol;
-- same topology prototype router as the final method;
-- same number of experts and same top-k;
-- same residual expert and beta policy;
-- same partial warm-start and Stage 2 optimization;
-- no phase head or phase loss in the BC pretraining path;
-- topology labels may be used for router bootstrap only if that use is explicitly part of the registered control and is held identical to the final router bootstrap.
-
-The plain encoder must be trained with normalization enabled. Loading an old unnormalized BC checkpoint and merely toggling normalization at Stage 2 is invalid because the representation was not trained under the same mapping.
-
-### 6.3 `precision_residual_phase_random_router`
-
-**Purpose:** Isolate topology/prototype router initialization.
-
-Required properties:
-
-- Stage 1 checkpoint supplied by the final `precision_residual_phaseforge` provider;
-- same normalized encoder, SupCon labels, phase head, residual expert, partial warm-start, and Stage 2 optimization as the final method;
-- same prototype-router class and dimensions;
-- router parameters left at a deterministic random initialization;
-- no topology prototypes installed;
-- no phase labels supplied during rollout.
-
-The current historical `phase_pretrain_random_router` resolves to old `phaseforge` and therefore cannot be reused as this control without a new Stage 1 run.
-
-### 6.4 `precision_residual_teacher_forced`
-
-**Purpose:** Measure the gap between privileged phase routing and learned autonomous routing.
-
-Required properties:
-
-- final Stage 1 checkpoint;
-- final normalized representation;
-- same residual experts, partial warm-start, action scale, and Stage 2 optimization;
-- ground-truth phase dispatch during Stage 2 training;
-- predicted phase dispatch during evaluation;
-- no ground-truth phase supplied to the proposed method;
-- explicit privileged label in all reports.
-
-This is not an ordinary baseline. It must not be included as evidence that the deployable method works without privileged information.
-
-## 7. Historical versus final-aligned identities
-
-The old names must not be silently reused for new definitions.
-
-| Historical identity | Final-aligned identity | Treatment |
-|---|---|---|
-| `warmstart_moe` | `precision_residual_warmstart_moe` | Preserve old artifacts; create new final-family control |
-| `plain_encoder_phase_bootstrap` | `precision_residual_plain_encoder` | Preserve old artifacts; create new final-family control |
-| `phase_pretrain_random_router` | `precision_residual_phase_random_router` | Change Stage 1 provider to final method and rerun |
-| `teacher_forced` | `precision_residual_teacher_forced` | Preserve old privileged diagnostic; create final-family diagnostic |
-| `scratch_moe` | `precision_residual_scratch_moe` if needed | Do not compare old direct-action scratch MoE as a final residual control |
-
-Old results remain valid only as historical results for the old architecture. They cannot be pooled with the final-family results.
-
-## 8. Required implementation architecture
-
-The final-aligned controls should share code where behavior is genuinely common. They should not be four copied implementations with drifting defaults.
-
-### 8.1 Shared final-family control base
-
-Create or generalize a shared control implementation that supports:
-
-- `StateEncoder` with explicit `normalize_output`;
-- `ActionHead` for Stage 1 checkpoint compatibility;
-- optional `PhaseClassificationHead`;
-- `TopKRouter` only where a legacy diagnostic explicitly requires it;
-- `PrototypeRouter` for final-family controls;
-- `ExpertMLP` for the direct-action control;
-- `ResidualImpedanceExpert` for the final action path;
-- random, topology/prototype, centroid, and teacher routing modes;
-- partial warm-start through the wrapped `base_expert`;
-- task-state extraction for residual action computation;
-- the final encoder freeze/unfreeze policy;
-- `ModelOutput.latent` and `ModelOutput.info` for training diagnostics;
-- deployment metadata recording router and expert types.
-
-The implementation must fail closed when a residual expert is configured but task state is absent.
-
-### 8.2 Checkpoint providers
-
-The checkpoint source map must become explicit and final-family-specific:
-
-```text
-precision_residual_phase_random_router -> precision_residual_phaseforge Stage 1
-precision_residual_teacher_forced     -> precision_residual_phaseforge Stage 1
-precision_residual_plain_encoder      -> final-aligned normalized BC Stage 1
-precision_residual_warmstart_moe      -> final-aligned normalized BC Stage 1
+```yaml
+router:
+  _target_: phaseforge.models.components.router.TopKRouter
+  top_k: 1
+  noise_std: 0.1
+  normalize_input: true
+  balance_coeff: 0.01
 ```
 
-No final-aligned control may silently load an old `phaseforge` checkpoint.
+Noise is active only during training through the router's existing train/eval behavior. No post-hoc tuning of `balance_coeff` is permitted. The primary label is **learned softmax-scored top-1 router**, not a true top-2 soft mixture. A top-2 soft mixture, if ever run, is a separate secondary comparison and must not replace the primary control.
 
-Stage 2 must always start from the provider's Stage 1 checkpoint. It must never start from the proposed method's Stage 2 checkpoint.
+Because the final method uses a prototype margin loss, the softmax router must expose a compatible `margin_loss_from_logits` interface using the same multiclass margin formula on gate logits. The margin loss must use deterministic pre-exploration logits, or the implementation must explicitly document an identical noise policy for both routers; training noise must not silently affect only the softmax margin targets. Without this interface, the softmax row would differ in both router mechanism and training objective and would not be a valid pre-registered router-package comparison. The implementation must test the common loss numerically on both router classes.
 
-### 8.3 Configuration inheritance and drift prevention
+### 5.5 Privileged diagnostics
 
-All final-family configs must pin, rather than inherit accidentally, the following fields:
+| Identity | Training routing | Evaluation routing | Status |
+|---|---|---|---|
+| `precision_residual_teacher_forced` | `phase_topo` labels | predicted `phase_topo` phase-head class | Privileged training diagnostic; separate table |
+| `precision_residual_oracle` | `phase_topo` labels | recorded `phase_topo` labels supplied by a privileged offline evaluator | Non-deployable reference; not an ordinary rollout row |
 
-- state/action dimensions through the task data config;
-- latent dimension and encoder widths;
-- `normalize_output`;
-- expert count;
-- router class and top-k;
-- margin and balance coefficient;
-- topology/prototype source;
-- action scales;
-- residual beta policy;
-- partial-warm drop rate and seed source;
-- Stage 2 encoder update policy;
-- loss enablement and weights.
+`teacher_forced` and `oracle` are distinct. Teacher-forced training uses labels but evaluation uses the learned phase head. The oracle uses labels at both training and evaluation.
 
-The resolved config hash must be written to every run. A control is valid only when its differences from the final method match a declared allowlist.
+The oracle must not fabricate `phase_topo` from a state-only `get_action()` call. The standard rollout interface does not provide the offline PELT label. The oracle is therefore evaluated offline or through an explicitly privileged evaluator that supplies the recorded label. It must reject normal deployable rollout mode.
 
-## 9. Fairness contract
+The oracle is an offline routing/action diagnostic, not an ordinary rollout success-rate baseline. Do not report an oracle rollout success rate unless a separately validated privileged labeler supplies labels on the policy-generated state trajectory; recorded demonstration labels alone cannot be assumed to label a different rollout trajectory.
 
-The final method and its mechanism controls must share:
+The final-aligned oracle is restricted to offline diagnostics on held-out demonstration data. Permissible metrics are: validation action MSE on held-out demonstration states; routing agreement between the supplied labels and the learned phase head on those states; and per-phase action error under label-directed routing. A rollout success rate is out of scope for this matrix because no validated labeler for arbitrary policy-generated states is included.
 
-- the same task-specific dataset and split;
-- the same state schema and normalization statistics;
-- the same action convention and action scale;
-- the same number of training epochs;
-- the same optimizer and scheduler unless the factor under study is the optimizer;
-- the same Stage 1 and Stage 2 checkpoint-selection rules;
-- the same seeds;
-- the same frozen evaluation reset bank;
-- the same episode count and horizon;
-- the same simulator and environment version;
-- the same success predicate;
-- the same rollout mode and no history/oracle intervention for deployable rows.
+The existing historical `oracle_moe` is not automatically a final-aligned oracle: its rollout path falls back to a router that was not trained for oracle deployment. It must remain historical unless replaced by the final privileged evaluator.
 
-Only the declared factor may differ.
+## 6. Final-aligned model implementations
 
-For example, `precision_residual_plain_encoder` may differ in Stage 1 representation source, but it may not also switch from a residual expert to a direct expert, from top-1 prototype routing to top-2 soft routing, or from partial warm-start to full warm-start.
+### 6.1 Shared implementation principles
 
-## 10. Validation and test gates
+Final-family models must share code for genuinely common behavior. They must not be four copied models with drifting defaults.
 
-No final-family training begins until these tests pass.
+The shared implementation must support:
 
-### Configuration gates
+- normalized and non-normalized encoders as explicit configuration;
+- Stage 1 action head and optional phase head;
+- `PrototypeRouter` and `TopKRouter`;
+- topology, rule, random, and K-Means initialization modes where explicitly registered;
+- configurable label fields for every loss and bootstrap operation;
+- partial warm-start and random expert initialization;
+- `ResidualImpedanceExpert` beta-zero behavior;
+- seed- and config-recorded initialization metadata;
+- deployment metadata recording router, expert, label fields, and beta;
+- memoryless inference for all deployable rows.
 
-1. Every final-family model composes for Lift, Can, Square, ToolHang, and Transport.
-2. All four requested controls resolve to the intended model class.
-3. All phase-supervised controls resolve Stage 1 from `precision_residual_phaseforge`.
-4. All plain-encoder controls resolve Stage 1 from the final-aligned normalized BC provider.
-5. No final-family manifest contains `model: phaseforge` as a Stage 1 provider.
-6. Resolved config hashes are different only in the declared factor fields.
+### 6.2 Plain encoder and factorial floor
 
-### Model-contract gates
+Create a final-aligned plain MoE model or generalize the old plain model. It must:
 
-1. All final-family policies are memoryless at inference.
-2. No ground-truth phase enters proposed-method rollout.
-3. Teacher-forced ground-truth routing is rejected in deployable evaluation mode.
-4. Residual experts receive task state when and only when the active residual path requires it.
-5. Direct experts never receive task state.
-6. All action outputs satisfy the declared action range and dimension.
+1. load a normalized BC Stage 1 checkpoint;
+2. use `PrototypeRouter`, not the old `TopKRouter`;
+3. accept a configured bootstrap label field;
+4. compute prototypes from its own BC latent vectors;
+5. use `phase_topo` for prototype and margin targets in the final plain control;
+6. use the residual expert with beta zero;
+7. support random router initialization for the factorial floor;
+8. use the same six experts, action dimensions, partial warm-start, and Stage 2 optimization as the proposed method.
 
-### Initialization gates
+Unit tests must prove that changing the label field changes only the intended bootstrap/target source and that no proposed-method latent or checkpoint is reused.
 
-1. Partial warm-start copies the action head into the residual expert's `base_expert` only.
-2. The dropped-neuron index set is shared across experts and hash-recorded.
-3. The same seed produces the same dropped-neuron hash.
-4. A different seed produces a different hash.
-5. Final-aligned controls use the same drop rate and seed convention as the proposed method.
+### 6.3 Softmax router
 
-### Residual gates
+Use the existing `TopKRouter` implementation with the locked settings above. Add the common margin-loss method required by Section 5.4 and expose deterministic pre-exploration gate logits for that loss. The test must verify:
 
-If Decision A is selected:
+- top-1 selection;
+- normalized input;
+- training noise and evaluation determinism;
+- balance-loss coefficient;
+- compatible margin-loss output and gradients;
+- identical beta-zero action-path contract.
 
-1. `beta > 0` or the declared schedule must be present in resolved metadata.
-2. The residual branch must produce a nonzero controlled contribution on a synthetic test input.
-3. The residual parameters must receive nonzero gradients during a training step.
-4. The gripper channel must follow the declared direct path.
-5. The beta schedule must be fixed before reading final evaluation results.
+Do not tune the balance coefficient after observing final utilization.
 
-## 11. Training and evaluation sequence
+### 6.4 Teacher-forced diagnostic
 
-### Phase 0 — freeze definitions
+Create or generalize the teacher-forced model so its final-aligned version has:
 
-1. Decide active versus zero residual behavior.
-2. Freeze the final config and final-family control table.
-3. Assign final identities and historical identities.
-4. Define the intentional-difference allowlist for each control.
-5. Freeze seeds, tasks, reset banks, and evaluation protocol.
+- normalized final encoder;
+- topology-labeled Stage 1 checkpoint;
+- final expert class with beta zero;
+- declared partial warm-start policy;
+- `phase_topo` labels during Stage 2 training;
+- predicted phase-head routing during evaluation;
+- explicit privileged-diagnostic metadata.
 
-### Phase 1 — implement and test
+The old direct-action teacher-forced implementation remains historical and must not be silently relabeled.
 
-1. Add the shared final-family control implementation.
-2. Add final-aligned normalized BC Stage 1 provider if required.
-3. Update checkpoint-source resolution.
-4. Add composition and contract tests.
-5. Add residual-gradient tests if Decision A is selected.
-6. Run unit, integration, and manifest tests on CPU.
+### 6.5 Privileged oracle
 
-### Phase 2 — dry-run and pilot
+Implement a final-aligned oracle evaluator that receives recorded `phase_topo` labels from the offline evaluation data. It must:
 
-1. Dry-run every final-family manifest.
-2. Verify dependency order: Stage 1 provider before Stage 2 consumer.
-3. Run a small pilot only for implementation failures and numerical stability.
-4. Do not select the final method or remove controls based on the pilot.
+- use the final encoder/expert contract;
+- route by the supplied topology label at training and evaluation;
+- be marked non-deployable;
+- refuse ordinary state-only rollout mode;
+- record privileged-label access in metadata;
+- validate label range and six-expert mapping.
 
-### Phase 3 — final training
+Its standard result is an offline diagnostic on held-out data (for example, action loss or routing agreement). A simulation success rate is admissible only if the evaluator has a documented, validated privileged label source for the states actually visited during that rollout.
 
-Run all declared methods at one frozen commit:
+## 7. Loss and label implementation
 
-- training seeds 42, 43, and 44;
-- Lift, Can, Square, ToolHang, and Transport where the protocol allows;
-- identical evaluation banks per task;
+Implement the following explicit configuration fields in the existing Hydra stage configs:
+
+```yaml
+# train=stage1
+phase_label_field: "phase_topo"
+supcon:
+  label_field: "phase_topo"
+
+# train=stage2
+phase_label_field: "phase_topo"
+margin:
+  enabled: true
+  label_field: "phase_topo"
+```
+
+The Static Rule MoE resolves all three fields to `phase`. Plain and factorial controls have no Stage 1 phase/SupCon loss, but their Stage 2 prototype and margin fields resolve to `phase_topo`.
+
+Update the trainers so that:
+
+- Stage 1 CE reads the resolved `phase_label_field`;
+- Stage 1 SupCon reads `supcon.label_field`;
+- Stage 2 margin reads `margin.label_field`;
+- validation routing accuracy and related diagnostics use the declared field;
+- missing fields fail closed with the method, task, and requested field in the error;
+- label cardinality and contiguity are checked before training.
+
+Where a phase head is retained for checkpoint compatibility, its output dimension remains six under the locked `topo_pelt_k6` protocol. A future K change requires a new protocol, new phase-head dimensions, and new identities.
+
+## 8. Checkpoint and runner provenance
+
+Do not hardcode absolute checkpoint paths in the manifest. Add explicit provider identities to the existing runner protocol or extend `stage2_source` to named providers. The runner must use the existing strict seed-aware resolution machinery and pass the resolved checkpoint as `train.stage1_ckpt_path` to the subprocess.
+
+Required provider identities include:
+
+- `precision_residual_phaseforge_stage1` — final topology/SupCon Stage 1 provider;
+- `final_aligned_bc_stage1` — normalized BC Stage 1 provider, produced by an explicit final-aligned BC configuration or override with the required normalized encoder contract;
+- `final_aligned_static_rule_stage1` — rule-label Stage 1 provider.
+
+The exact names may be implemented as method identities, but they must be explicit in the protocol and cannot resolve through the historical aliases `phaseforge`, `bc`, or old baseline names.
+
+For every Stage 2 consumer, resolution must require:
+
+- matching task;
+- matching training seed;
+- completed provider run;
+- expected provider commit;
+- expected provider resolved-config hash;
+- valid `checkpoint_best.pt`.
+
+The run metadata must record:
+
+- provider identity;
+- resolved absolute checkpoint path;
+- checkpoint SHA-256;
+- provider commit;
+- provider resolved-config hash;
+- consumer resolved-config hash;
+- dataset/cache hash;
+- topology artifact hash when used;
+- evaluation reset-bank hash;
+- environment versions.
+
+No final-aligned control may load a historical `phaseforge` Stage 1 checkpoint. The runner must fail before training if a seed-exact provider is unavailable.
+
+For every task and training seed, all rows that consume `phase_topo` must resolve the same topology-artifact identity and hash. The artifact's label mapping/remapping must also be recorded. A method-specific topology artifact, or a silent regeneration with a different seed/configuration, is a protocol violation because it changes the target labels between compared rows.
+
+### 8.1 Locked checkpoint and optimization policy
+
+All Stage 1 and Stage 2 final-family checkpoints are selected by minimum `val/loss_action` (validation action MSE) on the held-out validation split. Rollout success, routing diagnostics, and final evaluation-bank results must never select a checkpoint. The selected epoch, validation split identity, monitor name, monitor mode, and monitor value must be recorded in run metadata. Early stopping remains disabled for the locked full-length runs.
+
+The locked optimization values are the resolved values in [stage1.yaml](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/config/train/stage1.yaml), [stage2.yaml](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/config/train/stage2.yaml), and the per-task data configs:
+
+| Setting | Stage 1 | Stage 2 |
+|---|---:|---:|
+| Epochs | 100 | 200 |
+| Batch size | 256 | 256 |
+| Optimizer | AdamW | AdamW |
+| Learning rate | `3e-4` | `1e-4` |
+| Weight decay | `1e-4` | `1e-4` |
+| Betas / epsilon | `(0.9, 0.999)` / `1e-8` | `(0.9, 0.999)` / `1e-8` |
+| Scheduler | CosineAnnealingLR | CosineAnnealingLR |
+| Scheduler `T_max` / `eta_min` | `100` / `1e-6` | `200` / `1e-7` |
+| Gradient clipping norm | `1.0` | `1.0` |
+| Checkpoint monitor | `val/loss_action`, min | `val/loss_action`, min |
+
+Final-family Stage 2 rows that fine-tune the encoder use `encoder_lr_scale=0.1`; the value is part of the resolved configuration hash. Per-method loss switches and declared initialization factors are not silent hyperparameter changes: they must appear explicitly in the manifest and metadata. Any change to the values in this table requires a new protocol revision.
+
+## 9. Manifest structure
+
+Create a new manifest such as `experiments/final_causal_matrix.json`. Do not edit `experiments/five_task.json` in place for this final matrix.
+
+The manifest must:
+
+- contain task rows for Lift, Can, Square, ToolHang, and Transport;
+- use training seeds 42, 43, and 44;
+- declare final model identities, providers, label fields, and overrides explicitly;
+- pin `topo@_global_=topo_pelt_k6` for rows that require topology labels;
+- set `beta=0.0` explicitly for every residual-expert row;
+- set `train.supcon.label_field=phase_topo` for topology representation rows;
+- set `train.phase_label_field` and `train.margin.label_field` explicitly;
+- include the Static Rule MoE with `phase` fields;
+- include deployable rows in rollout evaluation only;
+- include the oracle only in its privileged offline evaluator;
+- use a fresh output namespace so historical artifacts cannot be overwritten.
+
+The old `five_task.json` remains historical. Existing `phase`-trained results are not included in the final matrix, but they are preserved with their original method identity, commit, config hash, provider, and label policy.
+
+## 10. Validation gates
+
+No final training begins until every gate passes.
+
+### 10.1 Configuration gates
+
+1. Every final manifest composes successfully for all five tasks.
+2. Every final row explicitly declares its label fields.
+3. Topology rows use `topo_pelt_k6` and `phase_topo`.
+4. Static Rule MoE uses `phase` consistently.
+5. All final residual-expert rows resolve beta exactly to `0.0`.
+6. No beta schedule is present in the final matrix.
+7. All final rows use six experts and the declared top-k.
+8. Config hashes differ only in declared factor fields and explicitly documented model-role fields.
+
+### 10.2 Label/data gates
+
+1. `phase_topo` exists in every required batch split.
+2. `phase_topo` labels are valid six-class integer labels after documented remapping.
+3. Stage 1 CE, SupCon, Stage 2 margin, bootstrap, and diagnostics resolve to the declared fields.
+4. No topology label enters deployable rollout input.
+5. Static-rule rows do not accidentally consume `phase_topo` for their declared rule-label losses.
+6. All topology-consuming rows for a given task and seed use the same topology-artifact hash and label mapping.
+
+### 10.3 Model-contract gates
+
+1. Proposed and deployable controls are memoryless at inference.
+2. No ground-truth or topology label enters proposed-policy rollout.
+3. Teacher-forced evaluation uses the phase-head prediction, not the label.
+4. Oracle evaluation is rejected by the ordinary rollout path.
+5. Plain prototypes are computed from plain latents.
+6. No final control reuses prototypes or Stage 2 checkpoints from another method.
+7. All action outputs satisfy the task action dimension and range contract.
+
+### 10.4 Router/loss gates
+
+1. Prototype router is hard top-1.
+2. Softmax router is top-1 with the exact registered settings.
+3. Both routers expose the common margin-loss interface used by their corresponding rows.
+4. `PrototypeRouter.balance_coeff=0.0001` and `TopKRouter.balance_coeff=0.01` are fixed before training.
+5. The coefficient asymmetry is reported as part of the softmax router-package comparison; it is not described as a pure gate-only causal effect.
+6. Neither balance coefficient is tuned after final results are observed.
+7. Router utilization, transition counts, entropy, margin, and collapse diagnostics are recorded using the definitions in Section 12.
+
+### 10.5 Provenance gates
+
+1. Every provider is seed-exact.
+2. Every provider has the expected commit and resolved-config hash.
+3. Every Stage 2 run records the exact provider checkpoint and SHA-256.
+4. Missing providers fail before subprocess launch.
+5. Historical aliases cannot satisfy a final provider request.
+
+## 11. Dry-run and test sequence
+
+### Phase 0 — no-write inspection
+
+1. Verify repository commit and working-tree ownership.
+2. Enumerate existing historical outputs without moving or deleting them.
+3. Confirm the topology artifact and label fields for every task.
+4. Confirm the final output namespace is fresh.
+
+### Phase 1 — implementation
+
+1. Add configurable label fields to Stage 1 and Stage 2 trainers.
+2. Add label-field validation and cardinality checks.
+3. Implement the final-aligned plain/factorial model.
+4. Generalize the teacher-forced model to the final contract.
+5. Implement the privileged oracle evaluator, not a fake state-only oracle action method.
+6. Add the common router margin-loss interface.
+7. Extend the existing runner provider resolution with explicit identities and seed/commit/config checks.
+8. Add beta-zero validation at the resolved manifest layer.
+
+### Phase 2 — unit and composition tests
+
+1. Compose every final model for all five tasks.
+2. Verify every declared label field is present in representative batches.
+3. Verify label counts and remapping.
+4. Verify plain prototypes come from plain latents.
+5. Verify random and topology router initialization hashes.
+6. Verify partial warm-start drop hashes are seed-deterministic.
+7. Verify beta-zero outputs equal the base action path and residual heads do not contribute.
+8. Verify both routers compute the common margin loss.
+9. Verify teacher-forced GT train/predicted eval behavior.
+10. Verify oracle rejection in ordinary rollout mode.
+11. Verify missing or wrong-seed providers fail before training.
+12. Run the existing unit/integration/manifest test suites.
+
+### Phase 3 — dry-run
+
+1. Build the full plan from `final_causal_matrix.json`.
+2. Verify provider dependency ordering.
+3. Verify Stage 1 providers run before Stage 2 consumers for each seed.
+4. Verify all commands carry the intended data, task, seed, model, and label overrides.
+5. Verify no final row resolves to historical `phaseforge` or old baseline aliases.
+6. Perform a small implementation-only pilot; do not use pilot scores to select methods or tune final settings.
+
+### Phase 4 — final training and evaluation
+
+Run every declared deployable row at one frozen commit with:
+
+- seeds 42, 43, and 44;
+- Lift, Can, Square, ToolHang, and Transport;
+- identical task data and, within each task/seed, identical topology artifact and label mapping for every topology-consuming row;
+- identical frozen reset banks per task;
+- rollout mode for deployable rows;
+- 50 reset-bank cases as configured by the evaluation protocol;
+- task-recorded horizons, currently 500 for Lift/Can/Square/ToolHang and 700 for Transport;
 - fresh output namespace;
-- resolved config, provider checkpoint, commit, dataset, bank hash, and environment recorded.
+- complete metadata and hashes.
 
-### Phase 4 — analysis
+Run teacher-forced only as its separate diagnostic. Run the oracle only through its privileged offline/evaluation path. Do not pool either diagnostic with deployable success rates.
 
-Report:
+## 12. Analysis and paper reporting
 
-- per-task and per-seed rollout success;
-- pooled success only with denominators shown;
+Report separate tables for:
+
+1. external baselines: BC and final-aligned softmax top-1;
+2. integrated comparison: Static Rule MoE;
+3. single-factor causal controls: plain representation, random router initialization, scratch experts;
+4. factorial corner: BC representation plus random prototype initialization;
+5. privileged diagnostics: teacher-forced and oracle;
+6. historical development results in an appendix only.
+
+For every deployable method report:
+
+- per-task success rate;
+- per-seed success rate;
+- pooled numerator and denominator;
 - Wilson intervals;
-- paired method-minus-control differences on identical reset cases;
-- offline action MSE and phase metrics;
-- router margin, entropy, utilization, and collapse diagnostics;
-- residual contribution magnitude and residual-gradient diagnostics;
-- total and active parameter counts;
-- training time and inference cost;
-- failure categories and timeout accounting;
-- configuration and checkpoint hashes.
+- paired method differences on identical reset cases where applicable;
+- action-loss metrics;
+- phase/topology metrics using the declared label field;
+- router utilization, entropy, margin, transition counts, and collapse diagnostics;
+- training and inference cost;
+- failure categories and infrastructure-failure accounting;
+- configuration, checkpoint, data, topology, and bank hashes.
 
-Do not pool old-generation artifacts with final-generation artifacts.
+Routing diagnostics use these fixed definitions:
 
-## 12. Interpretation rules
+- **Utilization:** fraction of evaluation steps assigned to each expert by top-1 routing. For any future top-k row, also report the all-selected-experts fraction separately; do not mix the two definitions.
+- **Entropy:** mean Shannon entropy of the full pre-top-k softmax distribution over all six experts, normalized by `log(6)`, matching the repository's `routing_entropy` metric.
+- **Margin:** for a prototype router, `d_(2) - d_(1)` where `d_(1)` and `d_(2)` are the smallest and second-smallest prototype distances; for a softmax router, the pre-exploration-logit difference `logit_(1) - logit_(2)`. Report the mean and per-seed values.
+- **Transition count/rate:** count adjacent in-trajectory pairs whose top-1 expert changes, using matching `trajectory_id` and consecutive `trajectory_position`; never count episode or trajectory boundaries as transitions.
+- **Collapse:** an expert is collapsed when its top-1 utilization is `< 1/(5E)`, matching the final Stage 2 `expert_utilization.collapse_rate` implementation (`E=6` here). The older initialization diagnostic uses a different `< 0.01/E` threshold and must be labeled separately if reported; the two metrics must not be pooled.
 
-| Outcome | Valid conclusion |
-|---|---|
-| Final method beats BC only | The method improves over a dense imitation floor; MoE-specific causality is not established |
-| Final method beats scratch/warm-start MoE | Evidence that the final initialization/representation/routing combination matters |
-| Plain encoder control loses to final method | Evidence that phase/SupCon representation contributes |
-| Random-router control loses to final method | Evidence that topology/prototype initialization contributes |
-| Direct-action control loses to final method | Evidence that the residual action path contributes, but only if residual beta is active |
-| Teacher-forced control is better | There is remaining phase-prediction or autonomous-routing loss; this is not evidence against the final method by itself |
-| Teacher-forced control is worse | Ground-truth routing is not automatically sufficient; inspect expert allocation and training mismatch |
-| Final method wins on one seed only | Exploratory evidence, not a robust method claim |
-| Residual beta is zero throughout | Do not claim a residual-action improvement |
+Do not claim that the method solves boundary chattering or load collapse. State that the design is intended to reduce them, then report the measured transition and utilization evidence.
 
-Three seeds provide a descriptive robustness check. They do not justify treating seed means as a large-sample population test.
+Do not claim a residual-compliance improvement. The residual branch is inactive at beta zero in this paper.
 
-## 13. Disposition of historical code and outputs
+Do not claim that the factorial floor isolates one factor. It is a two-factor corner.
 
-Historical implementations and outputs must be retained until the final research record is complete because they document the development path and explain why the final architecture was selected.
+Do not call `phase_topo` ground truth. Call it topology-derived or privileged discovered labeling.
 
-They must be clearly labeled as:
+## 13. Historical artifact policy
 
-```text
-historical / pre-final / old direct-action PhaseForge family
-```
+Historical implementations and outputs are preserved until the final research record is complete. They must retain their original identity, commit, configuration hash, provider, and label policy.
 
 They must not be:
 
 - renamed to `precision_residual_phaseforge`;
-- combined with final-family results;
-- used as evidence for final-family causal ablations;
-- loaded as Stage 1 providers for final-family controls.
+- pooled with final-generation results;
+- used as final-family Stage 1 providers;
+- edited in place to appear final-aligned;
+- deleted before the final record and provenance audit are complete.
 
-After the final report is complete, obsolete active configs may be hard-deleted from the working tree in a dedicated cleanup commit. Git history, immutable output directories, and this protocol must remain available. Rewriting Git history is not part of the research cleanup.
+After publication materials and the final provenance archive are complete, obsolete active configs may be archived or removed in a dedicated, reviewable cleanup change. Git history and the final protocol remain available.
 
-## 14. Final acceptance criterion
+## 14. Completion criterion
 
-The baseline program is complete only when:
+The final baseline program is complete only when:
 
-1. `precision_residual_phaseforge` is the sole proposed method identity.
-2. The four requested research questions have final-aligned controls.
-3. Every final-aligned control changes only its declared factor.
-4. The residual branch's active/inactive semantics are explicitly resolved.
-5. No final-family control loads an old `phaseforge` checkpoint.
-6. The same-generation run matrix is complete.
-7. Historical and final results are separated by identity, commit, and config hash.
-8. The final report can explain not only that the method wins, but why.
+1. `precision_residual_phaseforge` is the sole proposed-method identity.
+2. The canonical `phase_topo` label policy is implemented for all declared representation/routing losses.
+3. The plain, random-router, scratch, factorial, softmax, and static-rule controls have exact declared differences.
+4. The final-aligned teacher-forced diagnostic exists.
+5. The oracle is privileged and non-deployable by construction.
+6. All providers resolve seed-exactly with commit/config/hash checks.
+7. Beta is zero and validated for every final residual-expert row.
+8. The same-generation matrix is complete across all five tasks and three seeds.
+9. Historical and final results are separated by identity, commit, config hash, label policy, and data/topology hashes.
+10. The paper claims match the executed method and measured evidence.
 
-Until these conditions hold, the project is in research-definition phase and should not proceed to irreversible cleanup or publication claims.
-
+Until all ten conditions hold, the project remains in research-definition/implementation phase. Do not start final training, publication tables, hard deletion, or result relabeling.
