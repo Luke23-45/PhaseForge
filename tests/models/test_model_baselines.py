@@ -500,6 +500,9 @@ def test_r50_matched_control_configs_resolve_partial_warm() -> None:
                 assert ei.seed == seed, (
                     f"{model_path} init seed must follow the training seed"
                 )
+                assert cfg.models.router.normalize_input is True, (
+                    f"{model_path} must match canonical phaseforge router input normalization"
+                )
         for model_path in untouched:
             cfg = compose(
                 config_name="main",
