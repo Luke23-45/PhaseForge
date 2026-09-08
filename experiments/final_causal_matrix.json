@@ -1,7 +1,7 @@
 {
   "name": "final_causal_matrix",
   "task": "all",
-  "description": "Final same-generation baseline and ablation matrix for precision_residual_phaseforge (sole proposed method): topology-supervised representation controls, router/expert initialization controls, two-factor corner, external imitation floor, router-package and integrated rule-label comparisons, plus privileged teacher-forced (separate diagnostic) and oracle (offline only) diagnostics. All residual-expert rows run the beta-zero direct-action contract (beta=0.0, no schedule); topology rows pin topo_pelt_k6 with phase_topo labels; the static-rule row uses phase labels with its own Stage 1 provider. Retired pre-lock manifests are outside the active execution surface. Run with a fresh namespace, e.g. phaseforge-sweep --manifest experiments/final_causal_matrix.json --outputs outputs_final. No final training is authorized until the ledger validation gates pass.",
+  "description": "Final same-generation baseline and ablation matrix for precision_residual_phaseforge (sole proposed method): the proposed rows preserve the locked confirmation contract (topo_pelt_k6 for prototype initialization, phase labels for Stage 1/SupCon/margin, beta-zero residual experts, margin lambda 0.05, and disabled Lipschitz/gain regularization); topology-supervised representation controls, router/expert initialization controls, two-factor corner, external imitation floor, router-package and integrated rule-label comparisons, plus privileged teacher-forced (separate diagnostic) and oracle (offline only) diagnostics. Topology-control rows use phase_topo labels; the static-rule row uses phase labels with its own Stage 1 provider. Retired pre-lock manifests are outside the active execution surface. Run with a fresh namespace, e.g. phaseforge-sweep --manifest experiments/final_causal_matrix.json --outputs outputs_final. No final training is authorized until the ledger validation gates pass.",
   "seeds": [
     42,
     43,
@@ -34,12 +34,16 @@
       "evaluate_mode": "rollout",
       "overrides": [
         "topo@_global_=topo_pelt_k6",
-        "train.phase_label_field=phase_topo",
+        "train.phase_label_field=phase",
         "models.expert.beta=0.0",
         "train.supcon.enabled=true",
-        "train.supcon.label_field=phase_topo",
+        "train.supcon.label_field=phase",
         "train.margin.enabled=true",
-        "train.margin.label_field=phase_topo"
+        "train.margin.lambda_margin=0.05",
+        "train.margin.label_field=phase",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "eval.episodes.trace_level=full"
       ]
     },
     {
@@ -262,12 +266,16 @@
       "evaluate_mode": "rollout",
       "overrides": [
         "topo@_global_=topo_pelt_k6",
-        "train.phase_label_field=phase_topo",
+        "train.phase_label_field=phase",
         "models.expert.beta=0.0",
         "train.supcon.enabled=true",
-        "train.supcon.label_field=phase_topo",
+        "train.supcon.label_field=phase",
         "train.margin.enabled=true",
-        "train.margin.label_field=phase_topo"
+        "train.margin.lambda_margin=0.05",
+        "train.margin.label_field=phase",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "eval.episodes.trace_level=full"
       ]
     },
     {
@@ -490,12 +498,16 @@
       "evaluate_mode": "rollout",
       "overrides": [
         "topo@_global_=topo_pelt_k6",
-        "train.phase_label_field=phase_topo",
+        "train.phase_label_field=phase",
         "models.expert.beta=0.0",
         "train.supcon.enabled=true",
-        "train.supcon.label_field=phase_topo",
+        "train.supcon.label_field=phase",
         "train.margin.enabled=true",
-        "train.margin.label_field=phase_topo"
+        "train.margin.lambda_margin=0.05",
+        "train.margin.label_field=phase",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "eval.episodes.trace_level=full"
       ]
     },
     {
@@ -718,12 +730,16 @@
       "evaluate_mode": "rollout",
       "overrides": [
         "topo@_global_=topo_pelt_k6",
-        "train.phase_label_field=phase_topo",
+        "train.phase_label_field=phase",
         "models.expert.beta=0.0",
         "train.supcon.enabled=true",
-        "train.supcon.label_field=phase_topo",
+        "train.supcon.label_field=phase",
         "train.margin.enabled=true",
-        "train.margin.label_field=phase_topo"
+        "train.margin.lambda_margin=0.05",
+        "train.margin.label_field=phase",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "eval.episodes.trace_level=full"
       ]
     },
     {
@@ -946,12 +962,16 @@
       "evaluate_mode": "rollout",
       "overrides": [
         "topo@_global_=topo_pelt_k6",
-        "train.phase_label_field=phase_topo",
+        "train.phase_label_field=phase",
         "models.expert.beta=0.0",
         "train.supcon.enabled=true",
-        "train.supcon.label_field=phase_topo",
+        "train.supcon.label_field=phase",
         "train.margin.enabled=true",
-        "train.margin.label_field=phase_topo"
+        "train.margin.lambda_margin=0.05",
+        "train.margin.label_field=phase",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "eval.episodes.trace_level=full"
       ]
     },
     {

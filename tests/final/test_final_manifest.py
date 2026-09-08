@@ -33,7 +33,6 @@ MANIFEST = REPO / "experiments" / "final_causal_matrix.json"
 
 TASKS = ["Lift", "Can", "Square", "ToolHang", "Transport"]
 TOPO_ROWS = {
-    "precision_residual_phaseforge",
     "precision_residual_plain_encoder",
     "precision_residual_phase_random_router",
     "precision_residual_scratch_moe",
@@ -55,7 +54,9 @@ def test_final_manifest_has_locked_identities_and_seeds() -> None:
     assert {m.task for m in protocol.methods} == set(TASKS)
     assert len(protocol.methods) == 50
     names = sorted({m.name for m in protocol.methods})
-    assert names == sorted(TOPO_ROWS | {"bc", "final_aligned_static_rule"})
+    assert names == sorted(
+        TOPO_ROWS | {"bc", "final_aligned_static_rule", "precision_residual_phaseforge"}
+    )
 
 
 def test_final_manifest_declares_labels_beta_topo_explicitly() -> None:
@@ -70,9 +71,21 @@ def test_final_manifest_declares_labels_beta_topo_explicitly() -> None:
             assert not any(o.startswith("models.expert.beta") for o in ov)
             assert not any(o.startswith("topo@") for o in ov)
             continue
+        if name == "precision_residual_phaseforge":
+            # Preserve the locked proposed-method contract from the confirmed
+            # v8 run; omission would silently change its supervision/loss.
+            assert "train.phase_label_field=phase" in ov
+            assert "train.supcon.label_field=phase" in ov
+            assert "train.margin.label_field=phase" in ov
+            assert "train.margin.lambda_margin=0.05" in ov
+            assert "train.lipschitz.enabled=false" in ov
+            assert "train.gain_reg.enabled=false" in ov
+            assert "eval.episodes.trace_level=full" in ov
         # Every residual row pins beta zero explicitly (MAN-05).
         assert "models.expert.beta=0.0" in ov, name
-        if name == "final_aligned_static_rule":
+        if name == "precision_residual_phaseforge":
+            pass
+        elif name == "final_aligned_static_rule":
             assert "train.phase_label_field=phase" in ov
             assert "train.supcon.label_field=phase" in ov
             assert "train.margin.label_field=phase" in ov
