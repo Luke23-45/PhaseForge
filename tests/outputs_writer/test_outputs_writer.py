@@ -438,6 +438,27 @@ class TestLedger:
         with pytest.raises(KeyError, match="deadbeef"):
             ledger.update_status("deadbeef", "completed")
 
+    def test_update_stage_rewrites(self, tmp_path: Path) -> None:
+        ledger = RunLedger(tmp_path / "_ledger")
+        ledger.append(self._row("aaaaaaaa", kind="eval", stage=1))
+        ledger.update_stage("aaaaaaaa", 2)
+        rows = ledger.read_all()
+        assert len(rows) == 1
+        assert rows[0].stage == 2
+        assert ledger.find_by_id("aaaaaaaa").stage == 2
+
+    def test_update_stage_unknown_raises(self, tmp_path: Path) -> None:
+        ledger = RunLedger(tmp_path / "_ledger")
+        ledger.append(self._row("aaaaaaaa"))
+        with pytest.raises(KeyError, match="deadbeef"):
+            ledger.update_stage("deadbeef", 2)
+
+    def test_update_stage_rejects_non_int(self, tmp_path: Path) -> None:
+        ledger = RunLedger(tmp_path / "_ledger")
+        ledger.append(self._row("aaaaaaaa"))
+        with pytest.raises(ValueError, match="stage"):
+            ledger.update_stage("aaaaaaaa", "2")  # type: ignore[arg-type]
+
     def test_flush_builds_index(self, tmp_path: Path) -> None:
         ledger = RunLedger(tmp_path / "_ledger")
         ledger.append(self._row("aaaaaaaa"))

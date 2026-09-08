@@ -137,6 +137,31 @@ class RunLedger:
             self._rebuild_index_locked()
             self._appends_since_rebuild = 0
 
+    def update_stage(self, run_id: str, stage: int) -> None:
+        """Correct the recorded stage of a run (eval bookkeeping).
+
+        Eval runs append their ledger row before the model is built, when
+        only the default ``train.stage`` (stage 1) is known. The evaluated
+        checkpoint's real stage is known once the model is restored; the
+        eval flow calls this then so ``runs.jsonl`` agrees with
+        ``run_meta.json`` and the results row. Mirrors :meth:`update_status`
+        (strict rewrite + unconditional mirror rebuild).
+        """
+        if not isinstance(stage, int) or isinstance(stage, bool) or stage < 0:
+            raise ValueError(f"stage must be a non-negative int, got {stage!r}")
+        with self.lock:
+            rows = self._read_all_strict()
+            found = False
+            for r in rows:
+                if r.run_id == run_id:
+                    r.stage = stage
+                    found = True
+            if not found:
+                raise KeyError(f"Unknown run_id: {run_id}")
+            self._rewrite_all(rows)
+            self._rebuild_index_locked()
+            self._appends_since_rebuild = 0
+
     def _read_all_strict(self) -> list[LedgerRow]:
         """Read every row, raising on corruption (unlike :meth:`read_all`).
 

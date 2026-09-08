@@ -979,7 +979,7 @@ def evaluate(cfg: DictConfig) -> None:
     #    still leaves a pending ledger row + environment fingerprint.
     run_writer, ledger, run_id = _init_run_bookkeeping(cfg, output_dir, kind="eval")
     try:
-        _eval_body(cfg, output_dir)
+        _eval_body(cfg, output_dir, ledger=ledger, run_id=run_id)
     except BaseException as exc:
         _mark_run_failed(run_writer, ledger, run_id, exc)
         raise
@@ -1025,8 +1025,20 @@ def _finalize_eval_run(
         logger.exception("Failed to update the ledger for completed eval run %s.", run_id)
 
 
-def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
-    """The evaluation work itself, wrapped in run lifecycle bookkeeping."""
+def _eval_body(
+    cfg: DictConfig,
+    output_dir: Path,
+    *,
+    ledger: RunLedger | None = None,
+    run_id: str | None = None,
+) -> None:
+    """The evaluation work itself, wrapped in run lifecycle bookkeeping.
+
+    When ``ledger``/``run_id`` are provided (the ``evaluate()`` flow), the
+    ledger row's stage is corrected to the stage restored from the evaluated
+    checkpoint once the model is built — the row is appended before that,
+    when only the default ``train.stage`` is known.
+    """
     eval_mode = cfg.eval.get("mode", "offline")
     logger.info(f"Evaluation mode: {eval_mode}")
 
@@ -1049,6 +1061,15 @@ def _eval_body(cfg: DictConfig, output_dir: Path) -> None:
     # run artifact is written; metadata reflects the artifact actually
     # evaluated: the stage restored from the checkpoint (an eval run's
     # `train` group is stage1 by default).
+    if ledger is not None and run_id is not None:
+        try:
+            model_stage = getattr(model, "stage", None)
+            if isinstance(model_stage, int) and not isinstance(model_stage, bool):
+                ledger.update_stage(run_id, int(model_stage))
+        except Exception:
+            logger.exception(
+                "Failed to correct the ledger stage for eval run %s.", run_id
+            )
     from phaseforge.data.ingestion.cache_manager import CacheManager
 
     write_run_meta(

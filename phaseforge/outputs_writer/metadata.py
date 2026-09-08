@@ -1,8 +1,8 @@
 """Environment fingerprint for one run (adapted from ``csd_observer``).
 
-Captures the dependency versions, git state, host info, and dataset-cache
-identity that together make a single run reproducible from its output
-directory alone. ``run_writer.write_environment()`` persists the dict
+Captures the dependency versions, git state, host info, GPU silicon identity,
+and dataset-cache identity that together make a single run reproducible from
+its output directory alone. ``run_writer.write_environment()`` persists the dict
 returned here as ``<run_dir>/metadata/environment.json``.
 
 Version resolution never imports the fingerprinted packages: importing
@@ -94,6 +94,37 @@ def _safe_version(modname: str) -> str | None:
     return _installed_versions().get(_normalize_dist_name(dist_name))
 
 
+def _cuda_device_identity() -> dict[str, Any] | None:
+    """GPU silicon identity for cross-machine reproducibility forensics.
+
+    Never imports torch: when the training process already imported it (the
+    normal case — the model lives on CUDA), read the already-imported module
+    from :data:`sys.modules`; otherwise return ``None`` rather than paying
+    the import cost (same contract as :func:`_safe_version`). Any failure
+    (CPU-only build, no device, driver issues) yields ``None``, never raises:
+    a fingerprint must not crash a run.
+    """
+    module = sys.modules.get("torch")
+    if module is None:
+        return None
+    try:
+        cuda = getattr(module, "cuda", None)
+        if cuda is None or not bool(cuda.is_available()):
+            return None
+        name = str(cuda.get_device_name(0))
+        try:
+            major, minor = cuda.get_device_capability(0)
+            capability = f"{int(major)}.{int(minor)}"
+        except Exception:  # noqa: BLE001 - capability is nice-to-have
+            capability = None
+        info: dict[str, Any] = {"name": name}
+        if capability is not None:
+            info["capability"] = capability
+        return info
+    except Exception:  # noqa: BLE001 - fingerprint must not crash a run
+        return None
+
+
 def collect_environment(
     *,
     data_config_hash: str | None = None,
@@ -130,6 +161,11 @@ def collect_environment(
         },
         "git_sha": git_info()["commit"],
         "git_branch": git_info()["branch"],
+        # GPU silicon identity (None on CPU-only runs or when torch is not
+        # yet imported). Cross-architecture floating-point divergence is a
+        # real result confounder even with cudnn deterministic mode, so the
+        # device name travels with every run's fingerprint.
+        "gpu": _cuda_device_identity(),
         "data_config_hash": data_config_hash,
         "config_hash": config_hash,
     }

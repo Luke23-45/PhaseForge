@@ -15,6 +15,7 @@ import sys
 
 from phaseforge.outputs_writer.metadata import (
     _MODULE_TO_DIST,
+    _cuda_device_identity,
     _safe_version,
     collect_environment,
 )
@@ -49,6 +50,67 @@ def test_safe_version_uses_metadata_without_importing() -> None:
 
 def test_safe_version_unknown_module_returns_none() -> None:
     assert _safe_version("definitely-not-a-real-module-name") is None
+
+
+def test_collect_environment_includes_gpu_identity_key() -> None:
+    """Cross-machine forensics need the GPU silicon identity (review: the
+    0.64-vs-0.76 Can gap was untraceable to silicon from artifacts alone)."""
+    env = collect_environment()
+    assert "gpu" in env
+    assert env["gpu"] is None or (
+        isinstance(env["gpu"], dict) and isinstance(env["gpu"].get("name"), str)
+    )
+
+
+def test_cuda_device_identity_without_torch_imported(monkeypatch) -> None:
+    """No torch import is triggered just to fingerprint the GPU."""
+    import sys
+
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
+    monkeypatch.delitem(sys.modules, "torch.cuda", raising=False)
+    assert _cuda_device_identity() is None
+    assert "torch" not in sys.modules
+
+
+def test_cuda_device_identity_reads_imported_torch(monkeypatch) -> None:
+    """An already-imported torch is queried; failures yield None, never raise."""
+
+    class _Cuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def get_device_name(_idx: int) -> str:
+            return "Tesla T4"
+
+        @staticmethod
+        def get_device_capability(_idx: int) -> tuple[int, int]:
+            return (7, 5)
+
+    class _Torch:
+        cuda = _Cuda()
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", _Torch())
+    got = _cuda_device_identity()
+    assert got == {"name": "Tesla T4", "capability": "7.5"}
+
+
+def test_cuda_device_identity_cpu_only_returns_none(monkeypatch) -> None:
+    class _Cuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class _Torch:
+        cuda = _Cuda()
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", _Torch())
+    assert _cuda_device_identity() is None
 
 
 def test_collect_environment_does_not_import_heavy_packages() -> None:
