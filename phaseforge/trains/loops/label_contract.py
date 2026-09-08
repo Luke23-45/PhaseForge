@@ -22,8 +22,10 @@ used by router bootstrap for topo/dynamic vocabularies.
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
+import numpy as np
 import torch
 
 #: Label vocabularies the data pipeline can produce. ``phase`` is the
@@ -109,12 +111,25 @@ def peek_loader_batch(loader: Any) -> Any | None:
     epoch versus a run without preflight — silently breaking the
     bit-identical historical curves the protocol preserves. The generator
     state is therefore snapshotted and restored, so post-peek training
-    shuffles exactly as if the peek never happened. Val loaders
-    (``shuffle=False``, no generator) need no handling. Returns ``None``
-    for an empty loader.
+    shuffles exactly as if the peek never happened. This also covers
+    validation loaders (``shuffle=False``, normally with no generator),
+    whose iterator construction can consume process-wide worker-seeding
+    entropy. Returns ``None`` for an empty loader.
     """
+    # DataLoader uses its explicit ``generator`` for the train sampler, but
+    # the validation loaders intentionally have no generator.  Constructing
+    # an iterator for such a loader consumes the process-wide torch RNG to
+    # seed workers (and can consume Python/NumPy RNG when ``num_workers=0``).
+    # The preflight must be observational: preserve every RNG stream that a
+    # dataset/collator can touch, not only the sampler generator.
     gen = getattr(loader, "generator", None)
     state = None
+    torch_state = torch.get_rng_state().clone()
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+    cuda_states = None
+    if torch.cuda.is_available():
+        cuda_states = [state.clone() for state in torch.cuda.get_rng_state_all()]
     if gen is not None:
         try:
             state = gen.get_state().clone()
@@ -130,6 +145,11 @@ def peek_loader_batch(loader: Any) -> Any | None:
                 gen.set_state(state)
             except Exception:
                 pass
+        torch.set_rng_state(torch_state)
+        random.setstate(python_state)
+        np.random.set_state(numpy_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
 
 
 def resolve_label_field(
