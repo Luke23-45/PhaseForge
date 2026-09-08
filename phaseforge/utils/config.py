@@ -266,33 +266,16 @@ class CheckpointInfo:
 def resolve_checkpoint_source(model_name: str) -> str:
     """Map a model name to the source model for Stage 1 checkpoint lookup.
 
-    Some models share a pretrained encoder with another model and should
-    therefore look for that model's Stage 1 checkpoint.  For example,
-    ``warmstart_moe`` was pretrained *without* a phase head (via ``BC``),
-    so its Stage 1 checkpoint lives under ``outputs/bc/stage1/``.
-
-    The 2x2 factorial (C1) cells and the teacher-forced cell (E8) follow
-    the same pattern:
-
-    * ``warmstart_moe``, ``plain_encoder_phase_bootstrap`` -> plain BC
-      checkpoint (``bc``).
-    * ``phase_pretrain_random_router``, ``teacher_forced`` -> phaseforge's
-      phase-supervised checkpoint (``phaseforge``) — shared pretraining,
-      so only the Stage 2 supervision regime differs (locked E8 decision).
+    Final comparison rows explicitly share one of the locked provider
+    checkpoints. The mapping is kept here so direct CLI runs and the matrix
+    runner use the same resolution rule.
 
     Returns the model name to query, which may be different from the input.
     """
     alias_map: dict[str, str] = {
-        "warmstart_moe": "bc",
-        "plain_encoder_phase_bootstrap": "bc",
-        "phase_pretrain_random_router": "phaseforge",
-        "teacher_forced": "phaseforge",
-        # Final-aligned family (Group 3): explicit Stage 1 sources. Plain
-        # and factorial rows train from the normalized-BC provider;
-        # random-router, scratch, softmax, and teacher-forced rows train
-        # from the proposed topology/SupCon provider. The static-rule row
-        # trains from its own rule-label provider (self). Historical
-        # entries above are untouched.
+        # Final-aligned family: explicit Stage 1 sources. Plain and
+        # factorial rows use the normalized-BC provider; router, scratch,
+        # softmax, teacher-forced, and oracle rows use the proposed provider.
         "precision_residual_plain_encoder": "final_aligned_bc",
         "precision_residual_factorial_floor": "final_aligned_bc",
         "precision_residual_phase_random_router": "precision_residual_phaseforge",
@@ -300,20 +283,6 @@ def resolve_checkpoint_source(model_name: str) -> str:
         "final_aligned_softmax_top1": "precision_residual_phaseforge",
         "precision_residual_teacher_forced": "precision_residual_phaseforge",
         "precision_residual_oracle": "precision_residual_phaseforge",
-        "pf_random_random": "phaseforge",
-        "pf_centroid_random": "phaseforge",
-        "pf_kmeans": "phaseforge",
-        "pf_spherical_kmeans": "phaseforge",
-        "pf_phase_head": "phaseforge",
-        "pf_spherical": "phaseforge",
-        "pf_ft": "phaseforge",
-        "pf_k3": "phaseforge",
-        "pf_k12": "phaseforge",
-        "pf_jitter_00": "phaseforge",
-        "pf_jitter_10": "phaseforge",
-        "pf_corrupt_25": "phaseforge",
-        "pf_corrupt_50": "phaseforge",
-        "pf_shuffle_control": "phaseforge",
     }
     return alias_map.get(model_name, model_name)
 
@@ -454,10 +423,10 @@ def find_latest_checkpoint(
     """Find the most recent *best* checkpoint for a model+stage combo.
 
     Delegates to :func:`scan_checkpoints` and :func:`resolve_checkpoint_source`
-    so that alias handling (e.g. ``warmstart_moe`` → ``bc``) is centralised.
+    so that final provider handling is centralised.
 
     Args:
-        model_name: Model name (e.g. ``phaseforge``, ``bc``).
+        model_name: Final model identity (e.g. ``precision_residual_phaseforge``, ``bc``).
         stage: Training stage (1 or 2).
         base: Relative or absolute base output directory.
         resolve_alias: If ``True``, apply :func:`resolve_checkpoint_source`

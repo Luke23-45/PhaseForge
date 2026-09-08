@@ -42,7 +42,7 @@ CURVE_CORE_REQUIRED: tuple[str, ...] = (
 )
 
 #: Optional numeric fields. Stage 1 phase fields, Stage 2 routing fields,
-#: the teacher_forced routing-accuracy fields, the V2-C stickiness and
+#: the teacher diagnostic routing-accuracy fields, the V2-C stickiness and
 #: V2-D teacher-KL training scalars, the per-epoch checkpoint monitor
 #: value, and the V2-C validation switch rate all live here
 #: (type-checked only when present).

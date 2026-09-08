@@ -159,11 +159,9 @@ def calculate_model_accounting(
     # Epoch allocation
     batch_size = int(cfg.data.get("batch_size", 256))
     stage1_epochs = 100 if method_name in (
-        "phaseforge", "bc", "bc_large", "bc_robot_only",
+        "precision_residual_phaseforge", "bc", "final_aligned_static_rule",
     ) else 0
-    stage2_epochs = 200 if method_name not in (
-        "bc", "bc_large", "bc_robot_only",
-    ) else 0
+    stage2_epochs = 200 if method_name != "bc" else 0
     total_epochs = stage1_epochs + stage2_epochs
 
     # Approx dataset size 10,000 steps
@@ -252,32 +250,22 @@ def main() -> int:
 
     config_dir = str(PROJECT_ROOT / "phaseforge" / "config")
     methods = [
-        ("bc", "baselines/bc", "self"),
-        ("bc_large", "baselines/bc_large", "self"),
-        ("bc_robot_only", "baselines/bc", "self"),
-        ("scratch_moe", "baselines/scratch_moe", "none"),
-        ("warmstart_moe", "baselines/warmstart_moe", "bc"),
-        ("phase_pretrain_random_router", "baselines/phase_pretrain_random_router", "phaseforge"),
-        ("plain_encoder_phase_bootstrap", "baselines/plain_encoder_phase_bootstrap", "bc"),
-        ("phaseforge", "phaseforge", "self"),
-        ("pf_spherical_kmeans", "baselines/pf_spherical_kmeans", "phaseforge"),
-        ("pf_kmeans", "baselines/pf_kmeans", "phaseforge"),
-        ("pf_phase_head", "baselines/pf_phase_head", "phaseforge"),
-        ("pf_spherical", "baselines/pf_spherical", "phaseforge"),
-        ("pf_random_random", "baselines/pf_random_random", "phaseforge"),
-        ("pf_centroid_random", "baselines/pf_centroid_random", "phaseforge"),
-        ("pf_ft", "baselines/pf_ft", "phaseforge"),
-        ("teacher_forced", "baselines/teacher_forced", "phaseforge"),
+        ("bc", "final_aligned_bc", "self"),
+        ("precision_residual_phaseforge", "precision_residual_phaseforge", "self"),
+        ("precision_residual_plain_encoder", "precision_residual_plain_encoder", "final_aligned_bc"),
+        ("precision_residual_phase_random_router", "precision_residual_phase_random_router", "precision_residual_phaseforge"),
+        ("precision_residual_scratch_moe", "precision_residual_scratch_moe", "precision_residual_phaseforge"),
+        ("precision_residual_factorial_floor", "precision_residual_factorial_floor", "final_aligned_bc"),
+        ("final_aligned_softmax_top1", "final_aligned_softmax_top1", "precision_residual_phaseforge"),
+        ("final_aligned_static_rule", "final_aligned_static_rule", "self"),
+        ("precision_residual_teacher_forced", "precision_residual_teacher_forced", "precision_residual_phaseforge"),
+        ("precision_residual_oracle", "precision_residual_oracle", "precision_residual_phaseforge"),
     ]
 
     records: list[ModelFairnessRecord] = []
     with initialize_config_dir(config_dir=config_dir, version_base=None):
         for method_name, model_override, s1_source in methods:
-            # bc_robot_only uses the robot-only observation schema (state_dim 23)
-            if method_name == "bc_robot_only":
-                data_override = "robot_only_lift"
-            else:
-                data_override = "common"
+            data_override = "common"
             cfg = compose(
                 config_name="main",
                 overrides=[f"models={model_override}", f"data={data_override}", "train=stage2"],

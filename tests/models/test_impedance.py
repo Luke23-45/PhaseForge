@@ -204,48 +204,6 @@ def test_moe_flavor_mismatch_fails_closed() -> None:
         )
 
 
-def test_bc_impedance_forward_and_contract() -> None:
-    from phaseforge.models.baselines.bc_impedance import BCImpedanceModel
-    from phaseforge.models.components.encoder import StateEncoder
-
-    torch.manual_seed(0)
-    encoder = StateEncoder(input_dim=23, hidden_dims=[16], latent_dim=8)
-    model = BCImpedanceModel(
-        encoder=encoder, expert=ImpedanceExpert(input_dim=8, hidden_dim=16)
-    )
-    batch = {"state": torch.randn(8, 23), "action": torch.randn(8, 7)}
-    out = model(batch)
-    assert out.action_pred.shape == (8, 7)
-    assert out.info is not None and out.info["target"].shape == (8, 8)
-    assert model.deployment_contract()["expert_type"] == "impedance"
-    with pytest.raises(ValueError, match="7D"):
-        BCImpedanceModel(encoder=encoder, expert=ImpedanceExpert(input_dim=8, action_dim=14))
-
-
-def test_is_phaseforge_and_bc_impedance_compose() -> None:
-    from hydra import compose, initialize
-
-    from phaseforge.utils.registry import build_model
-
-    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
-        cfg = compose(config_name="main", overrides=["models=is_phaseforge", "data=can"])
-    model = build_model(cfg)
-    assert model.deployment_contract()["expert_type"] == "impedance"
-    assert model.deployment_contract()["router_type"] == "PrototypeRouter"
-    # Stage 2 impedance path works straight from template init (prototypes
-    # random until bootstrap_moe replaces them with regime centroids).
-    model.stage = 2
-    action = model.get_action(torch.randn(2, 23))
-    assert action.shape == (2, 7)
-    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
-        bc_cfg = compose(
-            config_name="main", overrides=["models=baselines/bc_impedance", "data=can"]
-        )
-    bc_model = build_model(bc_cfg)
-    bc_out = bc_model({"state": torch.randn(2, 23), "action": torch.randn(2, 7)})
-    assert bc_out.action_pred.shape == (2, 7)
-
-
 def test_bootstrap_installs_prototypes_for_impedance_template() -> None:
     """Template-cloned ImpedanceExperts + centroid install into prototypes."""
     torch.manual_seed(0)

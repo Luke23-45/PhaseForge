@@ -56,10 +56,10 @@ def _write_run(
 
 def test_report_aggregates_and_writes_csvs(tmp_path) -> None:
     base = tmp_path / "outputs"
-    # phaseforge (baseline) solves all 5; bc solves 3 of 5 on the same cases.
+    # The proposed method solves all 5; bc solves 3 of 5 on the same cases.
     _write_run(
         base,
-        "phaseforge",
+        "precision_residual_phaseforge",
         42,
         "r1",
         [(True, True)] * 5,
@@ -82,7 +82,7 @@ def test_report_aggregates_and_writes_csvs(tmp_path) -> None:
     assert report["episode_count"] == 10
 
     success_csv = (base / "_results" / SUCCESS_CSV).read_text(encoding="utf-8")
-    assert "phaseforge" in success_csv and "bc" in success_csv
+    assert "precision_residual_phaseforge" in success_csv and "bc" in success_csv
     assert "policy_failures" in success_csv
 
     comparisons_csv = (base / "_results" / COMPARISONS_CSV).read_text(encoding="utf-8")
@@ -115,16 +115,16 @@ def test_report_handles_empty_outputs(tmp_path) -> None:
 def test_paired_rows_per_seed_holms(tmp_path) -> None:
     base = tmp_path / "outputs"
     for seed in (42, 43):
-        _write_run(base, "phaseforge", seed, f"p{seed}", [(True, True)] * 4)
+        _write_run(base, "precision_residual_phaseforge", seed, f"p{seed}", [(True, True)] * 4)
         _write_run(base, "bc", seed, f"b{seed}", [(True, True)] * 2 + [(True, False)] * 2)
-        _write_run(base, "scratch_moe", seed, f"s{seed}", [(True, False)] * 4)
+        _write_run(base, "precision_residual_scratch_moe", seed, f"s{seed}", [(True, False)] * 4)
     report = build_rollout_report(base)
     comparisons = report["comparison_rows"]
     assert len(comparisons) == 4  # 2 seeds x 2 non-baseline identities
     seeds = {c["training_seed"] for c in comparisons}
     assert seeds == {42, 43}
     # Holm applied per task and seed: for each cell the two p-values (0.125 for
-    # scratch_moe, 0.5 for bc) adjust to [0.25, 0.5].
+    # the scratch-init control, 0.5 for bc) adjust to [0.25, 0.5].
     for seed in (42, 43):
         rows = [c for c in comparisons if c["training_seed"] == seed]
         assert sorted(c["mcnemar_holm_p"] for c in rows) == [0.25, 0.5]

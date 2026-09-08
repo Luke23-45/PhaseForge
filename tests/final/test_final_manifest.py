@@ -90,12 +90,6 @@ def test_final_manifest_declares_labels_beta_topo_explicitly() -> None:
     assert all(m == "rollout" for n, m in modes if n != "precision_residual_oracle")
 
 
-def test_final_manifest_preserves_historical_five_task() -> None:
-    """MAN-11: the historical manifest still loads with its old identities."""
-    protocol = load_protocol(REPO / "experiments" / "five_task.json")
-    assert {m.name for m in protocol.methods} >= {"phaseforge", "bc", "teacher_forced"}
-
-
 def test_final_rows_compose_for_every_task_stage_and_eval() -> None:
     """TEST-01: Hydra composition passes for all 50 rows (train + eval)."""
     protocol = _protocol()
@@ -192,13 +186,6 @@ def test_dry_run_pilot_selection_builds_without_training() -> None:
     assert len(plan) == 1
     step = plan[0]
     assert (step.kind, step.stage, step.seed) == ("train", 1, 42)
-
-
-def test_providerless_historical_rows_skip_ordering() -> None:
-    """Historical scratch cells (null source, random init) carry no ordering."""
-    protocol = load_protocol(REPO / "experiments" / "five_task.json")
-    plan = build_plan(protocol, list(protocol.methods), with_dependencies=True)
-    assert verify_plan_ordering(protocol, plan) == []
 
 
 def test_eval_only_plan_carries_no_ordering_constraint() -> None:

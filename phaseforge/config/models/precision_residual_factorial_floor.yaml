@@ -7,7 +7,7 @@
 # reported as such. Metadata declares both factors.
 
 name: "precision_residual_factorial_floor"
-_target_: phaseforge.models.baselines.plain_encoder_phase_bootstrap.PlainEncoderPhaseBootstrapModel
+_target_: phaseforge.models.baselines.precision_residual_plain_encoder.PrecisionResidualPlainEncoderModel
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder

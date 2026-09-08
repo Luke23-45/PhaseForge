@@ -9,7 +9,7 @@ and writes three artifacts under ``<outputs>/_summaries/``:
       (default ``phaseforge``), paired on (stage, seed)
 
 Usage:
-    uv run python scripts/analysis/summarize_eval.py [--outputs outputs] [--baseline phaseforge]
+    uv run python scripts/analysis/summarize_eval.py [--outputs outputs] [--baseline precision_residual_phaseforge]
 
 Requires:
     - At least one completed ``phaseforge-eval`` run (a non-empty
@@ -34,7 +34,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--baseline",
-        default="phaseforge",
+        default="precision_residual_phaseforge",
         help="Reference method for the paired Wilcoxon CSV (default: %(default)s).",
     )
     args = parser.parse_args()

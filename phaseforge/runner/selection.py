@@ -59,8 +59,7 @@ def _canonical(value: str) -> str:
 def effective_task(method: Method, protocol: Protocol) -> str | None:
     """The task a row belongs to for selection purposes.
 
-    Rows that carry no task (single-task manifests such as
-    ``lift_ablation``) inherit the protocol-level task name, unless that
+    Rows that carry no task inherit the protocol-level task name, unless that
     name is the multi-task placeholder ``"all"`` — a task-less row under an
     ``"all"`` protocol belongs to no concrete task.
     """
@@ -196,12 +195,6 @@ def _resolve_token(
 
     if "@" in token:
         name, _, task = token.partition("@")
-        if (
-            name == "is_phaseforge"
-            and not any(r.name == "is_phaseforge" for r in rows)
-            and any(r.name == "is_full" for r in rows)
-        ):
-            name = "is_full"
         wanted = _canonical(task)
         matched = [
             r
@@ -226,14 +219,7 @@ def _resolve_token(
             )
         return matched
 
-    lookup_token = token
-    if (
-        token == "is_phaseforge"
-        and not any(r.name == "is_phaseforge" for r in rows)
-        and any(r.name == "is_full" for r in rows)
-    ):
-        lookup_token = "is_full"
-    matched = [r for r in rows if r.name == lookup_token and in_task_filter(r)]
+    matched = [r for r in rows if r.name == token and in_task_filter(r)]
     if not matched:
         same_name = [r for r in rows if r.name == token]
         if same_name:

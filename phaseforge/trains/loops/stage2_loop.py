@@ -57,7 +57,7 @@ class Stage2Trainer(BaseTrainer):
     so pseudo-balancing (balance high while NMI collapses to 0) is visible
     at training time instead of only in offline evaluation.
 
-    For the ``teacher_forced`` cell, the label-free routing accuracy (micro
+    For the final teacher diagnostic, the label-free routing accuracy (micro
     and macro/balanced) is computed over the SAME inference path that
     selects experts by the frozen phase head (``out.phase_logits`` is only
     non-None for that cell in Stage 2) — never from the GT-routed training
@@ -385,7 +385,7 @@ class Stage2Trainer(BaseTrainer):
         # V2-D teacher KL routing. Single source of truth is
         # models.teacher_routing.enabled (the same block the model's forward
         # reads to emit phase_logits in Stage 2); the trainer additionally
-        # requires phase_logits present, so the teacher_forced cell (which
+        # requires phase_logits present, so the teacher diagnostic (which
         # emits them through its own label-free eval path) never receives the
         # teacher KL. T = M^T softmax(phase_logits), detached; λ(t) = λ0 for
         # the first half of training, then linear anneal to 0.
@@ -616,7 +616,7 @@ class Stage2Trainer(BaseTrainer):
 
             # Routing accuracy against the resolved diagnostic field when the
             # model emits phase_logits in Stage 2 (LABEL-04): the
-            # teacher_forced cell (label-free eval path) and the V2-D teacher
+            # teacher diagnostic (label-free eval path) and the teacher
             # path both qualify.
             if out.phase_logits is not None:
                 _vfield = self._phase_label_field()

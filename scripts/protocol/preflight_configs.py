@@ -18,10 +18,10 @@ mid-matrix:
 
 Usage::
 
-    uv run python scripts/protocol/preflight_configs.py                 # full matrix
+    uv run python scripts/protocol/preflight_configs.py                 # locked final matrix
     uv run python scripts/protocol/preflight_configs.py --methods bc     # subset
     uv run python scripts/protocol/preflight_configs.py --tasks Lift     # subset
-    uv run python scripts/protocol/preflight_configs.py --manifest experiments/lift_pilot.json
+    uv run python scripts/protocol/preflight_configs.py --manifest experiments/final_causal_matrix.json
 
 Exit code is 0 when every cell passes; errors are collected and reported
 per cell with the exact failing override.
@@ -38,15 +38,9 @@ from omegaconf import DictConfig
 from omegaconf.errors import OmegaConfBaseException
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MANIFEST = PROJECT_ROOT / "experiments" / "five_task.json"
+DEFAULT_MANIFEST = PROJECT_ROOT / "experiments" / "final_causal_matrix.json"
 
 MONITOR_BY_STAGE = {1: "val/loss_action", 2: "val/loss_action"}
-
-# Models whose stage-2 resolves its stage-1 checkpoint from another model.
-STAGE2_SOURCE_ALIASES = {
-    "baselines/phase_pretrain_random_router": "phaseforge",
-}
-
 
 @dataclass
 class Cell:
@@ -148,12 +142,6 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
                 f"scheduler T_max={t_max} < epochs={epochs} (premature LR decay)"
             )
 
-    if cell.method == "oracle_moe" or model_name == "oracle_moe":
-        cell.fail(
-            "oracle_moe cannot be trained; it is an eval-time routing intervention "
-            "on fixed trained experts"
-        )
-
     # Compute effective freeze and encoder_lr_scale following exact precedence:
     # models config wins if key present, else train config, else defaults
     models_cfg = cfg.get("models")
@@ -181,8 +169,8 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
 
     if cell.stage == 2:
         is_unfrozen = (
-            model_name in ("scratch_moe", "pf_ft")
-            or cell.method in ("scratch_moe", "pf_ft")
+            model_name in ("precision_residual_scratch_moe",)
+            or cell.method in ("precision_residual_scratch_moe",)
         )
         if not effective_freeze and not is_unfrozen:
             cell.fail(
@@ -214,56 +202,6 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
         if top_k > num_experts:
             cell.fail(f"router top_k ({top_k}) > num_experts ({num_experts})")
 
-    # Validate BC-large parameter matching against the per-task PhaseForge
-    # DEPLOYED count (|ratio - 1| <= 0.02). The reference is computed
-    # dynamically by composing and building the canonical phaseforge model
-    # on the SAME data config (state_dim scales every model's first encoder
-    # layer) and subtracting the detached Stage-1 heads (action head + phase
-    # head), which are not part of the deployed policy. bc_large is
-    # single-stage: it has no detached heads, so its total IS its deployed
-    # count. The previous hardcoded 382,646 target was the Lift figure and
-    # compared bases inconsistently, falsely failing ToolHang/Transport.
-    if "bc_large" in model_name:
-        from phaseforge.utils.registry import build_model
-
-        try:
-            m = build_model(cfg)
-            params = sum(p.numel() for p in m.parameters())
-
-            reference = Cell(
-                method="phaseforge",
-                model="phaseforge",
-                data=cell.data,
-                task=cell.task,
-                stage=2,
-                seed=cell.seed,
-            )
-            pf_cfg = _compose_cell(reference)
-            if pf_cfg is None:
-                cell.fail(
-                    "reference phaseforge composition failed; cannot validate "
-                    "bc_large parameter match"
-                )
-            else:
-                pf = build_model(pf_cfg)
-                pf_total = sum(p.numel() for p in pf.parameters())
-                detached = 0
-                for head in ("action_head", "phase_head"):
-                    module = getattr(pf, head, None)
-                    if module is not None:
-                        detached += sum(p.numel() for p in module.parameters())
-                target_params = pf_total - detached
-
-                ratio = params / target_params
-                if abs(ratio - 1.0) > 0.02:
-                    cell.fail(
-                        f"bc_large params={params} deviates from per-task "
-                        f"PhaseForge deployed count ({target_params}) by "
-                        f"{abs(ratio - 1.0):.2%}"
-                    )
-        except Exception as exc:
-            cell.fail(f"bc_large parameter count validation failed: {exc}")
-
     # Validate phase_head router init requirement
     router_init = cfg.models.get("router_init")
     if router_init is not None and router_init.get("type") == "phase_head":
@@ -272,15 +210,19 @@ def _check_train_cell(cfg: DictConfig, cell: Cell) -> None:
         from phaseforge.utils.config import resolve_checkpoint_source
 
         src_model = resolve_checkpoint_source(model_name)
-        if src_model not in ("phaseforge", "self") and cell.stage == 2:
+        if src_model not in ("precision_residual_phaseforge", "self") and cell.stage == 2:
             cell.fail(
-                "router_init=phase_head requires phase-supervised Stage 1 source 'phaseforge', "
+                "router_init=phase_head requires phase-supervised Stage 1 source "
+                "'precision_residual_phaseforge', "
                 f"got '{src_model}'"
             )
 
     # Validate corruption conflicts
     corruption_rate = float(cfg.data.get("phase_corruption_rate", 0.0))
-    if corruption_rate > 0.0 and cell.method in ("teacher_forced", "oracle_moe"):
+    if corruption_rate > 0.0 and cell.method in (
+        "precision_residual_teacher_forced",
+        "precision_residual_oracle",
+    ):
         cell.fail(f"Phase corruption not allowed for {cell.method}")
 
     # phase_class_weight sanity: the mode must be known, and cui requires

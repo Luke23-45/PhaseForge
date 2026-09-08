@@ -1,10 +1,8 @@
-"""Oracle Phase MoE baseline (privileged routing diagnostic).
+"""Final privileged oracle for offline routing diagnostics.
 
-Final-aligned rows (``precision_residual_oracle``) generalize this class
-without forking it: a resolved ``label_field`` (``phase_topo``), residual
-(beta-zero) experts warm-started from the Stage 1 action head, and a
-fail-closed refusal of ordinary state-only rollout. Historical configs keep
-their exact defaults (``phase`` labels, scratch experts, legacy fallback).
+The final row uses ``phase_topo`` labels, beta-zero residual experts
+warm-started from the Stage 1 action head, and a fail-closed refusal of
+ordinary state-only rollout.
 """
 
 from __future__ import annotations
@@ -36,7 +34,7 @@ logger = logging.getLogger(__name__)
 _ORACLE_LABEL_FIELDS = frozenset({"phase", "phase_rule", "phase_topo", "phase_dynamic"})
 
 
-class OraclePhaseMoEModel(BaseManipulationModel):
+class PrecisionResidualOracleModel(BaseManipulationModel):
     """MoE trained with Oracle routing (ground truth phases).
 
     During training, the router is bypassed, and the ground truth phase
@@ -132,7 +130,7 @@ class OraclePhaseMoEModel(BaseManipulationModel):
         self.encoder.eval()
         logger.info("Encoder weights frozen; encoder kept in eval mode (no dropout).")
 
-    def train(self, mode: bool = True) -> OraclePhaseMoEModel:
+    def train(self, mode: bool = True) -> PrecisionResidualOracleModel:
         """Override so a frozen encoder stays deterministic during Stage 2."""
         super().train(mode)
         if mode and self._encoder_frozen:
@@ -145,7 +143,7 @@ class OraclePhaseMoEModel(BaseManipulationModel):
 
         if phase is None:
             raise RuntimeError(
-                "OraclePhaseMoEModel requires ground-truth labels "
+                "PrecisionResidualOracleModel requires ground-truth labels "
                 f"(field {self.label_field!r}) in every forward pass and never "
                 "falls back to the (untrained) router: routing by it would "
                 "silently corrupt the oracle upper bound. The oracle is a "
@@ -218,14 +216,14 @@ class OraclePhaseMoEModel(BaseManipulationModel):
         """
         if not self.allow_rollout:
             raise RuntimeError(
-                "OraclePhaseMoEModel refuses ordinary state-only rollout: "
+                "PrecisionResidualOracleModel refuses ordinary state-only rollout: "
                 "no privileged labeler supplies routing labels for "
                 "policy-generated states. Evaluate through the privileged "
                 "offline path with recorded labels "
                 f"(field {self.label_field!r})."
             )
         logger.debug(
-            "OraclePhaseMoEModel.get_action falls back to the router's gate, "
+            "PrecisionResidualOracleModel.get_action falls back to the router's gate, "
             "which was never trained for the oracle (routing is by labels "
             "during training). Rollout scores from this path are NOT a "
             "policy-deployable signal."

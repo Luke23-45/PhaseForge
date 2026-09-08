@@ -8,7 +8,7 @@
 # results. Metadata marks it as such.
 
 name: "precision_residual_teacher_forced"
-_target_: phaseforge.models.baselines.teacher_forced.TeacherForcedMoEModel
+_target_: phaseforge.models.baselines.precision_residual_teacher_forced.PrecisionResidualTeacherForcedModel
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder

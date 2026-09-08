@@ -19,17 +19,29 @@ from phaseforge.evaluations.rollout.trace import (
     read_trace_rows,
     validate_trace_record,
 )
-from phaseforge.models.baselines.bc_impedance import BCImpedanceModel
+from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.impedance_expert import ImpedanceExpert
+from phaseforge.models.components.phase_head import PhaseClassificationHead
+from phaseforge.models.components.prototype_router import PrototypeRouter
+from phaseforge.models.phase_moe import PhaseBootstrappedMoE
 from tests.rollout_helpers import FakeAdapter, make_bank
 
 
-def _impedance_model(seed: int = 0) -> BCImpedanceModel:
+def _impedance_model(seed: int = 0) -> PhaseBootstrappedMoE:
     torch.manual_seed(seed)
     encoder = StateEncoder(input_dim=19, hidden_dims=[16], latent_dim=8)
-    expert = ImpedanceExpert(input_dim=8, hidden_dim=16)
-    return BCImpedanceModel(encoder=encoder, expert=expert)
+    model = PhaseBootstrappedMoE(
+        encoder=encoder,
+        action_head=ActionHead(input_dim=8, output_dim=7, hidden_dim=16),
+        phase_head=PhaseClassificationHead(latent_dim=8, num_phases=2),
+        router=PrototypeRouter(latent_dim=8, num_experts=2, top_k=1),
+        expert=ImpedanceExpert(input_dim=8, hidden_dim=16),
+        router_init={"type": "random"},
+        expert_init={"type": "random"},
+    )
+    model.stage = 2
+    return model
 
 
 def _evaluator(tmp_path: Path, horizon: int = 5, **kwargs) -> RolloutEvaluator:
@@ -42,7 +54,7 @@ def _evaluator(tmp_path: Path, horizon: int = 5, **kwargs) -> RolloutEvaluator:
         "model": _impedance_model(),
         "output_dir": tmp_path,
         "run_id": "trace-test",
-        "model_name": "bc_impedance",
+        "model_name": "precision_residual_phaseforge",
         "training_seed": 42,
         "task": "Lift",
         "checkpoint_sha256": "deadbeef",

@@ -171,11 +171,7 @@ def _build_model_for_test(name: str) -> torch.nn.Module:
 
     from phaseforge.utils.registry import build_model
 
-    path = (
-        "phaseforge/config/models/phaseforge.yaml"
-        if name == "phaseforge"
-        else f"phaseforge/config/models/baselines/{name}.yaml"
-    )
+    path = f"phaseforge/config/models/{name}.yaml"
     # Model configs interpolate ${data.state_dim}/${data.action_dim} and the
     # canonical phaseforge ties expert_init.seed to ${project.seed}, so the
     # data and project blocks must be present for the config to resolve —
@@ -195,47 +191,46 @@ def test_stage1_bootstrap_load_matrix_all_cells() -> None:
     phaseforge cell must be loadable through the cli's checked bootstrap
     load, and the load must still reject a missing head the target NEEDS.
     """
-    # A BC checkpoint (encoder + action head only) never has phase_head.
-    bc = _build_model_for_test("bc")
+    # The normalized BC provider (encoder + action head only) never has phase_head.
+    bc = _build_model_for_test("final_aligned_bc")
     bc_sd = bc.state_dict()
 
-    # The phaseforge cell's Stage 1 checkpoint includes the phase head.
-    pf = _build_model_for_test("phaseforge")
+    # The proposed final cell's Stage 1 checkpoint includes the phase head.
+    pf = _build_model_for_test("precision_residual_phaseforge")
     pf_sd = pf.state_dict()
     assert any(k.startswith("phase_head") for k in pf_sd)
 
-    # warmstart_moe / plain_encoder <- bc: no phase head in either side.
-    for name in ("warmstart_moe", "plain_encoder_phase_bootstrap"):
+    # The plain representation control consumes the BC provider and has no phase head.
+    for name in ("precision_residual_plain_encoder", "precision_residual_factorial_floor"):
         model = _build_model_for_test(name)
         assert not any(k.startswith("phase_head") for k in model.state_dict())
         cli._load_state_dict_checked(
             model,
             bc_sd,
-            f"{name} <- bc bootstrap load",
+            f"{name} <- final_aligned_bc bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
-    # phaseforge / teacher_forced <- phaseforge: identical head structure.
-    for name in ("phaseforge", "teacher_forced"):
+    # The proposed and teacher diagnostic share the final phase-supervised bundle.
+    for name in ("precision_residual_phaseforge", "precision_residual_teacher_forced"):
         model = _build_model_for_test(name)
         assert any(k.startswith("phase_head") for k in model.state_dict())
         cli._load_state_dict_checked(
             model,
             pf_sd,
-            f"{name} <- phaseforge bootstrap load",
+            f"{name} <- precision_residual_phaseforge bootstrap load",
             expected_unexpected_prefixes=("moe_layer", "soft_mapping"),
         )
 
-    # phase_pretrain_random_router <- phaseforge: no phase_head module in
-    # the target, so the checkpoint's phase_head keys are unused heads and
-    # may be dropped; anything else must still fail.
-    model = _build_model_for_test("phase_pretrain_random_router")
-    assert not any(k.startswith("phase_head") for k in model.state_dict())
+    # The random-router and scratch controls keep the final phase head, while
+    # changing only their registered Stage-2 initialization factor.
+    model = _build_model_for_test("precision_residual_phase_random_router")
+    assert any(k.startswith("phase_head") for k in model.state_dict())
     cli._load_state_dict_checked(
         model,
         pf_sd,
-        "phase_pretrain_random_router <- phaseforge bootstrap load",
-        expected_unexpected_prefixes=("moe_layer", "soft_mapping", "phase_head"),
+        "precision_residual_phase_random_router <- precision_residual_phaseforge bootstrap load",
+        expected_unexpected_prefixes=("moe_layer", "soft_mapping"),
     )
 
 
@@ -246,30 +241,31 @@ def test_unused_stage1_head_prefixes_are_target_specific() -> None:
     a cell that routes by the phase head may not.
     """
     assert cli._unused_stage1_head_prefixes(
-        _build_model_for_test("phase_pretrain_random_router")
+        _build_model_for_test("precision_residual_plain_encoder")
     ) == ("phase_head",)
-    assert cli._unused_stage1_head_prefixes(_build_model_for_test("warmstart_moe")) == (
-        "phase_head",
-    )
     assert cli._unused_stage1_head_prefixes(
-        _build_model_for_test("plain_encoder_phase_bootstrap")
+        _build_model_for_test("precision_residual_factorial_floor")
     ) == ("phase_head",)
-    assert cli._unused_stage1_head_prefixes(_build_model_for_test("teacher_forced")) == ()
-    assert cli._unused_stage1_head_prefixes(_build_model_for_test("phaseforge")) == ()
+    assert cli._unused_stage1_head_prefixes(
+        _build_model_for_test("precision_residual_phase_random_router")
+    ) == ()
+    assert cli._unused_stage1_head_prefixes(
+        _build_model_for_test("precision_residual_teacher_forced")
+    ) == ()
 
 
 def test_phase_head_required_when_target_uses_it() -> None:
     """A checkpoint missing the phase head must still fail for cells that
     route by it (the prefix is only allowed for heads the target lacks)."""
-    teacher_forced = _build_model_for_test("teacher_forced")
-    bc_sd = dict(_build_model_for_test("bc").state_dict())
+    teacher_forced = _build_model_for_test("precision_residual_teacher_forced")
+    bc_sd = dict(_build_model_for_test("final_aligned_bc").state_dict())
     assert not any(k.startswith("phase_head") for k in bc_sd)
 
     with pytest.raises(RuntimeError, match="phase_head"):
         cli._load_state_dict_checked(
             teacher_forced,
             bc_sd,
-            "teacher_forced <- bc bootstrap load",
+            "precision_residual_teacher_forced <- final_aligned_bc bootstrap load",
             expected_unexpected_prefixes=("moe_layer",),
         )
 
@@ -290,7 +286,7 @@ def test_load_state_dict_checked_normalizer_stats() -> None:
     )
 
     # Model with set_normalizer_stats has the buffers registered and matches exactly
-    pf = _build_model_for_test("phaseforge")
+    pf = _build_model_for_test("precision_residual_phaseforge")
     dim = pf.encoder.hidden[0].in_features
     mean = torch.randn(dim)
     std = torch.ones(dim)
@@ -299,7 +295,7 @@ def test_load_state_dict_checked_normalizer_stats() -> None:
     assert "normalizer_mean" in sd_pf
     assert "normalizer_std" in sd_pf
 
-    fresh_pf = _build_model_for_test("phaseforge")
+    fresh_pf = _build_model_for_test("precision_residual_phaseforge")
     fresh_pf.set_normalizer_stats(sd_pf["normalizer_mean"], sd_pf["normalizer_std"])
     cli._load_state_dict_checked(
         fresh_pf,
@@ -317,7 +313,9 @@ def test_build_eval_model_restores_normalizer_stats(tmp_path) -> None:
     from omegaconf import DictConfig, OmegaConf
 
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    model_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    model_cfg = OmegaConf.load(
+        "phaseforge/config/models/precision_residual_phaseforge.yaml"
+    )
     cfg = DictConfig(
         {"models": model_cfg, "data": data_cfg, "project": {"seed": 42}, "train": {}}
     )
@@ -349,7 +347,9 @@ def test_build_eval_model_fails_closed_on_corrupt_unexpected_key(tmp_path) -> No
     from omegaconf import DictConfig, OmegaConf
 
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    model_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    model_cfg = OmegaConf.load(
+        "phaseforge/config/models/precision_residual_phaseforge.yaml"
+    )
     cfg = DictConfig(
         {"models": model_cfg, "data": data_cfg, "project": {"seed": 42}, "train": {}}
     )
@@ -363,4 +363,3 @@ def test_build_eval_model_fails_closed_on_corrupt_unexpected_key(tmp_path) -> No
     cfg.train.stage1_ckpt_path = str(ckpt_path)
     with pytest.raises(RuntimeError, match="corrupt_head_extra_param"):
         cli.build_eval_model(cfg)
-

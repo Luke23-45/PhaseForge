@@ -82,7 +82,7 @@ sticky_coeff: 0.0
 # default: `enabled=false` contributes exactly 0.0 with no extra metrics,
 # preserving the frozen protocol bit-for-bit. Enable with
 # `train.margin.enabled=true` alongside a PrototypeRouter model
-# (`models=is_phaseforge` or `models=phaseforge_prototype`); any other
+# (`models=precision_residual_phaseforge`); any other
 # router fails closed. Pairs with the lipschitz/gain_reg blocks below for
 # the full multi-term Stage 2 objective (WP7, Professor §9).
 margin:

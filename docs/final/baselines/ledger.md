@@ -109,7 +109,7 @@ The old `warmstart_moe`, `plain_encoder_phase_bootstrap`, `phase_pretrain_random
 | GOV-02 | Preserve archived professor reports as historical provenance. | `docs/archive/professor_report1.md` through `professor_report5.md` are present; no report is used as execution authority. | GOV-01 | `VERIFIED` |
 | GOV-03 | Freeze the final protocol revision before implementation. | Git commit records the protocol revision; later conceptual changes require a new revision. | GOV-01, DATA-01, MODEL-01 | `PENDING` |
 | GOV-04 | Use a fresh final output namespace. | Preflight proves the namespace is absent or empty and cannot overwrite historical outputs. | MAN-01 | `PENDING` |
-| GOV-05 | Do not hard-delete historical configs or outputs during this program. | Cleanup is postponed until final provenance and publication archive are complete. | GOV-01 | `MAPPED` |
+| GOV-05 | Keep only the locked final runnable surface active. | Retired runnable manifests/configs/implementations and ignored legacy output trees are removed; professor/archive reports remain provenance. | GOV-01 | `VERIFIED` |
 
 ## 6. Work ledger: data and label contract
 
@@ -194,7 +194,7 @@ The repository's existing Hydra selection remains `train=stage1` and `train=stag
 
 | ID | Work item | Required evidence / exit condition | Depends on | Status |
 |---|---|---|---|---|
-| PROVIDER-01 | Add explicit provider identity support to the runner. | Protocol accepts final provider identities instead of only historical aliases. | — | `PENDING` |
+| PROVIDER-01 | Add explicit provider identity support to the runner. | Protocol accepts final provider identities and no longer accepts retired aliases. | — | `VERIFIED` |
 | PROVIDER-02 | Create `final_aligned_bc_stage1`. | Explicit normalized-BC configuration/override produces a valid Stage 1 checkpoint for every task/seed. | MODEL-02, TRAIN-01 | `PENDING` |
 | PROVIDER-03 | Create `final_aligned_static_rule_stage1`. | Rule-label Stage 1 checkpoint is produced independently and is not resolved through old `phaseforge`. | MODEL-07, LABEL-06 | `PENDING` |
 | PROVIDER-04 | Create `precision_residual_phaseforge_stage1`. | Final topology/SupCon Stage 1 provider exists per task/seed with resolved metadata. | LABEL-04, TRAIN-01 | `PENDING` |
@@ -204,7 +204,7 @@ The repository's existing Hydra selection remains `train=stage1` and `train=stag
 | PROVIDER-08 | Record complete provenance. | Provider identity/path/hash, provider commit/config hash, consumer config hash, dataset/cache hash, topology hash, bank hash, and environment versions are stored. | PROVIDER-07 | `PENDING` |
 | PROVIDER-09 | Prevent historical alias fallback. | Final rows cannot resolve `phaseforge`, `bc`, or old baseline aliases when a final provider is required. | PROVIDER-01 | `PENDING` |
 
-The current runner schema limitation is tracked explicitly: `stage2_source` currently accepts only `self`, `bc`, and `phaseforge` in `phaseforge/runner/protocol.py`. The implementation must extend that schema and reuse the strict seed-aware resolver in `phaseforge/runner/resolver.py`, then pass the resolved checkpoint as `train.stage1_ckpt_path`.
+The runner now accepts `self` and the explicit final provider identities in `phaseforge/runner/protocol.py`, reuses the strict seed-aware resolver, and passes the resolved checkpoint as `train.stage1_ckpt_path`.
 
 ## 12. Work ledger: final manifest
 
@@ -456,46 +456,33 @@ Record paths, commit IDs, hashes, and commands here as work is completed.
 | EVID-005 | Final evaluation bank index |  |  |  |  | `PENDING` |
 | EVID-006 | Final result summary |  |  |  |  | `PENDING` |
 
-## 23. Deferred legacy-baseline cleanup register
+## 23. Legacy-baseline cleanup record
 
-Legacy-baseline cleanup is a separate post-completion activity. It must not block implementation, and it must not begin merely because the final method is locked.
-
-The cleanup rule is:
-
-> Preserve legacy implementations, manifests, checkpoints, outputs, reports, and provenance until the final research record and provenance archive are complete. Prefer archiving over deletion. Any deletion must be a separate, reviewable change after the final completion gate passes.
-
-The following are never permitted during final implementation or final training:
-
-- deleting historical checkpoints or rollout outputs;
-- deleting old manifests before their identities, commits, configuration hashes, and label policies are archived;
-- editing old results in place to make them appear final-aligned;
-- renaming an old method to `precision_residual_phaseforge`;
-- deleting a file that is still required by a final provider, manifest, test, import, or historical reproduction path;
-- deleting the archived professor reports or the final protocol.
+The active runnable surface is now final-only. The cleanup removed retired
+manifests, old Hydra model configs, legacy-only model implementations, obsolete
+protocol scripts, and the ignored local output trees for those runs. Final
+provider/configuration files and the locked manifest were retained. Archived
+professor reports and final protocol documents were retained as provenance.
 
 | ID | Cleanup item | Required evidence / exit condition | Earliest timing | Status |
 |---|---|---|---|---|
-| CLEAN-01 | Inventory legacy baseline code, configs, manifests, checkpoints, outputs, reports, and references. | A path-level inventory identifies each item as active-final, historical-preserved, archive-candidate, or deletion-candidate. | After final matrix is complete | `PENDING` |
-| CLEAN-02 | Protect final dependencies. | Search confirms no final manifest, provider, test, import, documentation link, or reproduction procedure depends on a proposed deletion target. | After CLEAN-01 | `PENDING` |
-| CLEAN-03 | Freeze historical provenance. | Every retained legacy result has method identity, commit, resolved-config hash, provider, label policy, dataset/topology hash, reset-bank hash where applicable, and result path. | After final reporting | `PENDING` |
-| CLEAN-04 | Create the immutable historical archive. | Archive contains the required legacy configs/results/reports and has an index with hashes and original paths. | After CLEAN-03 | `PENDING` |
-| CLEAN-05 | Decide archive versus deletion per item. | Archive is the default. Deletion is allowed only for obsolete active files with no provenance or dependency role; the decision is recorded per path. | After CLEAN-04 | `PENDING` |
-| CLEAN-06 | Obtain cleanup approval through the project review process. | The cleanup scope, exact paths, rationale, recovery status, and expected impact are reviewed before any deletion. | After CLEAN-05 | `PENDING` |
-| CLEAN-07 | Execute cleanup in a dedicated change. | No final experiment or protocol change is mixed into the cleanup change; exact deleted/moved paths and commit are recorded. | After CLEAN-06 | `PENDING` |
-| CLEAN-08 | Verify the repository after cleanup. | Final manifest composition, provider resolution, tests, historical archive checks, and documentation links still pass. | After CLEAN-07 | `PENDING` |
-| CLEAN-09 | Record recoverability. | For every removed item, state whether it remains recoverable from the archive or Git history; material deletion is reported explicitly. | After CLEAN-07 | `PENDING` |
+| CLEAN-01 | Inventory cleanup targets. | Target inventory was created before deletion and separated final dependencies from retired assets. | — | `VERIFIED` |
+| CLEAN-02 | Protect final dependencies. | Final manifest/configs/providers were retained; final configs no longer target deleted modules. | CLEAN-01 | `VERIFIED` |
+| CLEAN-03 | Preserve provenance documents. | Professor reports and final protocol/ledger were retained; no historical result was relabeled. | CLEAN-01 | `VERIFIED` |
+| CLEAN-04 | Delete retired runnable surface. | Retired manifests, configs, legacy-only modules, obsolete protocol scripts, and ignored legacy output trees were removed. | CLEAN-02, CLEAN-03 | `VERIFIED` |
+| CLEAN-05 | Static post-delete audit. | Remaining tracked references are limited to final identities, retained provenance, or generic shared infrastructure. Tests/experiments are intentionally not run in this cleanup turn. | CLEAN-04 | `VERIFIED` |
+| CLEAN-06 | Record recoverability. | Tracked deletions remain recoverable from Git history; ignored output trees were materially deleted and are not recoverable from Git. | CLEAN-04 | `VERIFIED` |
 
-### 23.1 Initial cleanup classification
-
-Until the inventory is completed, use these provisional classifications:
+### 23.1 Cleanup classification
 
 | Category | Treatment |
 |---|---|
 | `precision_residual_phaseforge` and its final providers/configuration | Active final; never delete as legacy. |
 | `precision_residual_*` final-aligned controls and diagnostics | Active final until the matrix and reporting are complete; do not delete during implementation. |
-| Old `warmstart_moe`, `plain_encoder_phase_bootstrap`, `phase_pretrain_random_router`, `scratch_moe`, `teacher_forced`, and `oracle_moe` | Historical or archive-candidate; preserve identity and results; do not relabel. |
-| Old `phaseforge`, `phaseforge_dynamic`, `phaseforge_r50`, and other development variants | Historical or archive-candidate; preserve their provenance and exclusion status. |
-| `experiments/five_task.json` and other historical manifests | Historical; do not edit in place for the final matrix. |
+| Retired baseline names/configs/manifests and ignored local output trees | Hard-deleted from the active workspace; tracked files remain recoverable from Git history, ignored outputs do not. |
+| External or archived reports | Retained as provenance and never used as execution authority. |
 | Archived professor reports and `PRECISION_RESIDUAL_BASELINE_PROTOCOL.md` | Required provenance/authority; never delete. |
 
-Cleanup is not a condition for claiming the final method. It is complete only when CLEAN-01 through CLEAN-09 have acceptable evidence and the final completion gate remains satisfied.
+Cleanup is complete for the current workspace. It does not constitute an
+experiment result and does not replace the later no-test preflight and final
+matrix execution gates.

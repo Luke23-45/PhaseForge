@@ -93,14 +93,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: Dense checkpoints (BC family) carry no ``moe_layer.experts.*`` keys and
 #: skip the check inside ``verify_checkpoint_contract``. This is the
 #: fail-closed guard against pre-final artifacts that share a filesystem
-#: name with the canonical method (the retired 8-expert ``phaseforge``).
+#: name with the canonical method.
 FINAL_EXPERT_CONTRACT = 6
 
-#: Default protocol manifest. The full five-task evaluation lives in
-#: ``experiments/five_task.json``; ``experiments/lift_pilot.json`` is the
-#: original single-task pilot that remains useful for debugging the
-#: rollout pipeline.
-DEFAULT_MANIFEST = "experiments/five_task.json"
+#: Default protocol manifest for the locked final experiment matrix.
+DEFAULT_MANIFEST = "experiments/final_causal_matrix.json"
 
 
 def _split_list(values: list[str]) -> list[str]:
@@ -400,10 +397,9 @@ def _require_stage2_prereq(
     exact artifact rather than re-running its own auto-detect
     (:func:`phaseforge.utils.config.find_latest_checkpoint`), whose
     ``tag=None`` means "no constraint" and can select a newer *tagged* sibling
-    variant that shares the provider's output tree (e.g. ``bc_robot_only``
-    next to ``bc``), crashing the load with a dimension mismatch. With
-    ``expected_commit``, only provider checkpoints from that git revision are
-    eligible.
+    variant that shares the provider's output tree, crashing the load with a
+    dimension mismatch. With ``expected_commit``, only provider checkpoints
+    from that git revision are eligible.
 
     Gate stack (all before any subprocess launches):
 
@@ -510,10 +506,8 @@ def _auto_dependency_provider(
         return None
     source = step.method.stage2_source
     if source == "self":
-        # Legacy behavior preserved exactly: only a self-sourced method
-        # whose model shares the historical provider name (in practice the
-        # canonical "phaseforge" cell) re-injects its own Stage 1.
-        if model not in ("bc", "phaseforge"):
+        # Only self-sourced Stage-1 providers re-inject their own checkpoint.
+        if model not in ("bc", "precision_residual_phaseforge", "final_aligned_static_rule"):
             return None
         return protocol.method_by_name(model, task=step.method.task)
     provider_name = provider_method_name(source)

@@ -31,9 +31,9 @@ def _valid_doc() -> dict:
         "methods": [
             {
                 "index": 1,
-                "name": "phaseforge",
+                "name": "precision_residual_phaseforge",
                 "role": "proposed",
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "data": "common",
                 "stages": [1, 2],
                 "stage2_source": "self",
@@ -43,7 +43,7 @@ def _valid_doc() -> dict:
                 "index": 2,
                 "name": "bc",
                 "role": "floor",
-                "model": "baselines/bc",
+                "model": "final_aligned_bc",
                 "data": "common",
                 "stages": [1],
                 "evaluate": True,
@@ -53,7 +53,7 @@ def _valid_doc() -> dict:
 
 
 def _multi_task_doc() -> dict:
-    """Minimal five_task-shaped manifest: names replicated across tasks."""
+    """Minimal multi-task manifest: final names replicated across tasks."""
     return {
         "name": "mini_multi",
         "task": "all",
@@ -62,9 +62,9 @@ def _multi_task_doc() -> dict:
         "methods": [
             {
                 "index": 1,
-                "name": "phaseforge",
+                "name": "precision_residual_phaseforge",
                 "role": "proposed",
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "data": "lift",
                 "task": "Lift",
                 "stages": [1, 2],
@@ -73,9 +73,9 @@ def _multi_task_doc() -> dict:
             },
             {
                 "index": 2,
-                "name": "phaseforge",
+                "name": "precision_residual_phaseforge",
                 "role": "proposed",
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "data": "can",
                 "task": "Can",
                 "stages": [1, 2],
@@ -86,7 +86,7 @@ def _multi_task_doc() -> dict:
                 "index": 3,
                 "name": "bc",
                 "role": "floor",
-                "model": "baselines/bc",
+                "model": "final_aligned_bc",
                 "data": "lift",
                 "task": "Lift",
                 "stages": [1],
@@ -96,7 +96,7 @@ def _multi_task_doc() -> dict:
                 "index": 4,
                 "name": "bc",
                 "role": "floor",
-                "model": "baselines/bc",
+                "model": "final_aligned_bc",
                 "data": "can",
                 "task": "Can",
                 "stages": [1],
@@ -137,14 +137,15 @@ def test_cli_bare_name_selects_across_tasks(tmp_path: Path, capsys) -> None:
             "--outputs",
             str(tmp_path / "outputs"),
             "--methods",
-            "phaseforge",
+            "precision_residual_phaseforge",
             "--dry-run",
         ]
     )
     assert runner_cli.run(args) == 0
     out = capsys.readouterr().out
     assert "[runner] selection: 2 cells" in out
-    assert "phaseforge@Lift" in out and "phaseforge@Can" in out
+    assert "precision_residual_phaseforge@Lift" in out
+    assert "precision_residual_phaseforge@Can" in out
     # 2 tasks x 1 seed x (stage1, stage2, eval).
     assert "[runner] plan (6 steps" in out
 
@@ -158,7 +159,7 @@ def test_cli_task_filter_narrows_selection(tmp_path: Path, capsys) -> None:
             "--outputs",
             str(tmp_path / "outputs"),
             "--methods",
-            "phaseforge",
+            "precision_residual_phaseforge",
             "--tasks",
             "can",
             "--dry-run",
@@ -166,8 +167,8 @@ def test_cli_task_filter_narrows_selection(tmp_path: Path, capsys) -> None:
     )
     assert runner_cli.run(args) == 0
     out = capsys.readouterr().out
-    assert "phaseforge@Can" in out
-    assert "phaseforge@Lift" not in out
+    assert "precision_residual_phaseforge@Can" in out
+    assert "precision_residual_phaseforge@Lift" not in out
 
 
 def test_cli_unknown_task_exits_2(tmp_path: Path, capsys) -> None:
@@ -268,7 +269,7 @@ def test_cli_writes_plan_artifact(tmp_path: Path, monkeypatch) -> None:
             "--outputs",
             str(outputs),
             "--methods",
-            "phaseforge",
+            "precision_residual_phaseforge",
             "--tasks",
             "Can",
             "--continue-on-error",
@@ -284,11 +285,13 @@ def test_cli_writes_plan_artifact(tmp_path: Path, monkeypatch) -> None:
         protocol_path.read_bytes()
     ).hexdigest()
     assert payload["selection"] == {
-        "method_tokens": ["phaseforge"],
+        "method_tokens": ["precision_residual_phaseforge"],
         "tasks": ["Can"],
         "seeds": [],
     }
-    assert [c["phase_key"] for c in payload["resolved_cells"]] == ["Can/phaseforge"]
+    assert [c["phase_key"] for c in payload["resolved_cells"]] == [
+        "Can/precision_residual_phaseforge"
+    ]
     assert payload["resolved_cells"][0]["stages"] == [1, 2]
     assert payload["step_count"] == 3  # stage1 + stage2 + eval, one seed
     assert payload["expect_steps"] is None

@@ -29,7 +29,7 @@ from phaseforge.runner.resolver import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = PROJECT_ROOT / "experiments" / "lift_pilot.json"
+MANIFEST = PROJECT_ROOT / "experiments" / "final_causal_matrix.json"
 
 
 def _protocol() -> Protocol:
@@ -52,44 +52,42 @@ def _step(method_name: str, seed: int, phase: str) -> Step:
 
 def test_load_real_protocol_matches_notebook_methods() -> None:
     protocol = _protocol()
-    assert protocol.name == "lift_pilot"
+    assert protocol.name == "final_causal_matrix"
     assert protocol.seeds == (42, 43, 44)
-    assert [m.index for m in protocol.methods] == list(range(1, 9))
+    assert len(protocol.methods) == 50
     names = {m.name for m in protocol.methods}
     assert names == {
-        "phaseforge",
+        "precision_residual_phaseforge",
         "bc",
-        "bc_robot_only",
-        "scratch_moe",
-        "warmstart_moe",
-        "phase_pretrain_random_router",
-        "plain_encoder_phase_bootstrap",
-        "teacher_forced",
+        "precision_residual_plain_encoder",
+        "precision_residual_phase_random_router",
+        "precision_residual_scratch_moe",
+        "precision_residual_factorial_floor",
+        "final_aligned_softmax_top1",
+        "final_aligned_static_rule",
+        "precision_residual_teacher_forced",
+        "precision_residual_oracle",
     }
-    phaseforge = protocol.method_by_name("phaseforge")
+    phaseforge = protocol.method_by_name("precision_residual_phaseforge", task="Lift")
     assert phaseforge is not None
     assert phaseforge.stages == (1, 2)
     assert phaseforge.stage2_source == "self"
     assert phaseforge.evaluate
-    assert phaseforge.model_name == "phaseforge"
+    assert phaseforge.model_name == "precision_residual_phaseforge"
 
-    bc = protocol.method_by_name("bc")
+    bc = protocol.method_by_name("bc", task="Lift")
     assert bc is not None
     assert bc.stages == (1,)
     assert bc.stage2_source is None
+    assert bc.model_name == "final_aligned_bc"
 
-    robot = protocol.method_by_name("bc_robot_only")
-    assert robot is not None
-    assert robot.tag == "robot_only"
-    assert robot.model_name == "bc"
-
-    warmstart = protocol.method_by_name("warmstart_moe")
+    warmstart = protocol.method_by_name("precision_residual_scratch_moe", task="Lift")
     assert warmstart is not None
-    assert warmstart.stage2_source == "bc"
+    assert warmstart.stage2_source == "precision_residual_phaseforge_stage1"
 
-    teacher = protocol.method_by_name("teacher_forced")
+    teacher = protocol.method_by_name("precision_residual_teacher_forced", task="Lift")
     assert teacher is not None
-    assert teacher.stage2_source == "phaseforge"
+    assert teacher.stage2_source == "precision_residual_phaseforge_stage1"
 
 
 def _write_protocol(tmp_path: Path, doc: dict) -> Path:
@@ -107,9 +105,9 @@ def _valid_doc() -> dict:
         "methods": [
             {
                 "index": 1,
-                "name": "phaseforge",
+                "name": "precision_residual_phaseforge",
                 "role": "proposed",
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "data": "common",
                 "stages": [1, 2],
                 "stage2_source": "self",
@@ -119,7 +117,7 @@ def _valid_doc() -> dict:
                 "index": 2,
                 "name": "bc",
                 "role": "floor",
-                "model": "baselines/bc",
+                "model": "final_aligned_bc",
                 "data": "common",
                 "stages": [1],
                 "evaluate": True,
@@ -147,7 +145,9 @@ def test_load_protocol_valid(tmp_path: Path) -> None:
         (lambda d: d["methods"][0].update(index=0), "index"),
         (lambda d: d["methods"][0].update(stage2_source="nope"), "stage2_source"),
         (
-            lambda d: d["methods"][0].update(stage2_source="phaseforge", stages=[1]),
+            lambda d: d["methods"][0].update(
+                stage2_source="precision_residual_phaseforge", stages=[1]
+            ),
             "stage 2",
         ),
     ],
@@ -162,7 +162,9 @@ def test_load_protocol_validation_errors(tmp_path: Path, mutate, match) -> None:
 def test_load_protocol_rejects_unknown_provider(tmp_path: Path) -> None:
     doc = _valid_doc()
     # bc gains a stage 2 sourced from a provider that no longer exists.
-    doc["methods"][1].update(stages=[1, 2], stage2_source="phaseforge")
+    doc["methods"][1].update(
+        stages=[1, 2], stage2_source="precision_residual_phaseforge"
+    )
     doc["methods"] = [doc["methods"][1]]  # drop the phaseforge method entirely
     with pytest.raises(ProtocolError, match="not a method"):
         load_protocol(_write_protocol(tmp_path, doc))
@@ -170,8 +172,16 @@ def test_load_protocol_rejects_unknown_provider(tmp_path: Path) -> None:
 
 def test_select_methods_by_index_and_name() -> None:
     protocol = _protocol()
-    selected = protocol.select_methods(["8", "1", "warmstart_moe"])
-    assert [m.index for m in selected] == [1, 5, 8]
+    selected = protocol.select_methods(
+        [
+            "precision_residual_scratch_moe@Lift",
+            "precision_residual_phaseforge@Lift",
+        ]
+    )
+    assert [m.name for m in selected] == [
+        "precision_residual_phaseforge",
+        "precision_residual_scratch_moe",
+    ]
     with pytest.raises(ProtocolError, match="Unknown method"):
         protocol.select_methods(["does_not_exist"])
     with pytest.raises(ProtocolError, match="Unknown method index"):
@@ -185,22 +195,24 @@ def test_select_methods_by_index_and_name() -> None:
 
 def test_build_plan_full_matrix_order_and_count() -> None:
     protocol = _protocol()
-    plan = build_plan(protocol, list(protocol.methods), seeds=[42])
-    # phaseforge (3) + 7 single-stage methods (2 each) = 17 steps per seed.
-    assert len(plan) == 17
-    labels = [s.label for s in plan[:6]]
-    assert labels == [
-        "phaseforge seed=42 stage1",
-        "phaseforge seed=42 stage2",
-        "phaseforge seed=42 eval",
-        "bc seed=42 stage1",
-        "bc seed=42 eval",
-        "bc_robot_only seed=42 stage1",
-    ]
-    # Eval step targets the method's final-stage checkpoint.
-    eval_step = plan[2]
-    assert eval_step.kind == "eval"
-    assert eval_step.required_checkpoint() == ("phaseforge", 2)
+    plan = build_plan(
+        protocol,
+        [m for m in protocol.methods if m.task == "Lift"],
+        seeds=[42],
+    )
+    # Ten final identities: two two-stage methods contribute three steps;
+    # Seven stage-2-only methods contribute two each; BC contributes two.
+    assert len(plan) == 22
+    assert any(
+        step.label == "precision_residual_phaseforge seed=42 stage2"
+        for step in plan
+    )
+    eval_step = next(
+        step
+        for step in plan
+        if step.kind == "eval" and step.method.name == "precision_residual_phaseforge"
+    )
+    assert eval_step.required_checkpoint() == ("precision_residual_phaseforge", 2)
 
 
 def test_build_plan_multi_seed() -> None:
@@ -211,7 +223,12 @@ def test_build_plan_multi_seed() -> None:
 
 def test_build_plan_stage_filter() -> None:
     protocol = _protocol()
-    plan = build_plan(protocol, [protocol.method_by_name("phaseforge")], seeds=[42], stage=1)
+    plan = build_plan(
+        protocol,
+        [protocol.method_by_name("precision_residual_phaseforge", task="Lift")],
+        seeds=[42],
+        stage=1,
+    )
     assert len(plan) == 1
     assert plan[0].stage == 1
     assert plan[0].kind == "train"
@@ -219,14 +236,24 @@ def test_build_plan_stage_filter() -> None:
 
 def test_build_plan_eval_only() -> None:
     protocol = _protocol()
-    plan = build_plan(protocol, [protocol.method_by_name("phaseforge")], seeds=[42], eval_only=True)
+    plan = build_plan(
+        protocol,
+        [protocol.method_by_name("precision_residual_phaseforge", task="Lift")],
+        seeds=[42],
+        eval_only=True,
+    )
     assert len(plan) == 1
     assert plan[0].kind == "eval"
 
 
 def test_build_plan_skip_eval() -> None:
     protocol = _protocol()
-    plan = build_plan(protocol, [protocol.method_by_name("phaseforge")], seeds=[42], skip_eval=True)
+    plan = build_plan(
+        protocol,
+        [protocol.method_by_name("precision_residual_phaseforge", task="Lift")],
+        seeds=[42],
+        skip_eval=True,
+    )
     assert [s.kind for s in plan] == ["train", "train"]
 
 
@@ -252,23 +279,23 @@ def test_build_plan_conflicting_filters() -> None:
 
 def test_build_plan_injects_dependency() -> None:
     protocol = _protocol()
-    teacher = protocol.method_by_name("teacher_forced")
+    teacher = protocol.method_by_name("precision_residual_teacher_forced", task="Lift")
     plan = build_plan(protocol, [teacher], seeds=[42], with_dependencies=True)
     assert len(plan) == 3
     dep = plan[0]
     assert dep.dependency
-    assert dep.method.name == "phaseforge"
+    assert dep.method.name == "precision_residual_phaseforge"
     assert dep.stage == 1
     assert dep.registry_phase == "stage1"
-    assert plan[1].label == "teacher_forced seed=42 stage2"
+    assert plan[1].label == "precision_residual_teacher_forced seed=42 stage2"
     assert plan[2].kind == "eval"
 
 
 def test_build_plan_no_injection_when_provider_selected() -> None:
     protocol = _protocol()
     selected = [
-        protocol.method_by_name("phaseforge"),
-        protocol.method_by_name("teacher_forced"),
+        protocol.method_by_name("precision_residual_phaseforge", task="Lift"),
+        protocol.method_by_name("precision_residual_teacher_forced", task="Lift"),
     ]
     plan = build_plan(protocol, selected, seeds=[42], with_dependencies=True)
     assert not any(s.dependency for s in plan)
@@ -293,7 +320,7 @@ def test_train_command_common_cell(tmp_path: Path) -> None:
     )
     assert cmd == [
         "phaseforge-train",
-        "models=baselines/bc",
+        "models=final_aligned_bc",
         "train=stage1",
         "project.seed=42",
         f"project.output_dir={tmp_path / 'outputs'}",
@@ -302,31 +329,20 @@ def test_train_command_common_cell(tmp_path: Path) -> None:
     ]
 
 
-def test_train_command_variant_tag_and_data(tmp_path: Path) -> None:
-    cmd = train_command(
-        _step("bc_robot_only", 42, "stage1"),
-        outputs_base=tmp_path / "outputs",
-        defaults=(),
-    )
-    assert "data=robot_only" in cmd
-    assert "project.tag=robot_only" in cmd
-    assert "project.method=bc_robot_only" in cmd
-
-
 def test_train_command_stage2(tmp_path: Path) -> None:
     cmd = train_command(
-        _step("phaseforge", 42, "stage2"),
+        _step("precision_residual_phaseforge", 42, "stage2"),
         outputs_base=tmp_path / "outputs",
         defaults=(),
     )
-    assert "models=phaseforge" in cmd
+    assert "models=precision_residual_phaseforge" in cmd
     assert "train=stage2" in cmd
 
 
 def test_train_command_stage2_injects_provider_ckpt(tmp_path: Path) -> None:
     ckpt = tmp_path / "outputs" / "bc" / "stage1" / "x" / "checkpoint_best.pt"
     cmd = train_command(
-        _step("warmstart_moe", 42, "stage2"),
+        _step("precision_residual_scratch_moe", 42, "stage2"),
         outputs_base=tmp_path / "outputs",
         defaults=(),
         ckpt_path=ckpt,
@@ -335,9 +351,9 @@ def test_train_command_stage2_injects_provider_ckpt(tmp_path: Path) -> None:
 
 
 def test_eval_command_targets_final_checkpoint(tmp_path: Path) -> None:
-    ckpt = tmp_path / "outputs" / "phaseforge" / "stage2" / "ckpt" / "checkpoint_best.pt"
+    ckpt = tmp_path / "outputs" / "precision_residual_phaseforge" / "stage2" / "ckpt" / "checkpoint_best.pt"
     cmd = eval_command(
-        _step("phaseforge", 42, "eval"),
+        _step("precision_residual_phaseforge", 42, "eval"),
         ckpt_path=ckpt,
         outputs_base=tmp_path / "outputs",
         defaults=(),
@@ -361,7 +377,7 @@ def _offline_eval_step(seed: int) -> Step:
         index=1,
         name="bc",
         role="baseline",
-        model="baselines/bc",
+        model="final_aligned_bc",
         data="common",
         stages=(1,),
         stage2_source=None,
@@ -395,7 +411,7 @@ def test_eval_command_unknown_mode_raises_keyerror(tmp_path: Path) -> None:
         index=1,
         name="bc",
         role="baseline",
-        model="baselines/bc",
+        model="final_aligned_bc",
         data="common",
         stages=(1,),
         stage2_source=None,
@@ -481,16 +497,16 @@ def test_toolhang_preflight_rejects_wrong_robosuite(monkeypatch, tmp_path: Path)
 def test_registry_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "_runner" / "state.json"
     state = RunnerState(path)
-    state.mark("phaseforge", 42, "stage1", run_dir="phaseforge/stage1/x", ckpt="p/s1/c.pt")
-    state.mark("phaseforge", 42, "stage2", run_dir="phaseforge/stage2/y", ckpt="p/s2/c.pt")
-    state.mark("phaseforge", 42, "eval", ckpt="p/s2/c.pt", run_dir="eval/phaseforge/z")
+    state.mark("precision_residual_phaseforge", 42, "stage1", run_dir="precision_residual_phaseforge/stage1/x", ckpt="p/s1/c.pt")
+    state.mark("precision_residual_phaseforge", 42, "stage2", run_dir="precision_residual_phaseforge/stage2/y", ckpt="p/s2/c.pt")
+    state.mark("precision_residual_phaseforge", 42, "eval", ckpt="p/s2/c.pt", run_dir="eval/precision_residual_phaseforge/z")
 
     reloaded = RunnerState(path)
-    assert reloaded.is_complete("phaseforge", 42, "stage1")
-    assert reloaded.is_complete("phaseforge", 42, "eval")
-    assert not reloaded.is_complete("phaseforge", 43, "stage1")
-    assert reloaded.get_ckpt("phaseforge", 42, 2) == "p/s2/c.pt"
-    assert reloaded.get_ckpt("phaseforge", 43, 1) is None
+    assert reloaded.is_complete("precision_residual_phaseforge", 42, "stage1")
+    assert reloaded.is_complete("precision_residual_phaseforge", 42, "eval")
+    assert not reloaded.is_complete("precision_residual_phaseforge", 43, "stage1")
+    assert reloaded.get_ckpt("precision_residual_phaseforge", 42, 2) == "p/s2/c.pt"
+    assert reloaded.get_ckpt("precision_residual_phaseforge", 43, 1) is None
 
 
 def test_registry_mark_failed(tmp_path: Path) -> None:
@@ -511,17 +527,17 @@ def test_registry_corrupt_state_is_loud(tmp_path: Path) -> None:
 def test_registry_commit_gate_skips_stale_entries(tmp_path: Path) -> None:
     path = tmp_path / "state.json"
     state_old = RunnerState(path, expected_commit="aaaa1111")
-    state_old.mark("phaseforge", 42, "stage1", run_dir="phaseforge/stage1/x", ckpt="p/s1/c.pt")
+    state_old.mark("precision_residual_phaseforge", 42, "stage1", run_dir="precision_residual_phaseforge/stage1/x", ckpt="p/s1/c.pt")
 
     # A later revision must not reuse the pre-fix artifact.
     state_new = RunnerState(path, expected_commit="bbbb2222")
-    assert not state_new.is_complete("phaseforge", 42, "stage1")
-    assert state_new.get_ckpt("phaseforge", 42, 1) is None
+    assert not state_new.is_complete("precision_residual_phaseforge", 42, "stage1")
+    assert state_new.get_ckpt("precision_residual_phaseforge", 42, 1) is None
 
     # The revision that produced it still sees it.
     state_same = RunnerState(path, expected_commit="aaaa1111")
-    assert state_same.is_complete("phaseforge", 42, "stage1")
-    assert state_same.get_ckpt("phaseforge", 42, 1) == "p/s1/c.pt"
+    assert state_same.is_complete("precision_residual_phaseforge", 42, "stage1")
+    assert state_same.get_ckpt("precision_residual_phaseforge", 42, 1) == "p/s1/c.pt"
 
 
 def test_registry_commit_gate_stale_without_commit_field(tmp_path: Path) -> None:
@@ -647,7 +663,7 @@ def test_resolve_run_dir_filters_by_commit(tmp_path: Path) -> None:
     # sweep runs at a newer revision, even if it is the newest completed run.
     _make_run(
         tmp_path,
-        "phaseforge",
+        "precision_residual_phaseforge",
         1,
         "2026-08-03_10-00-00_stale0001",
         seed=42,
@@ -655,7 +671,7 @@ def test_resolve_run_dir_filters_by_commit(tmp_path: Path) -> None:
     )
     _make_run(
         tmp_path,
-        "phaseforge",
+        "precision_residual_phaseforge",
         1,
         "2026-08-02_10-00-00_fixed0001",
         seed=42,
@@ -664,22 +680,22 @@ def test_resolve_run_dir_filters_by_commit(tmp_path: Path) -> None:
 
     # The stale run is newest but must be skipped at the fixed revision.
     assert (
-        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42, expected_commit="bbbb2222").name
+        resolve_run_dir(tmp_path, "precision_residual_phaseforge", 1, seed=42, expected_commit="bbbb2222").name
         == "2026-08-02_10-00-00_fixed0001"
     )
     # Only stale runs at the expected revision → nothing matches.
     with pytest.raises(CheckpointError, match="No completed"):
-        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42, expected_commit="cccc3333")
+        resolve_run_dir(tmp_path, "precision_residual_phaseforge", 1, seed=42, expected_commit="cccc3333")
     # No gating → newest completed wins (backwards compatible).
     assert (
-        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42).name
+        resolve_run_dir(tmp_path, "precision_residual_phaseforge", 1, seed=42).name
         == "2026-08-03_10-00-00_stale0001"
     )
 
 
 def test_resolve_run_dir_missing_stage(tmp_path: Path) -> None:
     with pytest.raises(CheckpointError, match="stage1"):
-        resolve_run_dir(tmp_path, "phaseforge", 1, seed=42)
+        resolve_run_dir(tmp_path, "precision_residual_phaseforge", 1, seed=42)
 
 
 def test_resolve_run_dir_legacy_layout(tmp_path: Path) -> None:
@@ -702,9 +718,9 @@ def test_stage_checkpoint_relative_requires_best_ckpt(tmp_path: Path) -> None:
 
 
 def test_resolve_checkpoint_path_scan_fallback(tmp_path: Path) -> None:
-    _make_run(tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", seed=42)
+    _make_run(tmp_path, "precision_residual_phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", seed=42)
     state = RunnerState(tmp_path / "state.json")
-    method = _protocol().method_by_name("phaseforge")
+    method = _protocol().method_by_name("precision_residual_phaseforge", task="Lift")
     assert method is not None
     ckpt = resolve_checkpoint_path(tmp_path, method, 2, seed=42, state=state)
     assert ckpt.is_file()
@@ -715,18 +731,18 @@ def test_resolve_checkpoint_path_scan_fallback(tmp_path: Path) -> None:
 
 
 def test_resolve_checkpoint_path_prefers_registry(tmp_path: Path) -> None:
-    _make_run(tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", seed=42)
+    _make_run(tmp_path, "precision_residual_phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", seed=42)
     state = RunnerState(tmp_path / "state.json")
     state.mark(
-        "phaseforge",
+        "precision_residual_phaseforge",
         42,
         "stage2",
         run_dir="x",
-        ckpt="phaseforge/stage2/old/checkpoint_best.pt",
+        ckpt="precision_residual_phaseforge/stage2/old/checkpoint_best.pt",
     )
-    (tmp_path / "phaseforge" / "stage2" / "old").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "phaseforge" / "stage2" / "old" / "checkpoint_best.pt").write_text("newer")
-    method = _protocol().method_by_name("phaseforge")
+    (tmp_path / "precision_residual_phaseforge" / "stage2" / "old").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "precision_residual_phaseforge" / "stage2" / "old" / "checkpoint_best.pt").write_text("newer")
+    method = _protocol().method_by_name("precision_residual_phaseforge", task="Lift")
     assert method is not None
     ckpt = resolve_checkpoint_path(tmp_path, method, 2, seed=42, state=state)
     assert "old" in str(ckpt)
@@ -742,7 +758,7 @@ def test_stage2_resolves_exact_untagged_provider_ckpt(tmp_path: Path) -> None:
     """
     _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
     _make_run(tmp_path, "bc", 1, "2026-08-02_10-00-00_aaaa0002", seed=42, tag="robot_only")
-    step = _step("warmstart_moe", 42, "stage2")
+    step = _step("precision_residual_scratch_moe", 42, "stage2")
     ckpt = runner_cli._require_stage2_prereq(step, tmp_path)
     assert ckpt is not None
     assert "aaaa0001" in str(ckpt)
@@ -761,13 +777,16 @@ def test_auto_dependency_provider_eligibility() -> None:
     args_eval = runner_cli.parse_args(["--methods", "bc", "--seeds", "42", "--eval-only"])
 
     # A stage-2 consumer with an external provider is eligible.
-    warmstart = _step("warmstart_moe", 42, "stage2")
+    warmstart = _step("precision_residual_scratch_moe", 42, "stage2")
     provider = runner_cli._auto_dependency_provider(warmstart, protocol, args_plain)
     assert provider is not None and provider.name == "bc"
 
-    # teacher_forced needs the phaseforge Stage 1 cell.
-    teacher = _step("teacher_forced", 42, "stage2")
-    assert runner_cli._auto_dependency_provider(teacher, protocol, args_plain).name == "phaseforge"
+    # The privileged diagnostic needs the proposed Stage 1 cell.
+    teacher = _step("precision_residual_teacher_forced", 42, "stage2")
+    assert (
+        runner_cli._auto_dependency_provider(teacher, protocol, args_plain).name
+        == "precision_residual_phaseforge"
+    )
 
     # Non-consumers are never eligible.
     assert (
@@ -776,7 +795,7 @@ def test_auto_dependency_provider_eligibility() -> None:
     )
     assert (
         runner_cli._auto_dependency_provider(
-            _step("warmstart_moe", 42, "eval"), protocol, args_plain
+            _step("precision_residual_scratch_moe", 42, "eval"), protocol, args_plain
         )
         is None
     )
@@ -789,11 +808,11 @@ def test_auto_dependency_provider_eligibility() -> None:
 def test_resolve_stage2_auto_injects_provider(tmp_path: Path, monkeypatch) -> None:
     """A missing Stage 1 provider is auto-trained before the consumer runs."""
     protocol = _protocol()
-    step = _step("warmstart_moe", 42, "stage2")
+    step = _step("precision_residual_scratch_moe", 42, "stage2")
     outputs = tmp_path / "outputs"
     state = RunnerState(runner_cli.RunnerState.default_path(outputs))
     args = runner_cli.parse_args(
-        ["--methods", "warmstart_moe", "--seeds", "42", "--outputs", str(outputs)]
+        ["--methods", "precision_residual_scratch_moe", "--seeds", "42", "--outputs", str(outputs)]
     )
     ran: list[str] = []
 
@@ -821,11 +840,11 @@ def test_resolve_stage2_auto_injects_provider(tmp_path: Path, monkeypatch) -> No
 def test_resolve_stage2_scoped_run_still_fails_preflight(tmp_path: Path, monkeypatch) -> None:
     """--stage/--eval-only keep the strict pre-flight check (no auto-training)."""
     protocol = _protocol()
-    step = _step("warmstart_moe", 42, "stage2")
+    step = _step("precision_residual_scratch_moe", 42, "stage2")
     outputs = tmp_path / "outputs"
     state = RunnerState(runner_cli.RunnerState.default_path(outputs))
     args = runner_cli.parse_args(
-        ["--methods", "warmstart_moe", "--seeds", "42", "--stage", "2", "--outputs", str(outputs)]
+        ["--methods", "precision_residual_scratch_moe", "--seeds", "42", "--stage", "2", "--outputs", str(outputs)]
     )
     called = False
 
@@ -851,9 +870,9 @@ def test_cli_auto_injects_missing_dependency(tmp_path: Path, monkeypatch, capsys
             "methods": [
                 {
                     "index": 1,
-                    "name": "phaseforge",
+                    "name": "precision_residual_phaseforge",
                     "role": "proposed",
-                    "model": "phaseforge",
+                    "model": "precision_residual_phaseforge",
                     "data": "common",
                     "stages": [1, 2],
                     "stage2_source": "self",
@@ -863,16 +882,16 @@ def test_cli_auto_injects_missing_dependency(tmp_path: Path, monkeypatch, capsys
                     "index": 2,
                     "name": "bc",
                     "role": "floor",
-                    "model": "baselines/bc",
+                    "model": "final_aligned_bc",
                     "data": "common",
                     "stages": [1],
                     "evaluate": True,
                 },
                 {
                     "index": 5,
-                    "name": "warmstart_moe",
+                    "name": "precision_residual_scratch_moe",
                     "role": "moe",
-                    "model": "baselines/warmstart_moe",
+                    "model": "precision_residual_scratch_moe",
                     "data": "common",
                     "stages": [2],
                     "stage2_source": "bc",
@@ -906,14 +925,14 @@ def test_cli_auto_injects_missing_dependency(tmp_path: Path, monkeypatch, capsys
             "--outputs",
             str(outputs),
             "--methods",
-            "warmstart_moe",
+            "precision_residual_scratch_moe",
             "--seeds",
             "42",
             "--skip-eval",
         ]
     )
     assert runner_cli.run(args) == 0
-    assert calls == [("bc", 1, True), ("warmstart_moe", 2, False)]
+    assert calls == [("bc", 1, True), ("precision_residual_scratch_moe", 2, False)]
 
 
 def test_cli_dry_run_previews_auto_injection(tmp_path: Path, capsys) -> None:
@@ -928,9 +947,9 @@ def test_cli_dry_run_previews_auto_injection(tmp_path: Path, capsys) -> None:
             "methods": [
                 {
                     "index": 1,
-                    "name": "phaseforge",
+                    "name": "precision_residual_phaseforge",
                     "role": "proposed",
-                    "model": "phaseforge",
+                    "model": "precision_residual_phaseforge",
                     "data": "common",
                     "stages": [1, 2],
                     "stage2_source": "self",
@@ -940,16 +959,16 @@ def test_cli_dry_run_previews_auto_injection(tmp_path: Path, capsys) -> None:
                     "index": 2,
                     "name": "bc",
                     "role": "floor",
-                    "model": "baselines/bc",
+                    "model": "final_aligned_bc",
                     "data": "common",
                     "stages": [1],
                     "evaluate": True,
                 },
                 {
                     "index": 5,
-                    "name": "warmstart_moe",
+                    "name": "precision_residual_scratch_moe",
                     "role": "moe",
-                    "model": "baselines/warmstart_moe",
+                    "model": "precision_residual_scratch_moe",
                     "data": "common",
                     "stages": [2],
                     "stage2_source": "bc",
@@ -965,7 +984,7 @@ def test_cli_dry_run_previews_auto_injection(tmp_path: Path, capsys) -> None:
             "--outputs",
             str(tmp_path / "outputs"),
             "--methods",
-            "warmstart_moe",
+            "precision_residual_scratch_moe",
             "--seeds",
             "42",
             "--dry-run",
@@ -986,8 +1005,8 @@ def test_cli_list(tmp_path: Path, capsys) -> None:
     args = runner_cli.parse_args(["--manifest", str(protocol_path), "--list"])
     assert runner_cli.run(args) == 0
     out = capsys.readouterr().out
-    assert "phaseforge" in out
-    assert "baselines/bc" in out
+    assert "precision_residual_phaseforge" in out
+    assert "final_aligned_bc" in out
     assert "seeds: [42]" in out
 
 
@@ -1011,7 +1030,7 @@ def test_cli_dry_run_prints_commands_without_executing(tmp_path: Path, capsys) -
     out = capsys.readouterr().out
     assert "WOULD RUN  bc seed=42 stage1" in out
     assert "phaseforge-train" in out
-    assert "models=baselines/bc" in out
+    assert "models=final_aligned_bc" in out
     # Eval cannot run before bc stage1 exists — dry-run reports the blocker.
     assert "BLOCKED  bc seed=42 eval" in out
     assert "No bc stage1 runs found" in out
@@ -1057,7 +1076,7 @@ def test_cli_continue_on_error_records_failures(tmp_path: Path, monkeypatch, cap
             "--outputs",
             str(outputs),
             "--methods",
-            "phaseforge",
+            "precision_residual_phaseforge",
             "--seeds",
             "42",
             "--continue-on-error",
@@ -1066,10 +1085,10 @@ def test_cli_continue_on_error_records_failures(tmp_path: Path, monkeypatch, cap
     assert runner_cli.run(args) == 1
     state = RunnerState(runner_cli.RunnerState.default_path(outputs))
     for phase in ("stage1", "stage2", "eval"):
-        entry = state.get("phaseforge", 42, phase)
+        entry = state.get("precision_residual_phaseforge", 42, phase)
         assert entry is not None and entry["status"] == "failed"
     captured = capsys.readouterr()
-    assert "FAILED phaseforge seed=42 stage1" in captured.out + captured.err
+    assert "FAILED precision_residual_phaseforge seed=42 stage1" in captured.out + captured.err
 
 
 def test_cli_fails_fast_without_continue_on_error(tmp_path: Path, monkeypatch) -> None:
@@ -1086,7 +1105,7 @@ def test_cli_fails_fast_without_continue_on_error(tmp_path: Path, monkeypatch) -
             "--outputs",
             str(tmp_path / "outputs"),
             "--methods",
-            "phaseforge",
+            "precision_residual_phaseforge",
             "--seeds",
             "42",
         ]

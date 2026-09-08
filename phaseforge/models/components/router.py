@@ -65,8 +65,8 @@ class TopKRouter(nn.Module):
             the gate projection. Combined with unit-norm centroids loaded
             into ``gate_linear.weight`` (see the bootstrap), the gate logits
             become true cosine similarities between the latent and each
-            centroid — the ``phaseforge`` / ``plain_encoder_phase_bootstrap``
-            cells. ``False`` keeps raw dot products.
+            centroid — the precision-residual prototype-router cells.
+            ``False`` keeps raw dot products.
         use_history: If ``True`` (V2-C), a two-pass in-batch history bias is
             added: the first pass computes the gate logits, the previous
             in-trajectory step's top-1 expert is resolved (adjacent

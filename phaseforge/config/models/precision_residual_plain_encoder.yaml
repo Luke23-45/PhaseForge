@@ -8,7 +8,7 @@
 # isolates the topology-supervised representation package.
 
 name: "precision_residual_plain_encoder"
-_target_: phaseforge.models.baselines.plain_encoder_phase_bootstrap.PlainEncoderPhaseBootstrapModel
+_target_: phaseforge.models.baselines.precision_residual_plain_encoder.PrecisionResidualPlainEncoderModel
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder

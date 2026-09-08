@@ -22,26 +22,22 @@ from phaseforge.data.ingestion.state_machine import (
 )
 
 PHASE_CONSUMING_MODELS = {
-    "phaseforge",
-    "teacher_forced",
-    "oracle_moe",
-    "plain_encoder_phase_bootstrap",
+    "precision_residual_phaseforge",
+    "precision_residual_teacher_forced",
+    "precision_residual_oracle",
+    "precision_residual_plain_encoder",
+    "precision_residual_factorial_floor",
+    "precision_residual_phase_random_router",
+    "precision_residual_scratch_moe",
 }
 LABEL_FREE_MODELS = {
-    "bc",
-    "scratch_moe",
-    "warmstart_moe",
-    "phase_pretrain_random_router",
+    "final_aligned_bc",
 }
 
 
 def _fsm_for_model(model: str) -> DataPipelineStateMachine:
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    path = (
-        "phaseforge/config/models/phaseforge.yaml"
-        if model == "phaseforge"
-        else f"phaseforge/config/models/baselines/{model}.yaml"
-    )
+    path = f"phaseforge/config/models/{model}.yaml"
     return DataPipelineStateMachine(DictConfig({"models": OmegaConf.load(path), "data": data_cfg}))
 
 
@@ -60,7 +56,9 @@ def test_soft_mapping_init_allows_experts_ne_phases() -> None:
     it is no longer the historical 8-expert default.
     """
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    models_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    models_cfg = OmegaConf.load(
+        "phaseforge/config/models/precision_residual_phaseforge.yaml"
+    )
     models_cfg.router_init.type = "soft_mapping"
     models_cfg.soft_mapping.enabled = True
     models_cfg.router.num_experts = 8
@@ -76,7 +74,9 @@ def test_soft_mapping_init_allows_experts_ne_phases() -> None:
 def test_non_soft_mapping_init_still_requires_match() -> None:
     """Without soft_mapping/centroid/random init, E != P must fail loudly."""
     data_cfg = OmegaConf.load("phaseforge/config/data/common.yaml")
-    models_cfg = OmegaConf.load("phaseforge/config/models/phaseforge.yaml")
+    models_cfg = OmegaConf.load(
+        "phaseforge/config/models/precision_residual_phaseforge.yaml"
+    )
     models_cfg.router_init.type = "banana"
     # The canonical config has E == P == 6, which the guard would accept for
     # any init type; force E != P so the strict-matching requirement fires.
@@ -116,7 +116,7 @@ def _fsm_with_fake_ingester(model: str) -> DataPipelineStateMachine:
 
 
 def test_degenerate_phases_fail_loud_for_phase_consuming_models() -> None:
-    fsm = _fsm_with_fake_ingester("phaseforge")
+    fsm = _fsm_with_fake_ingester("precision_residual_phaseforge")
     with pytest.raises(PipelineError, match="no samples for phase"):
         fsm._ingest_source()
 
@@ -136,7 +136,9 @@ def _fsm_with_missing_source(tmp_path: Path, auto_download: bool) -> DataPipelin
     return DataPipelineStateMachine(
         DictConfig(
             {
-                "models": OmegaConf.load("phaseforge/config/models/phaseforge.yaml"),
+                "models": OmegaConf.load(
+                    "phaseforge/config/models/precision_residual_phaseforge.yaml"
+                ),
                 "data": data_cfg,
             }
         )

@@ -5,9 +5,9 @@ The authoritative protocol is
 `experiments/final_causal_matrix.json`; the scientific rules are in
 `docs/final/baselines/PRECISION_RESIDUAL_BASELINE_PROTOCOL.md`.
 
-The old `experiments/five_task.json` and `experiments/lift_ablation.json`
-manifests are historical research records. Do not use them for the final
-comparison or mix their results into `outputs_final`.
+The retired research manifests and their output trees have been removed. Use
+only `experiments/final_causal_matrix.json` and a fresh `outputs_final/`
+namespace for the locked comparison.
 
 ## Current readiness status
 
@@ -158,7 +158,7 @@ uv run python -m phaseforge.runner \
 Then inspect the final output ledgers and provenance. Every topology-consuming
 run must carry the topology provenance metadata, provider checkpoint identity,
 dataset/cache hash, commit, resolved-config hash, and evaluation reset-bank
-identity. Do not combine these rows with historical `five_task.json` results.
+identity. Do not combine these rows with any pre-final output tree.
 
 The oracle remains an offline diagnostic, and the teacher-forced row remains a
 separate privileged diagnostic. Neither supports the primary deployable

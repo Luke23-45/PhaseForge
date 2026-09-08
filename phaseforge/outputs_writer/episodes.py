@@ -350,7 +350,7 @@ def summarize_episodes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def paired_rollout_comparisons(
     rows: list[dict[str, Any]],
     *,
-    baseline: str = "phaseforge",
+    baseline: str = "precision_residual_phaseforge",
 ) -> list[dict[str, Any]]:
     """Paired PhaseForge-minus-baseline differences per ``(task, tag, seed)``.
 

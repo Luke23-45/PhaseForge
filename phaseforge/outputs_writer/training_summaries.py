@@ -315,7 +315,10 @@ def write_rollout_success_csv(episode_rows: list[dict[str, Any]], path: Path) ->
 
 
 def write_rollout_comparisons_csv(
-    episode_rows: list[dict[str, Any]], path: Path, *, baseline: str = "phaseforge"
+    episode_rows: list[dict[str, Any]],
+    path: Path,
+    *,
+    baseline: str = "precision_residual_phaseforge",
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     import csv
@@ -360,7 +363,9 @@ def summarize_training(outputs_base: str | Path) -> dict[str, Path]:
     return paths
 
 
-def summarize_rollout(outputs_base: str | Path, *, baseline: str = "phaseforge") -> dict[str, Path]:
+def summarize_rollout(
+    outputs_base: str | Path, *, baseline: str = "precision_residual_phaseforge"
+) -> dict[str, Path]:
     """Rebuild the rollout summary artifacts from every ``episodes.jsonl``.
 
     Scans ``eval/`` run directories for episode records, validates each

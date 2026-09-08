@@ -1,10 +1,9 @@
-"""Frozen experiment protocol: load + validate the JSON matrix, build the plan.
+"""Locked experiment protocol: load + validate the JSON matrix, build the plan.
 
-The protocol manifest (``experiments/lift_pilot.json``) is the single source
-of truth describing every baseline method, its training stages, its Stage 1
-source dependency, and whether a complete run includes the offline
-evaluation. ``load_protocol`` validates it loudly so a malformed matrix
-never silently produces a partial sweep.
+The final protocol manifest is the single source of truth describing every
+method, its training stages, its Stage 1 source dependency, and whether a
+complete run includes evaluation. ``load_protocol`` validates it loudly so a
+malformed matrix never silently produces a partial sweep.
 
 A *plan* is the ordered list of concrete steps produced by
 :func:`build_plan`: for every selected method and seed, all training stages
@@ -42,12 +41,6 @@ _VALID_DATA = frozenset(
 )
 _VALID_EVAL_MODES = frozenset({"rollout", "offline"})
 
-#: Historical Stage 1 sources (pre-final manifests only). ``self`` is the
-#: method's own Stage 1; ``bc``/``phaseforge`` resolve to the same-named
-#: method's Stage 1 in the same task. Retained so historical manifests keep
-#: loading bit-for-bit.
-_HISTORICAL_STAGE2_SOURCES = frozenset({"self", "bc", "phaseforge"})
-
 #: Final provider identities (PROVIDER-01): explicit Stage 1 sources for the
 #: final causal matrix. Each maps to ``(provider method name, provider model
 #: name)``. The model name is the filesystem/config identity consumed via
@@ -66,10 +59,7 @@ _FINAL_STAGE1_PROVIDERS: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: Method-name prefixes marking final-family rows. A final row that names a
-#: historical alias (``bc``/``phaseforge``) as its Stage 2 source is a
-#: protocol violation (PROVIDER-09): it would silently consume a
-#: pre-final checkpoint.
+#: Method-name prefixes marking final-family rows.
 _FINAL_METHOD_PREFIXES = ("precision_residual_", "final_aligned_")
 
 
@@ -86,10 +76,9 @@ def is_final_provider(stage2_source: str | None) -> bool:
 def provider_method_name(stage2_source: str | None) -> str | None:
     """Return the manifest method name providing a Stage 2 source.
 
-    ``"self"`` is resolved by the caller (the consumer's own method);
-    historical aliases double as their own method names; final identities
-    resolve through :data:`_FINAL_STAGE1_PROVIDERS`. Returns ``None`` for a
-    null source (Stage 1 / provider-less rows).
+    ``"self"`` is resolved by the caller (the consumer's own method); final
+    identities resolve through :data:`_FINAL_STAGE1_PROVIDERS`. Returns
+    ``None`` for a null source (Stage 1 / provider-less rows).
     """
     if stage2_source is None or stage2_source == "self":
         return None
@@ -256,10 +245,10 @@ class Protocol:
     def known_tasks(self) -> tuple[str, ...]:
         """The concrete task dimension of this protocol, in manifest order.
 
-        Returns the per-row task values when rows carry them (the five-task
-        protocol); otherwise falls back to the protocol-level task name for
-        single-task manifests (``lift_ablation``), ignoring the multi-task
-        placeholder ``"all"``. Empty when the protocol declares no task at
+        Returns the per-row task values when rows carry them (the final
+        multi-task protocol); otherwise falls back to the protocol-level task
+        name for single-task manifests, ignoring the multi-task placeholder
+        ``"all"``. Empty when the protocol declares no task at
         all — such manifests reject a ``--tasks`` filter loudly instead of
         silently selecting nothing.
         """
@@ -357,23 +346,15 @@ def _parse_method(raw: dict[str, Any]) -> Method:
 
     stage2_source = raw.get("stage2_source")
     if stage2_source is not None:
-        allowed_sources = _HISTORICAL_STAGE2_SOURCES | frozenset(_FINAL_STAGE1_PROVIDERS)
+        allowed_sources = frozenset({"self"}) | frozenset(_FINAL_STAGE1_PROVIDERS)
         if stage2_source not in allowed_sources:
             raise ProtocolError(
-                f"Method {name!r}: 'stage2_source' must be null, 'self', 'bc', 'phaseforge' "
-                f"or one of {sorted(_FINAL_STAGE1_PROVIDERS)}, "
+                f"Method {name!r}: 'stage2_source' must be null, 'self' or one of "
+                f"{sorted(_FINAL_STAGE1_PROVIDERS)}, "
                 f"got {stage2_source!r}."
             )
         if 2 not in stages:
             raise ProtocolError(f"Method {name!r}: 'stage2_source' set but method has no stage 2.")
-        # PROVIDER-09: final rows must name explicit final providers, never
-        # the historical aliases.
-        if stage2_source in ("bc", "phaseforge") and is_final_method(name):
-            raise ProtocolError(
-                f"Method {name!r}: final-family rows cannot resolve the historical "
-                f"alias {stage2_source!r} as a Stage 2 source (PROVIDER-09). Use an "
-                "explicit final provider identity instead."
-            )
 
     evaluate = raw.get("evaluate", True)
     if not isinstance(evaluate, bool):
@@ -500,10 +481,10 @@ def load_protocol(path: str | Path) -> Protocol:
     seen_names: set[tuple[str | None, str]] = set()
     for m in methods:
         task_key: str | None = m.task
-        # Method identity is (task, name) under the five-task protocol:
-        # the same baseline name (e.g. "phaseforge") appears five times,
-        # once per task. Single-task protocols (lift_pilot.json) leave
-        # ``task`` null and the identity collapses to ``name``.
+        # Method identity is (task, name) under the final multi-task
+        # protocol: the same method name appears once per task. Single-task
+        # protocols leave ``task`` null and the identity collapses to
+        # ``name``.
         identity: tuple[str | None, str] = (task_key, m.name)
         index_key: tuple[str | None, int] = (task_key, m.index)
         if index_key in seen_indices:

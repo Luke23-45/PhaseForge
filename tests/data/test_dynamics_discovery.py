@@ -3,8 +3,6 @@
 import numpy as np
 import pytest
 import torch
-from hydra import compose, initialize
-
 from phaseforge.data.dynamics.artifacts import (
     load_discovery_artifact,
     save_discovery_artifact,
@@ -192,50 +190,6 @@ def test_artifact_serialization_roundtrip(tmp_path):
     assert np.allclose(loaded_slds.params.transition_matrix, slds.params.transition_matrix)
     assert len(loaded_labels["train"]) == 5
     assert len(loaded_labels["val"]) == 2
-
-
-def test_dynamic_config_group_is_composable():
-    """The documented dynamics override must populate ``cfg.data.dynamics``."""
-    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
-        cfg = compose(
-            config_name="main",
-            overrides=[
-                "models=phaseforge_dynamic",
-                "data=lift",
-                "train=stage1",
-                "dynamics@_global_=switching_linear_k6",
-            ],
-        )
-
-    assert cfg.data.dynamics.enabled is True
-    assert cfg.data.dynamics.num_regimes == 6
-    assert cfg.data.dynamics.train_label_field == "phase_dynamic"
-
-
-def test_factorial_model_configs_compose_with_dynamic_data():
-    cells = (
-        ("phaseforge", "phase", None, False),
-        ("baselines/phaseforge_rule_encoder_dynamic_router", "phase", "dynamic", True),
-        ("baselines/phaseforge_dynamic_encoder_rule_router", "phase_dynamic", "rule", True),
-        ("phaseforge_dynamic", "phase_dynamic", "dynamic", True),
-    )
-    with initialize(version_base="1.3", config_path="../../phaseforge/config"):
-        for model_path, label_field, prototype_source, dynamic_enabled in cells:
-            overrides = [f"models={model_path}", "data=lift"]
-            if dynamic_enabled:
-                overrides.extend(
-                    [
-                        "dynamics@_global_=switching_linear_k6",
-                        f"data.dynamics.train_label_field={label_field}",
-                    ]
-                )
-            cfg = compose(config_name="main", overrides=overrides)
-            if dynamic_enabled:
-                assert cfg.data.dynamics.enabled is True
-                assert cfg.data.dynamics.train_label_field == label_field
-                assert cfg.models.router_init.prototype_source == prototype_source
-            else:
-                assert cfg.data.get("dynamics") is None
 
 
 def test_artifact_checksum_failure_is_rejected(tmp_path):

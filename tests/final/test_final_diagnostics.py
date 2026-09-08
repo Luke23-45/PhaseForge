@@ -12,8 +12,10 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from phaseforge.models.baselines.oracle_moe import OraclePhaseMoEModel
-from phaseforge.models.baselines.teacher_forced import TeacherForcedMoEModel
+from phaseforge.models.baselines.precision_residual_oracle import PrecisionResidualOracleModel
+from phaseforge.models.baselines.precision_residual_teacher_forced import (
+    PrecisionResidualTeacherForcedModel,
+)
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
 from phaseforge.models.components.expert import ExpertMLP
@@ -45,9 +47,9 @@ def _loader(**kwargs) -> DataLoader:
     return DataLoader(_DictDataset(**kwargs), batch_size=8)
 
 
-def _teacher() -> TeacherForcedMoEModel:
+def _teacher() -> PrecisionResidualTeacherForcedModel:
     torch.manual_seed(5)
-    return TeacherForcedMoEModel(
+    return PrecisionResidualTeacherForcedModel(
         encoder=StateEncoder(
             input_dim=19, hidden_dims=[64], latent_dim=32, normalize_output=True
         ),
@@ -60,7 +62,7 @@ def _teacher() -> TeacherForcedMoEModel:
     )
 
 
-def _oracle(**over) -> OraclePhaseMoEModel:
+def _oracle(**over) -> PrecisionResidualOracleModel:
     torch.manual_seed(5)
     kwargs: dict = {
         "encoder": StateEncoder(
@@ -71,7 +73,7 @@ def _oracle(**over) -> OraclePhaseMoEModel:
         "num_phases": 6,
     }
     kwargs.update(over)
-    return OraclePhaseMoEModel(**kwargs)
+    return PrecisionResidualOracleModel(**kwargs)
 
 
 def test_teacher_uses_labels_in_training_and_predictions_in_eval() -> None:

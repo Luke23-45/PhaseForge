@@ -87,7 +87,7 @@ def make_curve(
 def make_summary(
     *,
     run_id: str = "a1b2c3d4",
-    model: str = "phaseforge",
+    model: str = "precision_residual_phaseforge",
     stage: int = 1,
     seed: int | None = 42,
     kind: str = "train",
@@ -121,7 +121,7 @@ def make_summary(
 def make_episode(
     *,
     run_id: str = "a1b2c3d4",
-    model: str = "phaseforge",
+    model: str = "precision_residual_phaseforge",
     task: str = "pick_and_place",
     seed: int = 42,
     episode_index: int = 0,
@@ -280,7 +280,7 @@ class TestSummarySchema:
             validate_summary(make_summary(freeze_encoder="yes"))
 
     def test_tag_and_method_str_or_null(self) -> None:
-        validate_summary(make_summary(tag="robot_only", method="bc_robot_only"))
+        validate_summary(make_summary(tag="alternate", method="alternate_method"))
         validate_summary(make_summary(tag=None, method=None))
         with pytest.raises(SchemaError, match="tag"):
             validate_summary(make_summary(tag=7))
@@ -375,7 +375,7 @@ class TestTrainingSummaryLedger:
 
     def test_reconcile_builds_ledger_from_run_local_summaries(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
-        run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
+        run_dir = outputs / "precision_residual_phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
         metrics = run_dir / "metrics"
         metrics.mkdir(parents=True)
         (metrics / "summary.json").write_text(
@@ -392,11 +392,11 @@ class TestTrainingSummaryLedger:
         ids = {r["run_id"] for r in rows}
         assert ids == {"aaaa0001", "cccc0003"}
         added = next(r for r in rows if r["run_id"] == "aaaa0001")
-        assert added["run_dir"] == "phaseforge/stage1/2026-01-01_00-00-00_aaaa0001"
+        assert added["run_dir"] == "precision_residual_phaseforge/stage1/2026-01-01_00-00-00_aaaa0001"
 
     def test_reconcile_skips_duplicates(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
-        run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
+        run_dir = outputs / "precision_residual_phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
         metrics = run_dir / "metrics"
         metrics.mkdir(parents=True)
         (metrics / "summary.json").write_text(
@@ -416,7 +416,7 @@ class TestTrainingSummaryLedger:
         self, tmp_path: Path, content: str
     ) -> None:
         outputs = tmp_path / "outputs"
-        run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
+        run_dir = outputs / "precision_residual_phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
         metrics = run_dir / "metrics"
         metrics.mkdir(parents=True)
         (metrics / "summary.json").write_text(content, encoding="utf-8")
@@ -552,13 +552,13 @@ class TestEpisodes:
 
     def test_summarize_episodes_groups_and_counts(self) -> None:
         rows = [
-            make_episode(task="push", model="phaseforge", seed=42, episode_index=0),
-            make_episode(task="push", model="phaseforge", seed=42, episode_index=1),
-            make_episode(task="push", model="phaseforge", seed=42, episode_index=2, success=False),
+            make_episode(task="push", model="precision_residual_phaseforge", seed=42, episode_index=0),
+            make_episode(task="push", model="precision_residual_phaseforge", seed=42, episode_index=1),
+            make_episode(task="push", model="precision_residual_phaseforge", seed=42, episode_index=2, success=False),
             make_episode(task="push", model="bc", seed=42, episode_index=0),
             make_episode(
                 task="push",
-                model="phaseforge",
+                model="precision_residual_phaseforge",
                 seed=42,
                 episode_index=3,
                 valid=False,
@@ -567,7 +567,7 @@ class TestEpisodes:
         ]
         summaries = summarize_episodes(rows)
         by_key = {(s["task"], s["model"], s["tag"], s["training_seed"]): s for s in summaries}
-        pf = by_key[("push", "phaseforge", None, 42)]
+        pf = by_key[("push", "precision_residual_phaseforge", None, 42)]
         assert pf["valid_episodes"] == 3
         assert pf["successes"] == 2
         assert pf["success_rate"] == pytest.approx(2 / 3)
@@ -592,7 +592,7 @@ class TestEpisodes:
 
     def test_paired_rollout_comparisons(self) -> None:
         rows = []
-        for model in ("phaseforge", "bc"):
+        for model in ("precision_residual_phaseforge", "bc"):
             for episode_index in range(4):
                 rows.append(
                     make_episode(
@@ -600,13 +600,15 @@ class TestEpisodes:
                         model=model,
                         seed=42,
                         episode_index=episode_index,
-                        success=episode_index < (3 if model == "phaseforge" else 2),
+                        success=episode_index < (3 if model == "precision_residual_phaseforge" else 2),
                     )
                 )
-        comparisons = paired_rollout_comparisons(rows, baseline="phaseforge")
+        comparisons = paired_rollout_comparisons(
+            rows, baseline="precision_residual_phaseforge"
+        )
         assert len(comparisons) == 1
         comp = comparisons[0]
-        assert comp["baseline"] == "phaseforge"
+        assert comp["baseline"] == "precision_residual_phaseforge"
         assert comp["model"] == "bc"
         assert comp["diff"] == pytest.approx(0.75 - 0.50)
 
@@ -787,7 +789,7 @@ def _run_callback(
 
 class TestPersistenceCallback:
     def test_writes_curves_and_summary(self, tmp_path: Path) -> None:
-        cfg = _persistence_cfg(1, "phaseforge")
+        cfg = _persistence_cfg(1, "precision_residual_phaseforge")
         run_dir = tmp_path / "run"
         model = _FakeModel(with_phase_head=True)
         metrics = {
@@ -816,7 +818,7 @@ class TestPersistenceCallback:
         summary = json.loads((run_dir / "metrics" / "summary.json").read_text())
         validate_summary(summary)
         assert summary["kind"] == "train"
-        assert summary["model"] == "phaseforge"
+        assert summary["model"] == "precision_residual_phaseforge"
         assert summary["stage"] == 1
         assert summary["seed"] == 42
         assert summary["epochs_run"] == 2
@@ -856,7 +858,7 @@ class TestPersistenceCallback:
         assert "val/loss_phase" not in rows[0]
 
     def test_unknown_val_metric_dropped_without_crashing(self, tmp_path: Path) -> None:
-        cfg = _persistence_cfg(1, "phaseforge")
+        cfg = _persistence_cfg(1, "precision_residual_phaseforge")
         run_dir = tmp_path / "run"
         model = _FakeModel(with_phase_head=True)
         metrics = {"loss_total": torch.tensor(0.041), "loss_action": torch.tensor(0.040)}
@@ -908,7 +910,7 @@ class TestPersistenceCallback:
     def test_prefixed_monitor_value_resolved(self, tmp_path: Path) -> None:
         # Stage 2 returns already-prefixed keys (e.g. ``val/routing_entropy``);
         # the curve row's checkpoint_monitor_value must still be populated.
-        cfg = _persistence_cfg(1, "phaseforge")
+        cfg = _persistence_cfg(1, "precision_residual_phaseforge")
         cfg.train.checkpoint.monitor = "val/routing_entropy"
         run_dir = tmp_path / "run"
         model = _FakeModel(with_phase_head=True)
@@ -924,7 +926,7 @@ class TestPersistenceCallback:
         assert rows[0]["checkpoint_monitor_value"] == pytest.approx(0.88)
 
     def test_resumed_run_appends_no_duplicate_epoch(self, tmp_path: Path) -> None:
-        cfg = _persistence_cfg(1, "phaseforge")
+        cfg = _persistence_cfg(1, "precision_residual_phaseforge")
         run_dir = tmp_path / "run"
         model = _FakeModel(with_phase_head=True)
         metrics = {
@@ -972,7 +974,7 @@ class TestTrainingSummaries:
         aggs = training_aggregate_rows(rows)
         assert len(aggs) == 1
         agg = aggs[0]
-        assert agg["model"] == "phaseforge"
+        assert agg["model"] == "precision_residual_phaseforge"
         assert agg["stage"] == 1
         assert agg["n_seeds"] == 2
         assert agg["loss_total_mean"] == pytest.approx(0.043)
@@ -1037,7 +1039,7 @@ class TestTrainingSummaries:
 
     def test_read_training_curves_located_via_run_dir(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
-        run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
+        run_dir = outputs / "precision_residual_phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
         metrics = run_dir / "metrics"
         metrics.mkdir(parents=True)
         writer = TrainingCurveWriter(run_dir)
@@ -1047,20 +1049,20 @@ class TestTrainingSummaries:
             [
                 make_summary(
                     run_id="aaaa0001",
-                    run_dir="phaseforge/stage1/2026-01-01_00-00-00_aaaa0001",
+                    run_dir="precision_residual_phaseforge/stage1/2026-01-01_00-00-00_aaaa0001",
                 )
             ],
         )
         assert len(rows) == 1
         assert rows[0]["run_id"] == "aaaa0001"
-        assert rows[0]["model"] == "phaseforge"
+        assert rows[0]["model"] == "precision_residual_phaseforge"
         assert rows[0]["stage"] == 1
 
     def test_write_training_curves_csv(self, tmp_path: Path) -> None:
         curve_rows = [
-            {"model": "phaseforge", "stage": 1, "seed": 42, **make_curve(run_id="a", epoch=1)},
+            {"model": "precision_residual_phaseforge", "stage": 1, "seed": 42, **make_curve(run_id="a", epoch=1)},
             {
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "stage": 1,
                 "seed": 43,
                 **make_curve(run_id="b", epoch=1, global_step=150),
@@ -1070,20 +1072,20 @@ class TestTrainingSummaries:
         text = path.read_text()
         assert text.splitlines()[0].startswith("model,tag,stage,epoch")
         assert "train/loss_total_mean" in text
-        assert "phaseforge,,1,1" in text
+        assert "precision_residual_phaseforge,,1,1" in text
 
     def test_write_training_curves_csv_tolerates_missing_metrics(self, tmp_path: Path) -> None:
         # Seed 43 emits a routing metric seed 42 lacks; the aggregate for it
         # must be NaN (n=0), not a KeyError.
         curve_rows = [
             {
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "stage": 1,
                 "seed": 42,
                 **make_curve(run_id="a", epoch=1),
             },
             {
-                "model": "phaseforge",
+                "model": "precision_residual_phaseforge",
                 "stage": 1,
                 "seed": 43,
                 **make_curve(run_id="b", epoch=1, global_step=150),
@@ -1105,7 +1107,7 @@ class TestTrainingSummaries:
             ("aaaa0001", 42, 1),
             ("bbbb0002", 43, 1),
         ):
-            run_dir = outputs / "phaseforge" / "stage1" / f"2026-01-01_00-00-00_{run_id}"
+            run_dir = outputs / "precision_residual_phaseforge" / "stage1" / f"2026-01-01_00-00-00_{run_id}"
             metrics = run_dir / "metrics"
             metrics.mkdir(parents=True)
             (metrics / "summary.json").write_text(
@@ -1121,14 +1123,14 @@ class TestTrainingSummaries:
             assert path.exists(), name
         agg = (outputs / "_summaries" / "training_aggregates.csv").read_text()
         assert agg.splitlines()[0].startswith("model,tag,stage,n_seeds")
-        assert "phaseforge,,1,2" in agg
+        assert "precision_residual_phaseforge,,1,2" in agg
         curves = (outputs / "_summaries" / "training_curves.csv").read_text()
         assert curves.splitlines()[0].startswith("model,tag,stage,epoch")
-        assert "phaseforge,,1,1" in curves
+        assert "precision_residual_phaseforge,,1,1" in curves
 
     def test_summarize_training_is_idempotent(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
-        run_dir = outputs / "phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
+        run_dir = outputs / "precision_residual_phaseforge" / "stage1" / "2026-01-01_00-00-00_aaaa0001"
         metrics = run_dir / "metrics"
         metrics.mkdir(parents=True)
         (metrics / "summary.json").write_text(
@@ -1141,8 +1143,8 @@ class TestTrainingSummaries:
 
     def test_summarize_rollout_end_to_end(self, tmp_path: Path) -> None:
         outputs = tmp_path / "outputs"
-        eval_run = outputs / "eval" / "phaseforge" / "2026-01-01_00-00-00_cccc0003"
-        for model in ("phaseforge", "bc"):
+        eval_run = outputs / "eval" / "precision_residual_phaseforge" / "2026-01-01_00-00-00_cccc0003"
+        for model in ("precision_residual_phaseforge", "bc"):
             for idx in range(4):
                 append_episode_record(
                     eval_run,
@@ -1151,14 +1153,14 @@ class TestTrainingSummaries:
                         model=model,
                         task="push",
                         episode_index=idx,
-                        success=idx < (3 if model == "phaseforge" else 2),
+                        success=idx < (3 if model == "precision_residual_phaseforge" else 2),
                     ),
                 )
         paths = summarize_rollout(outputs)
         assert set(paths) == {"rollout_success", "rollout_comparisons"}
         success = (outputs / "_summaries" / "rollout_success.csv").read_text()
         assert success.splitlines()[0].startswith("task,model,tag,training_seed")
-        assert "push,phaseforge,,42" in success
+        assert "push,precision_residual_phaseforge,,42" in success
         comparisons = (outputs / "_summaries" / "rollout_comparisons.csv").read_text()
         assert comparisons.splitlines()[0].startswith("task,training_seed,baseline")
         assert "0.25" in comparisons

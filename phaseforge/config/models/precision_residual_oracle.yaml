@@ -9,7 +9,7 @@
 # success rate. Metadata marks the privilege.
 
 name: "precision_residual_oracle"
-_target_: phaseforge.models.baselines.oracle_moe.OraclePhaseMoEModel
+_target_: phaseforge.models.baselines.precision_residual_oracle.PrecisionResidualOracleModel
 
 encoder:
   _target_: phaseforge.models.components.encoder.StateEncoder

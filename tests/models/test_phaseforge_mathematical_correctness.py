@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader
 
 from phaseforge.data.topo.observability import audit_regimes
 from phaseforge.data.topo.task_vars import extract_task_vars
-from phaseforge.models.baselines.bc_impedance import BCImpedanceModel
 from phaseforge.models.components.action_adapter import rotation_error
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
@@ -261,43 +260,6 @@ class TestPhaseAccumulatorBounds:
         micro, macro = acc.compute()
         assert 0.0 <= micro <= 1.0
         assert 0.0 <= macro <= 1.0
-
-class TestBCImpedancePhysicalIntegration:
-    """Verify BCImpedanceModel integrates normalizer stats and computes physical actions."""
-
-    def test_bc_impedance_normalizer_integration(self):
-        state_dim = 19
-        latent_dim = 16
-        encoder = StateEncoder(input_dim=state_dim, hidden_dims=[32], latent_dim=latent_dim)
-        expert = ImpedanceExpert(input_dim=latent_dim, hidden_dim=32)
-        model = BCImpedanceModel(encoder=encoder, expert=expert)
-
-        # Set normalizer stats
-        mean = torch.tensor(
-        [0.1, -0.2, 0.8] + [0.5, 0.1, 0.5, 0.1] + [0.0, 0.0] + [0.0] * 10,
-        dtype=torch.float32,
-    )
-        std = torch.tensor(
-        [0.05, 0.05, 0.05] + [0.3, 0.2, 0.3, 0.2] + [0.02, 0.02] + [1.0] * 10,
-        dtype=torch.float32,
-    )
-        model.set_normalizer_stats(mean, std)
-
-        m_ret, s_ret = model.get_normalizer_stats()
-        torch.testing.assert_close(m_ret, mean)
-        torch.testing.assert_close(s_ret, std)
-
-        # Act on normalized state
-        norm_state = torch.randn(2, state_dim)
-        action = model.get_action(norm_state)
-        assert action.shape == (2, 7)
-        # Action must respect contract in [-1, 1]
-        assert (action >= -1.0).all() and (action <= 1.0).all()
-
-        step_desc = model.describe_step(norm_state)
-        assert "task_vars" in step_desc
-        assert step_desc["task_vars"].shape == (2, 8)
-
 
 class TestTaskVarsPhysicalMetric:
     """Verify extract_task_vars computes exact physical relative positions when denormalized."""

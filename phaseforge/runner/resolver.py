@@ -260,9 +260,9 @@ def resolve_stage_ckpt(
     the exact, completed, *untagged* provider run is selected — never the CLI
     auto-detect (:func:`phaseforge.utils.config.find_latest_checkpoint`),
     whose ``tag=None`` means "no constraint" and can therefore pick a tagged
-    sibling variant that shares the provider's output tree (e.g.
-    ``bc_robot_only`` next to ``bc``), crashing the stage-2 load with a
-    dimension mismatch. With ``expected_commit`` / ``expected_config_hash``,
+    sibling variant that shares the provider's output tree, crashing the
+    stage-2 load with a dimension mismatch. With ``expected_commit`` /
+    ``expected_config_hash``,
     only provider checkpoints produced at that git revision / resolved
     config are eligible.
     """

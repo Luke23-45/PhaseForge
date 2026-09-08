@@ -14,8 +14,8 @@ from __future__ import annotations
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from phaseforge.models.baselines.plain_encoder_phase_bootstrap import (
-    PlainEncoderPhaseBootstrapModel,
+from phaseforge.models.baselines.precision_residual_plain_encoder import (
+    PrecisionResidualPlainEncoderModel,
 )
 from phaseforge.models.components.action_head import ActionHead
 from phaseforge.models.components.encoder import StateEncoder
@@ -50,7 +50,7 @@ def _loader(**kwargs) -> DataLoader:
     return DataLoader(_DictDataset(**kwargs), batch_size=16)
 
 
-def _plain(**over) -> PlainEncoderPhaseBootstrapModel:
+def _plain(**over) -> PrecisionResidualPlainEncoderModel:
     torch.manual_seed(11)
     kwargs: dict = {
         "encoder": StateEncoder(
@@ -65,7 +65,7 @@ def _plain(**over) -> PlainEncoderPhaseBootstrapModel:
         "bootstrap_label_field": "phase_topo",
     }
     kwargs.update(over)
-    return PlainEncoderPhaseBootstrapModel(**kwargs)
+    return PrecisionResidualPlainEncoderModel(**kwargs)
 
 
 def test_plain_prototypes_come_from_own_latents() -> None:

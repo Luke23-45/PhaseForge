@@ -442,8 +442,8 @@ def test_teacher_kl_schedule_anneals() -> None:
 
 
 def test_teacher_kl_inactive_without_models_block() -> None:
-    # phase_logits present but no models.teacher_routing block (teacher_forced
-    # pattern) -> no teacher KL, no crash.
+    # phase_logits present but no models.teacher_routing block -> no teacher KL,
+    # no crash.
     model = TeacherKLMoEModel(num_experts=3)
     trainer = _make_trainer(model, DataLoader(_DictDataset(num=2, seed=17), batch_size=2))
     batch = DataLoader(_DictDataset(num=1, seed=18), batch_size=1)

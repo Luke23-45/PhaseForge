@@ -171,21 +171,6 @@ def test_final_provider_without_sidecar_fails_strict(tmp_path: Path) -> None:
         runner_cli._require_stage2_prereq(step, tmp_path, protocol=_protocol())
 
 
-def test_historical_source_without_sidecar_keeps_frozen_behavior(tmp_path: Path) -> None:
-    """Pre-sidecar historical trees stay resolvable (no behavior change)."""
-    _write_tree(
-        tmp_path, "bc", "2026-09-08_hist01", seed=42, tag="Lift",
-        task=None, config_hash=None,
-    )
-    method = Method(
-        index=5, name="warmstart_moe", role="x", model="baselines/warmstart_moe",
-        data="lift", stages=(2,), stage2_source="bc", evaluate=False, task="Lift",
-    )
-    step = runner_cli.Step(kind="train", method=method, seed=42, stage=2)
-    ckpt = runner_cli._require_stage2_prereq(step, tmp_path)
-    assert ckpt is not None and "hist01" in str(ckpt)
-
-
 def test_output_namespace_gate(tmp_path: Path) -> None:
     """DRY-01 helper: absent passes, occupied fails with an itemized error."""
     fresh = tmp_path / "newns"

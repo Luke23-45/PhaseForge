@@ -7,11 +7,11 @@ consistent.
 
 Usage::
 
-    # Print the path to the latest PhaseForge Stage 1 checkpoint
-    python scripts/find_checkpoint.py --model phaseforge --stage 1
+    # Print the path to the latest final PhaseForge Stage 1 checkpoint
+    python scripts/find_checkpoint.py --model precision_residual_phaseforge --stage 1
 
     # List every checkpoint for a model+stage with metadata
-    python scripts/find_checkpoint.py --model phaseforge --stage 1 --list
+    python scripts/find_checkpoint.py --model precision_residual_phaseforge --stage 1 --list
 
     # List ALL checkpoints across every model and stage
     python scripts/find_checkpoint.py --list-all
@@ -186,7 +186,7 @@ def main() -> None:
         dest="resolve",
         action="store_false",
         default=True,
-        help="Disable model alias resolution (e.g. warmstart_moe → bc)",
+        help="Disable final provider resolution",
     )
     p_latest.set_defaults(func=cmd_latest)
 

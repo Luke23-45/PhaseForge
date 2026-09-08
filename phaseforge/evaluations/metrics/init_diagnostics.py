@@ -70,7 +70,7 @@ def compute_init_routing_diagnostics(
         latent = model.encoder(state)
 
         # 1. Routing logits via the model's actual dispatch path (supports
-        #    teacher_forced, whose router is structural parity only and never
+        #    final teacher diagnostic, whose router is structural parity only and never
         #    trained). Falls back to the raw router if the model exposes none.
         model_out = model({"state": state})
         if model_out.gate_logits is not None:

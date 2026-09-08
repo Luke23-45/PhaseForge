@@ -64,15 +64,28 @@ def test_tasks_are_never_pooled(tmp_path: Path) -> None:
 
 def test_main_reports_per_task_json(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     for task, outcomes in (("Can", [True] * 6), ("Square", [False] * 6)):
-        _write_episodes(tmp_path, "phaseforge", 42, outcomes, task=task, run=f"{task.lower()}_run")
+        _write_episodes(
+            tmp_path,
+            "precision_residual_phaseforge",
+            42,
+            outcomes,
+            task=task,
+            run=f"{task.lower()}_run",
+        )
         _write_episodes(tmp_path, "bc", 42, outcomes, task=task, run=f"{task.lower()}_run")
     out = tmp_path / "stats.json"
     code = main(["--root", str(tmp_path), "--json", str(out), "--n-resamples", "2000"])
     assert code == 0
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert set(payload["tasks"]) == {"Can", "Square"}
-    assert payload["tasks"]["Can"]["methods"]["phaseforge"]["seed_rates"]["42"] == 1.0
-    assert payload["tasks"]["Square"]["methods"]["phaseforge"]["seed_rates"]["42"] == 0.0
+    assert (
+        payload["tasks"]["Can"]["methods"]["precision_residual_phaseforge"]["seed_rates"]["42"]
+        == 1.0
+    )
+    assert (
+        payload["tasks"]["Square"]["methods"]["precision_residual_phaseforge"]["seed_rates"]["42"]
+        == 0.0
+    )
     printed = capsys.readouterr().out
     assert "task: Can" in printed and "task: Square" in printed
 

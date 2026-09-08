@@ -257,7 +257,7 @@ def _evaluator(
         model=model,
         output_dir=tmp_path,
         run_id="testrun",
-        model_name="phaseforge",
+        model_name="precision_residual_phaseforge",
         training_seed=42,
         task="Lift",
         checkpoint_sha256="deadbeef",
@@ -605,7 +605,7 @@ class TestRequirePhaseTracking:
                 "data": {"source": {"task_name": "Lift"}},
                 "project": {"seed": 42},
                 "models": {
-                    "name": "phaseforge",
+                    "name": "precision_residual_phaseforge",
                     "_target_": "phaseforge.models.phase_moe.PhaseBootstrappedMoE",
                 },
                 "eval": {
@@ -659,7 +659,7 @@ class TestRequirePhaseTracking:
                 "data": {"source": {"task_name": "Lift"}},
                 "project": {"seed": 42},
                 "models": {
-                    "name": "phaseforge",
+                    "name": "precision_residual_phaseforge",
                     "_target_": "phaseforge.models.phase_moe.PhaseBootstrappedMoE",
                 },
                 "eval": {

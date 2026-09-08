@@ -124,7 +124,7 @@ class TestSummarize:
 
 class TestPairedComparisons:
     def test_case_level_mcnemar(self) -> None:
-        base = [_row(i, "phaseforge", success=True) for i in range(5)]
+        base = [_row(i, "precision_residual_phaseforge", success=True) for i in range(5)]
         other = [_row(i, "bc", success=False, failure_category="task_timeout") for i in range(5)]
         rows = base + other
         rows.append(_row(5, "bc", success=False, failure_category="task_timeout"))
@@ -140,15 +140,18 @@ class TestPairedComparisons:
         assert comp["diff"] == pytest.approx(1.0)
 
     def test_invalid_episodes_excluded_from_pairing(self) -> None:
-        base = [_row(i, "phaseforge", success=True) for i in range(3)]
+        base = [_row(i, "precision_residual_phaseforge", success=True) for i in range(3)]
         other = [_row(i, "bc", valid=False) for i in range(3)]
         comparisons = paired_rollout_comparisons(base + other)
         # no valid episodes on the model side → no pair row at all
         assert comparisons == []
 
     def test_tagged_variant_not_paired(self) -> None:
-        rows = [_row(i, "phaseforge", success=True) for i in range(2)]
-        rows += [_row(i, "phaseforge", success=True, tag="robot_only") for i in range(2)]
+        rows = [_row(i, "precision_residual_phaseforge", success=True) for i in range(2)]
+        rows += [
+            _row(i, "precision_residual_phaseforge", success=True, tag="robot_only")
+            for i in range(2)
+        ]
         assert paired_rollout_comparisons(rows) == []
 
     def test_policy_failure_categories_frozen(self) -> None:

@@ -52,9 +52,6 @@ _FINAL_MODEL_ALLOWLIST = frozenset(
     }
 )
 
-_HISTORICAL_SOURCES = frozenset({"bc", "phaseforge"})
-
-
 def _git_record(project_root: Path) -> dict[str, Any]:
     """Read-only git identity: commit, branch, and working-tree cleanliness."""
     from phaseforge.utils.config import git_info
@@ -263,11 +260,6 @@ def verify_historical_isolation(protocol: Protocol) -> list[str]:
                 "is not a final-family config."
             )
         source = method.stage2_source
-        if source in _HISTORICAL_SOURCES:
-            violations.append(
-                f"{method.name} (task={method.task}): historical source "
-                f"{source!r} (PROVIDER-09)."
-            )
         if 2 in method.stages and not source:
             violations.append(
                 f"{method.name} (task={method.task}): stage 2 with no "

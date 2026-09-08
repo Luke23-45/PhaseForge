@@ -2,9 +2,8 @@
 #
 # The Stage 1 representation provider for the plain-encoder and factorial
 # rows (PROVIDER-02 basis): dense behavior cloning with the final-family
-# NORMALIZED encoder contract (normalize_output=true). The historical
-# baselines/bc.yaml keeps its legacy unnormalized encoder untouched; this
-# config exists so plain/factorial prototypes are computed in the same
+# NORMALIZED encoder contract (normalize_output=true). This dedicated
+# provider config exists so plain/factorial prototypes are computed in the same
 # normalized latent geometry the final family routes in.
 # Stage 1 only: no router, no experts, no phase head.
 

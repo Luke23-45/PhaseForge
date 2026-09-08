@@ -6,7 +6,7 @@ Covers:
 * S6.2 — ``verify_checkpoint_contract`` (expert count, model tree, stage,
   unreadable-artifact fail-closed);
 * S6.4/S6.6 — end-to-end fail-closed rejection of a pre-final 8-expert
-  ``phaseforge`` artifact through both runner funnels (stage-2 prerequisite
+  canonical-model artifact through both runner funnels (stage-2 prerequisite
   and evaluation target): the runner must never silently consume or fall
   back to a wrong-contract checkpoint.
 """
@@ -78,37 +78,37 @@ def _make_contract_run(
 
 def test_config_hash_gate_selects_only_matching_run(tmp_path: Path) -> None:
     _make_contract_run(
-        tmp_path, "phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42,
+        tmp_path, "precision_residual_phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42,
         num_experts=6, config_hash="hash_a",
     )
     _make_contract_run(
-        tmp_path, "phaseforge", 1, "2026-08-02_10-00-00_aaaa0002", 42,
+        tmp_path, "precision_residual_phaseforge", 1, "2026-08-02_10-00-00_aaaa0002", 42,
         num_experts=6, config_hash="hash_b",
     )
     got = resolve_stage_ckpt(
-        tmp_path, "phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_b"
+        tmp_path, "precision_residual_phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_b"
     )
     assert "aaaa0002" in str(got)
     got = resolve_stage_ckpt(
-        tmp_path, "phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_a"
+        tmp_path, "precision_residual_phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_a"
     )
     assert "aaaa0001" in str(got)
     # An absent hash matches nothing — fail closed, no fallback to a
     # mismatching (even newer) artifact.
     with pytest.raises(CheckpointError, match="config_hash 'hash_c'"):
         resolve_stage_ckpt(
-            tmp_path, "phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_c"
+            tmp_path, "precision_residual_phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_c"
         )
 
 
 def test_config_hash_gate_rejects_runs_without_recorded_hash(tmp_path: Path) -> None:
-    _make_contract_run(tmp_path, "phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42)
+    _make_contract_run(tmp_path, "precision_residual_phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42)
     with pytest.raises(CheckpointError, match="config_hash"):
         resolve_stage_ckpt(
-            tmp_path, "phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_a"
+            tmp_path, "precision_residual_phaseforge", 1, seed=42, tag=None, expected_config_hash="hash_a"
         )
     # Without the gate, backwards-compatible behaviour is unchanged.
-    assert resolve_stage_ckpt(tmp_path, "phaseforge", 1, seed=42, tag=None).is_file()
+    assert resolve_stage_ckpt(tmp_path, "precision_residual_phaseforge", 1, seed=42, tag=None).is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -118,21 +118,24 @@ def test_config_hash_gate_rejects_runs_without_recorded_hash(tmp_path: Path) -> 
 
 def test_verify_contract_accepts_canonical_six_expert(tmp_path: Path) -> None:
     run = _make_contract_run(
-        tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", 42,
+        tmp_path, "precision_residual_phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", 42,
         num_experts=6, config_hash="hash_a",
     )
     ckpt = run / "checkpoints" / "checkpoint_best.pt"
     summary = verify_checkpoint_contract(
-        ckpt, expected_model_name="phaseforge", expected_num_experts=6, expected_stage=2
+        ckpt,
+        expected_model_name="precision_residual_phaseforge",
+        expected_num_experts=6,
+        expected_stage=2,
     )
     assert summary["num_experts"] == 6
-    assert summary["model_name"] == "phaseforge"
+    assert summary["model_name"] == "precision_residual_phaseforge"
     assert summary["config_hash"] == "hash_a"
 
 
 def test_verify_contract_rejects_legacy_eight_expert(tmp_path: Path) -> None:
     run = _make_contract_run(
-        tmp_path, "phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42, num_experts=8
+        tmp_path, "precision_residual_phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42, num_experts=8
     )
     ckpt = run / "checkpoints" / "checkpoint_best.pt"
     with pytest.raises(CheckpointError, match="8 experts.*requires 6"):
@@ -141,12 +144,12 @@ def test_verify_contract_rejects_legacy_eight_expert(tmp_path: Path) -> None:
 
 def test_verify_contract_rejects_wrong_model_tree(tmp_path: Path) -> None:
     run = _make_contract_run(
-        tmp_path, "phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42,
+        tmp_path, "precision_residual_phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42,
         num_experts=6, model_name="something_else",
     )
     ckpt = run / "checkpoints" / "checkpoint_best.pt"
     with pytest.raises(CheckpointError, match="belongs to model 'something_else'"):
-        verify_checkpoint_contract(ckpt, expected_model_name="phaseforge")
+        verify_checkpoint_contract(ckpt, expected_model_name="precision_residual_phaseforge")
 
 
 def test_verify_contract_skips_expert_check_for_dense_checkpoints(tmp_path: Path) -> None:
@@ -159,7 +162,7 @@ def test_verify_contract_skips_expert_check_for_dense_checkpoints(tmp_path: Path
 
 
 def test_verify_contract_rejects_unreadable_checkpoint(tmp_path: Path) -> None:
-    run = _make_contract_run(tmp_path, "phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42)
+    run = _make_contract_run(tmp_path, "precision_residual_phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42)
     ckpt = run / "checkpoints" / "checkpoint_best.pt"
     ckpt.write_text("not a torch file", encoding="utf-8")
     with pytest.raises(CheckpointError, match="cannot be loaded"):
@@ -174,9 +177,9 @@ def test_verify_contract_rejects_unreadable_checkpoint(tmp_path: Path) -> None:
 def _proposed_method() -> Method:
     return Method(
         index=1,
-        name="phaseforge",
+        name="precision_residual_phaseforge",
         role="proposed method",
-        model="phaseforge",
+        model="precision_residual_phaseforge",
         data="lift",
         stages=(1, 2),
         stage2_source="self",
@@ -185,14 +188,14 @@ def _proposed_method() -> Method:
     )
 
 
-def test_stage2_prereq_fails_closed_on_legacy_artifact(tmp_path: Path) -> None:
-    """A pre-final 8-expert phaseforge stage-1 artifact must be rejected.
+def test_stage2_prereq_fails_closed_on_wrong_expert_artifact(tmp_path: Path) -> None:
+    """An 8-expert artifact for the canonical model must be rejected.
 
-    The runner may not silently consume it (the retired configuration shares
-    the ``outputs/phaseforge`` namespace) — the step fails loudly instead.
+    The runner must fail closed instead of consuming a wrong-contract
+    checkpoint from the canonical model namespace.
     """
     _make_contract_run(
-        tmp_path, "phaseforge", 1, "2026-01-01_10-00-00_legacy0001", 42,
+        tmp_path, "precision_residual_phaseforge", 1, "2026-01-01_10-00-00_wrong0001", 42,
         num_experts=8, tag="Lift",
     )
     step = Step(kind="train", method=_proposed_method(), seed=42, stage=2)
@@ -200,9 +203,9 @@ def test_stage2_prereq_fails_closed_on_legacy_artifact(tmp_path: Path) -> None:
         runner_cli._require_stage2_prereq(step, tmp_path)
 
 
-def test_eval_target_fails_closed_on_legacy_artifact(tmp_path: Path) -> None:
+def test_eval_target_fails_closed_on_wrong_expert_artifact(tmp_path: Path) -> None:
     _make_contract_run(
-        tmp_path, "phaseforge", 2, "2026-01-01_10-00-00_legacy0001", 42,
+        tmp_path, "precision_residual_phaseforge", 2, "2026-01-01_10-00-00_wrong0001", 42,
         num_experts=8, tag="Lift",
     )
     state = RunnerState(RunnerState.default_path(tmp_path))
@@ -213,7 +216,7 @@ def test_eval_target_fails_closed_on_legacy_artifact(tmp_path: Path) -> None:
 
 def test_eval_target_accepts_canonical_artifact(tmp_path: Path) -> None:
     _make_contract_run(
-        tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", 42,
+        tmp_path, "precision_residual_phaseforge", 2, "2026-08-01_10-00-00_aaaa0001", 42,
         num_experts=6, tag="Lift",
     )
     state = RunnerState(RunnerState.default_path(tmp_path))
@@ -225,7 +228,7 @@ def test_eval_target_accepts_canonical_artifact(tmp_path: Path) -> None:
 
 def test_stage2_prereq_accepts_canonical_artifact(tmp_path: Path) -> None:
     _make_contract_run(
-        tmp_path, "phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42,
+        tmp_path, "precision_residual_phaseforge", 1, "2026-08-01_10-00-00_aaaa0001", 42,
         num_experts=6, tag="Lift",
     )
     step = Step(kind="train", method=_proposed_method(), seed=42, stage=2)
@@ -233,86 +236,5 @@ def test_stage2_prereq_accepts_canonical_artifact(tmp_path: Path) -> None:
     assert ckpt is not None and "aaaa0001" in str(ckpt)
 
 
-# ---------------------------------------------------------------------------
-# K-sweep expert scaling contract tests (pf_k3, pf_k12)
-# ---------------------------------------------------------------------------
-
-
-def _k3_method() -> Method:
-    return Method(
-        index=17,
-        name="pf_k3",
-        role="Wave 2 K sweep: super-prototype reduction (E=3 < P=6)",
-        model="baselines/pf_spherical",
-        data="common",
-        stages=(2,),
-        stage2_source="phaseforge",
-        overrides=("models.router.num_experts=3", "models.router.top_k=2"),
-        tag="k3",
-        evaluate=True,
-    )
-
-
-def _k12_method() -> Method:
-    return Method(
-        index=18,
-        name="pf_k12",
-        role="Wave 2 K sweep: intra-phase sub-prototype scaling (E=12 > P=6)",
-        model="baselines/pf_spherical",
-        data="common",
-        stages=(2,),
-        stage2_source="phaseforge",
-        overrides=("models.router.num_experts=12", "models.router.top_k=2"),
-        tag="k12",
-        evaluate=True,
-    )
-
-
 def test_method_expected_num_experts_property() -> None:
     assert _proposed_method().expected_num_experts == 6
-    assert _k3_method().expected_num_experts == 3
-    assert _k12_method().expected_num_experts == 12
-
-
-def test_eval_target_accepts_k3_and_k12_artifacts(tmp_path: Path) -> None:
-    _make_contract_run(
-        tmp_path, "pf_spherical", 2, "2026-08-01_10-00-00_k3_0001", 42,
-        num_experts=3, tag="k3",
-    )
-    _make_contract_run(
-        tmp_path, "pf_spherical", 2, "2026-08-01_10-00-00_k12_0001", 42,
-        num_experts=12, tag="k12",
-    )
-    state = RunnerState(RunnerState.default_path(tmp_path))
-
-    step_k3 = Step(kind="eval", method=_k3_method(), seed=42)
-    ckpt_k3 = runner_cli._eval_target(step_k3, tmp_path, state)
-    assert ckpt_k3.is_file()
-    assert "k3_0001" in str(ckpt_k3)
-
-    step_k12 = Step(kind="eval", method=_k12_method(), seed=42)
-    ckpt_k12 = runner_cli._eval_target(step_k12, tmp_path, state)
-    assert ckpt_k12.is_file()
-    assert "k12_0001" in str(ckpt_k12)
-
-
-def test_eval_target_rejects_mismatched_expert_counts_for_k_sweep(tmp_path: Path) -> None:
-    # A 6-expert artifact given to pf_k3 must be rejected (pf_k3 expects 3)
-    _make_contract_run(
-        tmp_path, "pf_spherical", 2, "2026-08-01_10-00-00_wrong001", 42,
-        num_experts=6, tag="k3",
-    )
-    state = RunnerState(RunnerState.default_path(tmp_path))
-    step_k3 = Step(kind="eval", method=_k3_method(), seed=42)
-    with pytest.raises(CheckpointError, match="has 6 experts; the final protocol requires 3"):
-        runner_cli._eval_target(step_k3, tmp_path, state)
-
-    # A 3-expert artifact given to canonical phaseforge must be rejected (phaseforge expects 6)
-    _make_contract_run(
-        tmp_path, "phaseforge", 2, "2026-08-01_10-00-00_wrong002", 42,
-        num_experts=3, tag="Lift",
-    )
-    step_pf = Step(kind="eval", method=_proposed_method(), seed=42)
-    with pytest.raises(CheckpointError, match="has 3 experts; the final protocol requires 6"):
-        runner_cli._eval_target(step_pf, tmp_path, state)
-

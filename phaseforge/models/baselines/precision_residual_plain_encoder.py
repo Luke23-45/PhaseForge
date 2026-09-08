@@ -1,28 +1,13 @@
-"""Plain-encoder MoE with a centroid-bootstrapped router (C1 cell).
+"""Final plain-representation control with a centroid-bootstrapped router.
 
 Completes the 2x2 factorial (issues register C1):
 
-    encoder x router     centroid (bootstrap)   random init
-    phase-supervised     phaseforge             phase_pretrain_random_router
-    plain (BC)           plain_encoder_phase_bootstrap   warmstart_moe
-
-This cell shares the plain BC Stage 1 checkpoint with ``warmstart_moe``
-(``resolve_checkpoint_source`` maps it to ``bc``) but runs the *centroid*
-bootstrap: phase centroids computed over the plain encoder's latent space
-initialize the router. Its registered model config pins the canonical 50%
-partial warm-start for the experts, so it is an exact R50 factorial control.
-Comparing it against ``phase_pretrain_random_router`` isolates the effect of
-phase supervision in the pretraining encoder (same partial-warm experts,
-same random-vs-centroid router contrast); comparing it against the canonical
-``phaseforge`` isolates the phase-supervision effect given the same centroid
-router init.
-
-Final-aligned rows (``precision_residual_plain_encoder``,
-``precision_residual_factorial_floor``) generalize this class without
-forking it: a ``PrototypeRouter`` with a residual (beta-zero) expert, a
-resolved ``bootstrap_label_field`` (``phase_topo``), and an explicit
-``router_init`` policy (``centroid`` vs ``random``). Historical configs keep
-their exact defaults (TopK router, ``phase`` labels, centroid init).
+The locked final rows ``precision_residual_plain_encoder`` and
+``precision_residual_factorial_floor`` use this implementation with a
+normalized BC provider, ``PrototypeRouter``, ``phase_topo`` labels, and an
+explicit centroid/random router-init policy. Both rows share the final
+residual-expert contract with the proposed method; they differ only in the
+registered representation/router factors.
 """
 
 from __future__ import annotations
@@ -61,7 +46,7 @@ _BOOTSTRAP_LABEL_FIELDS = frozenset({"phase", "phase_rule", "phase_topo", "phase
 _ROUTER_INIT_TYPES = frozenset({"centroid", "random"})
 
 
-class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
+class PrecisionResidualPlainEncoderModel(BaseManipulationModel):
     """MoE bootstrapped from a plain (BC) encoder using phase centroids.
 
     Structure mirrors :class:`WarmStartMoEModel` (no phase head — the BC
@@ -143,7 +128,7 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         if value not in (1, 2):
             raise ValueError(f"Stage must be 1 or 2, got {value}")
         self._stage = value
-        logger.info(f"PlainEncoderPhaseBootstrapModel transitioned to Stage {value}.")
+        logger.info(f"PrecisionResidualPlainEncoderModel transitioned to Stage {value}.")
 
     def freeze_encoder(self) -> None:
         """Freeze the encoder for Stage 2 (weights + eval mode, no dropout)."""
@@ -153,7 +138,7 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
         self.encoder.eval()
         logger.info("Encoder weights frozen; encoder kept in eval mode (no dropout).")
 
-    def train(self, mode: bool = True) -> PlainEncoderPhaseBootstrapModel:
+    def train(self, mode: bool = True) -> PrecisionResidualPlainEncoderModel:
         """Override so a frozen encoder stays deterministic during Stage 2."""
         super().train(mode)
         if mode and self._encoder_frozen:

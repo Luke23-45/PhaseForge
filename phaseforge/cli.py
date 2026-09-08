@@ -202,10 +202,10 @@ def _append_eval_result_row(
 def _unused_stage1_head_prefixes(model: torch.nn.Module) -> tuple[str, ...]:
     """Stage 1 head prefixes the target model does not use at all.
 
-    The Stage 1 checkpoint of a phase-supervised cell (``phaseforge``)
+    The Stage 1 checkpoint of a phase-supervised cell
     contains ``phase_head`` weights. A Stage 2 cell without a phase head
-    (e.g. ``phase_pretrain_random_router``) legitimately drops them; a cell
-    that routes by the phase head (``phaseforge``, ``teacher_forced``) must
+    (e.g. the random-router final control) legitimately drops them; a cell
+    that routes by the phase head (the proposed method and teacher diagnostic) must
     always load them exactly. Heads the target model owns are therefore
     never droppable.
     """
@@ -307,9 +307,8 @@ def train(cfg: DictConfig) -> None:
     effective_device = _resolve_device(cfg)
     cfg.project.device = str(effective_device)
 
-    # Per-model override: baselines without Stage 1 pretraining (scratch_moe,
-    # oracle_moe) must train their encoder in Stage 2. Apply before the
-    # resolved config / run metadata are written so records are accurate.
+    # Apply any model-declared encoder-freeze policy before writing the
+    # resolved config and run metadata so records are accurate.
     model_freeze = cfg.models.get("freeze_encoder", None)
     if model_freeze is not None:
         cfg.train.freeze_encoder = bool(model_freeze)
@@ -639,8 +638,8 @@ def _train_body(
     # Lift's phase labels are severely imbalanced (phases 1/5 ≈ 1.2%/0.6% of
     # steps). Plain CE lets the phase head overfit the majority phases
     # (val/loss_phase 2.59 > ln(6) ≈ 1.79 random baseline, report §5.3),
-    # which then drags stage-2 routing for phase_pretrain_random_router and
-    # teacher_forced. Weights computed from the TRAINING split keep the head
+    # which then drags stage-2 routing for the final random-router and teacher
+    # diagnostic rows. Weights computed from the TRAINING split keep the head
     # from memorising the majority class. Opt-in via
     # train.phase_class_weight="balanced" (inverse frequency) or "cui"
     # (class-wise uniform increasing: w_c = (1-β)/(1-β^{n_c}), bounded by
@@ -719,16 +718,14 @@ def _train_body(
     if stage == 2:
         ckpt_path = cfg.train.get("stage1_ckpt_path")
 
-        # Most bootstrapped models need a Stage 1 checkpoint to initialise
-        # encoder + action_head. The historical scratch oracle (no action
-        # head, no expert init) trains fully from random weights and opts
-        # out via requires_stage1_checkpoint instead of being forced through
-        # a checkpoint it never consumed.
+        # Bootstrapped models need a Stage 1 checkpoint to initialise the
+        # encoder and action head. Models that intentionally opt out declare
+        # requires_stage1_checkpoint=false in their final config.
         if hasattr(model, "bootstrap_moe") and getattr(
             model, "requires_stage1_checkpoint", True
         ):
-            # Models with bootstrapping (PhaseBootstrappedMoE, WarmStartMoE)
-            # need a Stage 1 checkpoint to initialise encoder + action_head.
+            # The final family uses the same checkpoint contract for all
+            # bootstrapped models and records any provider identity.
             if not ckpt_path:
                 model_name = getattr(cfg.models, "name", cfg.models._target_.split(".")[-1])
                 source_model = resolve_checkpoint_source(model_name)

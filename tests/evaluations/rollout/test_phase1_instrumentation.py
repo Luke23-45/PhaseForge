@@ -69,7 +69,7 @@ def _evaluator(tmp_path: Path, **kwargs) -> RolloutEvaluator:
         "model": None,
         "output_dir": tmp_path,
         "run_id": "phase1",
-        "model_name": "phaseforge",
+        "model_name": "precision_residual_phaseforge",
         "training_seed": 42,
         "task": "Lift",
         "checkpoint_sha256": "deadbeef",

@@ -343,7 +343,7 @@ class Stage1Trainer(BaseTrainer):
 
         # Optional label smoothing on the phase targets (V2-A): the head is
         # discouraged from saturating, which keeps the phase logits soft for
-        # the downstream phase_pretrain_random_router / teacher_forced cells
+        # the downstream final random-router / teacher diagnostic cells
         # that route on them. 0.0 (default) preserves plain CE bit-for-bit.
         soft_target_eps = float(self.train_cfg.get("soft_target_eps", 0.0))
         if not 0.0 <= soft_target_eps <= 1.0:

@@ -45,9 +45,9 @@ The current training code still hardcodes `batch["phase"]` in several places. Th
 - Stage 1 phase-classification loss currently uses `batch["phase"]` in [stage1_loop.py:165](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/trains/loops/stage1_loop.py:165).
 - Stage 1 SupCon already has a configurable label field in [stage1_loop.py:274](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/trains/loops/stage1_loop.py:274).
 - Stage 2 margin loss currently uses `batch["phase"]` in [stage2_loop.py:342](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/trains/loops/stage2_loop.py:342).
-- The current plain encoder control uses the old `TopKRouter` and reads `batch["phase"]` for bootstrap in [plain_encoder_phase_bootstrap.py:204](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/plain_encoder_phase_bootstrap.py:204).
+- The final plain encoder control uses `PrototypeRouter` and reads its declared `bootstrap_label_field` in [precision_residual_plain_encoder.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/models/baselines/precision_residual_plain_encoder.py).
 
-The current runner's protocol schema accepts only `stage2_source` values `self`, `bc`, and `phaseforge`; this is enforced in [protocol.py:241](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/runner/protocol.py:241). Final provider identities must therefore be added to the existing runner rather than written into a manifest and assumed to work.
+The runner's protocol schema accepts `self` and the explicit final provider identities. Stage 2 provider resolution is enforced in [protocol.py](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/runner/protocol.py).
 
 The existing runner already has strict seed-aware run resolution in [resolver.py:259](C:/Users/Hellx/Documents/Programming/python/Project/Neryva/PhaseForge/phaseforge/runner/resolver.py:259). The final implementation must extend and reuse that mechanism.
 
@@ -175,7 +175,7 @@ The oracle is an offline routing/action diagnostic, not an ordinary rollout succ
 
 The final-aligned oracle is restricted to offline diagnostics on held-out demonstration data. Permissible metrics are: validation action MSE on held-out demonstration states; routing agreement between the supplied labels and the learned phase head on those states; and per-phase action error under label-directed routing. A rollout success rate is out of scope for this matrix because no validated labeler for arbitrary policy-generated states is included.
 
-The existing historical `oracle_moe` is not automatically a final-aligned oracle: its rollout path falls back to a router that was not trained for oracle deployment. It must remain historical unless replaced by the final privileged evaluator.
+The final oracle implementation is separate from ordinary deployable rollout and refuses state-only rollout.
 
 ## 6. Final-aligned model implementations
 
@@ -198,10 +198,10 @@ The shared implementation must support:
 
 ### 6.2 Plain encoder and factorial floor
 
-Create a final-aligned plain MoE model or generalize the old plain model. It must:
+The final plain MoE implementation must:
 
 1. load a normalized BC Stage 1 checkpoint;
-2. use `PrototypeRouter`, not the old `TopKRouter`;
+2. use `PrototypeRouter`;
 3. accept a configured bootstrap label field;
 4. compute prototypes from its own BC latent vectors;
 5. use `phase_topo` for prototype and margin targets in the final plain control;
@@ -236,7 +236,7 @@ Create or generalize the teacher-forced model so its final-aligned version has:
 - predicted phase-head routing during evaluation;
 - explicit privileged-diagnostic metadata.
 
-The old direct-action teacher-forced implementation remains historical and must not be silently relabeled.
+The retired direct-action teacher-forced implementation is removed; only the final privileged diagnostic remains.
 
 ### 6.5 Privileged oracle
 
@@ -291,7 +291,7 @@ Required provider identities include:
 - `final_aligned_bc_stage1` — normalized BC Stage 1 provider, produced by an explicit final-aligned BC configuration or override with the required normalized encoder contract;
 - `final_aligned_static_rule_stage1` — rule-label Stage 1 provider.
 
-The exact names may be implemented as method identities, but they must be explicit in the protocol and cannot resolve through the historical aliases `phaseforge`, `bc`, or old baseline names.
+The exact names are explicit in the protocol and resolve only through the final provider identities.
 
 For every Stage 2 consumer, resolution must require:
 
@@ -315,7 +315,7 @@ The run metadata must record:
 - evaluation reset-bank hash;
 - environment versions.
 
-No final-aligned control may load a historical `phaseforge` Stage 1 checkpoint. The runner must fail before training if a seed-exact provider is unavailable.
+No final-aligned control may load a pre-final Stage 1 checkpoint. The runner must fail before training if a seed-exact provider is unavailable.
 
 For every task and training seed, all rows that consume `phase_topo` must resolve the same topology-artifact identity and hash. The artifact's label mapping/remapping must also be recorded. A method-specific topology artifact, or a silent regeneration with a different seed/configuration, is a protocol violation because it changes the target labels between compared rows.
 
@@ -342,7 +342,7 @@ Final-family Stage 2 rows that fine-tune the encoder use `encoder_lr_scale=0.1`;
 
 ## 9. Manifest structure
 
-Create a new manifest such as `experiments/final_causal_matrix.json`. Do not edit `experiments/five_task.json` in place for this final matrix.
+The locked manifest is `experiments/final_causal_matrix.json`.
 
 The manifest must:
 
@@ -358,7 +358,9 @@ The manifest must:
 - include the oracle only in its privileged offline evaluator;
 - use a fresh output namespace so historical artifacts cannot be overwritten.
 
-The old `five_task.json` remains historical. Existing `phase`-trained results are not included in the final matrix, but they are preserved with their original method identity, commit, config hash, provider, and label policy.
+Pre-final manifests and runnable legacy baseline implementations were removed
+from the active tree. Existing external output archives are not included in
+the final matrix and must not be mixed with new final results.
 
 ## 10. Validation gates
 

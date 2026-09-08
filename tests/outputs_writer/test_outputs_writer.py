@@ -47,7 +47,7 @@ from phaseforge.outputs_writer.writer import RunWriter, parse_run_dir
 
 def make_row(
     *,
-    model: str = "phaseforge",
+    model: str = "precision_residual_phaseforge",
     stage: int = 2,
     seed: int = 42,
     action_mse: float = 0.028,
@@ -67,7 +67,7 @@ def make_row(
         "git_sha": "c0e72de",
         "config_hash": "f89790f7520ddfdb",
         "device": "cuda:0",
-        "ckpt_path": "outputs/phaseforge/stage2/2026-01-01_00-00-00_a1b2c3d4/model.pt",
+        "ckpt_path": "outputs/precision_residual_phaseforge/stage2/2026-01-01_00-00-00_a1b2c3d4/model.pt",
         "action_mse": action_mse,
         "tag": tag,
         "method": method,
@@ -175,9 +175,9 @@ class TestSchema:
         assert row.to_dict()["action_mse"] == 0.028
 
     def test_tag_and_method_str_or_null(self) -> None:
-        validate_row(make_row(tag="robot_only", method="bc_robot_only"))
+        validate_row(make_row(tag="alternate", method="alternate_method"))
         validate_row(make_row(tag=None, method=None))
-        row = make_row(tag="robot_only")
+        row = make_row(tag="alternate")
         row["method"] = 7
         with pytest.raises(SchemaError, match="method"):
             validate_row(row)
@@ -393,11 +393,11 @@ class TestLedger:
             run_id=run_id,
             kind="eval",
             timestamp="2026-01-01_00-00-00",
-            model="phaseforge",
+            model="precision_residual_phaseforge",
             config_hash="f89790f7520ddfdb",
             git_sha="c0e72de",
             status="pending",
-            path=f"outputs/phaseforge/stage2/2026-01-01_00-00-00_{run_id}",
+            path=f"outputs/precision_residual_phaseforge/stage2/2026-01-01_00-00-00_{run_id}",
             stage=2,
             seed=42,
         )
@@ -596,12 +596,12 @@ class TestMetadata:
 class TestTables:
     def test_aggregate_rows_groups_and_counts(self) -> None:
         rows = [
-            make_result_row(model="phaseforge", stage=2, seed=42, action_mse=0.028),
-            make_result_row(model="phaseforge", stage=2, seed=43, action_mse=0.030),
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=42, action_mse=0.028),
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=43, action_mse=0.030),
             make_result_row(model="bc", stage=1, seed=42, action_mse=0.027, with_metrics=False),
         ]
         aggs = aggregate_rows(rows)
-        assert [(a.model, a.stage) for a in aggs] == [("bc", 1), ("phaseforge", 2)]
+        assert [(a.model, a.stage) for a in aggs] == [("bc", 1), ("precision_residual_phaseforge", 2)]
         pf = aggs[1]
         assert pf.n_seeds == 2
         assert pf.n_rows == 2
@@ -613,9 +613,9 @@ class TestTables:
 
     def test_aggregate_std_over_seeds(self) -> None:
         rows = [
-            make_result_row(model="phaseforge", stage=2, seed=42, action_mse=0.02),
-            make_result_row(model="phaseforge", stage=2, seed=43, action_mse=0.04),
-            make_result_row(model="phaseforge", stage=2, seed=44, action_mse=0.06),
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=42, action_mse=0.02),
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=43, action_mse=0.04),
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=44, action_mse=0.06),
         ]
         agg = aggregate_rows(rows)[0]
         assert agg.action_mse_mean == pytest.approx(0.04)
@@ -654,7 +654,7 @@ class TestTables:
         # Tagged and untagged variants of the same model share (stage, seed)
         # keys; the pairing key must include the tag so they cannot pair.
         rows = [
-            make_result_row(model="phaseforge", stage=1, seed=s, action_mse=0.02)
+            make_result_row(model="precision_residual_phaseforge", stage=1, seed=s, action_mse=0.02)
             for s in (42, 43, 44)
         ]
         rows += [
@@ -671,7 +671,7 @@ class TestTables:
         assert (
             paired_wilcoxon(
                 rows,
-                method_a=("phaseforge", None),
+                method_a=("precision_residual_phaseforge", None),
                 method_b=("bc", "robot_only"),
                 metric="action_mse",
             )
@@ -698,16 +698,16 @@ class TestTables:
             for s in (42, 43, 44)
         ]
         rows += [
-            make_result_row(model="scratch_moe", stage=1, seed=s, action_mse=0.05)
+            make_result_row(model="precision_residual_scratch_moe", stage=1, seed=s, action_mse=0.05)
             for s in (42, 43, 44)
         ]
         path = write_paired_wilcoxon_csv(rows, tmp_path / "paired_wilcoxon.csv", baseline="bc")
         text = path.read_text()
         assert text.splitlines()[0].startswith("method_a,tag_a,method_b,tag_b,metric")
-        assert "scratch_moe" in text
+        assert "precision_residual_scratch_moe" in text
 
-    def test_wilcoxon_csv_pairs_five_task_tags(self, tmp_path: Path) -> None:
-        # Regression (Phase 8b / S8b.1): five-task rows carry the protocol
+    def test_wilcoxon_csv_pairs_task_tags(self, tmp_path: Path) -> None:
+        # Regression: task rows carry the protocol
         # task as their tag. The old hardcoded baseline identity
         # (baseline, None) matched no tagged row, so the CSV was silently
         # empty; the baseline must resolve per tag, and the pairing key must
@@ -719,7 +719,7 @@ class TestTables:
             for seed in (42, 43, 44):
                 rows.append(
                     make_result_row(
-                        model="phaseforge", tag=task, stage=2, seed=seed, action_mse=0.02
+                        model="precision_residual_phaseforge", tag=task, stage=2, seed=seed, action_mse=0.02
                     )
                 )
                 rows.append(
@@ -733,13 +733,13 @@ class TestTables:
                     )
                 )
         path = write_paired_wilcoxon_csv(
-            rows, tmp_path / "paired_wilcoxon.csv", baseline="phaseforge"
+            rows, tmp_path / "paired_wilcoxon.csv", baseline="precision_residual_phaseforge"
         )
         with open(path, newline="", encoding="utf-8") as f:
             records = list(csv_mod.DictReader(f))
         action_rows = [r for r in records if r["metric"] == "action_mse"]
         assert {r["tag_a"] for r in action_rows} == {"Can", "Square"}
-        assert all(r["method_a"] == "phaseforge" for r in action_rows)
+        assert all(r["method_a"] == "precision_residual_phaseforge" for r in action_rows)
         assert all(r["method_b"] == "bc" for r in action_rows)
         assert all(int(r["n_pairs"]) == 3 for r in action_rows)
         # A tag the baseline never runs (robot-only style) has no baseline
@@ -756,7 +756,7 @@ class TestTables:
             for s in (42, 43, 44)
         ]
         path = write_paired_wilcoxon_csv(
-            rows, tmp_path / "paired_wilcoxon2.csv", baseline="phaseforge"
+            rows, tmp_path / "paired_wilcoxon2.csv", baseline="precision_residual_phaseforge"
         )
         with open(path, newline="", encoding="utf-8") as f:
             records2 = list(csv_mod.DictReader(f))
@@ -767,7 +767,7 @@ class TestTables:
         # family 1); a stage-locked pairing key would drop every
         # PhaseForge-vs-BC pair, so the key is (seed, tag).
         rows = [
-            make_result_row(model="phaseforge", tag="Can", stage=2, seed=s, action_mse=0.02)
+            make_result_row(model="precision_residual_phaseforge", tag="Can", stage=2, seed=s, action_mse=0.02)
             for s in (42, 43, 44)
         ]
         rows += [
@@ -778,7 +778,7 @@ class TestTables:
         ]
         record = paired_wilcoxon(
             rows,
-            method_a=("phaseforge", "Can"),
+            method_a=("precision_residual_phaseforge", "Can"),
             method_b=("bc", "Can"),
             metric="action_mse",
         )
@@ -803,17 +803,17 @@ class TestTables:
 
     def test_paired_wilcoxon_with_three_seeds(self) -> None:
         rows = [
-            make_result_row(model="phaseforge", stage=2, seed=s, action_mse=0.02)
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=s, action_mse=0.02)
             for s in (42, 43, 44)
         ]
         rows += [
-            make_result_row(model="scratch_moe", stage=2, seed=s, action_mse=0.06)
+            make_result_row(model="precision_residual_scratch_moe", stage=2, seed=s, action_mse=0.06)
             for s in (42, 43, 44)
         ]
         result = paired_wilcoxon(
             rows,
-            method_a=("phaseforge", None),
-            method_b=("scratch_moe", None),
+            method_a=("precision_residual_phaseforge", None),
+            method_b=("precision_residual_scratch_moe", None),
             metric="action_mse",
         )
         assert result is not None
@@ -822,39 +822,39 @@ class TestTables:
 
     def test_paired_wilcoxon_below_min_pairs(self) -> None:
         rows = [
-            make_result_row(model="phaseforge", stage=2, seed=42, action_mse=0.02),
-            make_result_row(model="scratch_moe", stage=2, seed=42, action_mse=0.06),
+            make_result_row(model="precision_residual_phaseforge", stage=2, seed=42, action_mse=0.02),
+            make_result_row(model="precision_residual_scratch_moe", stage=2, seed=42, action_mse=0.06),
         ]
         assert (
             paired_wilcoxon(
                 rows,
-                method_a=("phaseforge", None),
-                method_b=("scratch_moe", None),
+                method_a=("precision_residual_phaseforge", None),
+                method_b=("precision_residual_scratch_moe", None),
                 metric="action_mse",
             )
             is None
         )
 
     def test_csv_writers_produce_headers(self, tmp_path: Path) -> None:
-        rows = [make_result_row(model="phaseforge", stage=2, seed=s) for s in (42, 43, 44)]
+        rows = [make_result_row(model="precision_residual_phaseforge", stage=2, seed=s) for s in (42, 43, 44)]
         rows += [
-            make_result_row(model="scratch_moe", stage=2, seed=s, action_mse=0.06)
+            make_result_row(model="precision_residual_scratch_moe", stage=2, seed=s, action_mse=0.06)
             for s in (42, 43, 44)
         ]
         agg_path = write_aggregates_csv(rows, tmp_path / "aggregates.csv")
         boot_path = write_bootstrap_csv(rows, tmp_path / "bootstrap_ci.csv")
         wilcox_path = write_paired_wilcoxon_csv(
-            rows, tmp_path / "paired_wilcoxon.csv", baseline="phaseforge"
+            rows, tmp_path / "paired_wilcoxon.csv", baseline="precision_residual_phaseforge"
         )
         agg_text = agg_path.read_text()
         assert agg_text.splitlines()[0].startswith("model,tag,stage,n_seeds")
-        assert "phaseforge" in agg_text
+        assert "precision_residual_phaseforge" in agg_text
         boot_text = boot_path.read_text()
         assert boot_text.splitlines()[0].startswith("model,tag,stage,metric,n,mean")
         assert "action_mse" in boot_text
         wilcox_text = wilcox_path.read_text()
         assert wilcox_text.splitlines()[0].startswith("method_a,tag_a,method_b,tag_b,metric")
-        assert "phaseforge" in wilcox_text
+        assert "precision_residual_phaseforge" in wilcox_text
 
     def test_metric_columns_include_action_mse_first(self) -> None:
         assert METRIC_COLUMNS[0] == "action_mse"
@@ -880,7 +880,7 @@ class TestSummarize:
         for name, path in paths.items():
             assert path.exists(), name
         metrics = json.loads(paths["metrics"].read_text())
-        assert "phaseforge__stage2__tagdefault" in metrics["summary"]
+        assert "precision_residual_phaseforge__stage2__tagdefault" in metrics["summary"]
 
     def test_summarize_all_is_idempotent(self, tmp_path: Path) -> None:
         results_dir = tmp_path / "_results"

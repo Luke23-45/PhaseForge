@@ -140,17 +140,27 @@ def test_find_latest_checkpoint_seed_dir_layout(tmp_path: Path) -> None:
     assert "aaaa0003" in str(ckpt)
 
 
-def test_resolve_alias_looks_in_source_model_dir(tmp_path: Path) -> None:
-    # warmstart_moe shares BC's Stage 1 checkpoint.
+def test_resolve_final_provider_looks_in_source_model_dir(tmp_path: Path) -> None:
+    # The final plain-encoder provider shares BC's Stage 1 checkpoint.
     _make_run(tmp_path, "bc", 1, "2026-08-01_10-00-00_aaaa0001", seed=42)
 
     ckpt = find_latest_checkpoint(
-        "warmstart_moe", stage=1, base=tmp_path, resolve_alias=True, seed=42
+        "precision_residual_plain_encoder",
+        stage=1,
+        base=tmp_path,
+        resolve_alias=True,
+        seed=42,
     )
     assert ckpt is not None
     assert "aaaa0001" in str(ckpt)
     assert (
-        find_latest_checkpoint("warmstart_moe", stage=1, base=tmp_path, resolve_alias=False) is None
+        find_latest_checkpoint(
+            "precision_residual_plain_encoder",
+            stage=1,
+            base=tmp_path,
+            resolve_alias=False,
+        )
+        is None
     )
 
 
@@ -167,7 +177,10 @@ def test_config_hash_is_deterministic() -> None:
 def _meta_cfg(stage: int) -> DictConfig:
     return DictConfig(
         {
-            "models": {"name": "phaseforge", "_target_": "phaseforge.models.moe"},
+            "models": {
+                "name": "precision_residual_phaseforge",
+                "_target_": "phaseforge.models.phase_moe.PhaseBootstrappedMoE",
+            },
             "train": {"stage": stage},
             "project": {"seed": 42, "device": "cuda", "tag": None},
         }
@@ -179,7 +192,7 @@ def test_write_run_meta_records_explicit_stage(tmp_path: Path) -> None:
     write_run_meta(tmp_path, _meta_cfg(1), stage=2)
     meta = json.loads((tmp_path / "run_meta.json").read_text())
     assert meta["stage"] == 2
-    assert meta["model_name"] == "phaseforge"
+    assert meta["model_name"] == "precision_residual_phaseforge"
     assert meta["seed"] == 42
 
 

@@ -1,9 +1,9 @@
 """Unit tests for the pure selection resolver (facet-filter model).
 
 All fixtures are in-memory Protocols — resolution must never touch the
-filesystem. The multi-task fixture mirrors ``five_task.json`` (same name on
-every task, protocol task ``"all"``); the single-task fixture mirrors
-``lift_ablation.json`` (task-less rows, protocol task ``"Lift"``).
+filesystem. The multi-task fixture repeats final method identities across
+tasks; the single-task fixture uses task-less rows under protocol task
+``"Lift"``.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _m(
         index=index,
         name=name,
         role="test",
-        model=f"baselines/{name}",
+        model="final_aligned_bc" if name == "bc" else name,
         data="common",
         stages=stages,
         stage2_source=None,
@@ -52,14 +52,14 @@ def _proto(methods: list[Method], task: str = "Lift") -> Protocol:
 
 @pytest.fixture
 def multi() -> Protocol:
-    """five_task shape: every name replicated per task, protocol task 'all'."""
+    """Multi-task shape: every name replicated per task, protocol task 'all'."""
     return _proto(
         [
-            _m(1, "phaseforge", task="Lift", stages=(1, 2)),
+            _m(1, "precision_residual_phaseforge", task="Lift", stages=(1, 2)),
             _m(2, "bc", task="Lift"),
-            _m(3, "phaseforge", task="Can", stages=(1, 2)),
+            _m(3, "precision_residual_phaseforge", task="Can", stages=(1, 2)),
             _m(4, "bc", task="Can"),
-            _m(5, "phaseforge", task="Transport", stages=(1, 2)),
+            _m(5, "precision_residual_phaseforge", task="Transport", stages=(1, 2)),
             _m(6, "bc", task="Transport"),
         ],
         task="all",
@@ -68,12 +68,12 @@ def multi() -> Protocol:
 
 @pytest.fixture
 def single() -> Protocol:
-    """lift_ablation shape: task-less rows under a single-task protocol."""
+    """Single-task shape: task-less rows under a single-task protocol."""
     return _proto(
         [
-            _m(1, "phaseforge", stages=(1, 2)),
+            _m(1, "precision_residual_phaseforge", stages=(1, 2)),
             _m(2, "bc"),
-            _m(21, "pf_centroid_random", stages=(2,)),
+            _m(21, "precision_residual_plain_encoder", stages=(2,)),
         ],
         task="Lift",
     )
@@ -81,11 +81,13 @@ def single() -> Protocol:
 
 class TestBareName:
     def test_selects_every_task_for_that_name(self, multi: Protocol) -> None:
-        result = resolve_selection(multi, SelectionSpec(method_tokens=("phaseforge",)))
+        result = resolve_selection(
+            multi, SelectionSpec(method_tokens=("precision_residual_phaseforge",))
+        )
         assert [m.phase_key for m in result.methods] == [
-            "Lift/phaseforge",
-            "Can/phaseforge",
-            "Transport/phaseforge",
+            "Lift/precision_residual_phaseforge",
+            "Can/precision_residual_phaseforge",
+            "Transport/precision_residual_phaseforge",
         ]
 
     def test_name_intersected_with_task_filter(self, multi: Protocol) -> None:
@@ -102,44 +104,58 @@ class TestBareName:
 
     def test_name_with_no_cells_in_task_filter_is_loud(self) -> None:
         protocol = _proto(
-            [_m(1, "phaseforge", task="Lift"), _m(2, "bc", task="Can")],
+            [
+                _m(1, "precision_residual_phaseforge", task="Lift"),
+                _m(2, "bc", task="Can"),
+            ],
             task="all",
         )
         with pytest.raises(ProtocolError, match=r"exists on: \['Lift'\]"):
             resolve_selection(
                 protocol,
-                SelectionSpec(method_tokens=("phaseforge",), tasks=("Can",)),
+                SelectionSpec(
+                    method_tokens=("precision_residual_phaseforge",), tasks=("Can",)
+                ),
             )
 
     def test_unknown_name_gets_close_match_suggestion(self, single: Protocol) -> None:
-        with pytest.raises(ProtocolError, match="phaseforg"):
-            resolve_selection(single, SelectionSpec(method_tokens=("phaseforg",)))
+        with pytest.raises(ProtocolError, match="precision_residual_phaseforg"):
+            resolve_selection(
+                single, SelectionSpec(method_tokens=("precision_residual_phaseforg",))
+            )
 
 
 class TestExplicitCell:
     def test_name_at_task_selects_one_cell(self, multi: Protocol) -> None:
         result = resolve_selection(
-            multi, SelectionSpec(method_tokens=("phaseforge@Can",))
+            multi, SelectionSpec(method_tokens=("precision_residual_phaseforge@Can",))
         )
-        assert [m.phase_key for m in result.methods] == ["Can/phaseforge"]
+        assert [m.phase_key for m in result.methods] == [
+            "Can/precision_residual_phaseforge"
+        ]
 
     def test_name_at_task_case_insensitive(self, multi: Protocol) -> None:
         result = resolve_selection(
-            multi, SelectionSpec(method_tokens=("phaseforge@can",))
+            multi, SelectionSpec(method_tokens=("precision_residual_phaseforge@can",))
         )
-        assert [m.phase_key for m in result.methods] == ["Can/phaseforge"]
+        assert [m.phase_key for m in result.methods] == [
+            "Can/precision_residual_phaseforge"
+        ]
 
     def test_wrong_task_lists_available_tasks(self, multi: Protocol) -> None:
         with pytest.raises(ProtocolError, match="no cell on task 'Square'"):
             resolve_selection(
-                multi, SelectionSpec(method_tokens=("phaseforge@Square",))
+                multi,
+                SelectionSpec(method_tokens=("precision_residual_phaseforge@Square",)),
             )
 
     def test_name_at_task_outside_task_filter_is_rejected(self, multi: Protocol) -> None:
         with pytest.raises(ProtocolError, match="outside the --tasks filter"):
             resolve_selection(
                 multi,
-                SelectionSpec(method_tokens=("phaseforge@Lift",), tasks=("Can",)),
+                SelectionSpec(
+                    method_tokens=("precision_residual_phaseforge@Lift",), tasks=("Can",)
+                ),
             )
 
     def test_name_at_task_on_single_task_manifest(self, single: Protocol) -> None:
@@ -175,9 +191,9 @@ class TestTaskFacet:
     def test_tasks_alone_select_every_method_on_those_tasks(self, multi: Protocol) -> None:
         result = resolve_selection(multi, SelectionSpec(tasks=("Can", "Transport")))
         assert [m.phase_key for m in result.methods] == [
-            "Can/phaseforge",
+            "Can/precision_residual_phaseforge",
             "Can/bc",
-            "Transport/phaseforge",
+            "Transport/precision_residual_phaseforge",
             "Transport/bc",
         ]
 
@@ -190,7 +206,7 @@ class TestTaskFacet:
         assert len(result.methods) == 3
 
     def test_task_dimensionless_manifest_rejects_tasks(self) -> None:
-        protocol = _proto([_m(1, "phaseforge")], task="all")
+        protocol = _proto([_m(1, "precision_residual_phaseforge")], task="all")
         with pytest.raises(ProtocolError, match="declares no task dimension"):
             resolve_selection(protocol, SelectionSpec(tasks=("Lift",)))
 
@@ -199,21 +215,28 @@ class TestCompositionAndOrder:
     def test_tokens_union_and_dedup_in_manifest_order(self, multi: Protocol) -> None:
         result = resolve_selection(
             multi,
-            SelectionSpec(method_tokens=("bc@Can", "phaseforge", "2", "phaseforge")),
+            SelectionSpec(
+                method_tokens=(
+                    "bc@Can",
+                    "precision_residual_phaseforge",
+                    "2",
+                    "precision_residual_phaseforge",
+                )
+            ),
         )
         assert [m.phase_key for m in result.methods] == [
-            "Lift/phaseforge",
+            "Lift/precision_residual_phaseforge",
             "Lift/bc",
-            "Can/phaseforge",
+            "Can/precision_residual_phaseforge",
             "Can/bc",
-            "Transport/phaseforge",
+            "Transport/precision_residual_phaseforge",
         ]
         # Per-token audit trail keeps duplicates of the user's request.
         assert [token for token, _ in result.token_matches] == [
             "bc@Can",
-            "phaseforge",
+            "precision_residual_phaseforge",
             "2",
-            "phaseforge",
+            "precision_residual_phaseforge",
         ]
 
     def test_no_filters_selects_everything(self, multi: Protocol) -> None:
@@ -223,9 +246,10 @@ class TestCompositionAndOrder:
     def test_parity_with_legacy_select_methods_on_single_task(
         self, single: Protocol
     ) -> None:
-        legacy = single.select_methods(["phaseforge", "21"])
+        legacy = single.select_methods(["precision_residual_phaseforge", "21"])
         result = resolve_selection(
-            single, SelectionSpec(method_tokens=("phaseforge", "21"))
+            single,
+            SelectionSpec(method_tokens=("precision_residual_phaseforge", "21")),
         )
         assert [m.phase_key for m in result.methods] == [m.phase_key for m in legacy]
 
@@ -238,13 +262,15 @@ class TestHelpers:
         assert effective_task(single.methods[0], single) == "Lift"
 
     def test_effective_task_none_under_all_protocol(self) -> None:
-        protocol = _proto([_m(1, "phaseforge")], task="all")
+        protocol = _proto([_m(1, "precision_residual_phaseforge")], task="all")
         assert effective_task(protocol.methods[0], protocol) is None
 
     def test_table_renders_cell_lines(self, multi: Protocol) -> None:
-        result = resolve_selection(multi, SelectionSpec(method_tokens=("phaseforge",)))
+        result = resolve_selection(
+            multi, SelectionSpec(method_tokens=("precision_residual_phaseforge",))
+        )
         table = format_selection_table(result, multi)
-        assert "phaseforge@Lift" in table
+        assert "precision_residual_phaseforge@Lift" in table
         assert "stages 1,2" in table
         assert "eval=rollout" in table
 
@@ -255,5 +281,5 @@ class TestHelpers:
         assert single.known_tasks == ("Lift",)
 
     def test_known_tasks_all_placeholder_yields_empty(self) -> None:
-        protocol = _proto([_m(1, "phaseforge")], task="all")
+        protocol = _proto([_m(1, "precision_residual_phaseforge")], task="all")
         assert protocol.known_tasks == ()

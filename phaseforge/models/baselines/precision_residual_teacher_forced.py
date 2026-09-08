@@ -1,6 +1,6 @@
-"""Teacher-forced MoE: GT-partitioned experts, predicted-phase routing (E8).
+"""Final privileged-training diagnostic: GT-partitioned experts, predicted routing.
 
-The decomposable-oracle cell (issues register C7 / novelty claim E8):
+The locked diagnostic is not a primary deployable baseline:
 
     Training:  experts are partitioned by the GROUND-TRUTH phase label
                (top-1 hard partition, exclusive per phase) — the same
@@ -10,22 +10,20 @@ The decomposable-oracle cell (issues register C7 / novelty claim E8):
                labels.
 
 Locked implementation decisions (2026-08-07):
-    (i)  The phase predictor is the Stage 1 phase head of the SAME
-         phase-supervised checkpoint that ``phaseforge`` uses
-         (``resolve_checkpoint_source`` maps it there). Shared pretraining,
-         so only the Stage 2 supervision regime differs. The phase head is
+    (i)  The phase predictor is the Stage 1 phase head of the same
+         phase-supervised checkpoint that the proposed method uses. Shared
+         pretraining, so only the Stage 2 supervision regime differs. The phase head is
          part of the frozen Stage 1 bundle: only the experts train in
          Stage 2.
-    (ii) Top-k asymmetry is footnoted, not hidden: this cell routes top-1
-         (exclusive GT phase partition) vs ``phaseforge``'s top-2 (method
-         hyperparameter).
+    (ii) The final matrix pins top-1 routing for both the proposed method and
+         this diagnostic.
     (iii) Natural sampling for parity; starvation of a phase is a reported
          diagnostic, not a silent failure.
 
 This turns the oracle into a decomposable instrument:
-    oracle (GT routing) - teacher_forced (predicted routing)
+    precision_residual_oracle (GT routing) - this diagnostic (predicted routing)
         = phase-predictability loss (Gap 1)
-    teacher_forced (predicted) - phaseforge
+    this diagnostic (predicted) - precision_residual_phaseforge
         = strategy loss (Gap 2)
 """
 
@@ -59,7 +57,7 @@ logger = logging.getLogger(__name__)
 _TEACHER_LABEL_FIELDS = frozenset({"phase", "phase_rule", "phase_topo", "phase_dynamic"})
 
 
-class TeacherForcedMoEModel(BaseManipulationModel):
+class PrecisionResidualTeacherForcedModel(BaseManipulationModel):
     """MoE with ground-truth-partitioned experts and predicted-phase routing.
 
     Structurally mirrors :class:`PhaseBootstrappedMoE` (encoder + action_head
@@ -131,7 +129,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         if value not in (1, 2):
             raise ValueError(f"Stage must be 1 or 2, got {value}")
         self._stage = value
-        logger.info(f"TeacherForcedMoEModel transitioned to Stage {value}.")
+        logger.info(f"PrecisionResidualTeacherForcedModel transitioned to Stage {value}.")
 
     def freeze_encoder(self) -> None:
         """Freeze the Stage 1 bundle (encoder + phase predictor) for Stage 2.
@@ -149,7 +147,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
         self.phase_head.eval()
         logger.info("Encoder and phase predictor frozen (shared Stage 1 bundle).")
 
-    def train(self, mode: bool = True) -> TeacherForcedMoEModel:
+    def train(self, mode: bool = True) -> PrecisionResidualTeacherForcedModel:
         """Override so the frozen Stage 1 bundle stays deterministic."""
         super().train(mode)
         if mode and self._encoder_frozen:
@@ -182,7 +180,7 @@ class TeacherForcedMoEModel(BaseManipulationModel):
                 phase = batch.get(self.label_field)
                 if phase is None:
                     raise RuntimeError(
-                        "TeacherForcedMoEModel requires ground-truth labels "
+                        "PrecisionResidualTeacherForcedModel requires ground-truth labels "
                         f"(field {self.label_field!r}) during Stage 2 training "
                         f"(available: {sorted(str(k) for k in batch.keys())})."
                     )

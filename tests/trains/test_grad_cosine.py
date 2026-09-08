@@ -82,7 +82,9 @@ def test_grad_cosine_degenerate_returns_none() -> None:
     assert cos is not None
 
 
-def _build_stage1_trainer(grad_cosine: bool, model_cfg: str = "phaseforge"):
+def _build_stage1_trainer(
+    grad_cosine: bool, model_cfg: str = "precision_residual_phaseforge"
+):
     with initialize(version_base="1.3", config_path="../../phaseforge/config"):
         cfg = compose(
             config_name="main",
@@ -152,6 +154,6 @@ def test_grad_cosine_absent_by_default(tmp_path: Path) -> None:
 def test_grad_cosine_absent_without_phase_head(tmp_path: Path) -> None:
     # bc has no phase head: the phase loss carries no gradient, so the
     # diagnostic must be skipped (absence is honest, never a fabricated zero).
-    trainer, _ = _build_stage1_trainer(True, model_cfg="baselines/bc")
+    trainer, _ = _build_stage1_trainer(True, model_cfg="final_aligned_bc")
     row = _fit_and_read_row(tmp_path, trainer)
     assert "train/grad_cos_action_phase" not in row

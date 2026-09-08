@@ -15,7 +15,7 @@ side) and every ``eval/**/episodes.jsonl`` (rollout side) and writes:
       differences per (task, training seed)
 
 Usage:
-    uv run python scripts/analysis/summarize_train.py [--outputs outputs] [--baseline phaseforge]
+    uv run python scripts/analysis/summarize_train.py [--outputs outputs] [--baseline precision_residual_phaseforge]
 
 Requires:
     - At least one completed training run (a non-empty
@@ -44,7 +44,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--baseline",
-        default="phaseforge",
+        default="precision_residual_phaseforge",
         help="Reference method for the paired rollout comparisons CSV (default: %(default)s).",
     )
     args = parser.parse_args()

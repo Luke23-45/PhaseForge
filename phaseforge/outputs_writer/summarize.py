@@ -78,7 +78,7 @@ def build_metrics_summary(rows: list[ResultRow]) -> dict[str, Any]:
 def summarize_all(
     outputs_base: str | Path,
     *,
-    baseline: str = "phaseforge",
+    baseline: str = "precision_residual_phaseforge",
 ) -> dict[str, Path]:
     """Rebuild paper-ready artifacts under ``<outputs_base>/_summaries/``.
 
@@ -86,7 +86,7 @@ def summarize_all(
         outputs_base: The ``outputs`` directory (containing ``_results/``
             and ``_summaries/``).
         baseline: Method used as the reference in the paired Wilcoxon CSV
-            (default ``"phaseforge"`` — the proposed method).
+            (default ``"precision_residual_phaseforge"`` — the proposed method).
 
     Raises:
         FileNotFoundError: ``results.jsonl`` does not exist (no evals
