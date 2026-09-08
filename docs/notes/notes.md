@@ -1,205 +1,165 @@
-# PhaseForge — Final Experiment Command Reference (Cloud)
+# PhaseForge — Final Experiment Command Reference
 
-All commands use `uv run python -m phaseforge.runner` — the cloud image's
-default `uv` environment already has the rollout stack (`torch`, `robosuite`
-1.5.1, `mujoco` 3.2.7) installed. ToolHang steps are routed automatically to
-the ToolHang interpreter (`PHASEFORGE_TOOLHANG_PYTHON` / `.venv-toolhang`);
-no manual env switch is needed.
+This file is the operator reference for the locked final experiment matrix.
+The authoritative protocol is
+`experiments/final_causal_matrix.json`; the scientific rules are in
+`docs/final/baselines/PRECISION_RESIDUAL_BASELINE_PROTOCOL.md`.
 
-Two experiment types only: **Baseline Matrix** (`outputs_final`, 315 steps)
-and **Ablation Suite** (`outputs_ablation`, 165 steps). Both are resumable
-(completed steps are skipped via `outputs/_runner/state.json` + commit gating).
+The old `experiments/five_task.json` and `experiments/lift_ablation.json`
+manifests are historical research records. Do not use them for the final
+comparison or mix their results into `outputs_final`.
 
----
+## Current readiness status
 
-## 0. Pre-flight (read-only)
+The implementation has been audited and the full repository test suite passes
+(984 tests). The final manifest gates also pass:
+
+- 10 method identities × 5 tasks × 3 seeds;
+- 45 Stage 1 steps, 135 Stage 2 steps, and 150 evaluation steps;
+- 330 total planned steps;
+- explicit provider ordering and final-family model identities;
+- no `_pw` method or phase-weighting override in the final matrix.
+
+Training is not cleared until both operational prerequisites are satisfied:
+
+1. Commit the reviewed implementation and run the matrix at that frozen
+   commit. The current working tree must not remain dirty for final results.
+2. Generate and verify the required `topo_pelt_k6` cache artifacts. Every
+   topology-consuming task/seed must contain a valid
+   `topo_artifact/topo_manifest.json`, including its label mapping and checksums.
+
+The final output namespace must be fresh: `outputs_final/` must not contain
+previous final run markers, checkpoints, or runner state.
+
+## 1. Read-only pre-flight
+
+Run these commands after committing the implementation and before training:
 
 ```bash
-# List the frozen matrix: 50 rows (10/method × 5 tasks), seeds [42,43,44]
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --list
-
-# Dry-run the full baseline sweep: must be exactly 315 steps, all `pending` on a fresh namespace
 uv run python -m phaseforge.runner \
-  --manifest experiments/five_task.json \
+  --manifest experiments/final_causal_matrix.json \
   --outputs outputs_final \
-  --expect-steps 315 \
+  --verify-gates
+```
+
+The report must show:
+
+```text
+methods=50 seeds=[42, 43, 44] steps=330
+DRY-02_plan_expands: pass
+DRY-03_provider_ordering: pass
+DRY-04_command_contract: pass
+DRY-05_historical_isolation: pass
+namespace_fresh=True
+```
+
+Then inspect the complete command plan without executing training:
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --expect-steps 330 \
   --dry-run
+```
 
-# Dry-run the full ablation suite: must be exactly 165 steps
+Do not proceed if the plan is not exactly 330 steps, if the namespace is not
+fresh, or if any provider/topology prerequisite is missing.
+
+## 2. Locked final matrix
+
+The matrix uses tasks `Lift`, `Can`, `Square`, `ToolHang`, and `Transport`,
+with seeds `42`, `43`, and `44`.
+
+| Identity | Role | Stage 1 source | Evaluation |
+|---|---|---|---|
+| `precision_residual_phaseforge` | Sole proposed method | self | rollout |
+| `bc` using `final_aligned_bc` | normalized BC floor | self | rollout |
+| `precision_residual_plain_encoder` | plain-representation control | `final_aligned_bc_stage1` | rollout |
+| `precision_residual_phase_random_router` | random-router control | `precision_residual_phaseforge_stage1` | rollout |
+| `precision_residual_scratch_moe` | random-expert control | `precision_residual_phaseforge_stage1` | rollout |
+| `precision_residual_factorial_floor` | plain representation × random router | `final_aligned_bc_stage1` | rollout |
+| `final_aligned_softmax_top1` | registered softmax router-package comparison | `precision_residual_phaseforge_stage1` | rollout |
+| `final_aligned_static_rule` | rule-label integrated comparison | self | rollout |
+| `precision_residual_teacher_forced` | privileged training diagnostic | `precision_residual_phaseforge_stage1` | separate diagnostic rollout |
+| `precision_residual_oracle` | privileged offline diagnostic | `precision_residual_phaseforge_stage1` | offline only |
+
+The final method uses normalized encoder latents, six experts, hard top-1
+prototype routing, topology-derived prototypes, 50% partial expert
+warm-start, and `beta=0.0`. The residual branch is therefore not a claimed
+source of improvement in this matrix.
+
+`phase_topo` is a train-only topology-derived label. It must never enter the
+deployable policy's rollout input. The Static Rule comparison uses `phase`
+consistently instead.
+
+The teacher-forced and oracle rows are not pooled with ordinary deployable
+success rates. The oracle must never be evaluated through the normal
+state-only rollout interface.
+
+## 3. Full final sweep
+
+After the pre-flight gates pass and the topology artifacts are verified:
+
+```bash
 uv run python -m phaseforge.runner \
-  --manifest experiments/lift_ablation.json \
-  --outputs outputs_ablation \
-  --expect-steps 165 \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --expect-steps 330
+```
+
+The runner resolves the explicit Stage 1 providers and records the exact
+checkpoint consumed by each Stage 2 row. Do not use `--no-commit-gate` for
+the final run. Do not use `--continue-on-error` for the locked publication
+matrix; a failure should stop the sweep and be investigated.
+
+Expected completed records are:
+
+- 45 Stage 1 training records;
+- 135 Stage 2 training records;
+- 150 evaluation result rows;
+- 330 total runner steps, including provider dependencies.
+
+## 4. Recovery of an individual failed cell
+
+Use the exact final identity and task facet. For example, to rerun Stage 2
+for the proposed method on Lift, seed 42:
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_phaseforge@Lift \
+  --seeds 42 \
+  --stage 2 \
+  --force
+```
+
+The required Stage 1 provider must already exist at the same committed
+revision. For a missing provider, run the corresponding provider Stage 1
+explicitly first; do not point the consumer at a historical checkpoint.
+
+Useful filters are `--tasks`, `--seeds`, `--stage`, `--eval-only`, and
+`--skip-eval`. Use `--eval-only` only when the exact final checkpoint already
+exists and passes the checkpoint contract.
+
+## 5. After the sweep
+
+Verify the completed namespace before analysis:
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --expect-steps 330 \
   --dry-run
 ```
 
----
+Then inspect the final output ledgers and provenance. Every topology-consuming
+run must carry the topology provenance metadata, provider checkpoint identity,
+dataset/cache hash, commit, resolved-config hash, and evaluation reset-bank
+identity. Do not combine these rows with historical `five_task.json` results.
 
-## 1. Baseline Runs — Five-Task Matrix (`experiments/five_task.json`)
-
-Frozen: 10 methods × 5 tasks (Lift, Can, Square, ToolHang, Transport) ×
-3 seeds (42, 43, 44) = 50 cells = **315 steps** (21 per task-seed).
-
-### 1.1 Full sweep — single command (recommended)
-
-```bash
-uv run python -m phaseforge.runner \
-  --manifest experiments/five_task.json \
-  --outputs outputs_final \
-  --expect-steps 315 \
-  --continue-on-error
-```
-
-Runtime auto-injects missing Stage-1 providers; each provider trains once.
-
-### 1.2 Per-method decomposition (guarded, equivalent)
-
-Use only when splitting across jobs. Providers consumed via
-`stage2_source` need `--with-dependencies` (+15 steps = 5 tasks × 3 seeds).
-
-| # | Method | Role | Stages | Total Steps |
-|---|--------|------|--------|-------------|
-| 1 | `phaseforge` | proposed — 6 experts, centroid router, 50% partial warm-start | 1, 2 (self) | 45 |
-| 2 | `bc` | structured-state BC floor | 1 | 30 |
-| 3 | `bc_large` | parameter-matched dense capacity control | 1 | 30 |
-| 4 | `bc_rnn` | temporal comparator (10-step history) | 1 | 30 |
-| 5 | `bc_robot_only` | robot-only negative control | 1 | 30 |
-| 6 | `scratch_moe` | MoE architecture control, random init | 2 (none) | 30 |
-| 7 | `warmstart_moe` | warm-start MoE (plain encoder × random router, needs `bc` S1) | 2 → `bc` | 45 |
-| 8 | `phase_pretrain_random_router` | H1 control (needs `phaseforge` S1) | 2 → `phaseforge` | 45 |
-| 9 | `plain_encoder_phase_bootstrap` | H2 control (needs `bc` S1) | 2 → `bc` | 45 |
-| 10 | `teacher_forced` | privileged-training diagnostic, E8 (needs `phaseforge` S1) | 2 → `phaseforge` | 45 |
-
-```bash
-# 1 — Proposed (self-provided, no extra provider)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods phaseforge --expect-steps 45 --continue-on-error
-
-# 2 — BC floor
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc --expect-steps 30 --continue-on-error
-
-# 3 — Parameter-matched dense
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_large --expect-steps 30 --continue-on-error
-
-# 4 — Temporal history comparator
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_rnn --expect-steps 30 --continue-on-error
-
-# 5 — Robot-only negative control
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods bc_robot_only --expect-steps 30 --continue-on-error
-
-# 6 — Scratch MoE (no provider)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods scratch_moe --expect-steps 30 --continue-on-error
-
-# 7 — Warm-start MoE (needs bc S1: 30 + 15 = 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods warmstart_moe --with-dependencies --expect-steps 45 --continue-on-error
-
-# 8 — Phase pretraining / random router (needs phaseforge S1: 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods phase_pretrain_random_router --with-dependencies --expect-steps 45 --continue-on-error
-
-# 9 — Plain encoder / centroid router (needs bc S1: 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods plain_encoder_phase_bootstrap --with-dependencies --expect-steps 45 --continue-on-error
-
-# 10 — Privileged training diagnostic (needs phaseforge S1: 45)
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --methods teacher_forced --with-dependencies --expect-steps 45 --continue-on-error
-```
-
-Verify after:
-
-```bash
-uv run python -m phaseforge.runner --manifest experiments/five_task.json --outputs outputs_final --expect-steps 315 --dry-run
-# every step `done`; then results.jsonl = 150 rows, training_summary.jsonl = 165 rows
-```
-
----
-
-## 2. Ablation Runs — Lift Suite (`experiments/lift_ablation.json`)
-
-27 cells (Lift only) × 3 seeds = **165 steps** under `outputs_ablation`
-(`experiments/lift_ablation.json:9`).
-
-* **9 Lift baseline replicas** (Group 0 — `bc_rnn` excluded): `phaseforge`,
-  `bc`, `bc_large`, `bc_robot_only`, `scratch_moe`, `warmstart_moe`,
-  `phase_pretrain_random_router`, `plain_encoder_phase_bootstrap`,
-  `teacher_forced` = 57 steps (`phaseforge` 9 + 8×6).
-* **18 ablation-only** (`pf_*`) = 108 steps (Groups A-D below).
-* Full suite = 57 + 108 = **165** (verified: `stage1=12 stage2=72 eval=81`).
-
-The canonical provider EXP-101 `phaseforge` S1 is shared by all `pf_*` cells.
-
-### 2.1 Full suite — single command (recommended)
-
-```bash
-uv run python -m phaseforge.runner \
-  --manifest experiments/lift_ablation.json \
-  --outputs outputs_ablation \
-  --expect-steps 165 \
-  --continue-on-error
-```
-
-Run only after the baseline matrix verifies clean (independent namespace,
-but keeps provider semantics identical).
-
-### 2.2 Per-group decomposition (guarded)
-
-Each `pf_*` cell = Stage-2 train + eval = 2 steps/seed = 6 steps/method.
-Isolated `pf_*` groups need the canonical `phaseforge` S1 via
-`--with-dependencies` (+3 steps); Group 0 already contains its own provider.
-
-```bash
-# Group 0 — Lift baseline replicas (9 methods: 57 steps, no --with-dependencies needed)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods phaseforge bc bc_large bc_robot_only scratch_moe warmstart_moe phase_pretrain_random_router plain_encoder_phase_bootstrap teacher_forced --expect-steps 57 --continue-on-error
-
-# Group A — Router initialization controls (5 methods: 30 + 3 = 33 isolated)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_spherical_kmeans pf_kmeans pf_phase_head pf_random_random pf_centroid_random --with-dependencies --expect-steps 33 --continue-on-error
-
-# Group B — Expert initialization & warm-start drop sweep (6 methods: 36 + 3 = 39)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_full_warm pf_drop00 pf_drop25 pf_drop75 pf_drop100 pf_one_warm_plus_random --with-dependencies --expect-steps 39 --continue-on-error
-
-# Group C — Representation, fine-tuning & phase noise (5 methods: 30 + 3 = 33)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_spherical pf_ft pf_corrupt_25 pf_corrupt_50 pf_shuffle_control --with-dependencies --expect-steps 33 --continue-on-error
-
-# Group D — Capacity & expert scaling, K sweep (2 methods: 12 + 3 = 15)
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_k3 pf_k12 --with-dependencies --expect-steps 15 --continue-on-error
-```
-
-Single-cell recovery (any `pf_*` alone: 6 + 3 = 9):
-
-```bash
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --methods pf_drop25 --with-dependencies --expect-steps 9 --continue-on-error
-```
-
-Verify after:
-
-```bash
-uv run python -m phaseforge.runner --manifest experiments/lift_ablation.json --outputs outputs_ablation --expect-steps 165 --dry-run
-# every step `done`; full 165. If you ran Group 0 + A-D separately, the 3 provider
-# steps are counted in each isolated plan but skipped on resume — distinct total is still 165.
-```
-
----
-
-## 3. Failed-cell re-run (only if needed)
-
-```bash
-# Example: re-run proposed method on Lift, seed 42, Stage 2 only
-uv run python -m phaseforge.runner \
-  --manifest experiments/five_task.json \
-  --outputs outputs_final \
-  --methods phaseforge@Lift --seeds 42 --stage 2 --force
-
-# Add --with-dependencies if the cell needs its provider's S1
-```
-
-Useful filters: `--tasks Lift Can`, `--seeds 42,43`, `--stage {1,2}`, `--eval-only`, `--skip-eval`.
-
----
-
-## 4. Paper tables (final namespaces ONLY, after verification)
-
-```bash
-uv run python scripts/analysis/summarize_train.py --outputs outputs_final --baseline phaseforge
-uv run python scripts/analysis/summarize_eval.py  --outputs outputs_final --baseline phaseforge
-uv run python scripts/analysis/stratified_stats.py --root outputs_final --json outputs_final/_summaries/stratified_stats.json
-uv run python -m phaseforge.evaluations.rollout.report_cli outputs_final
-```
-
-`--root` fully replaces the default so historical `outputs/` rows cannot leak in.
+The oracle remains an offline diagnostic, and the teacher-forced row remains a
+separate privileged diagnostic. Neither supports the primary deployable
+success-rate claim.
