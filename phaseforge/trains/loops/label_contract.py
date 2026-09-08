@@ -103,48 +103,60 @@ def infer_split() -> str:
 
 
 def peek_loader_batch(loader: Any) -> Any | None:
-    """Return a loader's first batch without perturbing sampler randomness.
+    """Return a representative batch without touching the live loader.
 
-    Creating an iterator draws from the loader's sampler generator (worker
-    base-seed plus the epoch permutation). Without restoring it, a
-    preflight peek would shift the entire training shuffle sequence by one
-    epoch versus a run without preflight — silently breaking the
-    bit-identical historical curves the protocol preserves. The generator
-    state is therefore snapshotted and restored, so post-peek training
-    shuffles exactly as if the peek never happened. This also covers
-    validation loaders (``shuffle=False``, normally with no generator),
-    whose iterator construction can consume process-wide worker-seeding
-    entropy. Returns ``None`` for an empty loader.
+    This function runs immediately before training and validation. Calling
+    ``iter(loader)`` here is unsafe: with persistent workers, the iterator
+    owns worker and prefetch state that cannot be restored by resetting RNG
+    states or the sampler generator. The next real iterator can therefore
+    start from a different prefetched/permuted sequence even though all
+    visible RNG states appear unchanged.
+
+    The project loaders are map-style ``DataLoader`` instances. Sample the
+    underlying dataset directly and apply the loader's collator, which
+    validates the same batch structure without creating an iterator, worker,
+    sampler, or prefetch state. Returns ``None`` for an empty or unsupported
+    loader. Global RNG states are still restored because a dataset or
+    collator may legitimately use process-level randomness while producing
+    its sample.
     """
-    # DataLoader uses its explicit ``generator`` for the train sampler, but
-    # the validation loaders intentionally have no generator.  Constructing
-    # an iterator for such a loader consumes the process-wide torch RNG to
-    # seed workers (and can consume Python/NumPy RNG when ``num_workers=0``).
-    # The preflight must be observational: preserve every RNG stream that a
-    # dataset/collator can touch, not only the sampler generator.
-    gen = getattr(loader, "generator", None)
-    state = None
     torch_state = torch.get_rng_state().clone()
     python_state = random.getstate()
     numpy_state = np.random.get_state()
     cuda_states = None
     if torch.cuda.is_available():
         cuda_states = [state.clone() for state in torch.cuda.get_rng_state_all()]
-    if gen is not None:
-        try:
-            state = gen.get_state().clone()
-        except Exception:
-            state = None
     try:
-        return next(iter(loader), None)
-    except StopIteration:
+        dataset = getattr(loader, "dataset", None)
+        if dataset is None:
+            return None
+        try:
+            dataset_size = len(dataset)
+        except (TypeError, AttributeError):
+            return None
+        if dataset_size <= 0:
+            return None
+
+        batch_size = getattr(loader, "batch_size", None)
+        collate_fn = getattr(loader, "collate_fn", None)
+
+        # DataLoader(batch_size=None) passes one dataset item directly to its
+        # collate function. This is the mode used by the contract tests.
+        if batch_size is None:
+            sample = dataset[0]
+            return collate_fn(sample) if collate_fn is not None else sample
+
+        batch_size = int(batch_size)
+        if batch_size <= 0:
+            return None
+        if bool(getattr(loader, "drop_last", False)) and dataset_size < batch_size:
+            return None
+
+        samples = [dataset[index] for index in range(min(batch_size, dataset_size))]
+        return collate_fn(samples) if collate_fn is not None else samples
+    except (IndexError, KeyError):
         return None
     finally:
-        if gen is not None and state is not None:
-            try:
-                gen.set_state(state)
-            except Exception:
-                pass
         torch.set_rng_state(torch_state)
         random.setstate(python_state)
         np.random.set_state(numpy_state)

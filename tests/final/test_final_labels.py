@@ -234,6 +234,34 @@ def test_preflight_preserves_sampler_order() -> None:
     assert _full_order(peeked_loader) == _full_order(fresh_loader)
 
 
+def test_preflight_preserves_persistent_worker_order() -> None:
+    """Preflight must not consume a multi-worker loader's prefetched data."""
+    from phaseforge.trains.loops.label_contract import peek_loader_batch
+
+    peeked_loader, _ = _shuffled_loader(5678)
+    peeked_loader = DataLoader(
+        peeked_loader.dataset,
+        batch_size=8,
+        shuffle=True,
+        generator=torch.Generator().manual_seed(5678),
+        num_workers=2,
+        persistent_workers=True,
+        prefetch_factor=2,
+    )
+    assert peek_loader_batch(peeked_loader) is not None
+
+    fresh_loader = DataLoader(
+        _DictDataset(_order_states()),
+        batch_size=8,
+        shuffle=True,
+        generator=torch.Generator().manual_seed(5678),
+        num_workers=2,
+        persistent_workers=True,
+        prefetch_factor=2,
+    )
+    assert _full_order(peeked_loader) == _full_order(fresh_loader)
+
+
 def test_stage1_compute_loss_fails_closed_per_batch() -> None:
     """TEST-09: the per-batch path fails too (not only the preflight)."""
     from phaseforge.models.base import ModelOutput
