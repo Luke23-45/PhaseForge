@@ -35,6 +35,7 @@ router:
   top_k: 2
   noise_std: 0.1
   balance_coeff: 0.01
+  normalize_input: true   # R50-matched cosine routing, identical to phaseforge
 
 expert:
   _target_: phaseforge.models.components.expert.ExpertMLP

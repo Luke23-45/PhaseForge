@@ -42,6 +42,123 @@ _VALID_DATA = frozenset(
 )
 _VALID_EVAL_MODES = frozenset({"rollout", "offline"})
 
+#: Historical Stage 1 sources (pre-final manifests only). ``self`` is the
+#: method's own Stage 1; ``bc``/``phaseforge`` resolve to the same-named
+#: method's Stage 1 in the same task. Retained so historical manifests keep
+#: loading bit-for-bit.
+_HISTORICAL_STAGE2_SOURCES = frozenset({"self", "bc", "phaseforge"})
+
+#: Final provider identities (PROVIDER-01): explicit Stage 1 sources for the
+#: final causal matrix. Each maps to ``(provider method name, provider model
+#: name)``. The model name is the filesystem/config identity consumed via
+#: ``train.stage1_ckpt_path``; the method name is the manifest identity
+#: whose Stage 1 cell is the provider (used for cross-checks, plan
+#: dependencies, and runner auto-injection).
+_FINAL_STAGE1_PROVIDERS: dict[str, tuple[str, str]] = {
+    "precision_residual_phaseforge_stage1": (
+        "precision_residual_phaseforge",
+        "precision_residual_phaseforge",
+    ),
+    "final_aligned_bc_stage1": ("bc", "final_aligned_bc"),
+    "final_aligned_static_rule_stage1": (
+        "final_aligned_static_rule",
+        "final_aligned_static_rule",
+    ),
+}
+
+#: Method-name prefixes marking final-family rows. A final row that names a
+#: historical alias (``bc``/``phaseforge``) as its Stage 2 source is a
+#: protocol violation (PROVIDER-09): it would silently consume a
+#: pre-final checkpoint.
+_FINAL_METHOD_PREFIXES = ("precision_residual_", "final_aligned_")
+
+
+def is_final_method(name: str) -> bool:
+    """Return whether a method name belongs to the final matrix family."""
+    return str(name).startswith(_FINAL_METHOD_PREFIXES)
+
+
+def is_final_provider(stage2_source: str | None) -> bool:
+    """Return whether a Stage 2 source is an explicit final provider identity."""
+    return stage2_source in _FINAL_STAGE1_PROVIDERS
+
+
+def provider_method_name(stage2_source: str | None) -> str | None:
+    """Return the manifest method name providing a Stage 2 source.
+
+    ``"self"`` is resolved by the caller (the consumer's own method);
+    historical aliases double as their own method names; final identities
+    resolve through :data:`_FINAL_STAGE1_PROVIDERS`. Returns ``None`` for a
+    null source (Stage 1 / provider-less rows).
+    """
+    if stage2_source is None or stage2_source == "self":
+        return None
+    if stage2_source in _FINAL_STAGE1_PROVIDERS:
+        return _FINAL_STAGE1_PROVIDERS[stage2_source][0]
+    return stage2_source
+
+
+def provider_model_name(stage2_source: str | None, consumer_model_name: str) -> str | None:
+    """Return the model (filesystem/config) identity of a Stage 2 source.
+
+    Mirrors :func:`provider_method_name` but yields the model name consumed
+    via ``train.stage1_ckpt_path`` (which differs from the method name for
+    the BC provider: method ``bc``, model ``final_aligned_bc``).
+    """
+    if stage2_source is None:
+        return None
+    if stage2_source == "self":
+        return consumer_model_name
+    if stage2_source in _FINAL_STAGE1_PROVIDERS:
+        return _FINAL_STAGE1_PROVIDERS[stage2_source][1]
+    return stage2_source
+
+
+def verify_output_namespace(outputs_base: str | Path) -> Path:
+    """Fail closed unless an output namespace is fresh (GOV-04).
+
+    A namespace is fresh when its directory is absent or contains no run
+    artifacts (no ``*.completed`` markers, no ``checkpoint_best.pt``, no
+    runner state). Final sweeps must target a fresh namespace so
+    historical outputs can never be overwritten or mixed into the final
+    matrix. Raises :class:`ProtocolError` describing what was found.
+    """
+    base = Path(outputs_base)
+    if not base.exists():
+        return base.resolve()
+    offenders: list[str] = []
+    try:
+        markers = sorted(
+            str(p.relative_to(base))
+            for p in base.rglob("*.completed")
+            if p.is_file()
+        )
+        offenders.extend(markers[:8])
+        if not markers:
+            ckpts = sorted(
+                str(p.relative_to(base))
+                for p in base.rglob("checkpoint_best.pt")
+                if p.is_file()
+            )
+            offenders.extend(ckpts[:8])
+        state = base / "_runner" / "state.json"
+        if state.is_file():
+            offenders.append("_runner/state.json")
+    except OSError as exc:
+        raise ProtocolError(
+            f"Cannot inspect output namespace {base}: {exc}. Refusing to run."
+        ) from exc
+    if offenders:
+        shown = ", ".join(offenders)
+        extra = "" if len(offenders) < 8 else ", ..."
+        raise ProtocolError(
+            f"Output namespace {base} is not fresh (found {shown}{extra}). "
+            "Final sweeps require a fresh namespace: choose an absent or "
+            "empty --outputs directory so historical artifacts cannot be "
+            "overwritten."
+        )
+    return base.resolve()
+
 
 class ProtocolError(ValueError):
     """Raised when a protocol manifest is malformed or inconsistent."""
@@ -240,13 +357,23 @@ def _parse_method(raw: dict[str, Any]) -> Method:
 
     stage2_source = raw.get("stage2_source")
     if stage2_source is not None:
-        if stage2_source not in ("self", "bc", "phaseforge"):
+        allowed_sources = _HISTORICAL_STAGE2_SOURCES | frozenset(_FINAL_STAGE1_PROVIDERS)
+        if stage2_source not in allowed_sources:
             raise ProtocolError(
-                f"Method {name!r}: 'stage2_source' must be null, 'self', 'bc' or 'phaseforge', "
+                f"Method {name!r}: 'stage2_source' must be null, 'self', 'bc', 'phaseforge' "
+                f"or one of {sorted(_FINAL_STAGE1_PROVIDERS)}, "
                 f"got {stage2_source!r}."
             )
         if 2 not in stages:
             raise ProtocolError(f"Method {name!r}: 'stage2_source' set but method has no stage 2.")
+        # PROVIDER-09: final rows must name explicit final providers, never
+        # the historical aliases.
+        if stage2_source in ("bc", "phaseforge") and is_final_method(name):
+            raise ProtocolError(
+                f"Method {name!r}: final-family rows cannot resolve the historical "
+                f"alias {stage2_source!r} as a Stage 2 source (PROVIDER-09). Use an "
+                "explicit final provider identity instead."
+            )
 
     evaluate = raw.get("evaluate", True)
     if not isinstance(evaluate, bool):
@@ -396,27 +523,31 @@ def load_protocol(path: str | Path) -> Protocol:
     # Cross-checks: a stage2_source provider must be a real method in the
     # SAME task, and the provided stage 1 must come from the default
     # (no variant tag) cell of that task — otherwise dependency injection
-    # would point at the wrong output tree.
+    # would point at the wrong output tree. Final provider identities
+    # resolve to their manifest method through provider_method_name().
     for m in methods:
-        if m.stage2_source in ("bc", "phaseforge"):
-            provider = next(
-                (p for p in methods if p.name == m.stage2_source and p.task == m.task),
-                None,
+        if m.stage2_source is None or m.stage2_source == "self":
+            continue
+        provider_name = provider_method_name(m.stage2_source)
+        assert provider_name is not None
+        provider = next(
+            (p for p in methods if p.name == provider_name and p.task == m.task),
+            None,
+        )
+        if provider is None:
+            raise ProtocolError(
+                f"Method {m.name!r} (task={m.task!r}): 'stage2_source' "
+                f"{m.stage2_source!r} is not a method in this task."
             )
-            if provider is None:
-                raise ProtocolError(
-                    f"Method {m.name!r} (task={m.task!r}): 'stage2_source' "
-                    f"{m.stage2_source!r} is not a method in this task."
-                )
-            if 1 not in provider.stages:
-                raise ProtocolError(
-                    f"Method {m.name!r}: provider {provider.name!r} has no stage 1."
-                )
-            if provider.tag is not None:
-                raise ProtocolError(
-                    f"Method {m.name!r}: provider {provider.name!r} must be the default "
-                    "(common-data) cell, but it carries a variant tag."
-                )
+        if 1 not in provider.stages:
+            raise ProtocolError(
+                f"Method {m.name!r}: provider {provider.name!r} has no stage 1."
+            )
+        if provider.tag is not None:
+            raise ProtocolError(
+                f"Method {m.name!r}: provider {provider.name!r} must be the default "
+                "(common-data) cell, but it carries a variant tag."
+            )
 
     return Protocol(
         name=str(name),
@@ -460,7 +591,9 @@ class Step:
         """The ``(model, stage)`` artifact this step must load, or ``None``.
 
         * A stage-2 step loads the Stage 1 checkpoint of its provider
-          (``"self"`` -> this method's own stage 1).
+          (``"self"`` -> this method's own stage 1; a historical alias or a
+          final ``*_stage1`` identity -> the mapped provider model's
+          stage 1).
         * An eval step loads the method's final-stage checkpoint.
         * A stage-1 step loads nothing.
         """
@@ -468,10 +601,15 @@ class Step:
             return (self.method.model_name, self.method.final_stage)
         if self.kind == "train" and self.stage == 2:
             source = self.method.stage2_source
-            if source == "self":
-                return (self.method.model_name, 1)
-            if source in ("bc", "phaseforge"):
-                return (source, 1)
+            if source is None:
+                return None
+            model = provider_model_name(source, self.method.model_name)
+            if model is None:  # pragma: no cover - validated at load time
+                raise ProtocolError(
+                    f"Method {self.method.name!r}: cannot resolve Stage 1 "
+                    f"provider for 'stage2_source' {source!r}."
+                )
+            return (model, 1)
         return None
 
 
@@ -523,12 +661,14 @@ def build_plan(
     deps: list[Step] = []
     if with_dependencies and not eval_only and stage is None:
         for m in methods:
-            provider_identity = (m.task, m.stage2_source)
-            if (
-                m.stage2_source in ("bc", "phaseforge")
-                and provider_identity not in selected_identities
-            ):
-                provider = protocol.method_by_name(m.stage2_source, task=m.task)
+            if m.stage2_source is None or m.stage2_source == "self":
+                continue
+            provider_name = provider_method_name(m.stage2_source)
+            if provider_name is None:  # pragma: no cover - validated at load
+                continue
+            provider_identity = (m.task, provider_name)
+            if provider_identity not in selected_identities:
+                provider = protocol.method_by_name(provider_name, task=m.task)
                 if provider is None:
                     raise ProtocolError(
                         f"Method {m.name!r}: provider {m.stage2_source!r} is missing "

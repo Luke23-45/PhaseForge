@@ -349,6 +349,66 @@ def resolve_eval_run_dir(
     )
 
 
+def verify_provider_task(
+    ckpt_path: str | Path, *, expected_task: str | None, include_data_hash: bool = False
+) -> dict[str, Any]:
+    """Fail closed unless a provider checkpoint was trained on the expected task.
+
+    A seed-exact checkpoint from the wrong task lives in a different output
+    tree symmetry (same model, same seed, different ``data``) and must never
+    satisfy a Stage 2 provider request (PROVIDER-05). The task is read from
+    the provider run's own ``resolved_config.yaml``
+    (``data.source.task_name``); a missing/unreadable sidecar or a mismatch
+    raises :class:`CheckpointError` before any subprocess launches.
+
+    Returns a summary dict (``task``, plus ``data_config_hash`` only when
+    ``include_data_hash`` is set — recomputing it re-stats the raw dataset,
+    so resolution callers leave it off). ``expected_task=None``
+    (task-agnostic callers) skips the check but still reports what was found.
+    """
+    ckpt_path = Path(ckpt_path)
+    run_dir = ckpt_path.parent.parent
+    resolved = run_dir / "resolved_config.yaml"
+    if not resolved.is_file():
+        raise CheckpointError(
+            f"Provider run {run_dir} has no resolved_config.yaml; cannot verify "
+            "its task. Refusing to consume an untraceable artifact."
+        )
+    try:
+        from omegaconf import OmegaConf
+
+        cfg = OmegaConf.load(str(resolved))
+    except Exception as exc:
+        raise CheckpointError(
+            f"Provider run {run_dir} has an unreadable resolved_config.yaml "
+            f"({type(exc).__name__}: {exc}); cannot verify its task."
+        ) from exc
+    try:
+        data = cfg.get("data", None)
+        source = data.get("source", None) if data is not None else None
+        task = str(source.get("task_name", "")) if source is not None else ""
+        data_hash = None
+        if include_data_hash:
+            try:
+                from phaseforge.data.ingestion.cache_manager import CacheManager
+
+                data_hash = CacheManager.compute_hash(cfg.data)
+            except Exception:
+                data_hash = None
+    except Exception as exc:
+        raise CheckpointError(
+            f"Provider run {run_dir} resolved config has no data.source.task_name; "
+            "cannot verify its task."
+        ) from exc
+    if expected_task is not None and task != expected_task:
+        raise CheckpointError(
+            f"Provider checkpoint {ckpt_path} was trained on task {task!r}; "
+            f"the consumer requires task {expected_task!r}. Run the provider "
+            "Stage 1 for the consuming task first."
+        )
+    return {"task": task, "data_config_hash": data_hash}
+
+
 _EXPERT_KEY_RE = re.compile(r"^moe_layer\.experts\.(\d+)\.")
 
 

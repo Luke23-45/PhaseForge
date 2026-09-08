@@ -8,12 +8,13 @@ the protocol's Stage 1 source dependencies. A resumable state registry
 artifact each stage produced, so evaluation never targets a stale or
 seed-mixed checkpoint and an interrupted sweep resumes in place.
 
-When a selected stage-2 method's Stage 1 provider (``bc``/``phaseforge``) is
-not selected and its checkpoint is missing from the output tree, the runner
-auto-trains the provider's Stage 1 as a dependency step before running the
-consumer, so a partial ``--methods`` selection no longer fails pre-flight on
-a missing provider. Explicitly scoped runs (``--stage``/``--eval-only``)
-keep the strict pre-flight check: a missing prerequisite then fails loudly
+When a selected stage-2 method's Stage 1 provider (historical ``bc`` /
+``phaseforge`` or a final ``*_stage1`` identity) is not selected and its
+checkpoint is missing from the output tree, the runner auto-trains the
+provider's Stage 1 as a dependency step before running the consumer, so a
+partial ``--methods`` selection no longer fails pre-flight on a missing
+provider. Explicitly scoped runs (``--stage``/``--eval-only``) keep the
+strict pre-flight check: a missing prerequisite then fails loudly
 instead of silently training.
 
 Examples::
@@ -62,7 +63,9 @@ from phaseforge.runner.protocol import (
     ProtocolError,
     Step,
     build_plan,
+    is_final_provider,
     load_protocol,
+    provider_method_name,
 )
 from phaseforge.runner.registry import RegistryError, RunnerState
 from phaseforge.runner.resolver import (
@@ -73,6 +76,7 @@ from phaseforge.runner.resolver import (
     resolve_stage_ckpt,
     stage_checkpoint_relative,
     verify_checkpoint_contract,
+    verify_provider_task,
 )
 from phaseforge.runner.selection import (
     SelectionResult,
@@ -80,7 +84,7 @@ from phaseforge.runner.selection import (
     format_selection_table,
     resolve_selection,
 )
-from phaseforge.utils.config import git_info
+from phaseforge.utils.config import config_hash, git_info
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -187,6 +191,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Print the plan and exact commands without executing anything.",
     )
     parser.add_argument(
+        "--verify-gates",
+        action="store_true",
+        help="Run the read-only final-matrix verification gates (DRY-01..DRY-05: "
+        "inspection record, plan expansion, provider ordering, command "
+        "contract, historical isolation) and exit without executing anything.",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="Print the method matrix from the manifest and exit.",
@@ -259,8 +270,127 @@ def _build_plan(
     return plan, selection
 
 
+def _provider_stage1_overrides(
+    protocol: Protocol, provider: Method, seed: int, outputs_base: Path
+) -> list[str]:
+    """Build the Hydra override list for a provider's Stage 1 config.
+
+    Mirrors :func:`phaseforge.runner.commands.train_command` for a stage-1
+    step of the provider method exactly (same keys, same order semantics),
+    so the composed config hashes identically to the provider run's
+    recorded ``resolved_config.yaml`` when the provider was trained from
+    this manifest at this commit.
+    """
+    cmd = [
+        f"models={provider.model}",
+        "train=stage1",
+        f"project.seed={seed}",
+        f"project.output_dir={outputs_base}",
+    ]
+    if provider.data != "common":
+        cmd.append(f"data={provider.data}")
+    if provider.output_tag:
+        cmd.append(f"project.tag={provider.output_tag}")
+    if provider.name:
+        cmd.append(f"project.method={provider.name}")
+    cmd.extend(protocol.defaults)
+    if provider.overrides:
+        cmd.extend([o for o in provider.overrides if not o.startswith("eval.")])
+    return cmd
+
+
+def _expected_stage1_config_hash(
+    protocol: Protocol,
+    provider: Method,
+    seed: int,
+    outputs_base: Path,
+    device: str | None,
+) -> str:
+    """Compose a provider's Stage 1 config and hash it (PROVIDER-06).
+
+    Applies the same training-time mutations the CLI applies before
+    hashing (per-model ``freeze_encoder`` override; effective device), so
+    the digest is directly comparable with the provider run's recorded
+    ``config_hash``. Raises :class:`CheckpointError` when composition
+    itself fails — a provider whose expected config cannot even be built
+    must fail closed, never silently pass.
+    """
+    from hydra import compose, initialize
+
+    overrides = _provider_stage1_overrides(protocol, provider, seed, outputs_base)
+    if device is not None:
+        overrides.append(f"project.device={device}")
+    try:
+        with initialize(version_base="1.3", config_path="../config"):
+            cfg = compose(config_name="main", overrides=overrides)
+    except Exception as exc:
+        raise CheckpointError(
+            f"Cannot compose the expected Stage 1 config for provider "
+            f"{provider.name!r} (task={provider.task!r}, seed={seed}): "
+            f"{type(exc).__name__}: {exc}. Refusing to consume a provider "
+            "whose identity cannot be established."
+        ) from exc
+    # Mirror phaseforge.cli.train: per-model freeze override lands in
+    # train.freeze_encoder BEFORE run metadata / config hash are written.
+    try:
+        model_freeze = cfg.models.get("freeze_encoder", None)
+    except Exception:
+        model_freeze = None
+    if model_freeze is not None:
+        cfg.train.freeze_encoder = bool(model_freeze)
+    return config_hash(cfg)
+
+
+def _check_provider_config_identity(
+    protocol: Protocol,
+    step: Step,
+    provider: Method,
+    ckpt: Path,
+    outputs_base: Path,
+) -> None:
+    """Enforce the provider config-identity gate (PROVIDER-06).
+
+    Reads the resolved provider run's recorded ``device`` and
+    ``config_hash``, recomposes the expected Stage 1 config for that
+    device, and rejects mismatches before any subprocess launches. The
+    device is environment identity (not science) and is normalized to the
+    recorded value; every other key must match exactly.
+    """
+    import json as _json
+
+    run_dir = ckpt.parent.parent
+    meta_path = run_dir / "run_meta.json"
+    try:
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CheckpointError(
+            f"Provider run {run_dir} has no readable run_meta.json; cannot "
+            "verify its config identity."
+        ) from exc
+    if not isinstance(meta, dict) or not meta.get("config_hash"):
+        raise CheckpointError(
+            f"Provider run {run_dir} records no config_hash; failing closed "
+            "instead of consuming an unidentified artifact."
+        )
+    expected = _expected_stage1_config_hash(
+        protocol, provider, step.seed, outputs_base, meta.get("device"),
+    )
+    if meta.get("config_hash") != expected:
+        raise CheckpointError(
+            f"Provider {provider.name!r} (task={provider.task!r}, seed={step.seed}) "
+            f"config mismatch: run {run_dir.name} records "
+            f"config_hash {meta.get('config_hash')!r} but the manifest resolves "
+            f"{expected!r}. The provider checkpoint was trained from a "
+            "different configuration — re-train the provider Stage 1 from "
+            "this manifest instead of consuming a stale artifact."
+        )
+
+
 def _require_stage2_prereq(
-    step: Step, outputs_base: Path, expected_commit: str | None = None
+    step: Step,
+    outputs_base: Path,
+    expected_commit: str | None = None,
+    protocol: Protocol | None = None,
 ) -> Path | None:
     """Resolve the exact Stage 1 checkpoint a stage-2 step bootstraps from.
 
@@ -274,14 +404,27 @@ def _require_stage2_prereq(
     next to ``bc``), crashing the load with a dimension mismatch. With
     ``expected_commit``, only provider checkpoints from that git revision are
     eligible.
+
+    Gate stack (all before any subprocess launches):
+
+    * seed-exact completed-run resolution + checkpoint contract
+      (model tree, six-expert count, stage) — every source;
+    * task match (PROVIDER-05): the provider run's own resolved config must
+      name the consuming task. Historical sources skip the check when the
+      run predates ``resolved_config.yaml`` sidecars; final
+      ``*_stage1`` identities always require it;
+    * config identity (PROVIDER-06): for final providers, and only when the
+      calling sweep passes its ``protocol``, the provider run's recorded
+      config hash must equal the manifest-resolved Stage 1 hash.
     """
     req = step.required_checkpoint()
     if req is None:
         return None
     model, stage = req
     try:
+        source = step.method.stage2_source
         source_tag = (
-            step.method.output_tag if step.method.stage2_source == "self" else step.method.task
+            step.method.output_tag if source == "self" else step.method.task
         )
         ckpt = resolve_stage_ckpt(
             outputs_base,
@@ -312,6 +455,34 @@ def _require_stage2_prereq(
         expected_num_experts=expected_experts,
         expected_stage=stage,
     )
+    # PROVIDER-05: exact task match from the provider run's own config.
+    is_final = is_final_provider(step.method.stage2_source)
+    if step.method.task is not None:
+        try:
+            verify_provider_task(ckpt, expected_task=step.method.task)
+        except CheckpointError:
+            if is_final:
+                raise
+            # Historical sources: runs predating resolved_config.yaml
+            # sidecars stay resolvable (frozen behavior); anything carrying
+            # the sidecar is still checked.
+            run_dir = ckpt.parent.parent
+            if (run_dir / "resolved_config.yaml").is_file():
+                raise
+    # PROVIDER-06: config-identity gate for final providers.
+    if is_final and protocol is not None:
+        provider_name = provider_method_name(step.method.stage2_source)
+        provider = (
+            protocol.method_by_name(provider_name, task=step.method.task)
+            if provider_name is not None
+            else None
+        )
+        if provider is None:  # pragma: no cover - validated at load time
+            raise CheckpointError(
+                f"{step.method.name} stage 2 provider "
+                f"{step.method.stage2_source!r} is missing from the protocol."
+            )
+        _check_provider_config_identity(protocol, step, provider, ckpt, outputs_base)
     return ckpt
 
 
@@ -321,9 +492,11 @@ def _auto_dependency_provider(
     """Return the Stage 1 provider the runner should auto-train, or ``None``.
 
     Mirrors the plan-level dependency policy: providers are the default
-    ``bc``/``phaseforge`` cells of the consumer's task, and explicit scoping
-    (``--stage``, ``--eval-only``) disables injection so a deliberately
-    narrowed sweep still fails pre-flight.
+    Stage 1 cells of the consumer's task (historical ``bc``/``phaseforge``
+    or the final ``*_stage1`` identities resolved through
+    :func:`provider_method_name`), and explicit scoping (``--stage``,
+    ``--eval-only``) disables injection so a deliberately narrowed sweep
+    still fails pre-flight.
     """
     if args.eval_only or args.stage is not None:
         return None
@@ -333,9 +506,20 @@ def _auto_dependency_provider(
     if req is None:
         return None
     model, stage = req
-    if stage != 1 or model not in ("bc", "phaseforge"):
+    if stage != 1:
         return None
-    return protocol.method_by_name(model, task=step.method.task)
+    source = step.method.stage2_source
+    if source == "self":
+        # Legacy behavior preserved exactly: only a self-sourced method
+        # whose model shares the historical provider name (in practice the
+        # canonical "phaseforge" cell) re-injects its own Stage 1.
+        if model not in ("bc", "phaseforge"):
+            return None
+        return protocol.method_by_name(model, task=step.method.task)
+    provider_name = provider_method_name(source)
+    if provider_name is None:
+        return None
+    return protocol.method_by_name(provider_name, task=step.method.task)
 
 
 def _run_dependency_step(
@@ -402,7 +586,7 @@ def _resolve_stage2_with_auto_dependency(
     fail loudly. Returns ``None`` for steps that load no prerequisite.
     """
     try:
-        return _require_stage2_prereq(step, outputs_base, expected_commit)
+        return _require_stage2_prereq(step, outputs_base, expected_commit, protocol)
     except CheckpointError:
         provider = _auto_dependency_provider(step, protocol, args)
         if provider is None:
@@ -411,7 +595,7 @@ def _resolve_stage2_with_auto_dependency(
         _run_dependency_step(
             dep, protocol, outputs_base, state, args, toolhang_python, expected_commit
         )
-        return _require_stage2_prereq(step, outputs_base, expected_commit)
+        return _require_stage2_prereq(step, outputs_base, expected_commit, protocol)
 
 
 def _eval_target(
@@ -636,6 +820,23 @@ def run(args: argparse.Namespace) -> int:
         print(f"[runner] ERROR loading manifest: {exc}", file=sys.stderr)
         return 2
 
+    if args.verify_gates:
+        from phaseforge.runner.verify import format_gates_report, run_final_gates
+
+        try:
+            seeds = [int(s) for s in _split_list(args.seeds)] or None
+        except ValueError:
+            print(f"[runner] ERROR: --seeds must be integers: {args.seeds}", file=sys.stderr)
+            return 2
+        try:
+            report = run_final_gates(_manifest_path(args), outputs_base, seeds=seeds)
+        except ProtocolError as exc:
+            print(f"[runner] ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(format_gates_report(report))
+        failed = [g for g, r in report["gates"].items() if r["status"] != "pass"]
+        return 2 if failed else 0
+
     if args.list:
         try:
             selection = resolve_selection(protocol, _selection_spec(args))
@@ -814,7 +1015,7 @@ def _print_dry_run(
         if step.kind == "eval":
             ckpt_abs = _eval_target(step, outputs_base, state, expected_commit)
         else:
-            ckpt_abs = _require_stage2_prereq(step, outputs_base, expected_commit)
+            ckpt_abs = _require_stage2_prereq(step, outputs_base, expected_commit, protocol)
         cmd = step_command(
             step, ckpt_path=ckpt_abs, outputs_base=outputs_base, defaults=protocol.defaults
         )

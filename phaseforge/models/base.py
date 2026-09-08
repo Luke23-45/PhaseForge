@@ -36,6 +36,14 @@ class ModelOutput:
     gate_logits: Tensor | None = None
     """(B, E) — raw gate logits over all experts (for metric logging)."""
 
+    clean_gate_logits: Tensor | None = None
+    """(B, E) — deterministic pre-exploration gate logits (ROUTER-04).
+
+    Reported by MoE models whose router exposes them (both in-tree routers
+    after the Group 2 change); ``None`` for dense models and legacy
+    baselines. The Stage 2 margin loss consumes this when present so
+    training-time exploration noise never shifts the margin targets."""
+
     aux_losses: dict[str, Tensor] = field(default_factory=dict)
     """Auxiliary losses: keys may include ``"balance"``, ``"phase"``."""
 

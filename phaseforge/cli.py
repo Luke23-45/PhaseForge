@@ -395,6 +395,10 @@ def _finalize_training_run(
     except Exception:
         logger.exception("Failed to copy the cache data provenance into %s.", output_dir.name)
     try:
+        _copy_topo_provenance(cfg, output_dir, data_config_hash=data_config_hash)
+    except Exception:
+        logger.exception("Failed to copy the topo provenance into %s.", output_dir.name)
+    try:
         run_writer.mark_completed()
     except Exception:
         logger.exception("Failed to mark run %s completed.", run_id)
@@ -416,6 +420,10 @@ def _finalize_training_run(
         for optional in ("metadata/init_routing.json", "metadata/init_expert.json"):
             if (output_dir / optional).is_file():
                 manifest_inputs[optional] = optional
+        # PROVIDER-08: the topology artifact identity travels with every run
+        # that consumed phase_topo (written by _copy_topo_provenance above).
+        if (output_dir / "metadata" / "topo_provenance.json").is_file():
+            manifest_inputs["metadata/topo_provenance.json"] = "metadata/topo_provenance.json"
         write_artifact_manifest(output_dir, manifest_inputs)
     except Exception:
         logger.exception("Failed to write the artifact manifest for run %s.", run_id)
@@ -480,6 +488,93 @@ def _copy_data_provenance(
                 exc_info=True,
             )
     copy_cache_provenance(output_dir, processed_cache_root(), config_hash_val)
+
+
+def _copy_topo_provenance(
+    cfg: DictConfig, output_dir: Path, data_config_hash: str | None = None
+) -> None:
+    """Copy the topology artifact identity into the run directory.
+
+    Writes ``metadata/topo_provenance.json`` recording the exact PELT
+    discovery artifact this run consumed (PROVIDER-08 / DATA-04): regime
+    count, method, hyper-parameters, file checksums, and quality report, as
+    staged by the data pipeline under ``<cache>/topo_artifact/``. Runs
+    without topology enabled (``data.topo`` absent or disabled) record
+    nothing and return silently. Best effort like the data provenance copy:
+    callers log failures without failing the run, but a topo-enabled run
+    whose artifact is missing is logged loudly (the trainer preflight
+    already fails closed on missing ``phase_topo`` labels themselves).
+    """
+    from phaseforge.data.paths import processed_cache_root
+
+    topo_cfg = cfg.data.get("topo", None) if hasattr(cfg.data, "get") else None
+    if topo_cfg is None or not bool(topo_cfg.get("enabled", False)):
+        return
+    env_path = output_dir / "metadata" / "environment.json"
+    config_hash_val = data_config_hash
+    if config_hash_val is None:
+        from phaseforge.data.ingestion.cache_manager import CacheManager
+
+        config_hash_val = CacheManager.compute_hash(cfg.data)
+    if env_path.is_file():
+        try:
+            env = json.loads(env_path.read_text(encoding="utf-8"))
+            recorded = env.get("data_config_hash")
+            if recorded:
+                config_hash_val = str(recorded)
+        except (OSError, ValueError):
+            logger.warning(
+                "Could not read environment.json to resolve the effective "
+                "cache hash for topo provenance — falling back to the "
+                "computed data-config hash.",
+                exc_info=True,
+            )
+    manifest_path = (
+        Path(processed_cache_root())
+        / str(config_hash_val)
+        / "topo_artifact"
+        / "topo_manifest.json"
+    )
+    if not manifest_path.is_file():
+        logger.warning(
+            "Topo is enabled but no artifact manifest exists at %s — the run "
+            "consumed phase_topo labels without a recorded artifact identity. "
+            "Re-ingest the cache with topo discovery enabled.",
+            manifest_path,
+        )
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.warning(
+            "Could not read topo artifact manifest at %s.",
+            manifest_path,
+            exc_info=True,
+        )
+        return
+    if not isinstance(manifest, dict):
+        logger.warning("Topo artifact manifest at %s is not a JSON object.", manifest_path)
+        return
+    payload = {
+        "cache_hash": str(config_hash_val),
+        "source_manifest": str(manifest_path),
+        "version": manifest.get("version"),
+        "method": manifest.get("method"),
+        "task_name": manifest.get("task_name"),
+        "num_regimes": manifest.get("num_regimes"),
+        "hyper_params": manifest.get("hyper_params"),
+        "checksums": manifest.get("checksums"),
+        "quality_report": manifest.get("quality_report"),
+    }
+    meta_dir = output_dir / "metadata"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    (meta_dir / "topo_provenance.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8"
+    )
+    logger.info(
+        "Recorded topo provenance (K=%s) to metadata/topo_provenance.json",
+        payload.get("num_regimes"),
+    )
 
 
 def _phase_class_weights(
@@ -624,7 +719,14 @@ def _train_body(
     if stage == 2:
         ckpt_path = cfg.train.get("stage1_ckpt_path")
 
-        if hasattr(model, "bootstrap_moe"):
+        # Most bootstrapped models need a Stage 1 checkpoint to initialise
+        # encoder + action_head. The historical scratch oracle (no action
+        # head, no expert init) trains fully from random weights and opts
+        # out via requires_stage1_checkpoint instead of being forced through
+        # a checkpoint it never consumed.
+        if hasattr(model, "bootstrap_moe") and getattr(
+            model, "requires_stage1_checkpoint", True
+        ):
             # Models with bootstrapping (PhaseBootstrappedMoE, WarmStartMoE)
             # need a Stage 1 checkpoint to initialise encoder + action_head.
             if not ckpt_path:

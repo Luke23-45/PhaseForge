@@ -380,6 +380,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 },
                 latent=latent,
                 info=moe_out.info,
+                clean_gate_logits=moe_out.clean_gate_logits,
             )
         else:
             raise RuntimeError(f"Invalid stage {self._stage}")
@@ -655,6 +656,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
             proto_source_norm = "dynamic"
 
         all_phases: Tensor | None = None
+        # Group 1 (DATA-04): label-mapping provenance recorded in
+        # _expert_init_info below. Defaults cover data-free router inits
+        # (e.g. "random"); data-driven paths override them.
+        effective_num_phases: int = num_phases
+        topo_label_mapping: list[int] | None = None
         if needs_data:
             logger.info(
                 "Scanning training dataloader for bootstrap "
@@ -742,6 +748,12 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 if proto_source_norm in ("topo", "dynamic"):
                     unique_labels, inverse_indices = torch.unique(all_phases, return_inverse=True)
                     effective_num_phases = len(unique_labels)
+                    # DATA-04: record the documented unique-to-contiguous
+                    # remapping so every task/seed consumer can prove it used
+                    # the same label mapping. The raw vocabulary (e.g. PELT
+                    # regime ids) maps to contiguous prototype indices via
+                    # this ordered list: contiguous_id -> raw_label.
+                    topo_label_mapping = [int(v) for v in unique_labels.tolist()]
                     all_phases = inverse_indices
                     logger.info(
                         f"Dynamic/topo regimes mapped to {effective_num_phases} "
@@ -749,6 +761,7 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                     )
                 else:
                     effective_num_phases = num_phases
+                    topo_label_mapping = None
             elif phases_list:
                 all_phases = torch.cat(phases_list, dim=0)
 
@@ -1014,6 +1027,11 @@ class PhaseBootstrappedMoE(BaseManipulationModel):
                 "top_k": int(self.moe_layer.router.top_k),
                 "init_type": r_type,
                 "init_seed": int(cluster_seed),
+                "prototype_source": str(proto_source_norm),
+                "effective_num_phases": int(effective_num_phases),
+                "label_mapping": (
+                    list(topo_label_mapping) if topo_label_mapping is not None else None
+                ),
                 "init_mapping_mode": (
                     str(router_cfg.get("mapping_mode")) if "mapping_mode" in router_cfg else None
                 ),

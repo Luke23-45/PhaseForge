@@ -287,6 +287,19 @@ def resolve_checkpoint_source(model_name: str) -> str:
         "plain_encoder_phase_bootstrap": "bc",
         "phase_pretrain_random_router": "phaseforge",
         "teacher_forced": "phaseforge",
+        # Final-aligned family (Group 3): explicit Stage 1 sources. Plain
+        # and factorial rows train from the normalized-BC provider;
+        # random-router, scratch, softmax, and teacher-forced rows train
+        # from the proposed topology/SupCon provider. The static-rule row
+        # trains from its own rule-label provider (self). Historical
+        # entries above are untouched.
+        "precision_residual_plain_encoder": "final_aligned_bc",
+        "precision_residual_factorial_floor": "final_aligned_bc",
+        "precision_residual_phase_random_router": "precision_residual_phaseforge",
+        "precision_residual_scratch_moe": "precision_residual_phaseforge",
+        "final_aligned_softmax_top1": "precision_residual_phaseforge",
+        "precision_residual_teacher_forced": "precision_residual_phaseforge",
+        "precision_residual_oracle": "precision_residual_phaseforge",
         "pf_random_random": "phaseforge",
         "pf_centroid_random": "phaseforge",
         "pf_kmeans": "phaseforge",

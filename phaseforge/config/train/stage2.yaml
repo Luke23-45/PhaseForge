@@ -4,6 +4,12 @@ stage: 2
 epochs: 200
 grad_clip_norm: 1.0
 lambda_phase: 0.0         # Phase loss not used in Stage 2
+# Resolved label field for Stage 2 phase diagnostics (routing accuracy,
+# phase-weighted action loss, release-loss gating, dimension logging).
+# Topology rows resolve to "phase_topo"; the Static Rule comparison resolves
+# to "phase". Default "phase" preserves historical behavior; the final
+# manifest overrides this explicitly per method (MAN-04, LABEL-01).
+phase_label_field: "phase"
 # Present so manifest-level overrides of the stage-1 λ schedule compose for
 # every cell. Stage-2 training never reads it (Stage2Trainer has its own
 # _compute_loss) — the value is inert here and always "constant".
@@ -83,6 +89,10 @@ margin:
   enabled: false
   lambda_margin: 1.0
   margin: 0.5
+  # Resolved label field for the Stage 2 margin-routing loss (LABEL-03).
+  # Topology rows resolve to "phase_topo"; the Static Rule comparison
+  # resolves to "phase". Default "phase" preserves historical behavior.
+  label_field: "phase"
 
 # Local contraction regularization (WP6, Professor §8). Disabled by default
 # (exactly 0.0, no extra metrics when off). Enabled only with impedance

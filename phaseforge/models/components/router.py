@@ -32,6 +32,13 @@ class RouterOutput(NamedTuple):
     gate_logits: Tensor  # (B, E) raw logits over all experts
     balance_loss: Tensor  # scalar, auxiliary load-balancing loss
     sticky_loss: Tensor  # scalar, raw (unscaled) history-stickiness loss
+    clean_gate_logits: Tensor | None = None  # (B, E) deterministic pre-exploration logits
+    # ``clean_gate_logits`` carries the gate logits WITHOUT the training-time
+    # exploration noise (ROUTER-04): the linear projection plus the learned
+    # history bias when ``use_history`` is on. In evaluation (noise off) it
+    # equals ``gate_logits``. The Stage 2 margin loss consumes it so training
+    # noise never silently shifts the margin targets; diagnostics keep using
+    # ``gate_logits`` (the actually-dispatched routing signal).
 
 
 class TopKRouter(nn.Module):
@@ -288,6 +295,12 @@ class TopKRouter(nn.Module):
             latent = F.normalize(latent, p=2, dim=-1)
         gate_logits = self.gate_linear(latent)
 
+        # Deterministic pre-exploration logits (ROUTER-04): everything except
+        # the stochastic exploration term below. Reassignment via ``+``
+        # creates new tensors, so this reference keeps tracking the linear
+        # output while ``gate_logits`` advances through noise/history.
+        clean_gate_logits = gate_logits
+
         # Add exploration noise during training
         if self.training and self.noise_std > 0.0 and self.noise_linear is not None:
             noise_logits = self.noise_linear(latent)
@@ -323,6 +336,11 @@ class TopKRouter(nn.Module):
             embed_idx = torch.where(prev_valid, prev_top1 + 1, 0)
             history_bias = self.history_proj(self.history_embedding(embed_idx))
             gate_logits = gate_logits + history_bias
+            # The history bias is learned and deterministic given the batch,
+            # so it belongs to the clean signal too. (Caveat: with
+            # use_history=True the bias derives from the noisy first pass;
+            # all final-matrix rows disable history, where clean is exact.)
+            clean_gate_logits = clean_gate_logits + history_bias
 
             # Stickiness: -log p_t[top1_{t-1}] over samples with a previous
             # step. The final (second-pass) logits define p_t.
@@ -353,7 +371,58 @@ class TopKRouter(nn.Module):
             gate_logits=gate_logits,
             balance_loss=balance_loss * self.balance_coeff,
             sticky_loss=sticky_loss,
+            clean_gate_logits=clean_gate_logits,
         )
+
+    def margin_loss_from_logits(
+        self, gate_logits: Tensor, targets: Tensor, margin: float | None = None
+    ) -> Tensor:
+        """Large-margin loss from gate logits (ROUTER-03 common interface).
+
+        Logit-space mirror of :meth:`PrototypeRouter.margin_loss_from_logits`:
+        where the prototype form penalizes ``m - (d_j - d_y)`` on distances
+        (smaller is better), this penalizes ``m - (l_y - l_j)`` on gate
+        logits (larger is better)::
+
+            L_margin = 1/|B| Σ_i Σ_{j≠y_i} max(0, m − (l_{iy_i} − l_{ij}))
+
+        Callers must pass deterministic pre-exploration logits
+        (:attr:`RouterOutput.clean_gate_logits`) so training-time
+        exploration noise never silently shifts the margin targets
+        (ROUTER-04). The operation preserves gradients to the gate weights.
+
+        Args:
+            gate_logits: ``(B, E)`` deterministic gate logits.
+            targets: ``(B,)`` true regime ids.
+            margin: Override for the locked Stage 2 margin (default ``0.5``,
+                the ``train.margin.margin`` protocol value; the trainer
+                always passes it explicitly in practice).
+
+        Returns:
+            Scalar margin loss tensor (same dtype as ``gate_logits``).
+        """
+        m = 0.5 if margin is None else float(margin)
+        if m < 0.0:
+            raise ValueError(f"margin must be >= 0.0, got {m}.")
+        flat_targets = targets.reshape(-1).long()
+        if gate_logits.ndim != 2 or gate_logits.size(0) != flat_targets.numel():
+            raise ValueError(
+                "gate_logits (B, E) and targets (B,) must share the batch size."
+            )
+        if gate_logits.size(-1) != self.num_experts:
+            raise ValueError(
+                f"gate_logits width {gate_logits.size(-1)} != num_experts {self.num_experts}."
+            )
+        if flat_targets.numel() == 0:
+            return torch.zeros((), device=gate_logits.device, dtype=gate_logits.dtype)
+        if bool((flat_targets < 0).any()) or bool((flat_targets >= self.num_experts).any()):
+            raise ValueError("margin targets are out of range.")
+        correct = gate_logits.float().gather(1, flat_targets.unsqueeze(-1))
+        gaps = correct - gate_logits.float()
+        margins = torch.clamp(m - gaps, min=0.0)
+        eye = torch.zeros_like(margins).scatter_(1, flat_targets.unsqueeze(-1), 1.0)
+        margins = margins * (1.0 - eye)
+        return margins.sum(dim=-1).mean().to(gate_logits.dtype)
 
     def _compute_balance_loss(self, routing_probs: Tensor, gate_logits: Tensor) -> Tensor:
         """Compute the Switch Transformer auxiliary load-balancing loss.

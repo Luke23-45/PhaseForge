@@ -109,6 +109,9 @@ class PrototypeRouter(nn.Module):
             gate_logits=gate_logits,
             balance_loss=balance_loss,
             sticky_loss=torch.zeros((), device=latent.device, dtype=latent.dtype),
+            # No exploration noise exists on this path: the reported logits
+            # already are the deterministic pre-exploration signal (ROUTER-04).
+            clean_gate_logits=gate_logits,
         )
 
     def _balance_loss(self, dists: Tensor) -> Tensor:

@@ -14,6 +14,15 @@ from phaseforge.trains.loops.base import (
     MetricValue,
     _PhaseAccumulator,
 )
+from phaseforge.trains.loops.label_contract import (
+    LOCKED_NUM_CLASSES,
+    describe_run,
+    peek_loader_batch,
+    resolve_label_field,
+    resolve_label_tensor,
+    resolve_margin_label_field,
+    validate_label_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +68,92 @@ class Stage2Trainer(BaseTrainer):
         super().__init__(*args, **kwargs)
         self._val_routing_acc = _PhaseAccumulator(device=self.device)
 
+    def _phase_label_field(self) -> str:
+        """Resolved Stage 2 diagnostic label field (LABEL-01/LABEL-04)."""
+        return resolve_label_field(
+            self.train_cfg, "phase_label_field", cfg=self.cfg, purpose="Stage 2 diagnostics"
+        )
+
+    def _margin_label_field(self) -> str:
+        """Resolved Stage 2 margin-routing label field (LABEL-03)."""
+        return resolve_margin_label_field(self.train_cfg, cfg=self.cfg)
+
+    def _router_num_experts(self) -> int:
+        """Expert count from the active router (margin validation width)."""
+        try:
+            router = getattr(getattr(self.model, "moe_layer", None), "router", None)
+            if router is not None and getattr(router, "num_experts", None) is not None:
+                return int(router.num_experts)
+        except Exception:
+            pass
+        return LOCKED_NUM_CLASSES
+
+    def validate_label_contract(self) -> None:
+        """Preflight: fail closed on missing/invalid Stage 2 label fields.
+
+        Checks the resolved ``phase_label_field`` (diagnostics / weighted
+        losses) and, when the margin loss is enabled, ``margin.label_field``
+        against one sample batch from each split before any optimizer step
+        (LABEL-05 / LABEL-06).
+        """
+        ctx = describe_run(self.cfg)
+        # Peek without perturbing the sampler (see Stage 1 preflight).
+        train_batch = peek_loader_batch(self.train_loader)
+        if train_batch is None:
+            raise RuntimeError(
+                "Stage 2 label preflight: train loader is empty. "
+                f"(method={ctx['method']}, task={ctx['task']}, seed={ctx['seed']})"
+            )
+        val_batch = (
+            peek_loader_batch(self.val_loader) if self.val_loader is not None else None
+        )
+        phase_field = self._phase_label_field()
+        for split, sample in (("train", train_batch), ("val", val_batch)):
+            if sample is None:
+                continue
+            if phase_field not in sample:
+                available = sorted(str(k) for k in sample.keys())
+                raise RuntimeError(
+                    f"Stage 2 label preflight: label field {phase_field!r} "
+                    f"is missing from the {split} batch. "
+                    f"(method={ctx['method']}, task={ctx['task']}, split={split}, "
+                    f"seed={ctx['seed']}, requested_field={phase_field}, "
+                    f"available_keys={available})"
+                )
+            validate_label_values(
+                sample[phase_field], self._router_num_experts(),
+                cfg=self.cfg, field=phase_field,
+                purpose="Stage 2 label preflight", split=split,
+            )
+        margin_cfg = self.train_cfg.get("margin", None)
+        margin_enabled = bool(margin_cfg.get("enabled", False)) if margin_cfg is not None else False
+        if margin_enabled:
+            margin_field = self._margin_label_field()
+            for split, sample in (("train", train_batch), ("val", val_batch)):
+                if sample is None:
+                    continue
+                if margin_field not in sample:
+                    available = sorted(str(k) for k in sample.keys())
+                    raise RuntimeError(
+                        f"Stage 2 label preflight: margin label field {margin_field!r} "
+                        f"is missing from the {split} batch. "
+                        f"(method={ctx['method']}, task={ctx['task']}, split={split}, "
+                        f"seed={ctx['seed']}, requested_field={margin_field}, "
+                        f"available_keys={available})"
+                    )
+                validate_label_values(
+                    sample[margin_field], self._router_num_experts(),
+                    cfg=self.cfg, field=margin_field,
+                    purpose="Stage 2 margin preflight", split=split,
+                )
+
     def fit(self) -> None:
         """Override fit to handle encoder freezing and fine-tuning LR scaling."""
         from hydra.utils import instantiate
+
+        # Group 1 preflight: resolved label fields stop misconfigured
+        # method/task/seed combinations before any optimizer state exists.
+        self.validate_label_contract()
 
         # Precedence: per-model models.freeze_encoder wins when key is present;
         # train.freeze_encoder otherwise; default True.
@@ -180,6 +272,9 @@ class Stage2Trainer(BaseTrainer):
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
         mask = batch.get("padding_mask")  # (B, T)
+        # Resolved diagnostic label field (LABEL-01/LABEL-04): topology rows
+        # use "phase_topo", the Static Rule comparison uses "phase".
+        phase_field = self._phase_label_field()
         # Action Loss (MSE, optionally weighted per dimension and/or per phase)
         phase_weights = self.train_cfg.get("phase_weights", None)
         dim_weights = self.train_cfg.get("dim_weights", None)
@@ -191,11 +286,18 @@ class Stage2Trainer(BaseTrainer):
                 if dw_tensor.numel() == 7 and target_action.size(-1) == 14:
                     dw_tensor = dw_tensor.repeat(2)
                 sq_err = sq_err * dw_tensor
-            if phase_weights is not None and "phase" in batch:
+            if phase_weights is not None:
+                # Fail-closed: a requested weighting with a missing/invalid
+                # field stops instead of silently training unweighted.
+                phase_ids = resolve_label_tensor(
+                    batch, phase_field, cfg=self.cfg,
+                    purpose="Stage 2 phase-weighted action loss",
+                    num_classes=self._router_num_experts(),
+                )
                 weights_tensor = torch.as_tensor(
                     phase_weights, dtype=torch.float32, device=self.device
                 )
-                max_p = int(batch["phase"].max().item()) if batch["phase"].numel() > 0 else 0
+                max_p = int(phase_ids.max().item()) if phase_ids.numel() > 0 else 0
                 if weights_tensor.numel() <= max_p:
                     pad = torch.ones(
                         max_p + 1 - weights_tensor.numel(),
@@ -203,7 +305,7 @@ class Stage2Trainer(BaseTrainer):
                         device=weights_tensor.device,
                     )
                     weights_tensor = torch.cat([weights_tensor, pad])
-                sample_weights = weights_tensor[batch["phase"].long()]
+                sample_weights = weights_tensor[phase_ids.long()]
                 if mask is not None:
                     sq_err = sq_err[mask]
                     sample_weights = sample_weights[mask]
@@ -222,22 +324,31 @@ class Stage2Trainer(BaseTrainer):
             action_loss = F.mse_loss(out.action_pred, target_action)
 
         # Release Kinematics Auxiliary Loss (Professor §4 Intervention C).
-        # When gripper is commanded to open during Place, penalizes lateral command
-        # drift (x, y velocities) to enforce "stop-then-drop" release stability.
-        # Robosuite convention: -1.0 is open (releasing), +1.0 is closed (holding).
+        # When gripper is commanded to open during Place, penalizes lateral
+        # command drift (x, y velocities) to enforce "stop-then-drop"
+        # release stability. Robosuite convention: -1.0 is open
+        # (releasing), +1.0 is closed (holding).
+        # LABEL-09: remains disabled in the final matrix. When enabled in a
+        # future protocol revision it follows the resolved phase field below
+        # (its own label-field contract); it never silently falls back to a
+        # different vocabulary.
         release_loss = _zero_scalar(self.device)
         rel_cfg = self.train_cfg.get("release_loss", None)
         rel_enabled = bool(rel_cfg.get("enabled", False)) if rel_cfg is not None else False
         if rel_enabled and target_action.size(-1) >= 7:
             lambda_rel = float(rel_cfg.get("lambda_rel", 0.1))
             grip_threshold = float(rel_cfg.get("gripper_threshold", 0.0))
+            rel_phase = resolve_label_tensor(
+                batch, phase_field, cfg=self.cfg,
+                purpose="Stage 2 release loss",
+                num_classes=self._router_num_experts(),
+            )
             if target_action.size(-1) >= 14:
                 is_rel_0 = target_action[..., 6] < grip_threshold
                 is_rel_1 = target_action[..., 13] < grip_threshold
-                if "phase" in batch:
-                    place_phase = int(rel_cfg.get("place_phase", 4))
-                    is_rel_0 = is_rel_0 & (batch["phase"] == place_phase)
-                    is_rel_1 = is_rel_1 & (batch["phase"] == place_phase)
+                place_phase = int(rel_cfg.get("place_phase", 4))
+                is_rel_0 = is_rel_0 & (rel_phase == place_phase)
+                is_rel_1 = is_rel_1 & (rel_phase == place_phase)
                 if mask is not None:
                     is_rel_0 = is_rel_0 & mask
                     is_rel_1 = is_rel_1 & mask
@@ -254,9 +365,8 @@ class Stage2Trainer(BaseTrainer):
                 release_loss = lambda_rel * (loss_0 + loss_1)
             else:
                 is_releasing = target_action[..., 6] < grip_threshold
-                if "phase" in batch:
-                    place_phase = int(rel_cfg.get("place_phase", 4))
-                    is_releasing = is_releasing & (batch["phase"] == place_phase)
+                place_phase = int(rel_cfg.get("place_phase", 4))
+                is_releasing = is_releasing & (rel_phase == place_phase)
                 if mask is not None:
                     is_releasing = is_releasing & mask
                 if is_releasing.any():
@@ -336,18 +446,31 @@ class Stage2Trainer(BaseTrainer):
             if margin_fn is None or out.gate_logits is None:
                 raise RuntimeError(
                     "train.margin.enabled=true requires a prototype router "
-                    "(PrototypeRouter.margin_loss_from_logits) emitting gate "
+                    "(or any router with the common margin_loss_from_logits "
+                    "interface, e.g. TopKRouter) emitting gate "
                     "logits; the active model provides neither."
                 )
-            targets = batch["phase"]
+            # ROUTER-04: margin targets use deterministic pre-exploration
+            # logits so training-time exploration noise (TopKRouter) never
+            # silently shifts them. Prototype routers report identical
+            # tensors for both; TopK routers report the pre-noise signal.
+            # Diagnostics (entropy/NMI/utilization) intentionally keep using
+            # out.gate_logits — the actually-dispatched routing signal.
+            clean = getattr(out, "clean_gate_logits", None)
+            logits_source = clean if clean is not None else out.gate_logits
+            targets = resolve_label_tensor(
+                batch, self._margin_label_field(), cfg=self.cfg,
+                purpose="Stage 2 margin",
+                num_classes=int(logits_source.size(-1)),
+            )
             if mask is not None:
-                flat_logits = out.gate_logits.view(-1, out.gate_logits.size(-1))
+                flat_logits = logits_source.view(-1, logits_source.size(-1))
                 flat_targets = targets.view(-1)
                 keep = mask.view(-1).bool()
                 margin_logits = flat_logits[keep]
                 margin_targets = flat_targets[keep]
             else:
-                margin_logits = out.gate_logits
+                margin_logits = logits_source
                 margin_targets = targets
             if margin_targets.numel() == 0:
                 loss_margin = _zero_scalar(self.device)
@@ -376,8 +499,8 @@ class Stage2Trainer(BaseTrainer):
                     metrics["loss_action_pos"] = diff_sq[:, 0:3].mean().detach()
                     metrics["loss_action_rot"] = diff_sq[:, 3:6].mean().detach()
                     metrics["loss_action_grip"] = diff_sq[:, 6].mean().detach()
-                    if "phase" in batch:
-                        p_flat = batch["phase"]
+                    if phase_field in batch:
+                        p_flat = batch[phase_field]
                         if mask is not None:
                             p_flat = p_flat[mask]
                         p4 = p_flat == 4
@@ -491,13 +614,17 @@ class Stage2Trainer(BaseTrainer):
             out = self.model(batch)
             _, metrics = self._compute_loss(batch, out=out)
 
-            # Routing accuracy against GT phases when the model emits phase_logits
-            # in Stage 2: the teacher_forced cell (label-free eval path) and
-            # the V2-D teacher path both qualify.
+            # Routing accuracy against the resolved diagnostic field when the
+            # model emits phase_logits in Stage 2 (LABEL-04): the
+            # teacher_forced cell (label-free eval path) and the V2-D teacher
+            # path both qualify.
             if out.phase_logits is not None:
-                self._val_routing_acc.update(
-                    out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
-                )
+                _vfield = self._phase_label_field()
+                _vt = batch.get(_vfield, batch.get("phase"))
+                if _vt is not None:
+                    self._val_routing_acc.update(
+                        out.phase_logits, _vt, mask=batch.get("padding_mask")
+                    )
 
             n = self._batch_sample_count(batch)
             if n == 0:
@@ -515,7 +642,9 @@ class Stage2Trainer(BaseTrainer):
 
             if out.expert_indices is not None:
                 expert_indices_all.append(out.expert_indices.detach())
-                phases_all.append(batch["phase"])
+                # NMI diagnostics follow the resolved field (LABEL-04).
+                _nfield = self._phase_label_field()
+                phases_all.append(batch.get(_nfield, batch["phase"]))
                 if "trajectory_id" in batch:
                     traj_id_all.append(batch["trajectory_id"])
                     traj_pos_all.append(batch["trajectory_position"])

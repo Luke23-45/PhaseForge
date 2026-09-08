@@ -4,6 +4,12 @@ stage: 1
 epochs: 100
 grad_clip_norm: 1.0
 lambda_phase: 1.0         # Weight on the auxiliary phase classification loss
+# Resolved label field for the Stage 1 auxiliary phase-classification loss
+# and phase diagnostics (LABEL-01, LABEL-04). Topology rows resolve to
+# "phase_topo"; the Static Rule comparison resolves to "phase".
+# Default "phase" preserves the historical bit-identical behavior; the final
+# manifest overrides this explicitly per method (MAN-04).
+phase_label_field: "phase"
 # Supervised contrastive regime alignment (WP3, Professor §5). Disabled by
 # default: `enabled=false` contributes exactly 0.0 with no extra metrics,
 # preserving the frozen protocol bit-for-bit. Enable with
@@ -59,6 +65,11 @@ margin:
   enabled: false
   lambda_margin: 1.0
   margin: 0.5
+  # Resolved label field for the Stage 2 margin loss. Inert in Stage 1
+  # (Stage1Trainer never reads it); present so manifest-level overrides
+  # compose for every cell regardless of stage. Topology rows use
+  # "phase_topo"; the Static Rule comparison uses "phase".
+  label_field: "phase"
 lipschitz:
   enabled: false
   lambda_lip: 0.1

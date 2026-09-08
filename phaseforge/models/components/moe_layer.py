@@ -28,6 +28,19 @@ class MoEOutput(NamedTuple):
     gate_logits: Tensor  # (B, E)
     sticky_loss: Tensor  # scalar, raw history-stickiness loss (V2-C)
     info: dict[str, Tensor] | None = None  # impedance diagnostics (WP5)
+    # (B, E) deterministic pre-exploration logits (ROUTER-04).
+    clean_gate_logits: Tensor | None = None
+
+
+def _clean_logits(router_out: RouterOutput) -> Tensor:
+    """Return the deterministic pre-exploration logits with fallback.
+
+    Routers reporting ``clean_gate_logits`` (both in-tree flavors after the
+    ROUTER-04 change) use it; any foreign router-like returning a legacy
+    5-field output falls back to ``gate_logits`` so dispatch never breaks.
+    """
+    clean = getattr(router_out, "clean_gate_logits", None)
+    return clean if clean is not None else router_out.gate_logits
 
 
 class MoELayer(nn.Module):
@@ -205,6 +218,7 @@ class MoELayer(nn.Module):
                 gate_logits=router_out.gate_logits,
                 sticky_loss=router_out.sticky_loss,
                 info=None,
+                clean_gate_logits=_clean_logits(router_out),
             )
 
         out_dim = cast(ExpertMLP, self.experts[0]).output_dim
@@ -261,6 +275,7 @@ class MoELayer(nn.Module):
             gate_logits=router_out.gate_logits,
             sticky_loss=router_out.sticky_loss,
             info=None,
+            clean_gate_logits=_clean_logits(router_out),
         )
 
     def _forward_impedance(
@@ -312,6 +327,7 @@ class MoELayer(nn.Module):
                 gate_logits=router_out.gate_logits,
                 sticky_loss=router_out.sticky_loss,
                 info=info,
+                clean_gate_logits=_clean_logits(router_out),
             )
 
         targets_all = torch.zeros(
@@ -353,4 +369,5 @@ class MoELayer(nn.Module):
             gate_logits=router_out.gate_logits,
             sticky_loss=router_out.sticky_loss,
             info=info,
+            clean_gate_logits=_clean_logits(router_out),
         )

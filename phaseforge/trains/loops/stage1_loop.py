@@ -14,6 +14,15 @@ from phaseforge.trains.loops.base import (
     MetricValue,
     _PhaseAccumulator,
 )
+from phaseforge.trains.loops.label_contract import (
+    LOCKED_NUM_CLASSES,
+    describe_run,
+    peek_loader_batch,
+    resolve_label_field,
+    resolve_label_tensor,
+    resolve_supcon_label_field,
+    validate_label_values,
+)
 
 
 def _phase_ce(
@@ -113,6 +122,96 @@ class Stage1Trainer(BaseTrainer):
         self._train_phase_acc = _PhaseAccumulator(device=self.device)
         self._val_phase_acc = _PhaseAccumulator(device=self.device)
 
+    def _phase_label_field(self) -> str:
+        """Resolved Stage 1 phase-CE / diagnostic label field (LABEL-01)."""
+        return resolve_label_field(
+            self.train_cfg, "phase_label_field", cfg=self.cfg, purpose="Stage 1 phase CE"
+        )
+
+    def _supcon_label_field(self) -> str:
+        """Resolved Stage 1 SupCon label field (LABEL-02)."""
+        return resolve_supcon_label_field(self.train_cfg, cfg=self.cfg)
+
+    def validate_label_contract(self) -> None:
+        """Preflight: fail closed on missing/invalid label fields (LABEL-05/06).
+
+        Checks one sample batch from the train loader (and the val loader
+        when present) before any optimizer step. Called at the start of
+        :meth:`fit` so misconfigured method/task/seed combinations stop
+        before training begins.
+        """
+        ctx = describe_run(self.cfg)
+        # Peek without perturbing the sampler: the helper restores the
+        # loader generator so epoch-1 shuffles bit-identically with or
+        # without this preflight.
+        train_batch = peek_loader_batch(self.train_loader)
+        if train_batch is None:
+            raise RuntimeError(
+                f"Stage 1 label preflight: train loader is empty. "
+                f"(method={ctx['method']}, task={ctx['task']}, seed={ctx['seed']})"
+            )
+        val_batch = (
+            peek_loader_batch(self.val_loader) if self.val_loader is not None else None
+        )
+        needs_phase = True
+        try:
+            needs_phase = getattr(self.model, "phase_head", None) is not None
+        except Exception:
+            needs_phase = True
+        # Models without a phase head (e.g. BC) skip the CE field unless
+        # SupCon needs labels.
+        supcon_cfg = self.train_cfg.get("supcon", None)
+        supcon_enabled = bool(supcon_cfg.get("enabled", False)) if supcon_cfg is not None else False
+        if needs_phase or supcon_enabled:
+            phase_field = self._phase_label_field()
+            for split, sample in (("train", train_batch), ("val", val_batch)):
+                if sample is None:
+                    continue
+                if phase_field not in sample:
+                    available = sorted(str(k) for k in sample.keys())
+                    raise RuntimeError(
+                        f"Stage 1 label preflight: label field {phase_field!r} "
+                        f"is missing from the {split} batch. "
+                        f"(method={ctx['method']}, task={ctx['task']}, split={split}, "
+                        f"seed={ctx['seed']}, requested_field={phase_field}, "
+                        f"available_keys={available})"
+                    )
+                # Range check against the phase head when present, else the
+                # locked six-class contract (subset passes, e.g. unit tests
+                # with 2-3 phases; out-of-range fails).
+                head = getattr(self.model, "phase_head", None)
+                head_phases = getattr(head, "num_phases", None) if head is not None else None
+                try:
+                    num_classes = (
+                        int(head_phases) if head_phases is not None else LOCKED_NUM_CLASSES
+                    )
+                except (TypeError, ValueError):
+                    num_classes = LOCKED_NUM_CLASSES
+                validate_label_values(
+                    sample[phase_field], num_classes,
+                    cfg=self.cfg, field=phase_field,
+                    purpose="Stage 1 label preflight", split=split,
+                )
+        if supcon_enabled:
+            supcon_field = self._supcon_label_field()
+            for split, sample in (("train", train_batch), ("val", val_batch)):
+                if sample is None:
+                    continue
+                if supcon_field not in sample:
+                    available = sorted(str(k) for k in sample.keys())
+                    raise RuntimeError(
+                        f"Stage 1 label preflight: SupCon label field {supcon_field!r} "
+                        f"is missing from the {split} batch. "
+                        f"(method={ctx['method']}, task={ctx['task']}, split={split}, "
+                        f"seed={ctx['seed']}, requested_field={supcon_field}, "
+                        f"available_keys={available})"
+                    )
+
+    def fit(self) -> None:
+        """Run preflight label validation before the training lifecycle."""
+        self.validate_label_contract()
+        super().fit()
+
     def _effective_lambda_phase(self) -> float:
         """Effective λ(t) for the auxiliary phase loss at the current epoch.
 
@@ -162,8 +261,43 @@ class Stage1Trainer(BaseTrainer):
 
         # Ground truths
         target_action = batch["action"]  # (B, A) or (B, T, A)
-        target_phase = batch["phase"]  # (B,) or (B, T)
+        # Resolved label field (LABEL-01/LABEL-04): topology rows use
+        # "phase_topo", the Static Rule comparison uses "phase". Fail-closed
+        # with method/task/split/field context when absent or invalid.
+        phase_field = self._phase_label_field()
         mask = batch.get("padding_mask")  # (B, T) boolean or None
+        # Eagerly resolve the declared field so a misconfigured vocabulary
+        # stops before any loss is computed (LABEL-06). Models without a
+        # phase head and without SupCon (e.g. BC) consume no phase labels:
+        # absence is honest there, never fabricated.
+        target_phase: torch.Tensor | None = None
+        try:
+            _num_classes_probe = (
+                int(out.phase_logits.size(-1))
+                if out is not None and getattr(out, "phase_logits", None) is not None
+                else LOCKED_NUM_CLASSES
+            )
+            target_phase = resolve_label_tensor(
+                batch, phase_field, cfg=self.cfg,
+                purpose="Stage 1 phase CE",
+                num_classes=_num_classes_probe,
+            )
+        except (RuntimeError, ValueError):
+            # Re-raise when any phase consumer is active; tolerate absence
+            # only for head-less, SupCon-less models.
+            _supcon_on = False
+            try:
+                _sc = self.train_cfg.get("supcon", None)
+                _supcon_on = bool(_sc.get("enabled", False)) if _sc is not None else False
+            except Exception:
+                _supcon_on = False
+            _needs_phase = (
+                (out is not None and getattr(out, "phase_logits", None) is not None)
+                or _supcon_on
+            )
+            if _needs_phase:
+                raise
+            target_phase = None
 
         lambda_phase = self._effective_lambda_phase()
         # The raw phase loss is always computed (and always reported on the
@@ -231,10 +365,11 @@ class Stage1Trainer(BaseTrainer):
         phase_loss = torch.tensor(0.0, device=self.device)
         if out.phase_logits is not None and base_lambda_positive and lambda_phase > 0.0:
             logits = out.phase_logits
-            num_classes = logits.size(-1)
-            if (target_phase >= num_classes).any() or (target_phase < 0).any():
-                phase_loss = torch.tensor(0.0, device=self.device)
-            elif mask is not None:
+            # Range was already validated against this head width by the
+            # eager resolve_label_tensor above (LABEL-06 fail-closed); the
+            # assert below only narrows the type, it never silently zeroes.
+            assert target_phase is not None  # fail-closed above when head exists
+            if mask is not None:
                 # Reshape for CE: (B*T, num_classes) and (B*T,)
                 logits_flat = logits.view(-1, logits.size(-1))
                 targets_flat = target_phase.view(-1)
@@ -271,7 +406,9 @@ class Stage1Trainer(BaseTrainer):
             assert supcon_cfg is not None
             supcon_lambda = float(supcon_cfg.get("lambda_sc", 1.0))
             temperature = float(supcon_cfg.get("temperature", 0.07))
-            label_field = str(supcon_cfg.get("label_field", "phase"))
+            # Resolved SupCon label field (LABEL-02/LABEL-04) with
+            # method/task/split/field context on failure.
+            label_field = self._supcon_label_field()
             if out.latent is None:
                 raise RuntimeError(
                     "train.supcon.enabled=true but the model forward did not "
@@ -279,14 +416,15 @@ class Stage1Trainer(BaseTrainer):
                     "the exact latents the action head consumed."
                 )
             latents = out.latent
-            regime_labels = batch.get(label_field)
-            if regime_labels is None:
-                raise RuntimeError(
-                    f"train.supcon.label_field={label_field!r} is missing from "
-                    "the batch. Enable the matching discovery source "
-                    "(data.topo.enabled / data.dynamics.enabled) and re-ingest, "
-                    "or point label_field at 'phase'."
-                )
+            regime_labels = resolve_label_tensor(
+                batch, label_field, cfg=self.cfg,
+                purpose="Stage 1 SupCon",
+                num_classes=(
+                    int(out.phase_logits.size(-1))
+                    if getattr(out, "phase_logits", None) is not None
+                    else LOCKED_NUM_CLASSES
+                ),
+            )
             if mask is not None:
                 flat_latents = latents.view(-1, latents.size(-1))
                 flat_labels = regime_labels.view(-1)
@@ -346,9 +484,15 @@ class Stage1Trainer(BaseTrainer):
         n: int,
     ) -> None:
         if out.phase_logits is not None:
-            self._train_phase_acc.update(
-                out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
-            )
+            # Diagnostics follow the resolved field (LABEL-04); fall back to
+            # the legacy key only when the configured field is absent here
+            # (per-batch loss already failed closed when active).
+            _field = self._phase_label_field()
+            _targets = batch.get(_field, batch.get("phase"))
+            if _targets is not None:
+                self._train_phase_acc.update(
+                    out.phase_logits, _targets, mask=batch.get("padding_mask")
+                )
 
     def epoch_train_metrics(self) -> dict[str, float]:
         if not self._train_phase_acc.has_data:
@@ -372,9 +516,12 @@ class Stage1Trainer(BaseTrainer):
         metrics: dict[str, MetricValue],
     ) -> None:
         if out.phase_logits is not None:
-            self._val_phase_acc.update(
-                out.phase_logits, batch["phase"], mask=batch.get("padding_mask")
-            )
+            _field = self._phase_label_field()
+            _targets = batch.get(_field, batch.get("phase"))
+            if _targets is not None:
+                self._val_phase_acc.update(
+                    out.phase_logits, _targets, mask=batch.get("padding_mask")
+                )
 
     def _finalize_validation_pool(self, agg_metrics: dict[str, float]) -> None:
         if self._val_phase_acc.has_data:

@@ -16,6 +16,13 @@ phase supervision in the pretraining encoder (same partial-warm experts,
 same random-vs-centroid router contrast); comparing it against the canonical
 ``phaseforge`` isolates the phase-supervision effect given the same centroid
 router init.
+
+Final-aligned rows (``precision_residual_plain_encoder``,
+``precision_residual_factorial_floor``) generalize this class without
+forking it: a ``PrototypeRouter`` with a residual (beta-zero) expert, a
+resolved ``bootstrap_label_field`` (``phase_topo``), and an explicit
+``router_init`` policy (``centroid`` vs ``random``). Historical configs keep
+their exact defaults (TopK router, ``phase`` labels, centroid init).
 """
 
 from __future__ import annotations
@@ -36,10 +43,22 @@ from phaseforge.models.components.expert import (
     partial_reinit_experts_from_action_head,
     warm_start_experts_from_action_head,
 )
+from phaseforge.models.components.impedance_expert import ResidualImpedanceExpert
 from phaseforge.models.components.moe_layer import MoELayer
+from phaseforge.models.components.prototype_router import PrototypeRouter
 from phaseforge.models.components.router import TopKRouter
 
 logger = logging.getLogger(__name__)
+
+#: Label vocabularies accepted for the centroid bootstrap. Mirrors
+#: ``phaseforge.trains.loops.label_contract.ALLOWED_LABEL_FIELDS`` (kept
+#: local so model construction never imports the trainer package).
+_BOOTSTRAP_LABEL_FIELDS = frozenset({"phase", "phase_rule", "phase_topo", "phase_dynamic"})
+
+#: Router initialization modes registered for this model (MODEL-12).
+#: ``centroid`` installs own-latent prototypes; ``random`` keeps the
+#: construction-time weights (factorial floor). Anything else fails closed.
+_ROUTER_INIT_TYPES = frozenset({"centroid", "random"})
 
 
 class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
@@ -57,20 +76,34 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
     Args:
         encoder: The StateEncoder instance (loaded from the BC Stage 1 ckpt).
         action_head: The ActionHead used in Stage 1.
-        router: The TopKRouter for Stage 2.
-        expert: A single ExpertMLP template to be cloned for Stage 2.
+        router: The router for Stage 2 (TopKRouter for historical cells,
+            PrototypeRouter for final-aligned rows).
+        expert: A single expert template to be cloned for Stage 2
+            (ExpertMLP for historical cells, ResidualImpedanceExpert with
+            beta zero for final-aligned rows).
         num_phases: Number of phases used by the phase labeler (drives the
             centroid computation; there is no phase head in this model).
+        expert_init: Config-driven expert init (``warmstart`` or
+            ``partial_warm``); the registered configs pin the canonical 50%
+            partial warm-start.
+        router_init: Router init policy (``centroid`` default preserves the
+            historical behavior; ``random`` keeps construction weights for
+            the factorial floor).
+        bootstrap_label_field: Batch label key the centroids are computed
+            from (``phase`` default preserves the historical behavior;
+            final-aligned rows use ``phase_topo``).
     """
 
     def __init__(
         self,
         encoder: StateEncoder,
         action_head: ActionHead,
-        router: TopKRouter,
-        expert: ExpertMLP,
+        router: TopKRouter | PrototypeRouter,
+        expert: ExpertMLP | ResidualImpedanceExpert,
         num_phases: int,
         expert_init: dict[str, Any] | None = None,
+        router_init: dict[str, Any] | None = None,
+        bootstrap_label_field: str = "phase",
     ) -> None:
         super().__init__()
         self.encoder = encoder
@@ -82,6 +115,20 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
             if expert_init is not None
             else {"type": "warmstart", "jitter_std": 0.02}
         )
+        self.router_init_cfg: dict[str, Any] = (
+            dict(router_init) if router_init is not None else {"type": "centroid"}
+        )
+        if str(self.router_init_cfg.get("type", "centroid")).lower() not in _ROUTER_INIT_TYPES:
+            raise ValueError(
+                f"Unknown router_init type {self.router_init_cfg.get('type')!r}. Supported: "
+                "centroid, random."
+            )
+        if str(bootstrap_label_field) not in _BOOTSTRAP_LABEL_FIELDS:
+            raise ValueError(
+                f"Unknown bootstrap_label_field {bootstrap_label_field!r}. Allowed: "
+                f"{sorted(_BOOTSTRAP_LABEL_FIELDS)}."
+            )
+        self.bootstrap_label_field: str = str(bootstrap_label_field)
         self._expert_init_info: dict[str, Any] | None = None
         self._stage = 1
         self._encoder_frozen = False
@@ -186,6 +233,8 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
 
         num_experts = self.moe_layer.router.num_experts
         latent_dim = self.encoder.latent_dim
+        label_field = self.bootstrap_label_field
+        r_init_type = str(self.router_init_cfg.get("type", "centroid")).lower()
 
         if self.num_phases != num_experts:
             logger.warning(
@@ -195,55 +244,107 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
                 "remain random."
             )
 
-        # 1. Compute latent centroids
-        phase_sums = torch.zeros((self.num_phases, latent_dim), device=device)
-        phase_counts = torch.zeros((self.num_phases,), device=device)
+        router_init_info: dict[str, Any] = {
+            "init_type": r_init_type,
+            "bootstrap_label_field": label_field,
+        }
 
-        for batch in dataloader:
-            state = batch["state"].to(device)
-            phase = batch["phase"].to(device)
-
-            if state.ndim == 3:
-                state = state.view(-1, state.size(-1))
-                phase = phase.view(-1)
-
-            latent = self.encoder(state)
-            phase_expanded = phase.unsqueeze(1).expand_as(latent)
-            phase_sums.scatter_add_(0, phase_expanded, latent)
-            counts = torch.bincount(phase, minlength=self.num_phases).float()
-            phase_counts += counts
-
-        # An absent phase would produce a zero centroid reported as if it had
-        # one sample — that silently corrupts the router init, so it is a
-        # hard failure instead.
-        absent = phase_counts == 0
-        if absent.any():
-            raise ValueError(
-                "Phase centroid bootstrap: "
-                f"{int(absent.sum().item())} phase(s) have zero samples in the "
-                f"bootstrap dataloader (missing: "
-                f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
-                "Refusing to bootstrap with zero centroids; every phase must "
-                "be present in the training data."
+        if r_init_type == "random":
+            # Factorial floor: no centroid computation, no dataloader scan.
+            # The router keeps its construction-time weights (seeded by the
+            # run's global seed at build time); experts are still initialized
+            # per expert_init below.
+            logger.info(
+                "PlainEncoderPhaseBootstrap: leaving router randomly initialized "
+                f"(router_init='random', bootstrap_label_field={label_field!r} unused)."
             )
-        centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
+        else:
+            # 1. Compute latent centroids over the plain encoder's OWN latents
+            # (MODEL-02 latent isolation: never reuse proposed-method latents)
+            # using the resolved label field (final rows: phase_topo).
+            phase_sums = torch.zeros((self.num_phases, latent_dim), device=device)
+            phase_counts = torch.zeros((self.num_phases,), device=device)
 
-        logger.info(f"Computed latent centroids for {self.num_phases} phases.")
+            for batch in dataloader:
+                state = batch["state"].to(device)
+                raw_labels = batch.get(label_field)
+                if raw_labels is None:
+                    raise RuntimeError(
+                        "Phase centroid bootstrap: label field "
+                        f"{label_field!r} is missing from the bootstrap batch "
+                        f"(available: {sorted(str(k) for k in batch.keys())}). "
+                        "Enable the matching discovery source and re-ingest, "
+                        "or point bootstrap_label_field at 'phase'."
+                    )
+                phase = raw_labels.to(device)
 
-        # 2. Initialize Router with the (normalized) centroids
-        # The router is configured with normalize_input=True, so the gate
-        # logits are true cosine similarities between the (normalized) latent
-        # and each (unit-norm) centroid.
-        centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
+                if state.ndim == 3:
+                    state = state.view(-1, state.size(-1))
+                    phase = phase.view(-1)
 
-        router_weight = self.moe_layer.router.gate_linear.weight.data
-        router_bias = self.moe_layer.router.gate_linear.bias.data
+                if bool((phase < 0).any()) or bool((phase >= self.num_phases).any()):
+                    raise ValueError(
+                        "Phase centroid bootstrap: label field "
+                        f"{label_field!r} has values outside [0, {self.num_phases - 1}] "
+                        f"(min={int(phase.min().item())}, max={int(phase.max().item())})."
+                    )
 
-        limit = min(self.num_phases, num_experts)
-        router_weight[:limit] = centroids_normalized[:limit]
-        router_bias.zero_()
+                latent = self.encoder(state)
+                phase_expanded = phase.unsqueeze(1).expand_as(latent)
+                phase_sums.scatter_add_(0, phase_expanded, latent)
+                counts = torch.bincount(phase, minlength=self.num_phases).float()
+                phase_counts += counts
 
-        logger.info(f"Initialized router weights with {limit} phase centroids.")
+            # An absent phase would produce a zero centroid reported as if it had
+            # one sample — that silently corrupts the router init, so it is a
+            # hard failure instead.
+            absent = phase_counts == 0
+            if absent.any():
+                raise ValueError(
+                    "Phase centroid bootstrap: "
+                    f"{int(absent.sum().item())} phase(s) have zero samples in the "
+                    f"bootstrap dataloader (missing: "
+                    f"{[int(i) for i in absent.nonzero().flatten().tolist()]}). "
+                    "Refusing to bootstrap with zero centroids; every phase must "
+                    "be present in the training data."
+                )
+            centroids = phase_sums / phase_counts.unsqueeze(1)  # (P, D)
+
+            logger.info(f"Computed latent centroids for {self.num_phases} phases.")
+
+            # 2. Initialize Router with the (normalized) centroids. Prototype
+            # routers store them as Voronoi prototypes; legacy TopK routers
+            # store them as gate hyperplanes with a zeroed bias. Shapes must
+            # match exactly — a mismatch fails closed.
+            centroids_normalized = torch.nn.functional.normalize(centroids, p=2, dim=-1)
+
+            proto = getattr(self.moe_layer.router, "prototypes", None)
+            if isinstance(proto, torch.nn.Parameter):
+                if tuple(proto.shape) != tuple(centroids_normalized.shape):
+                    raise ValueError(
+                        "Cannot install bootstrapped prototypes: router expects "
+                        f"{tuple(proto.shape)}, computed {tuple(centroids_normalized.shape)}."
+                    )
+                proto.data.copy_(centroids_normalized)
+                logger.info(
+                    f"Initialized prototype router with {self.num_phases} phase centroids "
+                    f"(label field {label_field!r})."
+                )
+            elif hasattr(self.moe_layer.router, "gate_linear"):
+                router_weight = self.moe_layer.router.gate_linear.weight.data
+                router_bias = self.moe_layer.router.gate_linear.bias.data
+
+                limit = min(self.num_phases, num_experts)
+                router_weight[:limit] = centroids_normalized[:limit]
+                router_bias.zero_()
+
+                logger.info(f"Initialized router weights with {limit} phase centroids.")
+            else:
+                raise ValueError(
+                    "Phase centroid bootstrap: the router has neither 'prototypes' "
+                    f"nor 'gate_linear' (got {type(self.moe_layer.router).__name__}); "
+                    "cannot install centroids."
+                )
 
         # 3. Initialize Experts per the config-driven init type.
         e_cfg = self.expert_init_cfg
@@ -302,7 +403,7 @@ class PlainEncoderPhaseBootstrapModel(BaseManipulationModel):
             "router": {
                 "num_experts": int(num_experts),
                 "top_k": int(self.moe_layer.router.top_k),
-                "init_type": "centroid",
+                **router_init_info,
             },
             "training_seed": int(training_seed) if training_seed is not None else None,
         }
