@@ -120,7 +120,165 @@ Expected completed records are:
 - 150 evaluation result rows;
 - 330 total runner steps, including provider dependencies.
 
-## 4. Recovery of an individual failed cell
+## 4. Individual baseline commands
+
+The following commands run one final-matrix identity at a time across all five
+tasks and all three protocol seeds. Run them in the same fresh
+`outputs_final/` namespace, one command block at a time. Do not delete the
+namespace between commands: provider checkpoints are intentionally shared and
+the runner will resume completed steps.
+
+Each command is an independent method selection. The runner automatically
+trains a required Stage 1 provider when an unscoped Stage 2 method needs one;
+`--with-dependencies` makes those provider steps visible in the printed plan.
+For a command-level preview, append `--dry-run` before executing it.
+
+### 4.1 Proposed method
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_phaseforge \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44
+```
+
+### 4.2 External imitation floor: BC
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods bc \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44
+```
+
+### 4.3 Plain-representation control
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_plain_encoder \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+This consumes the final-aligned BC Stage 1 provider. It is not the retired
+`plain_encoder_phase_bootstrap` implementation.
+
+### 4.4 Random-router control
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_phase_random_router \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+This consumes the final `precision_residual_phaseforge_stage1` provider and
+changes the router initialization only.
+
+### 4.5 Scratch-expert control
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_scratch_moe \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+This consumes the final `precision_residual_phaseforge_stage1` provider and
+changes expert initialization only.
+
+### 4.6 Two-factor factorial floor
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_factorial_floor \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+This is the plain-representation plus random-router corner. It consumes the
+final-aligned BC Stage 1 provider.
+
+### 4.7 Softmax top-1 router-package comparison
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods final_aligned_softmax_top1 \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+This consumes the final `precision_residual_phaseforge_stage1` provider and
+changes the router package to the registered softmax top-1 comparison.
+
+### 4.8 Static-rule integrated comparison
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods final_aligned_static_rule \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44
+```
+
+This row is self-contained. It uses the static-rule `phase` label contract;
+do not substitute the topology-label overrides from the other controls.
+
+### 4.9 Privileged teacher-forced diagnostic
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_teacher_forced \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+This is a separate privileged diagnostic. Keep its results in a separate
+table; do not pool them with the ordinary deployable rollout baselines.
+
+### 4.10 Offline oracle diagnostic
+
+```bash
+uv run python -m phaseforge.runner \
+  --manifest experiments/final_causal_matrix.json \
+  --outputs outputs_final \
+  --methods precision_residual_oracle \
+  --tasks Lift Can Square ToolHang Transport \
+  --seeds 42 43 44 \
+  --with-dependencies
+```
+
+The oracle is offline-only and privileged. It must not be reported as a
+normal state-only rollout success-rate baseline.
+
+After each method command, inspect its completed records before starting the
+next method. If a method fails, stop and investigate the failed cell; do not
+use `--continue-on-error` for the final matrix.
+
+## 5. Recovery of an individual failed cell
 
 Use the exact final identity and task facet. For example, to rerun Stage 2
 for the proposed method on Lift, seed 42:
@@ -143,7 +301,7 @@ Useful filters are `--tasks`, `--seeds`, `--stage`, `--eval-only`, and
 `--skip-eval`. Use `--eval-only` only when the exact final checkpoint already
 exists and passes the checkpoint contract.
 
-## 5. After the sweep
+## 6. After the sweep
 
 Verify the completed namespace before analysis:
 
