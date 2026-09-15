@@ -1,32 +1,54 @@
-# Strategic Research Report: MoE Routing Stability & The Control Decoupling Phenomenon
+# Research Report: MoE Routing Organization and Closed-Loop Task Success
 
 **To:** Research Director / Principal Investigator (Professor)  
 **From:** PhaseForge Project Team & Antigravity Research Group  
-**Date:** September 15, 2026  
-**Subject:** Scientific Re-evaluation of PhaseForge: Decoupling Routing Organization from Closed-Loop Task Success in Continuous Robot Manipulation  
-**Authority Reference:** `outputs_router_ablation_can_square` (Revision `f83d096`) and `final_experiments_results` (Revision `c09270a` / `e60467b`)
+**Date:** September 16, 2026
+**Subject:** Scientific re-evaluation of PhaseForge routing structure and task performance in continuous robot manipulation
+**Authority Reference:** `outputs_router_ablation_can_square` (Revision `f83d096`), valid PhaseForge final runs (Revision `e948b73`), and Square repair audit (Revision `76685b9`)
 
 ---
 
 ## Executive Summary & Scientific Repositioning
 
-Following an exhaustive review of the locked 5-task benchmark matrix (150 evaluation runs) and the focused Can/Square router-initialization ablation (30 Stage 2 runs), this report provides the definitive scientific assessment of PhaseForge.
+Following a review of the locked 5-task benchmark matrix (150 evaluation runs),
+the focused Can/Square router-initialization ablation (30 Stage 2 runs), and
+the subsequent Square repair runs, this report provides the final evidence
+assessment of PhaseForge.
 
 ### The Honest Scientific Reality
-If PhaseForge is positioned as an algorithmic contribution claiming a **superior, state-of-the-art robotic manipulation policy**, the work is **untenable**:
-1. On the 5-task benchmark, two tasks (`ToolHang`, `Transport`) remain at **0.00%** across all memoryless models, one task (`Lift`) is saturated at **100.0%**, and on `Square` (peg insertion), plain unsegmented Behavioral Cloning decisively outperforms PhaseForge (**50.0% vs. 40.7%**).
+If PhaseForge is positioned as an algorithmic contribution claiming a
+**universally superior robotic manipulation policy**, the current evidence
+does not support that claim:
+1. On the 5-task benchmark, two tasks (`ToolHang`, `Transport`) remain at
+   **0.00%** across the reported memoryless models, one task (`Lift`) is
+   saturated at **100.0%**, and on `Square` (peg insertion), plain unsegmented
+   Behavioral Cloning outperforms PhaseForge (**50.0% vs. 40.7%**).
 2. In the controlled ablation, standard learned Softmax gating outperforms hard prototype routing pooled across Can and Square (**54.3% vs. 51.3%**), winning on every seed of Square.
-3. Random prototype initialization is statistically indistinguishable from topological initialization on Can (73.3% vs. 76.0%) and superior on Square (28.0% vs. 26.7%).
+3. Random prototype initialization is close to topological initialization on
+   Can (73.3% vs. 76.0%) and higher on Square (28.0% vs. 26.7%). No
+   significance test is claimed for these aggregate differences.
 
 ### The True Research Contribution
-However, abandoning the project under the binary assumption that *"only SOTA task success is publishable"* would discard a significant, mathematically meaningful scientific finding.
+However, the mixed success results do not eliminate the possibility of a
+useful structural contribution.
 
-In the broader machine learning Mixture-of-Experts (MoE) literature, **routing stability** is recognized as a foundational challenge (e.g., *StableMoE*, Shen et al., ACL 2022; *Switch Transformers*, Fedus et al., JMLR 2022). Our evidence demonstrates that:
-1. **Topological prototype initialization successfully solves the MoE temporal routing instability problem in continuous control:** It establishes high phase-alignment (Normalized Mutual Information increases from `0.07` to `0.67` on Can and `0.09` to `0.51` on Square) and suppresses high-frequency routing chattering (switch rates drop from `0.11` to `0.04`).
-2. **More importantly, our empirical results reveal a fundamental decoupling phenomenon:** In continuous, contact-rich manipulation, **temporal routing stability does not guarantee closed-loop task success**.
-3. **We identify the exact physical mechanism of this failure:** Trace-level analysis reveals that switching between discrete neural experts creates a **5.7× to 6.7× step-function discontinuity in commanded action**, which is tolerated in unconstrained free-space transport (Can) but catastrophic in millimeter-clearance contact (Square).
+In the broader machine-learning MoE literature, routing stability is an
+important design concern. Within the focused ablation, topology initialization
+is associated with higher phase-expert NMI (from `0.07` to `0.67` on Can and
+from `0.09` to `0.51` on Square) and lower measured switch rates (from `0.11`
+to `0.04` on Can and from `0.10` to `0.07` on Square) than the random and
+phase-initialized arms. These are structural routing observations, not proof
+that the method solves routing instability.
 
-This report outlines the theoretical grounding, empirical evidence, mechanistic discovery, and publication strategy for reframing PhaseForge into a high-impact paper on **the mechanics, stability, and limitations of structured MoE routing in robot manipulation**.
+The results support a more limited decoupling observation: better routing
+organization did not guarantee higher closed-loop success in this benchmark.
+The trace audit also observes larger commanded-action changes at expert
+switches. Those changes are a plausible mechanism, but the available traces
+do not contain force, contact, or actual end-effector velocity fields, so a
+specific physical failure mechanism cannot be identified from these data.
+
+This report outlines the evidence and the limits of a possible paper on the
+mechanics and limitations of structured MoE routing in robot manipulation.
 
 ---
 
@@ -53,13 +75,13 @@ To establish scientific precision, we must distinguish between four separate def
 ```
 
 ### Empirical Assessment of PhaseForge Against These Dimensions:
-- **Dimension 1 (Training Stability):** Partially established. Centroid initialization from topological change-points (`phase_topo`) anchors prototypes from epoch 0, eliminating early routing fluctuation.
-- **Dimension 2 (Utilization Stability):** **Fully established.** Every trained model achieves a **0.0% collapse rate** across all tasks and seeds, maintaining a healthy balance coefficient (`0.0001` for prototypes, `0.01` for softmax).
-- **Dimension 3 (Temporal Routing Coherence):** **Fully established.** As shown in Section 2, PhaseForge achieves high NMI and suppresses trajectory switch rates by over 60% compared to random and unaligned baselines.
-- **Dimension 4 (Closed-Loop Control Stability):** **Falsified.** Higher temporal routing coherence does not yield closed-loop stability or higher task success in contact-rich manipulation.
+- **Dimension 1 (Training Stability):** Partially observed. Centroid initialization from topological change-points (`phase_topo`) changes the initial prototype geometry, but the available results do not isolate or measure all early-training fluctuations.
+- **Dimension 2 (Utilization Stability):** Limited evidence only. No top-1 collapse was observed in the focused matrix, but a zero collapse rate alone does not establish healthy utilization or general utilization stability.
+- **Dimension 3 (Temporal Routing Coherence):** Observed conditionally. The topology arm has higher NMI and lower measured switch rates than the random and phase-initialized arms in the focused ablation. The softmax control also has strong routing diagnostics, so topology is not shown to be uniquely most stable.
+- **Dimension 4 (Closed-Loop Control Stability):** Not established. Higher measured routing organization did not guarantee higher task success in this benchmark.
 
 **The Reframed Thesis:**  
-> *"Topological prototype initialization imposes phase-consistent and temporally coherent routing in memoryless hard-routing MoEs. However, routing organization and closed-loop task success are fundamentally decoupled: the step-function action discontinuities inherent to discrete expert transitions induce contact failure in tight-tolerance tasks, regardless of routing stability."*
+> *"Topological prototype initialization can produce more phase-aligned and lower-switch routing in a memoryless hard-routing MoE. In the tested benchmark, this routing organization did not guarantee higher closed-loop success. Commanded-action changes at expert transitions are a plausible contributor, but the available traces do not establish that they induce the physical failure mechanism."*
 
 ---
 
@@ -91,7 +113,9 @@ To isolate the causal effect of prototype initialization without objective-level
 
 ### 2.3 Routing Diagnostics: The Evidence of Structural Organization
 
-Despite the mixed task success rates, the internal routing metrics demonstrate that topological initialization profoundly alters the latent partition:
+Despite the mixed task success rates, the internal routing metrics show that
+topological initialization substantially changes the measured latent
+partition:
 
 | Method | Can Phase-Expert NMI | Square Phase-Expert NMI | Can Switch Rate | Square Switch Rate | Top-1 Collapse Rate |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -101,13 +125,42 @@ Despite the mixed task success rates, the internal routing metrics demonstrate t
 | `representation_bc` | 0.41 | 0.47 | 0.06 | 0.06 | **0.0%** |
 | `routing_softmax_top1` | 0.72 | 0.61 | 0.04 | 0.05 | **0.0%** |
 
-**Empirical Takeaway:** Topology initialization produces a **9× increase in phase alignment** and cuts routing switches by more than half. Yet, on Square, this pristine routing structure achieves a lower success rate (26.7%) than noisy random routing (28.0%) and plain unsegmented BC (50.0%).
+**Empirical Takeaway:** Within this focused ablation, topology initialization is
+associated with substantially higher phase alignment and lower measured switch
+rates than the random and phase-initialized arms. Yet, on Square, it achieves
+lower success (26.7%) than random initialization (28.0%) and plain
+unsegmented BC (50.0%). The routing metrics therefore do not predict task
+success by themselves.
 
 ---
 
-## 3. The Mechanistic Discovery: Action Discontinuity at Expert Switches
+### 2.4 Protocol audit of the Square repair runs
 
-Why does a more organized and temporally stable router fail on precision contact tasks?
+The later runs in `debug_run/new_runs` must not be treated as a replication of
+the original PhaseForge anchor. The valid original PhaseForge Square protocol
+used `train.margin.enabled=true` with `train.margin.lambda_margin=0.05`. The
+`square_regression_repairs.json` manifest disabled that objective for the
+anchor, top-2, beta, and phase-CE arms. The repair anchor therefore changed a
+training objective in addition to serving as a control.
+
+The original `debug_run/phaseforge_square` PhaseForge results were `23/50`,
+`16/50`, and `24/50` for seeds 42, 43, and 44, respectively (pooled
+`63/150 = 42.0%`). The later valid v10 final matrix independently reports
+`23/50`, `15/50`, and `23/50` (pooled `61/150 = 40.7%`). On seed 42,
+the repair results were 10/50 for the anchor, 11/50 with phase CE enabled,
+17/50 for top-2, and 17/50 for beta 0.1. None exceeded the valid original
+PhaseForge result of 23/50 on that reset bank.
+
+The original seed-42 Stage 2 summary also reported phase-expert NMI `0.927`
+and routing switch rate `0.0259`; the repair anchor reported NMI `0.485` and
+switch rate `0.0680`. This is evidence that the repair protocol did not
+preserve the original routing behavior. It is not an isolated test of the
+repair mechanisms. No additional cloud runs of the current repair manifest
+are recommended.
+
+## 3. Commanded-action discontinuity at expert switches
+
+Why can a more organized router still fail on precision contact tasks?
 
 To answer this, we performed a step-by-step physical audit of the recorded rollout traces (`trace.jsonl`), measuring the instantaneous L2 norm of the commanded action difference:
 $$\Delta a_t = \|a_t - a_{t-1}\|_2$$
@@ -142,49 +195,56 @@ We separated timesteps into **non-switch steps** ($e_t = e_{t-1}$) and **switch 
                                                               Timestep
 ```
 
-### Physical Interpretation of the Discontinuity:
-1. **The Vector Field Discontinuity:** In a memoryless hard-routing MoE, each expert $f_k(x)$ is an independent neural network parameterizing a separate vector field. When the router switches from expert $j$ to expert $k$ across a Voronoi boundary, the commanded action experiences a sharp step-function discontinuity ($\approx 6\times$ larger than normal tracking adjustments).
-2. **Task Sensitivity to Boundary Jumps:**
-   - **Can (Pick-and-Place):** Tolerant. The end-effector moves in open air. An action jump of $\approx 0.23$ produces a transient jerk, but arm inertia filters it out before contact occurs.
-   - **Square (Peg-in-Hole Insertion):** Catastrophic. During insertion, clearances are sub-millimeter. An instantaneous action jump of $\approx 0.15$ alters commanded torque/displacement while the peg is partially engaged, inducing mechanical wedging and contact jamming.
-3. **Why Plain BC Wins on Square:** Plain Behavioral Cloning learns a single, continuously differentiable mapping $f(x)$. It produces no artificial internal boundaries, enabling smooth compliance throughout insertion.
+### What the discontinuity does and does not establish:
+1. **The vector-field discontinuity:** In a memoryless hard-routing MoE, different experts can produce different actions at a router boundary. The measured action jump is therefore a valid commanded-output observation.
+2. **The causal limit:** The traces do not contain force, contact, or actual end-effector velocity fields. In addition, the softmax control has a larger reported jump ratio yet higher Square success. Thus the measured jump is not sufficient evidence for contact jamming or for a unique Square failure mechanism.
+3. **The defensible interpretation:** Plain BC may benefit from having no discrete expert boundary, but the present results cannot determine whether its Square advantage comes from smoother actions, state coverage, action direction, or another difference in the learned policy.
 
 ---
 
-## 4. The Three Required Stability Analyses for the Paper
+## 4. Analyses required for a stronger mechanistic paper
 
-To substantiate this contribution for academic peer review, the following three analyses must be finalized and included in the manuscript:
+The following analyses would be needed to substantiate a stronger mechanistic
+claim. They are not all completed in the current artifact.
 
 ### Analysis 1: Switch Partitioning (Within-Phase vs. Phase-Boundary)
 - **Concept:** In an ideal phase-aligned policy, switches should occur **only** at genuine semantic transitions (e.g., approach $\to$ grasp), with **zero** switches during steady-state execution within a phase.
 - **Method:** Using offline PELT changepoints $\tau_k$, categorize every rollout timestep as boundary-adjacent ($|t - \tau_k| \le \delta$) or within-phase ($|t - \tau_k| > \delta$).
-- **Evidence to Report:** Show that topological initialization confines over 80% of expert transitions to boundary zones, whereas random initialization distributes switches uniformly throughout steady-state phases.
+- **Evidence status:** Not completed. The current documents must not state an
+  expected percentage as an observed result.
 
-### Analysis 2: Action Discontinuity Profiling (Completed in Section 3)
-- **Method:** Document the 5.7× to 6.7× discontinuity jump ratio. 
-- **Figure:** Provide trajectory phase portraits showing the end-effector path entering the hole in Square, highlighting where expert switches coincide with mechanical timeout terminations.
+### Analysis 2: Action Discontinuity Profiling (commanded output only)
+- **Method:** Document the measured commanded-action jump ratio.
+- **Evidence status:** The jump profiling is completed for recorded traces,
+  but it does not include physical contact or end-effector dynamics. A figure
+  may show trace timing and timeout association, but it must not label the
+  result as mechanical jamming without additional physical measurements.
 
 ### Analysis 3: Router Lipschitz & Perturbation Sensitivity
 - **Concept:** A stable router must not alter its gating decision under small observation noise $\epsilon \sim \mathcal{N}(0, \sigma^2 I)$.
 - **Method:** Inject calibrated Gaussian perturbations into states along successful trajectories and measure the **Router Flip Probability**:
   $$P_{\text{flip}}(\sigma) = \mathbb{P}\left(\arg\min_k \|E(x_t + \epsilon) - c_k\| \neq \arg\min_k \|E(x_t) - c_k\|\right)$$
-- **Expected Finding:** Contrastive large-margin topological prototypes enforce a wide spatial margin around trajectory manifolds, resulting in significantly lower flip probabilities than random or unconstrained softmax gating.
+- **Evidence status:** Not run. The expected finding is a testable prediction,
+  not a result. It must not be included as evidence until perturbation
+  experiments are executed and analyzed.
 
 ---
 
-## 5. Strategic Paper Framing & Target Venues
+## 5. Defensible paper framing
 
 ### Proposed Working Title:
 > **"Decoupling Routing Organization from Closed-Loop Success: An Empirical Study of Structured Mixture-of-Experts in Robotic Manipulation"**
 
-### Authorship Positioning:
-We do not frame PhaseForge as an incremental manipulation algorithm that failed on Square. We frame it as a **rigorous scientific inquiry into the assumptions behind modular and phase-based robot learning**.
+### Positioning:
+PhaseForge should be framed as a structured MoE study with task-dependent
+performance, not as a universally superior manipulation algorithm. The paper
+can investigate whether routing organization and closed-loop success are
+separable properties.
 
-### Target Venues:
-1. **Primary Target: IEEE Robotics and Automation Letters (RA-L)**  
-   RA-L explicitly accepts thorough empirical investigations and well-instrumented negative results that challenge prevailing architectural assumptions.
-2. **Alternative / Fast-Track Target: CoRL / ICRA Workshop on Modular and Compositional Robot Learning**  
-   A high-visibility platform to present the decoupling phenomenon and action discontinuity findings to researchers developing next-generation MoE/VLA models.
+### Venue note:
+Venue suitability should be decided after the manuscript and evidence are
+complete. The current results alone do not justify predicting acceptance at a
+specific venue.
 
 ---
 
@@ -192,8 +252,17 @@ We do not frame PhaseForge as an incremental manipulation algorithm that failed 
 
 To finalize this research, the team requests the supervisor's approval on the following decisions:
 
-1. **D1 — Scientific Scope:** Formalize the paper around **MoE routing stability, action discontinuity, and the control decoupling phenomenon**, abandoning any claim of generic benchmark superiority.
-2. **D2 — Manuscript Deliverables:** Approve integrating the three stability analyses (switch partitioning, jump profiling, perturbation robustness) into the primary experimental section.
-3. **D3 — Codebase Cleanup:** Formally retire the `beta=0.0` "precision residual" branding from the public paper, presenting the model accurately as **Topologically-Bootstrapped Mixture-of-Experts (TopoMoE)**.
+1. **D1 — Scientific scope:** Use the conditional hypothesis: topology-derived
+   initialization can organize routing, but its control benefit is task-
+   dependent and is not established as universally superior.
+2. **D2 — Manuscript evidence:** Include the completed routing and commanded-
+   action analyses only with their stated limits. Treat switch partitioning
+   and perturbation sensitivity as future work unless they are actually run.
+3. **D3 — Model description:** Do not describe the beta-zero model as a
+   feedback or impedance controller. Use the exact implementation name and
+   state that `beta=0.0` removes the residual branch.
 
-The experimental data is fully preserved, reproducible, and ready to support this compelling scientific narrative. We await your direction.
+The recorded metrics are preserved, but the copied training checkpoints are
+not present locally. The archive is therefore reviewable but not currently
+independently reloadable. Any reproducibility statement must acknowledge
+that limitation.

@@ -1,10 +1,17 @@
 # Router-initialization hypothesis and evidence
 
-- **Status:** Evidence review after the completed focused ablation
+- **Status:** Final evidence review; current Square repair sweep discontinued
 - **Run:** `outputs_router_ablation_can_square`
 - **Code revision recorded by the run:** `f83d096`
 - **Tasks:** Can and Square
 - **Seeds:** 42, 43, 44
+
+This document separates the focused router-initialization ablation from the
+valid original PhaseForge protocol. The recent `square_regression_repairs`
+runs are not a valid replacement for the original anchor because their
+manifest disabled the original margin objective (`train.margin.enabled=false`).
+The original PhaseForge Square protocol retained
+`train.margin.enabled=true` and `train.margin.lambda_margin=0.05`.
 
 ## 1. Research question
 
@@ -29,7 +36,10 @@ Topology-derived prototype initialization will produce more structured and
 stable routing than random initialization. The observable indicators are the
 logged phase-expert NMI and routing-switch rate.
 
-**Result:** Supported by the logged routing diagnostics.
+**Result:** Supported conditionally within this margin-disabled ablation. The
+topology arm has higher phase-expert NMI and lower measured switch rate than
+the random and phase-initialized arms. This establishes a routing-organization
+effect in this experiment, not universal routing stability.
 
 ### H2 — Can performance hypothesis
 
@@ -171,16 +181,17 @@ supported. It is contradicted by the Square results and by the fact that
 topology initialization does not consistently beat random initialization on
 matched seeds.
 
-The narrower claim is supported:
+The narrower claim is supported within the stated ablation contract:
 
-> Topology-derived prototype initialization imposes a more phase-aligned and
-> temporally stable routing organization in a memoryless hard prototype MoE.
+> Topology-derived prototype initialization produces more phase-aligned and
+> lower-switch routing than the random and phase-initialized arms in this
+> margin-disabled memoryless hard prototype MoE experiment.
 
 The performance claim must be conditional:
 
-> That routing organization improves Can performance in this experiment, but
-> does not improve Square performance under the same beta-zero, margin-disabled
-> training contract.
+> That routing organization coincides with a Can advantage in this experiment,
+> but does not improve Square performance under the same beta-zero,
+> margin-disabled training contract.
 
 The current data also do not support making hard top-1 prototype routing the
 default package. The softmax-router control achieves 54.3% pooled success
@@ -206,28 +217,24 @@ without correction: topology prototype IDs are derived from `phase_topo` and
 are not guaranteed to have the same semantic ID ordering as `phase`. A margin
 loss using the wrong label vocabulary would confound the initialization test.
 
-## 8. Recommended next experiment
+## 8. Decision and follow-up work
 
-Run one objective-attribution experiment before presenting the complete method
-as a final result:
+Do not run the current `square_regression_repairs` methods for additional
+seeds. The valid original PhaseForge Square runs are stronger than all four
+repair arms tested on seed 42, and the repair anchor is not protocol
+equivalent because it disabled the original margin objective. The current
+repair sweep therefore does not provide a reason to spend more cloud compute.
 
-1. Reuse the existing `router_init_topology` / margin-disabled arm as the
-   reference.
-2. Add a matched topology-initialized arm with the margin loss enabled at the
-   locked `lambda_margin: 0.05`.
-3. Set the margin label field to `phase_topo` for topology-initialized
-   prototypes, so the target labels use the same six-class vocabulary as the
-   prototype construction.
-4. Keep task, seeds, Stage 1 provider, `beta=0`, expert initialization,
-   optimizer settings, and reset bank fixed.
-5. Run only Can and Square with seeds 42, 43, and 44.
-
-This is the minimum additional experiment that can separate the effect of
-topology initialization from the effect of the margin objective. If the
-margin-enabled topology arm recovers Square performance, the margin/objective
-component—not topology initialization alone—must receive the credit. If it
-does not, the proposed method should be reported as a routing-structure result
-with task-dependent performance, not as a generally superior policy.
+If objective attribution is later required, it must be a new, explicitly
+controlled experiment that preserves the original margin setting, holds the
+Stage 1 provider, beta value, expert initialization, optimizer, seeds, and
+reset bank fixed, and verifies the label vocabulary used by the margin loss.
+Only that design could separate topology initialization from the objective.
+If the margin-enabled topology arm recovers Square performance, the
+margin/objective component—not topology initialization alone—must receive the
+credit. If it does not, the proposed method should be reported as a
+routing-structure result with task-dependent performance, not as a generally
+superior policy.
 
 If the research question is limited strictly to router initialization, no
 additional performance claim should be added: the present ablation already
@@ -236,14 +243,14 @@ positive.
 
 ## 9. Reproducibility action required
 
-The copied result directory contains complete metadata, evaluation summaries,
-configuration files, and artifact manifests. However, the actual
+The copied result directory contains evaluation summaries, configuration
+files, and artifact manifests. However, the actual
 `checkpoints/checkpoint_best.pt` files are absent from the local copy even
 though the manifests mark them as present. The recorded metrics can be
 reviewed, but the weights cannot currently be independently reloaded from
 this archive.
 
-Before sending the results as a final artifact, recover or re-export the 42
+Before sending the results as a final artifact, recover or re-export the
 training checkpoints from the cloud result workspace, or preserve the original
 cloud workspace containing them. This is an archival/reproducibility issue;
 it does not change the recorded rollout counts.
