@@ -25,6 +25,10 @@ supcon:
   lambda_sc: 1.0
   temperature: 0.07
   label_field: "phase"
+  # Inert Stage 2 mirror so a protocol can carry the explicit Stage 1
+  # zero_ce setting through every composed stage without an untyped Hydra
+  # append override. Stage2Trainer never reads this field.
+  zero_ce: true
 log_every_n_steps: 50
 rich_progressbar: false
 epoch_progressbar: true

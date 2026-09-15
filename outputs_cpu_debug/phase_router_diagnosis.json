@@ -1,0 +1,501 @@
+{
+  "analysis": {
+    "name": "phase_router_diagnosis",
+    "cpu_only": true,
+    "repository": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge",
+    "tasks": [
+      "Can",
+      "Square"
+    ],
+    "data_root": "\\\\?\\C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data",
+    "cache_root": "\\\\?\\C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache",
+    "outputs_root": "\\\\?\\C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\final_experiments_results\\abalation_final\\teamspace\\studios\\this_studio\\PhaseForge\\outputs_router_ablation_can_square",
+    "observability_threshold_macro_f1": 0.6,
+    "num_phases": 6
+  },
+  "tasks": {
+    "Can": {
+      "phase_cache": {
+        "path": "\\\\?\\C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache\\74f710c31250dfb9",
+        "cache_config_hash": "74f710c31250dfb9",
+        "created_at": 1788618751.2087684,
+        "clean_status": "declared_clean",
+        "git_commit": null,
+        "raw_sha256_manifest": "3f2eb92e0a5025d0095e866ac16cc8092d6a762abe27dec90dbaff9027282962",
+        "raw_files_present": false,
+        "manifest_sha256": "b644d55149a4882a95290f201db88e3d287784faaf340f6fc59584914aeeabb7"
+      },
+      "samples": 23207,
+      "trajectories": 200,
+      "phase_observability": {
+        "passed": false,
+        "num_regimes": 6,
+        "num_samples": 23207,
+        "num_trajectories": 200,
+        "macro_f1": 0.502055648622712,
+        "confusion": [
+          [
+            216,
+            13,
+            280,
+            4,
+            9,
+            3
+          ],
+          [
+            6,
+            3292,
+            296,
+            1033,
+            34,
+            70
+          ],
+          [
+            133,
+            359,
+            1684,
+            520,
+            121,
+            57
+          ],
+          [
+            3,
+            979,
+            343,
+            8325,
+            100,
+            492
+          ],
+          [
+            5,
+            207,
+            565,
+            467,
+            318,
+            103
+          ],
+          [
+            0,
+            205,
+            38,
+            2171,
+            83,
+            673
+          ]
+        ],
+        "occupancy": {
+          "0": 0.022622484595165252,
+          "1": 0.20386090403757487,
+          "2": 0.12384194424096177,
+          "3": 0.44133235661653814,
+          "4": 0.0717455940018098,
+          "5": 0.1365967165079502
+        },
+        "min_occupancy": 0.022622484595165252,
+        "mean_duration": 16.447200566973777,
+        "duration_per_regime": {
+          "0": 8.203125,
+          "1": 22.966019417475728,
+          "2": 7.350383631713555,
+          "3": 35.1958762886598,
+          "4": 5.6440677966101696,
+          "5": 19.329268292682926
+        },
+        "action_residual_reduction": 0.13207267938526288,
+        "merge_candidates": [],
+        "failure_reasons": [
+          "Unobservable regimes: macro-F1 0.5021 is below 0.6000."
+        ]
+      },
+      "phase_action_relationship": {
+        "heldout_global_action_mse": 0.24131097037295593,
+        "heldout_phase_mean_action_mse": 0.21853133473346628,
+        "heldout_relative_mse_reduction": 0.09439950286670673,
+        "all_data_phase_variance_explained": 0.13207267938529232,
+        "train_phase_counts": [
+          450,
+          4314,
+          2641,
+          9152,
+          1512,
+          2814
+        ]
+      },
+      "topology_cache": {
+        "path": "\\\\?\\C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache\\6d1e0b150372e0b6",
+        "cache_config_hash": "6d1e0b150372e0b6",
+        "created_at": 1788617458.9293392,
+        "clean_status": "declared_clean",
+        "git_commit": null,
+        "raw_sha256_manifest": "3f2eb92e0a5025d0095e866ac16cc8092d6a762abe27dec90dbaff9027282962",
+        "raw_files_present": false,
+        "manifest_sha256": "47ef85a4a6ca03ef64f8a5d8c27977a880127e3bd531d88f21ca8beb236aee99"
+      },
+      "phase_topology_observability": {
+        "passed": true,
+        "num_regimes": 6,
+        "num_samples": 23207,
+        "num_trajectories": 200,
+        "macro_f1": 0.95025279669365,
+        "confusion": [
+          [
+            2394,
+            35,
+            0,
+            19,
+            6,
+            0
+          ],
+          [
+            44,
+            6091,
+            0,
+            0,
+            52,
+            37
+          ],
+          [
+            0,
+            0,
+            4705,
+            102,
+            103,
+            20
+          ],
+          [
+            21,
+            1,
+            63,
+            2010,
+            7,
+            44
+          ],
+          [
+            9,
+            74,
+            49,
+            4,
+            4532,
+            85
+          ],
+          [
+            10,
+            94,
+            49,
+            23,
+            96,
+            2428
+          ]
+        ],
+        "occupancy": {
+          "0": 0.10574395656482957,
+          "1": 0.26819494118154,
+          "2": 0.2124359029603137,
+          "3": 0.09247209893566596,
+          "4": 0.20480889386822942,
+          "5": 0.1163442064894213
+        },
+        "min_occupancy": 0.09247209893566596,
+        "mean_duration": 40.64273204903678,
+        "duration_per_regime": {
+          "0": 26.387096774193548,
+          "1": 47.51145038167939,
+          "2": 60.1219512195122,
+          "3": 23.844444444444445,
+          "4": 48.01010101010101,
+          "5": 35.526315789473685
+        },
+        "action_residual_reduction": 0.0962265612094443,
+        "merge_candidates": [],
+        "failure_reasons": []
+      },
+      "phase_topology_alignment": {
+        "verified": true,
+        "reason": "state/action/demo-key order verified"
+      },
+      "phase_topology_label_agreement": {
+        "normalized_mutual_information": 0.057686305551185264,
+        "adjusted_rand_index": 0.021229096564144588
+      }
+    },
+    "Square": {
+      "phase_cache": {
+        "path": "\\\\?\\C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache\\8b265fc443c80619",
+        "cache_config_hash": "8b265fc443c80619",
+        "created_at": 1786850365.5855665,
+        "clean_status": "unspecified",
+        "git_commit": null,
+        "raw_sha256_manifest": "45d8cabb6d57a4c03e839aa5e4b3e58fb60fe8bd20e1951fec563a2abfd14951",
+        "raw_files_present": false,
+        "manifest_sha256": "88c596ddeae3cf8679cecb6cb3adfbfb34876690b6ede15c0f18afc439080eb0"
+      },
+      "samples": 30154,
+      "trajectories": 200,
+      "phase_observability": {
+        "passed": false,
+        "num_regimes": 6,
+        "num_samples": 30154,
+        "num_trajectories": 200,
+        "macro_f1": 0.40926876131914125,
+        "confusion": [
+          [
+            36,
+            19,
+            397,
+            6,
+            13,
+            0
+          ],
+          [
+            0,
+            2767,
+            344,
+            2262,
+            802,
+            47
+          ],
+          [
+            52,
+            355,
+            2090,
+            417,
+            973,
+            8
+          ],
+          [
+            0,
+            1777,
+            244,
+            11016,
+            457,
+            146
+          ],
+          [
+            0,
+            802,
+            1025,
+            522,
+            2181,
+            27
+          ],
+          [
+            0,
+            131,
+            69,
+            905,
+            173,
+            91
+          ]
+        ],
+        "occupancy": {
+          "0": 0.015619818266233336,
+          "1": 0.20634078397559197,
+          "2": 0.12917025933541154,
+          "3": 0.4523446308947403,
+          "4": 0.15112422895801553,
+          "5": 0.045400278570007294
+        },
+        "min_occupancy": 0.015619818266233336,
+        "mean_duration": 27.338168631006347,
+        "duration_per_regime": {
+          "0": 7.721311475409836,
+          "1": 41.758389261744966,
+          "2": 10.941011235955056,
+          "3": 72.55319148936171,
+          "4": 18.524390243902438,
+          "5": 13.29126213592233
+        },
+        "action_residual_reduction": 0.14657802212357202,
+        "merge_candidates": [],
+        "failure_reasons": [
+          "Unobservable regimes: macro-F1 0.4093 is below 0.6000."
+        ]
+      },
+      "phase_action_relationship": {
+        "heldout_global_action_mse": 0.20199752508703803,
+        "heldout_phase_mean_action_mse": 0.1764238872865206,
+        "heldout_relative_mse_reduction": 0.12660371848367002,
+        "all_data_phase_variance_explained": 0.14657802212328863,
+        "train_phase_counts": [
+          418,
+          5645,
+          3577,
+          12232,
+          4098,
+          1195
+        ]
+      },
+      "topology_cache": null,
+      "phase_topology_observability": null,
+      "phase_topology_alignment": null,
+      "phase_topology_label_agreement": null
+    }
+  },
+  "stage1": {
+    "available": true,
+    "rows": [
+      {
+        "task": "Can",
+        "seed": 42,
+        "run_id": "2026-09-14_19-59-35_Can_0ce77a7d",
+        "supcon_enabled": false,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": null,
+        "val_phase_balanced_acc": null,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.030790440597140235,
+        "val_loss_supcon": null
+      },
+      {
+        "task": "Square",
+        "seed": 42,
+        "run_id": "2026-09-14_20-22-09_Square_130bee38",
+        "supcon_enabled": false,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": null,
+        "val_phase_balanced_acc": null,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.038298973277729666,
+        "val_loss_supcon": null
+      },
+      {
+        "task": "Can",
+        "seed": 43,
+        "run_id": "2026-09-14_20-02-34_Can_60ce6e1e",
+        "supcon_enabled": false,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": null,
+        "val_phase_balanced_acc": null,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.029636937631181925,
+        "val_loss_supcon": null
+      },
+      {
+        "task": "Square",
+        "seed": 43,
+        "run_id": "2026-09-14_20-25-54_Square_156e25d1",
+        "supcon_enabled": false,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": null,
+        "val_phase_balanced_acc": null,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.04019024794346096,
+        "val_loss_supcon": null
+      },
+      {
+        "task": "Can",
+        "seed": 44,
+        "run_id": "2026-09-14_20-05-32_Can_42a5c48c",
+        "supcon_enabled": false,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": null,
+        "val_phase_balanced_acc": null,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.029725116195089846,
+        "val_loss_supcon": null
+      },
+      {
+        "task": "Square",
+        "seed": 44,
+        "run_id": "2026-09-14_20-29-38_Square_f63487c8",
+        "supcon_enabled": false,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": null,
+        "val_phase_balanced_acc": null,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.03939140102099758,
+        "val_loss_supcon": null
+      },
+      {
+        "task": "Can",
+        "seed": 42,
+        "run_id": "2026-09-14_19-48-06_Can_9f8e36f9",
+        "supcon_enabled": true,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": 0.3253012001514435,
+        "val_phase_balanced_acc": 0.2871492803096771,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.036511885595352435,
+        "val_loss_supcon": 4.882417760904808
+      },
+      {
+        "task": "Square",
+        "seed": 42,
+        "run_id": "2026-09-14_20-08-24_Square_e961ff53",
+        "supcon_enabled": true,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": 0.36734694242477417,
+        "val_phase_balanced_acc": 0.5042022466659546,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.04118482954239279,
+        "val_loss_supcon": 4.878529414639261
+      },
+      {
+        "task": "Can",
+        "seed": 43,
+        "run_id": "2026-09-14_19-52-07_Can_c23340ca",
+        "supcon_enabled": true,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": 0.18459552526474,
+        "val_phase_balanced_acc": 0.17428851127624512,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.037458780082183125,
+        "val_loss_supcon": 4.929008913122233
+      },
+      {
+        "task": "Square",
+        "seed": 43,
+        "run_id": "2026-09-14_20-12-56_Square_fdabf041",
+        "supcon_enabled": true,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": 0.0,
+        "val_phase_balanced_acc": 0.0,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.041246607441638335,
+        "val_loss_supcon": 4.891223900770415
+      },
+      {
+        "task": "Can",
+        "seed": 44,
+        "run_id": "2026-09-14_19-55-54_Can_dd09e7b3",
+        "supcon_enabled": true,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": 0.050774525851011276,
+        "val_phase_balanced_acc": 0.16705140471458435,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.03657083044056228,
+        "val_loss_supcon": 4.886427084057754
+      },
+      {
+        "task": "Square",
+        "seed": 44,
+        "run_id": "2026-09-14_20-17-30_Square_997ba6cc",
+        "supcon_enabled": true,
+        "supcon_zero_ce_effective_default": true,
+        "effective_phase_ce_weight": 0.0,
+        "val_phase_acc": 0.09033121168613434,
+        "val_phase_balanced_acc": 0.20755445957183838,
+        "val_loss_phase": 0.0,
+        "val_loss_action": 0.0431849798552166,
+        "val_loss_supcon": 4.91382802964533
+      }
+    ]
+  },
+  "limitations": [
+    "This is a state/data diagnostic, not a replacement for closed-loop rollout evaluation.",
+    "Raw HDF5 files are not required by this analysis and are reported as unverified when absent.",
+    "The local cache may not be the exact cloud cache used by the archived focused run; cache provenance is retained above.",
+    "A missing phase_topo cache is reported as missing rather than inferred or fabricated."
+  ]
+}

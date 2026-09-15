@@ -1,0 +1,666 @@
+{
+  "report_version": 2,
+  "analysis": {
+    "name": "phase_suitability",
+    "report_version": 2,
+    "read_only": true,
+    "simulator_used": false,
+    "repository_git_commit": "2de34d58f0e513518c1155423448b81515b2f99f",
+    "python_version": "3.14.5 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)]",
+    "numpy_version": "2.4.6",
+    "torch_version": "2.13.0+cpu",
+    "data_root": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data",
+    "cache_root": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache",
+    "command": [
+      "scripts/analysis/phase_suitability.py",
+      "--tasks",
+      "Can",
+      "--all-caches",
+      "--allow-missing-raw",
+      "--json-out",
+      "outputs_cpu_debug/phase_suitability_can_all.json"
+    ],
+    "requested_tasks": [
+      "Can"
+    ],
+    "selected_records": 4,
+    "missing_tasks": [],
+    "partial_analysis": false,
+    "include_nonclean": false,
+    "raw_hash_skipped": false
+  },
+  "rows": [
+    {
+      "task": "Can",
+      "cache": "11a7e690cf9f99c2",
+      "created_at": 1788530061.6218798,
+      "cache_config_hash": "11a7e690cf9f99c2",
+      "code_git_commit": "e6273ac74d1778eb72549348282a3142ad8476cb",
+      "raw_sha256_manifest": "3f2eb92e0a5025d0095e866ac16cc8092d6a762abe27dec90dbaff9027282962",
+      "schema_version": "robomimic-can-structured-v2",
+      "environment": {
+        "name": "PickPlaceCan",
+        "version": "1.5.1"
+      },
+      "state_dim": 23,
+      "action_dim": 7,
+      "sequence_length": 1,
+      "clean_status": "declared_clean",
+      "integrity": {
+        "manifest_complete": true,
+        "trajectory_files": 200,
+        "manifest_trajectory_files": 200,
+        "manifest_split_counts": {
+          "train": 180,
+          "val": 20
+        },
+        "raw_files": {
+          "status": "missing",
+          "verified": false,
+          "files": [
+            {
+              "name": "low_dim_v15.hdf5",
+              "status": "missing"
+            }
+          ]
+        },
+        "partial_analysis": false
+      },
+      "trajectories": {
+        "count": 200,
+        "steps": 23207,
+        "length_min": 82,
+        "length_median": 115,
+        "length_max": 151,
+        "mean_phase_switches": 6.055
+      },
+      "phase_distribution": {
+        "counts_all": [
+          525,
+          4731,
+          2874,
+          10242,
+          1665,
+          3170
+        ],
+        "fractions_all": [
+          0.022622484595165252,
+          0.20386090403757487,
+          0.12384194424096177,
+          0.44133235661653814,
+          0.0717455940018098,
+          0.1365967165079502
+        ],
+        "fractions_train": [
+          0.0215486280706795,
+          0.2065795144375808,
+          0.12646650385481012,
+          0.43825120911746396,
+          0.07240339031748312,
+          0.1347507542019825
+        ],
+        "fractions_val": [
+          0.032271944922547334,
+          0.17943201376936316,
+          0.10025817555938038,
+          0.4690189328743546,
+          0.06583476764199656,
+          0.153184165232358
+        ],
+        "transition_counts": [
+          [
+            461,
+            39,
+            25,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            4525,
+            194,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            2483,
+            291,
+            55,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            9951,
+            240,
+            0
+          ],
+          [
+            1,
+            22,
+            16,
+            0,
+            1370,
+            164
+          ],
+          [
+            3,
+            145,
+            15,
+            0,
+            0,
+            3006
+          ]
+        ],
+        "label_entropy_normalized": 0.831881006513187
+      },
+      "action_phase_relationship": {
+        "descriptive_all_data": {
+          "global_action_mse": 0.24565011849387022,
+          "within_phase_action_mse": 0.21320644915319284,
+          "phase_action_variance_explained": 0.13207267938479317
+        },
+        "heldout_val_train_fitted": {
+          "global_mean_action_mse": 0.241310972556525,
+          "phase_mean_action_mse": 0.21853132182555374,
+          "relative_mse_reduction": 0.094399564552065,
+          "per_trajectory_reduction_mean": 0.091272974229796,
+          "per_trajectory_reduction_bootstrap_ci95": [
+            0.025822191921821277,
+            0.15494389654326804
+          ],
+          "bootstrap_seed": 2026,
+          "bootstrap_resamples": 2000,
+          "train_phase_counts": [
+            450,
+            4314,
+            2641,
+            9152,
+            1512,
+            2814
+          ],
+          "missing_train_phases": []
+        }
+      }
+    },
+    {
+      "task": "Can",
+      "cache": "6d1e0b150372e0b6",
+      "created_at": 1788617458.9293392,
+      "cache_config_hash": "6d1e0b150372e0b6",
+      "code_git_commit": "c56275d283baf14d77aa563feb656a59109efa57",
+      "raw_sha256_manifest": "3f2eb92e0a5025d0095e866ac16cc8092d6a762abe27dec90dbaff9027282962",
+      "schema_version": "robomimic-can-structured-v2",
+      "environment": {
+        "name": "PickPlaceCan",
+        "version": "1.5.1"
+      },
+      "state_dim": 23,
+      "action_dim": 7,
+      "sequence_length": 1,
+      "clean_status": "declared_clean",
+      "integrity": {
+        "manifest_complete": true,
+        "trajectory_files": 200,
+        "manifest_trajectory_files": 200,
+        "manifest_split_counts": {
+          "train": 180,
+          "val": 20
+        },
+        "raw_files": {
+          "status": "missing",
+          "verified": false,
+          "files": [
+            {
+              "name": "low_dim_v15.hdf5",
+              "status": "missing"
+            }
+          ]
+        },
+        "partial_analysis": false
+      },
+      "trajectories": {
+        "count": 200,
+        "steps": 23207,
+        "length_min": 82,
+        "length_median": 115,
+        "length_max": 151,
+        "mean_phase_switches": 6.055
+      },
+      "phase_distribution": {
+        "counts_all": [
+          525,
+          4731,
+          2874,
+          10242,
+          1665,
+          3170
+        ],
+        "fractions_all": [
+          0.022622484595165252,
+          0.20386090403757487,
+          0.12384194424096177,
+          0.44133235661653814,
+          0.0717455940018098,
+          0.1365967165079502
+        ],
+        "fractions_train": [
+          0.0215486280706795,
+          0.2065795144375808,
+          0.12646650385481012,
+          0.43825120911746396,
+          0.07240339031748312,
+          0.1347507542019825
+        ],
+        "fractions_val": [
+          0.032271944922547334,
+          0.17943201376936316,
+          0.10025817555938038,
+          0.4690189328743546,
+          0.06583476764199656,
+          0.153184165232358
+        ],
+        "transition_counts": [
+          [
+            461,
+            39,
+            25,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            4525,
+            194,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            2483,
+            291,
+            55,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            9951,
+            240,
+            0
+          ],
+          [
+            1,
+            22,
+            16,
+            0,
+            1370,
+            164
+          ],
+          [
+            3,
+            145,
+            15,
+            0,
+            0,
+            3006
+          ]
+        ],
+        "label_entropy_normalized": 0.831881006513187
+      },
+      "action_phase_relationship": {
+        "descriptive_all_data": {
+          "global_action_mse": 0.24565011849387022,
+          "within_phase_action_mse": 0.21320644915319284,
+          "phase_action_variance_explained": 0.13207267938479317
+        },
+        "heldout_val_train_fitted": {
+          "global_mean_action_mse": 0.241310972556525,
+          "phase_mean_action_mse": 0.21853132182555374,
+          "relative_mse_reduction": 0.094399564552065,
+          "per_trajectory_reduction_mean": 0.091272974229796,
+          "per_trajectory_reduction_bootstrap_ci95": [
+            0.025822191921821277,
+            0.15494389654326804
+          ],
+          "bootstrap_seed": 2026,
+          "bootstrap_resamples": 2000,
+          "train_phase_counts": [
+            450,
+            4314,
+            2641,
+            9152,
+            1512,
+            2814
+          ],
+          "missing_train_phases": []
+        }
+      }
+    },
+    {
+      "task": "Can",
+      "cache": "74f710c31250dfb9",
+      "created_at": 1788618751.2087684,
+      "cache_config_hash": "74f710c31250dfb9",
+      "code_git_commit": "c56275d283baf14d77aa563feb656a59109efa57",
+      "raw_sha256_manifest": "3f2eb92e0a5025d0095e866ac16cc8092d6a762abe27dec90dbaff9027282962",
+      "schema_version": "robomimic-can-structured-v2",
+      "environment": {
+        "name": "PickPlaceCan",
+        "version": "1.5.1"
+      },
+      "state_dim": 23,
+      "action_dim": 7,
+      "sequence_length": 1,
+      "clean_status": "declared_clean",
+      "integrity": {
+        "manifest_complete": true,
+        "trajectory_files": 200,
+        "manifest_trajectory_files": 200,
+        "manifest_split_counts": {
+          "train": 180,
+          "val": 20
+        },
+        "raw_files": {
+          "status": "missing",
+          "verified": false,
+          "files": [
+            {
+              "name": "low_dim_v15.hdf5",
+              "status": "missing"
+            }
+          ]
+        },
+        "partial_analysis": false
+      },
+      "trajectories": {
+        "count": 200,
+        "steps": 23207,
+        "length_min": 82,
+        "length_median": 115,
+        "length_max": 151,
+        "mean_phase_switches": 6.055
+      },
+      "phase_distribution": {
+        "counts_all": [
+          525,
+          4731,
+          2874,
+          10242,
+          1665,
+          3170
+        ],
+        "fractions_all": [
+          0.022622484595165252,
+          0.20386090403757487,
+          0.12384194424096177,
+          0.44133235661653814,
+          0.0717455940018098,
+          0.1365967165079502
+        ],
+        "fractions_train": [
+          0.0215486280706795,
+          0.2065795144375808,
+          0.12646650385481012,
+          0.43825120911746396,
+          0.07240339031748312,
+          0.1347507542019825
+        ],
+        "fractions_val": [
+          0.032271944922547334,
+          0.17943201376936316,
+          0.10025817555938038,
+          0.4690189328743546,
+          0.06583476764199656,
+          0.153184165232358
+        ],
+        "transition_counts": [
+          [
+            461,
+            39,
+            25,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            4525,
+            194,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            2483,
+            291,
+            55,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            9951,
+            240,
+            0
+          ],
+          [
+            1,
+            22,
+            16,
+            0,
+            1370,
+            164
+          ],
+          [
+            3,
+            145,
+            15,
+            0,
+            0,
+            3006
+          ]
+        ],
+        "label_entropy_normalized": 0.831881006513187
+      },
+      "action_phase_relationship": {
+        "descriptive_all_data": {
+          "global_action_mse": 0.24565011849387022,
+          "within_phase_action_mse": 0.21320644915319284,
+          "phase_action_variance_explained": 0.13207267938479317
+        },
+        "heldout_val_train_fitted": {
+          "global_mean_action_mse": 0.241310972556525,
+          "phase_mean_action_mse": 0.21853132182555374,
+          "relative_mse_reduction": 0.094399564552065,
+          "per_trajectory_reduction_mean": 0.091272974229796,
+          "per_trajectory_reduction_bootstrap_ci95": [
+            0.025822191921821277,
+            0.15494389654326804
+          ],
+          "bootstrap_seed": 2026,
+          "bootstrap_resamples": 2000,
+          "train_phase_counts": [
+            450,
+            4314,
+            2641,
+            9152,
+            1512,
+            2814
+          ],
+          "missing_train_phases": []
+        }
+      }
+    },
+    {
+      "task": "Can",
+      "cache": "7dfa20abed729092",
+      "created_at": 1786850362.9913661,
+      "cache_config_hash": "7dfa20abed729092",
+      "code_git_commit": "ee011c481372261cb3f569182f1557de038e2b3b",
+      "raw_sha256_manifest": "3f2eb92e0a5025d0095e866ac16cc8092d6a762abe27dec90dbaff9027282962",
+      "schema_version": "robomimic-can-structured-v2",
+      "environment": {
+        "name": "PickPlaceCan",
+        "version": "1.5.1"
+      },
+      "state_dim": 23,
+      "action_dim": 7,
+      "sequence_length": 1,
+      "clean_status": "unspecified",
+      "integrity": {
+        "manifest_complete": true,
+        "trajectory_files": 200,
+        "manifest_trajectory_files": 200,
+        "manifest_split_counts": {
+          "train": 180,
+          "val": 20
+        },
+        "raw_files": {
+          "status": "missing",
+          "verified": false,
+          "files": [
+            {
+              "name": "low_dim_v15.hdf5",
+              "status": "missing"
+            }
+          ]
+        },
+        "partial_analysis": false
+      },
+      "trajectories": {
+        "count": 200,
+        "steps": 23207,
+        "length_min": 82,
+        "length_median": 115,
+        "length_max": 151,
+        "mean_phase_switches": 6.055
+      },
+      "phase_distribution": {
+        "counts_all": [
+          525,
+          4731,
+          2874,
+          10242,
+          1665,
+          3170
+        ],
+        "fractions_all": [
+          0.022622484595165252,
+          0.20386090403757487,
+          0.12384194424096177,
+          0.44133235661653814,
+          0.0717455940018098,
+          0.1365967165079502
+        ],
+        "fractions_train": [
+          0.0215486280706795,
+          0.2065795144375808,
+          0.12646650385481012,
+          0.43825120911746396,
+          0.07240339031748312,
+          0.1347507542019825
+        ],
+        "fractions_val": [
+          0.032271944922547334,
+          0.17943201376936316,
+          0.10025817555938038,
+          0.4690189328743546,
+          0.06583476764199656,
+          0.153184165232358
+        ],
+        "transition_counts": [
+          [
+            461,
+            39,
+            25,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            4525,
+            194,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            2483,
+            291,
+            55,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            9951,
+            240,
+            0
+          ],
+          [
+            1,
+            22,
+            16,
+            0,
+            1370,
+            164
+          ],
+          [
+            3,
+            145,
+            15,
+            0,
+            0,
+            3006
+          ]
+        ],
+        "label_entropy_normalized": 0.831881006513187
+      },
+      "action_phase_relationship": {
+        "descriptive_all_data": {
+          "global_action_mse": 0.24565011849387022,
+          "within_phase_action_mse": 0.21320644915319284,
+          "phase_action_variance_explained": 0.13207267938479317
+        },
+        "heldout_val_train_fitted": {
+          "global_mean_action_mse": 0.241310972556525,
+          "phase_mean_action_mse": 0.21853132182555374,
+          "relative_mse_reduction": 0.094399564552065,
+          "per_trajectory_reduction_mean": 0.091272974229796,
+          "per_trajectory_reduction_bootstrap_ci95": [
+            0.025822191921821277,
+            0.15494389654326804
+          ],
+          "bootstrap_seed": 2026,
+          "bootstrap_resamples": 2000,
+          "train_phase_counts": [
+            450,
+            4314,
+            2641,
+            9152,
+            1512,
+            2814
+          ],
+          "missing_train_phases": []
+        }
+      }
+    }
+  ]
+}

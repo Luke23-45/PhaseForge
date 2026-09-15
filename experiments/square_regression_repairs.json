@@ -1,0 +1,143 @@
+{
+  "name": "square_regression_repairs",
+  "task": "Square",
+  "description": "One-factor Square regression repair study. The anchor preserves the current topology-initialized, beta-zero, hard top-1 contract. The phase-ce arm changes only Stage 1 phase-loss participation; the top-2 arm changes only prototype dispatch from hard top-1 to normalized top-2 action blending; the beta arm is an explicitly exploratory nonzero residual-branch diagnostic. All evaluated rows use full rollout traces and the same reset bank.",
+  "seeds": [42, 43, 44],
+  "defaults": [
+    "train.early_stopping.enabled=false"
+  ],
+  "methods": [
+    {
+      "index": 1,
+      "name": "precision_residual_phaseforge",
+      "role": "shared current Stage 1 provider for the topology anchor and repair arms",
+      "model": "precision_residual_phaseforge",
+      "data": "square",
+      "task": "Square",
+      "stages": [1],
+      "stage2_source": null,
+      "evaluate": false,
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.phase_label_field=phase",
+        "models.expert.beta=0.0",
+        "train.supcon.enabled=true",
+        "train.supcon.label_field=phase",
+        "train.supcon.zero_ce=true",
+        "train.margin.enabled=false",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false"
+      ]
+    },
+    {
+      "index": 2,
+      "name": "square_topology_top1_anchor",
+      "role": "same-seed anchor: current topology initialization, beta-zero, hard top-1",
+      "model": "precision_residual_phaseforge",
+      "data": "square",
+      "task": "Square",
+      "stages": [2],
+      "stage2_source": "precision_residual_phaseforge_stage1",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.phase_label_field=phase",
+        "models.expert.beta=0.0",
+        "models.router_init.type=centroid",
+        "models.router_init.prototype_source=topo",
+        "models.router.top_k=1",
+        "train.supcon.enabled=true",
+        "train.supcon.label_field=phase",
+        "train.margin.enabled=false",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "train.log_dimension_mse=true",
+        "eval.episodes.trace_level=full"
+      ]
+    },
+    {
+      "index": 3,
+      "name": "square_phase_ce_on",
+      "role": "representation repair: retain SupCon and restore the phase CE term",
+      "model": "precision_residual_phaseforge",
+      "data": "square",
+      "task": "Square",
+      "stages": [1, 2],
+      "stage2_source": "self",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.phase_label_field=phase",
+        "models.expert.beta=0.0",
+        "models.router_init.type=centroid",
+        "models.router_init.prototype_source=topo",
+        "models.router.top_k=1",
+        "train.supcon.enabled=true",
+        "train.supcon.zero_ce=false",
+        "train.supcon.label_field=phase",
+        "train.lambda_phase=1.0",
+        "train.margin.enabled=false",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "train.log_dimension_mse=true",
+        "eval.episodes.trace_level=full"
+      ]
+    },
+    {
+      "index": 4,
+      "name": "square_topology_top2",
+      "role": "boundary repair: topology prototypes with normalized top-2 action blending",
+      "model": "precision_residual_phaseforge",
+      "data": "square",
+      "task": "Square",
+      "stages": [2],
+      "stage2_source": "precision_residual_phaseforge_stage1",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.phase_label_field=phase",
+        "models.expert.beta=0.0",
+        "models.router_init.type=centroid",
+        "models.router_init.prototype_source=topo",
+        "models.router.top_k=2",
+        "train.supcon.enabled=true",
+        "train.supcon.label_field=phase",
+        "train.margin.enabled=false",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "train.log_dimension_mse=true",
+        "eval.episodes.trace_level=full"
+      ]
+    },
+    {
+      "index": 5,
+      "name": "square_residual_beta_01",
+      "role": "exploratory residual diagnostic: beta=0.1, not a true task-state feedback controller",
+      "model": "precision_residual_phaseforge",
+      "data": "square",
+      "task": "Square",
+      "stages": [2],
+      "stage2_source": "precision_residual_phaseforge_stage1",
+      "evaluate": true,
+      "evaluate_mode": "rollout",
+      "overrides": [
+        "topo@_global_=topo_pelt_k6",
+        "train.phase_label_field=phase",
+        "models.expert.beta=0.1",
+        "models.router_init.type=centroid",
+        "models.router_init.prototype_source=topo",
+        "models.router.top_k=1",
+        "train.supcon.enabled=true",
+        "train.supcon.label_field=phase",
+        "train.margin.enabled=false",
+        "train.lipschitz.enabled=false",
+        "train.gain_reg.enabled=false",
+        "train.log_dimension_mse=true",
+        "eval.episodes.trace_level=full"
+      ]
+    }
+  ]
+}

@@ -20,6 +20,11 @@ supcon:
   lambda_sc: 1.0
   temperature: 0.07
   label_field: "phase"
+  # When SupCon is enabled, keep the phase CE term disabled by default for
+  # the locked historical protocol. Repair/diagnostic rows must override this
+  # explicitly to false when testing whether the auxiliary phase classifier
+  # improves the learned representation.
+  zero_ce: true
 # Per-step diagnostic: log cos(grad L_action, grad L_phase) as the
 # train/grad_cos_action_phase curve (auxiliary-task conflict detector,
 # Du et al. 2018 / PCGrad). Diagnostic only — never part of the loss, and

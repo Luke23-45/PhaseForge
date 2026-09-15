@@ -1,0 +1,277 @@
+{
+  "analysis": {
+    "name": "square_data_geometry_audit",
+    "cpu_only": true,
+    "repository": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge",
+    "cache_root": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache",
+    "tasks": [
+      "Can",
+      "Square"
+    ]
+  },
+  "tasks": {
+    "Can": {
+      "phase_cache": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache\\74f710c31250dfb9",
+      "samples": 23207,
+      "trajectories": 200,
+      "phase": {
+        "label": "phase",
+        "unique_labels": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "action_relationship": {
+          "heldout_global_action_mse": 0.24131097037295593,
+          "heldout_phase_mean_action_mse": 0.21853133473346628,
+          "heldout_relative_mse_reduction": 0.09439950286670673,
+          "all_data_phase_variance_explained": 0.13207267938529232,
+          "train_phase_counts": [
+            450,
+            4314,
+            2641,
+            9152,
+            1512,
+            2814
+          ]
+        },
+        "local_geometry": {
+          "transition_count": 23007,
+          "state_delta": {
+            "q25": 0.15473284269170928,
+            "q50": 0.2258519389251889,
+            "q75": 0.3324717610243412,
+            "q95": 1.4494378980991327
+          },
+          "action_delta": {
+            "q25": 0.10180630717650657,
+            "q50": 0.16302826605549997,
+            "q75": 0.254147286926081,
+            "q95": 0.5313311204243947
+          },
+          "same_label_action_delta": {
+            "q25": 0.10180505873577272,
+            "q50": 0.16335327771682806,
+            "q75": 0.2549771890713038,
+            "q95": 0.5352547879148268
+          },
+          "changed_label_action_delta": {
+            "q25": 0.10227708286451312,
+            "q50": 0.15648406299270062,
+            "q75": 0.24264704183375546,
+            "q95": 0.45800680434646224
+          },
+          "action_state_local_slope": {
+            "q25": 0.34439996512245896,
+            "q50": 0.7003903641423707,
+            "q75": 1.2541457091933905,
+            "q95": 2.851018148861312
+          },
+          "same_label_action_state_local_slope": {
+            "q25": 0.3522610974427665,
+            "q50": 0.7175492217676013,
+            "q75": 1.2656228600960835,
+            "q95": 2.8649513001110978
+          },
+          "changed_label_action_state_local_slope": {
+            "q25": 0.23831890056975374,
+            "q50": 0.46074744469051615,
+            "q75": 0.9228966460583712,
+            "q95": 2.7265890299279762
+          }
+        },
+        "durations": {
+          "trajectory_label_switch_count": 1211,
+          "segment_count": 1411,
+          "segment_duration": {
+            "q25": 5.0,
+            "q50": 8.0,
+            "q75": 30.0,
+            "q95": 57.0
+          }
+        }
+      },
+      "topology": {
+        "available": true,
+        "cache": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache\\6d1e0b150372e0b6",
+        "alignment": "state/action/demo-key order verified",
+        "label": "phase_topo",
+        "unique_labels": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "action_relationship": {
+          "heldout_global_action_mse": 0.24131097037295593,
+          "heldout_phase_mean_action_mse": 0.22650921812232297,
+          "heldout_relative_mse_reduction": 0.061338911479060565,
+          "all_data_phase_variance_explained": 0.09622656120945228,
+          "train_phase_counts": [
+            2337,
+            5781,
+            3935,
+            1710,
+            4557,
+            2563
+          ]
+        },
+        "local_geometry": {
+          "transition_count": 23007,
+          "state_delta": {
+            "q25": 0.15473284269170928,
+            "q50": 0.2258519389251889,
+            "q75": 0.3324717610243412,
+            "q95": 1.4494378980991327
+          },
+          "action_delta": {
+            "q25": 0.10180630717650657,
+            "q50": 0.16302826605549997,
+            "q75": 0.254147286926081,
+            "q95": 0.5313311204243947
+          },
+          "same_label_action_delta": {
+            "q25": 0.10172838591637498,
+            "q50": 0.16301645445981816,
+            "q75": 0.2540931168968974,
+            "q95": 0.5315961685314676
+          },
+          "changed_label_action_delta": {
+            "q25": 0.10505534994745626,
+            "q50": 0.16367292513329182,
+            "q75": 0.2565158698367741,
+            "q95": 0.4851511581312
+          },
+          "action_state_local_slope": {
+            "q25": 0.34439996512245896,
+            "q50": 0.7003903641423707,
+            "q75": 1.2541457091933905,
+            "q95": 2.851018148861312
+          },
+          "same_label_action_state_local_slope": {
+            "q25": 0.35516054056744434,
+            "q50": 0.7135112729094553,
+            "q75": 1.2630851209577234,
+            "q95": 2.8946850516259905
+          },
+          "changed_label_action_state_local_slope": {
+            "q25": 0.03331860683588274,
+            "q50": 0.054476351081951216,
+            "q75": 0.11531513032177007,
+            "q95": 0.8971916844500544
+          }
+        },
+        "durations": {
+          "trajectory_label_switch_count": 371,
+          "segment_count": 571,
+          "segment_duration": {
+            "q25": 15.0,
+            "q50": 34.0,
+            "q75": 60.0,
+            "q95": 98.5
+          }
+        }
+      }
+    },
+    "Square": {
+      "phase_cache": "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\data\\processed\\cache\\8b265fc443c80619",
+      "samples": 30154,
+      "trajectories": 200,
+      "phase": {
+        "label": "phase",
+        "unique_labels": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "action_relationship": {
+          "heldout_global_action_mse": 0.20199752508703803,
+          "heldout_phase_mean_action_mse": 0.1764238872865206,
+          "heldout_relative_mse_reduction": 0.12660371848367002,
+          "all_data_phase_variance_explained": 0.14657802212328863,
+          "train_phase_counts": [
+            418,
+            5645,
+            3577,
+            12232,
+            4098,
+            1195
+          ]
+        },
+        "local_geometry": {
+          "transition_count": 29954,
+          "state_delta": {
+            "q25": 0.135543246027623,
+            "q50": 0.2167915460026182,
+            "q75": 0.33423052922437024,
+            "q95": 1.022017625936203
+          },
+          "action_delta": {
+            "q25": 0.10474617050228076,
+            "q50": 0.16223246955113357,
+            "q75": 0.24481160876341923,
+            "q95": 0.4754701013381997
+          },
+          "same_label_action_delta": {
+            "q25": 0.10443410184860015,
+            "q50": 0.16183410479547286,
+            "q75": 0.24436104021619282,
+            "q95": 0.4762800016628185
+          },
+          "changed_label_action_delta": {
+            "q25": 0.11675526191254565,
+            "q50": 0.17249561338965969,
+            "q75": 0.2618731503414915,
+            "q95": 0.4384453536716564
+          },
+          "action_state_local_slope": {
+            "q25": 0.40090168845424307,
+            "q50": 0.7432243518346695,
+            "q75": 1.3030522524654313,
+            "q95": 2.993999602466213
+          },
+          "same_label_action_state_local_slope": {
+            "q25": 0.4030496972701127,
+            "q50": 0.7487187625500158,
+            "q75": 1.3123738793088144,
+            "q95": 3.0358821419898785
+          },
+          "changed_label_action_state_local_slope": {
+            "q25": 0.3605465565054895,
+            "q50": 0.6156864240472684,
+            "q75": 0.9996052773206456,
+            "q95": 1.9830835647447729
+          }
+        },
+        "durations": {
+          "trajectory_label_switch_count": 903,
+          "segment_count": 1103,
+          "segment_duration": {
+            "q25": 7.0,
+            "q50": 8.0,
+            "q75": 51.0,
+            "q95": 81.0
+          }
+        }
+      },
+      "topology": {
+        "available": false,
+        "reason": "no aligned phase_topo cache found"
+      }
+    }
+  },
+  "limitations": [
+    "This uses demonstration-cache geometry and not closed-loop rollout states.",
+    "A large action/state local slope is an action-regression diagnostic, not a contact-force measurement.",
+    "Within-label action variance can be necessary for fine control; it is not automatically harmful.",
+    "Cache provenance and alignment must be checked before comparing phase and topology labels."
+  ]
+}

@@ -52,6 +52,15 @@ particular, the Stage 1 checkpoint, phase-aware representation, action-loss
 settings, disabled margin setting, expert initialization, beta value, and
 seeds must remain identical.
 
+Important implementation note for interpretation: the recorded Stage 1
+provider enables SupCon but does not explicitly set
+`train.supcon.zero_ce`. The trainer default is `true`, so the auxiliary phase
+classification CE loss is suppressed in that run. SupCon still shapes the
+latent representation using the configured `phase` labels, but the logged
+phase-head accuracy is not evidence of an actively optimized phase-classifier
+head. Any follow-up that intends to test phase-head learning must set
+`train.supcon.zero_ce` explicitly and treat it as a new protocol.
+
 ## Runner command
 
 Use a new output namespace. The runner refuses to mix this protocol with
@@ -61,13 +70,34 @@ existing artifacts:
 phaseforge-sweep --manifest experiments/router_initialization_ablation.json --outputs outputs_router_initialization_ablation --with-dependencies
 ```
 
-The protocol expands to 108 steps:
+If all three child manifests (`Lift`, `Can`, and `Square`) are run, the
+protocol expands to 108 steps:
 
 - 18 shared-provider Stage 1 training steps,
 - 45 Stage 2 training steps,
 - 45 rollout evaluations.
 
+The recorded result archive was created with an explicit `Can Square` task
+selection. It therefore contains 72 steps: 12 shared-provider Stage 1
+training steps, 30 Stage 2 training steps, and 30 rollout evaluations. Lift
+was present in the umbrella protocol but was not selected for that recorded
+run.
+
 Do not use the existing `outputs_final` directory for this run.
+
+For the CPU-only phase/router diagnosis, use the processed caches and archived
+summaries without loading a checkpoint:
+
+```text
+uv run python scripts/analysis/phase_router_diagnosis.py \
+  --tasks Can Square \
+  --outputs <focused-output-directory> \
+  --out outputs_cpu_debug/phase_router_diagnosis.json
+```
+
+This diagnostic reports state-only phase observability, held-out action
+residual reduction from phase means, available `phase_topo` observability and
+agreement, and whether archived Stage 1 logs actually enabled phase CE.
 
 ## Interpretation
 

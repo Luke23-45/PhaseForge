@@ -25,9 +25,10 @@ objective.
 
 ### H1 — Routing-organization hypothesis
 
-Topology-derived prototype initialization will produce more structured and
-stable routing than random initialization. The observable indicators are the
-logged phase-expert NMI and routing-switch rate.
+Topology-derived prototype initialization will produce more phase-aligned
+routing and a lower within-validation-trajectory switch rate than random and
+phase-derived initialization. The observable indicators are the logged
+phase-expert NMI and routing-switch rate.
 
 **Result:** Supported by the logged routing diagnostics.
 
@@ -91,7 +92,8 @@ training runs:
 - `beta: 0.0` in all 30 configurations;
 - `train.margin.enabled: false` in all 30 configurations;
 - the same action-loss contract and shared Stage 1 provider where applicable;
-- no top-1 routing collapse was reported;
+- the final validation summaries report `val/top1_collapse_rate: 0.0` for all
+  30 Stage 2 runs; initialization diagnostics are reported separately below;
 - all evaluations used reset seed `2026`;
 - all methods within Can used reset bank `310d9cfd3fa5e843`;
 - all methods within Square used reset bank `e16288589f5f69c2`.
@@ -154,15 +156,50 @@ The following values are means across the three Stage 2 seeds.
 | `representation_bc` | 0.41 | 0.47 | 0.06 | 0.06 |
 | `routing_softmax_top1` | 0.72 | 0.61 | 0.04 | 0.05 |
 
-All methods reported a zero top-1 collapse rate. Thus, the topology arm did
-not fail because of complete expert collapse. Its Square performance loss
-occurs despite more structured routing.
+All final validation summaries reported a zero top-1 collapse rate. This does
+not mean that every initialization was free of collapse: the random arm had
+nonzero `t0_collapse_rate` on both tasks, and the phase arm had nonzero initial
+collapse on some Square seeds. The topology arm had zero initial and final
+collapse in the recorded diagnostics. Its Square performance loss therefore
+does not appear to be explained by persistent complete expert collapse.
+
+The softmax control is a registered router-package comparison rather than a
+pure gate-only ablation. It uses a `TopKRouter` with training noise and a
+different balance coefficient (`0.01` versus `0.0001` for the prototype
+router), while the primary three-way initialization comparison keeps the
+router package fixed.
 
 The task-level failure totals also differ substantially: across all five
 methods and three seeds, Can had 212 timeouts out of 750 episodes, while
 Square had 520 timeouts out of 750. No other failure category was recorded.
 This confirms that Square is the harder and more discriminating task in this
 run; it should not be treated as a saturated task like Lift.
+
+### CPU diagnosis of the phase-learning hypothesis
+
+A supplementary CPU audit of the local processed caches found trajectory-aware
+state-only macro-F1 of 0.502 for Can phase labels and 0.409 for Square phase
+labels, both below the repository's 0.60 observability threshold. This supports
+phase/state ambiguity as a plausible contributor to Square's weaker result.
+It does not prove that phase learning is the sole cause: phase-conditioned
+means reduce held-out action MSE by 9.4% on Can and 12.7% on Square, leaving
+substantial within-phase action variation on both tasks.
+
+The archived Stage 1 logs require an additional caveat. SupCon was enabled and
+`train.supcon.zero_ce` was omitted, so the trainer's default suppressed the
+phase-classification CE loss. All six PhaseForge Stage 1 runs therefore logged
+`loss_phase: 0.0`; their phase-head accuracy is not evidence that the phase CE
+objective learned. The representation was shaped by SupCon, not by active phase
+CE. The Can local cache also shows low agreement between `phase` and
+`phase_topo` (NMI 0.058; ARI 0.021), while no comparable local Square
+`phase_topo` cache is available.
+
+The appropriate hypothesis is therefore joint and testable: Square may be
+limited by poorer state-to-phase observability, a mismatch between the phase
+partition used for representation learning and the topology partition used for
+prototype initialization, and loss of within-phase action detail. “Success is
+directly proportional to phase accuracy” is stronger than the current evidence
+supports.
 
 ## 6. Interpretation for the proposed method
 
@@ -174,7 +211,7 @@ matched seeds.
 The narrower claim is supported:
 
 > Topology-derived prototype initialization imposes a more phase-aligned and
-> temporally stable routing organization in a memoryless hard prototype MoE.
+> temporally coherent routing organization in a memoryless hard prototype MoE.
 
 The performance claim must be conditional:
 
