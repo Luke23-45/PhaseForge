@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "created_at": "2026-09-16T13:58:04.756935+00:00",
+  "created_at": "2026-09-16T17:06:10.977956+00:00",
   "argv": [
     "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\studies\\analysis\\scripts\\generate.py"
   ],
@@ -16,8 +16,8 @@
         "figures\\main\\F1_overview.png"
       ],
       "sha256": {
-        "figures\\main\\F1_overview.pdf": "100f775c4ae21725f777bb71c0fd8339b0deb594e6b83b2608aba1fcea0f1713",
-        "figures\\main\\F1_overview.png": "19b2d3ad7894d4487cb17e5ff9c1c1e7bacbe47b17f382923ce59dc8c785d13a"
+        "figures\\main\\F1_overview.pdf": "25c5fee9757f6bc56543013db9bed7515f69c19c62d13efdbca311f23a6ba72b",
+        "figures\\main\\F1_overview.png": "4dfc643b4c466d6e713c21e570c6942a11b15b42ad3bd8647449d268d428dc4d"
       }
     },
     "F2": {
@@ -26,8 +26,8 @@
         "figures\\main\\F2_paired_deltas.png"
       ],
       "sha256": {
-        "figures\\main\\F2_paired_deltas.pdf": "ff52ee84e9dbab28a46db83d71adf469816cbe77900af08271ce7e80747dad5a",
-        "figures\\main\\F2_paired_deltas.png": "31240f57094816ff59d5c4e81b9de4868091cf46c2741600bd666fb3a54e7d40"
+        "figures\\main\\F2_paired_deltas.pdf": "9367558a56d0d4e3aaaa637288db02773dac377b11e09b8b6028d67f34d9c1e5",
+        "figures\\main\\F2_paired_deltas.png": "bfd85b0068cbd0826d4e20778e756fd52ea6c199f8efb607c5f69157612b86b6"
       }
     },
     "F3": {
@@ -36,8 +36,8 @@
         "figures\\main\\F3_specialization.png"
       ],
       "sha256": {
-        "figures\\main\\F3_specialization.pdf": "a208cb885e23b5d39f8d1a899525685b07cbb8fd06e31f01773894538afbced0",
-        "figures\\main\\F3_specialization.png": "ba82766377a619c8f0d3a24abe009086163b696d37e82b3c32fea1113bc29978"
+        "figures\\main\\F3_specialization.pdf": "5c73fc7a0204d4ea6ceb8f84766081b024e9f8038fb10c68cc21178f7cb57766",
+        "figures\\main\\F3_specialization.png": "54f5ce514e8056ee50ea05d9f682a51eeb2626ccb42cca0dff06c882b0690507"
       }
     },
     "F4": {
@@ -46,8 +46,8 @@
         "figures\\main\\F4_action_discontinuity.png"
       ],
       "sha256": {
-        "figures\\main\\F4_action_discontinuity.pdf": "2a736e1661d8fd24bfb8887a1f8fd81e27916e06cd92c2b13166989950032073",
-        "figures\\main\\F4_action_discontinuity.png": "788fddbfc71f96210401a59b5200c3aedad5160e964c2876e51a7f87de78e90f"
+        "figures\\main\\F4_action_discontinuity.pdf": "b607b1c7697d6be93152f146aff7d7eb7ebb0b95bc5ddb0f3d8eed2362ead905",
+        "figures\\main\\F4_action_discontinuity.png": "39db8450eb9baa6b62dda81ceb8c6ff0bd28ff5f01754dc08cf5ec2e484a67a5"
       }
     },
     "T1": {
@@ -56,8 +56,8 @@
         "tables\\T1_success_matrix.md"
       ],
       "sha256": {
-        "tables\\T1_success_matrix.tex": "ee216dfe2f28dd353118095a3d6bada09ca772fb5f2f6736e3b873cc32a6155e",
-        "tables\\T1_success_matrix.md": "f5d33d894b614f4f7421fa206e6a41c3d37c27ee9ff15e1c004542914788137e"
+        "tables\\T1_success_matrix.tex": "1326c7dd9bfa75408a0f985ea98d4a1c0db31cfbcc1b8ad682f89498aeb1c5d2",
+        "tables\\T1_success_matrix.md": "2d12ff1540374be6d72bf16f5b9b877e174b5e7b0ec138231266eb2fcb70a687"
       }
     },
     "T2": {
@@ -106,7 +106,7 @@
         "figures\\appendix\\A3_training_curves.png"
       ],
       "sha256": {
-        "figures\\appendix\\A3_training_curves.pdf": "c3bc1c052ca059779a19dd60fafc188247ac0b2b051c564086232385e3746108",
+        "figures\\appendix\\A3_training_curves.pdf": "8f3036b72b7247e655b0436176f3c831038f112bc74b211f4930de4ba1b94742",
         "figures\\appendix\\A3_training_curves.png": "a94fc32d81ff79640239aaa505732c37b56bd83d21e8b7f1e3aa4c328de5e0eb"
       }
     },
@@ -126,8 +126,8 @@
         "figures\\appendix\\A5_failure_categories.png"
       ],
       "sha256": {
-        "figures\\appendix\\A5_failure_categories.pdf": "ca371a71babd795a94880ad52b7c5010cb7c226a2e3f1174d84fe475ad4f1005",
-        "figures\\appendix\\A5_failure_categories.png": "5bf8039fecc4621297c2526283fba720ce7c1f262b18326bf2bc221798a3a738"
+        "figures\\appendix\\A5_failure_categories.pdf": "9d021db24eee5d93df1c50075f03cca2cc28cb6ec6fc149b8fdd84341d13373b",
+        "figures\\appendix\\A5_failure_categories.png": "93f409628be4e93b5f30cb398fafc67d1539d1b60631a552d291a890b366c2e4"
       }
     },
     "A6": {
@@ -136,8 +136,8 @@
         "figures\\appendix\\A6_steps_ecdf.png"
       ],
       "sha256": {
-        "figures\\appendix\\A6_steps_ecdf.pdf": "f7ab96153dc2959b832a6de0d043f0729bece854840f1a9ca28b392b52cab160",
-        "figures\\appendix\\A6_steps_ecdf.png": "7b86e44cd757df2da2e67414ba247e133f6fed8ddf5ee2c7e5950081ca69cce4"
+        "figures\\appendix\\A6_steps_ecdf.pdf": "084cd85978d1828716709a69655eabc323cdfc07d57d935c0ce54db963b56e7c",
+        "figures\\appendix\\A6_steps_ecdf.png": "7eec8fde4adf43c074313895fd61c7b35e1645186e470058836bb5b8ff797359"
       }
     },
     "A7": {
@@ -156,8 +156,8 @@
         "figures\\appendix\\A8_balance.png"
       ],
       "sha256": {
-        "figures\\appendix\\A8_balance.pdf": "e77d384420be068655df55618b3bba8e04e3fcd558c2d273c0f57fc8d1c2d416",
-        "figures\\appendix\\A8_balance.png": "54da45ece741aa34fb8a0a00c42ae9708f361e5449876499fc996fdb69c738ff"
+        "figures\\appendix\\A8_balance.pdf": "acde4ada1b1854add9b18ee68f536811d0d8557e23af662c8d090c81dab98a5f",
+        "figures\\appendix\\A8_balance.png": "ae9309f92bb2c47fccfb9d2d83027d77764e53087b5efb5ef51e758956b438f1"
       }
     },
     "A9": {
@@ -186,7 +186,7 @@
         "figures\\appendix\\A11_router_family.png"
       ],
       "sha256": {
-        "figures\\appendix\\A11_router_family.pdf": "fd2a6cf0b8719572da286debd6358f12f8a139387e4d55174178102c36268623",
+        "figures\\appendix\\A11_router_family.pdf": "fc43d1bd0937a0ec3a816e503e9b9f4f9090f5e36462984c5d5bbea87346b0ea",
         "figures\\appendix\\A11_router_family.png": "b7b564987d288b0b83312fa310ff1ec2e9ba58cef9058233ce0d7bd8817f2e1e"
       }
     },
@@ -216,8 +216,8 @@
         "figures\\appendix\\A14_phase_depth.png"
       ],
       "sha256": {
-        "figures\\appendix\\A14_phase_depth.pdf": "b30bb87907c0f9af60b084568e8bcf69c0bb5cfbc07dad2aa4a81bbf0cc383a9",
-        "figures\\appendix\\A14_phase_depth.png": "1965dfff10cd39b9d4a83c676a67348254a0901cadcde9fd189a44b1d7d6966a"
+        "figures\\appendix\\A14_phase_depth.pdf": "77204bcb76d2c4463db0cea40aa597995d6992a36206efab3f48194d48b36cb7",
+        "figures\\appendix\\A14_phase_depth.png": "31c0d943a1e9da4c5576120991615e1e71c645931f23acd98ccee1314789647c"
       }
     },
     "A15": {

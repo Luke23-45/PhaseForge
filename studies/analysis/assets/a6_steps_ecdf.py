@@ -27,7 +27,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     with paper_style():
         fig, axes = plt.subplots(
-            1, len(SOLVABLE_TASKS), figsize=(7.0, 2.6), squeeze=True, sharey=True
+            1, len(SOLVABLE_TASKS), figsize=(7.2, 2.8), squeeze=True, sharey=True
         )
         for col, task in enumerate(SOLVABLE_TASKS):
             ax = axes[col]
@@ -54,7 +54,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
             ax.set_xlabel("Completion Steps", fontsize=8.5)
             ax.set_ylim(0.0, 1.05)
-            ax.grid(True, linestyle=":", alpha=0.3)
+            ax.grid(True, linestyle=":", alpha=0.35)
             if col == 0:
                 ax.set_ylabel("Empirical CDF", fontsize=8.5)
 
@@ -64,8 +64,8 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             handles,
             labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, 1.02),
-            ncol=4,
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=3,
             frameon=False,
             fontsize=7.5,
         )

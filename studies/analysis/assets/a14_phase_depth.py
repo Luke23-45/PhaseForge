@@ -24,9 +24,19 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
         "precision_residual_phase_random_router",
     )
     methods = [m for m in target_methods if m in registry.matrix_method_names()]
+
+    # Derive phase range dynamically from validated episode artifacts
+    all_observed_phases = [
+        ep.max_phase
+        for eps in dataset.episodes.values()
+        for ep in eps
+        if ep.max_phase is not None
+    ]
+    max_depth = max(all_observed_phases) if all_observed_phases else 5
+
     with paper_style():
         fig, axes = plt.subplots(
-            1, len(tasks), figsize=(7.2, 2.5), squeeze=True, sharey=True
+            1, len(tasks), figsize=(7.2, 2.8), squeeze=True, sharey=True
         )
         for col, task in enumerate(tasks):
             ax = axes[col]
@@ -42,7 +52,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             if not depths_by_method:
                 ax.set_visible(False)
                 continue
-            max_depth = 5  # Standard benchmark phases 0..5 (P=6)
+
             width = 0.8 / len(depths_by_method)
             for i, (method, counter) in enumerate(depths_by_method.items()):
                 total = sum(counter.values())
@@ -56,8 +66,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                     edgecolor="white",
                     linewidth=0.4,
                 )
-            ax.axvline(5.0, color="#888888", linestyle="--", linewidth=0.8, alpha=0.6)
-            ax.set_xlabel("Phase Reached", fontsize=8.0)
+            ax.axvline(float(max_depth), color="#888888", linestyle="--", linewidth=0.8, alpha=0.6)
             ax.set_xticks(range(max_depth + 1))
             ax.set_xticklabels([f"P{d}" for d in range(max_depth + 1)], fontsize=7.0)
             ax.set_title(task, fontsize=9.0, fontweight="bold", pad=5)
@@ -65,15 +74,18 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             if col == 0:
                 ax.set_ylabel("Share of Episodes", fontsize=8.5)
 
+        # Single clean centered xlabel at bottom
+        fig.text(0.53, 0.03, "Deepest Phase Reached", ha="center", fontsize=8.5, fontweight="bold")
+
         handles, labels = axes[0].get_legend_handles_labels()
         fig.legend(
             handles,
             labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, 1.02),
-            ncol=4,
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=len(methods),
             frameon=False,
             fontsize=7.5,
         )
-        fig.subplots_adjust(top=0.84, bottom=0.18, left=0.08, right=0.98, wspace=0.15)
+        fig.subplots_adjust(top=0.82, bottom=0.18, left=0.08, right=0.98, wspace=0.18)
     return save(fig, "figures/appendix/A14_phase_depth")

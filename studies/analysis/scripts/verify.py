@@ -22,7 +22,7 @@ from studies.analysis.common.config import generation_manifest_path, paper_root
 logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(name)s | %(message)s")
 logger = logging.getLogger("studies.analysis.verify")
 
-PLANNED_IDS = ["F1", "F2", "F3", "F4", "F5"] + ["T1", "T2", "T3"] + [f"A{i}" for i in range(1, 16)]
+PLANNED_IDS = ["F1", "F2", "F3", "F4"] + ["T1", "T2", "T3"] + [f"A{i}" for i in range(1, 16)]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

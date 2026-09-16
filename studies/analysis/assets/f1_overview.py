@@ -58,62 +58,62 @@ def generate(dataset: AnalysisDataset | None = None) -> list[Path]:
             facecolor=c_stage2, edgecolor=c_stage2_border, linewidth=1.2, linestyle="--"
         )
         ax.add_patch(box_s2)
-        ax.text(82.5, 44.5, "Stage 2: MoE Policy", ha="center", va="center",
+        ax.text(82.5, 44.5, "Stage 2: Top-1 MoE Policy", ha="center", va="center",
                 fontsize=8.5, fontweight="bold", color=c_stage2_border)
 
         # --- Stage 1 Components ---
         # State input
-        _draw_node(ax, 16, 38, 22, 4.5, r"State Input $\mathbf{s}_t \in \mathbb{R}^d$" + "\n(robot + object state)", "#FFFFFF", "#555555")
+        _draw_node(ax, 16, 39.0, 22, 4.5, r"State Input $\mathbf{s}_t \in \mathbb{R}^d$" + "\n(robot + object state)", "#FFFFFF", "#555555")
         # Encoder
-        _draw_node(ax, 16, 28, 22, 6.0, r"State Encoder $f_\theta$" + "\n(3-layer MLP + Residual)", "#D9EAF7", c_stage1_border)
-        _draw_arrow(ax, (16, 35.5), (16, 31.2))
+        _draw_node(ax, 16, 29.5, 22, 5.5, r"State Encoder $f_\theta$" + "\n(3-layer MLP + Residual)", "#D9EAF7", c_stage1_border)
+        _draw_arrow(ax, (16, 36.5), (16, 32.5))
 
-        # Latent z
-        ax.text(16, 23.5, r"Latent $\mathbf{z}_t \in \mathbb{R}^{128}$", ha="center", va="center", fontsize=7.5, fontweight="bold", color="#333333")
-        _draw_arrow(ax, (16, 25.0), (16, 22.2))
+        # Latent z badge
+        _draw_node(ax, 16, 21.5, 18, 3.8, r"Latent $\mathbf{z}_t \in \mathbb{R}^{128}$", "#FFFFFF", c_stage1_border)
+        _draw_arrow(ax, (16, 26.5), (16, 23.5))
 
         # Dual Heads
-        _draw_node(ax, 8.5, 13.5, 12, 6.5, r"Phase Head $g_\psi$" + "\n" + r"$\mathcal{L}_\mathrm{phase}$ (Cross-Ent)", "#FFFFFF", OKABE_ITO["vermillion"])
-        _draw_node(ax, 23.5, 13.5, 12, 6.5, r"Action Head $h_\phi$" + "\n" + r"$\mathcal{L}_\mathrm{action}$ (MSE)", "#FFFFFF", OKABE_ITO["purple"])
-        _draw_arrow(ax, (13, 22.0), (8.5, 17.0))
-        _draw_arrow(ax, (19, 22.0), (23.5, 17.0))
+        _draw_node(ax, 8.5, 11.5, 12.5, 6.5, r"Phase Head $g_\psi$" + "\n" + r"$\mathcal{L}_\mathrm{phase}$ (Cross-Ent)", "#FFFFFF", OKABE_ITO["vermillion"])
+        _draw_node(ax, 23.5, 11.5, 12.5, 6.5, r"Action Head $h_\phi$" + "\n" + r"$\mathcal{L}_\mathrm{action}$ (MSE)", "#FFFFFF", OKABE_ITO["purple"])
+        _draw_arrow(ax, (12.5, 19.5), (8.5, 15.0))
+        _draw_arrow(ax, (19.5, 19.5), (23.5, 15.0))
 
         # --- Transition Arrow 1 -> Boot ---
         _draw_arrow(ax, (31.5, 25), (33.5, 25), lw=1.8, color="#555555")
 
         # --- Bootstrap Components ---
         # Topological Changepoint & Clustering
-        _draw_node(ax, 48.5, 36, 24, 7.0, r"1. Topological Changepoints" + "\n" + r"PELT / Manifold clustering $\to \mathcal{D}_k$", "#FFFFFF", c_boot_border)
+        _draw_node(ax, 48.5, 36, 25, 7.0, r"1. Topological Changepoints" + "\n" + r"PELT / Manifold clustering $\to \mathcal{D}_k$", "#FFFFFF", c_boot_border)
 
         # Prototype Router Init
-        _draw_node(ax, 48.5, 24, 24, 6.0, r"2. Prototype Router Init" + "\n" + r"$\mathbf{c}_k = \frac{1}{|\mathcal{D}_k|} \sum_{i \in \mathcal{D}_k} f_\theta(\mathbf{s}_i)$", "#FFF2DE", OKABE_ITO["vermillion"])
-        _draw_arrow(ax, (48.5, 32.2), (48.5, 27.2))
+        _draw_node(ax, 48.5, 24, 25, 6.5, r"2. Prototype Router Init ($K=6$)" + "\n" + r"$\mathbf{c}_k = \frac{1}{|\mathcal{D}_k|} \sum_{i \in \mathcal{D}_k} f_\theta(\mathbf{s}_i)$", "#FFF2DE", OKABE_ITO["vermillion"])
+        _draw_arrow(ax, (48.5, 32.2), (48.5, 27.5))
 
         # Direct Expert Setup
-        _draw_node(ax, 48.5, 11.5, 24, 7.5, r"3. Direct Expert Allocation" + "\n" + r"Residual Experts ($\beta = 0.0$)" + "\n" + r"Independent heads $f_{E_1}, \dots, f_{E_K}$", "#FFF2DE", OKABE_ITO["purple"])
-        _draw_arrow(ax, (48.5, 20.8), (48.5, 15.5))
+        _draw_node(ax, 48.5, 11.5, 25, 8.0, r"3. Direct Expert Allocation" + "\n" + r"Residual Experts ($\beta = 0.0$, inactive)" + "\n" + r"Initialized from action head $h_\phi$", "#FFF2DE", OKABE_ITO["purple"])
+        _draw_arrow(ax, (48.5, 20.5), (48.5, 15.8))
 
         # --- Transition Arrow Boot -> 2 ---
         _draw_arrow(ax, (63.5, 25), (65.5, 25), lw=1.8, color="#555555")
 
         # --- Stage 2 Components ---
-        # State & Encoder
-        _draw_node(ax, 82.5, 37.5, 24, 5.5, r"State $\mathbf{s}_t \rightarrow$ Encoder $\mathbf{z}_t = f_\theta(\mathbf{s}_t)$" + "\n(Frozen representation)", "#E2F0D9", c_stage2_border)
+        # State & Encoder (Trainable, lr_scale=0.1)
+        _draw_node(ax, 82.5, 37.5, 26, 5.5, r"Encoder $\mathbf{z}_t = f_\theta(\mathbf{s}_t)$" + "\n" + r"(Trainable, $\mathrm{lr\_scale}=0.1$)", "#E2F0D9", c_stage2_border)
 
-        # Router
-        _draw_node(ax, 74.0, 26.0, 13, 6.5, r"Hard Router" + "\n" + r"$r_t = \arg\min_k \|\mathbf{z}_t - \mathbf{c}_k\|_2$", "#FFFFFF", OKABE_ITO["vermillion"])
+        # Hard Top-1 Voronoi Router
+        _draw_node(ax, 74.0, 26.0, 14, 6.5, r"Hard Top-1 Router" + "\n" + r"$r_t = \arg\min_k \|\mathbf{z}_t - \mathbf{c}_k\|_2$", "#FFFFFF", OKABE_ITO["vermillion"])
         _draw_arrow(ax, (78.0, 34.5), (74.0, 29.5))
 
-        # Experts
-        _draw_node(ax, 90.5, 26.0, 14, 6.5, r"Specialized Experts" + "\n" + r"Direct Action $f_{r_t}(\mathbf{z}_t)$", "#FFFFFF", OKABE_ITO["purple"])
-        _draw_arrow(ax, (87.0, 34.5), (90.5, 29.5))
+        # Specialized Experts
+        _draw_node(ax, 91.0, 26.0, 14, 6.5, r"6 Specialized Experts" + "\n" + r"Direct Action $f_{r_t}(\mathbf{z}_t)$", "#FFFFFF", OKABE_ITO["purple"])
+        _draw_arrow(ax, (87.0, 34.5), (91.0, 29.5))
 
         # Routing selection flow
         _draw_arrow(ax, (74.0, 22.5), (82.5, 17.5))
-        _draw_arrow(ax, (90.5, 22.5), (82.5, 17.5))
+        _draw_arrow(ax, (91.0, 22.5), (82.5, 17.5))
 
         # Commanded Action Output
-        _draw_node(ax, 82.5, 11.5, 26, 8.0, r"Direct Action Output $\mathbf{a}_t = f_{r_t}(\mathbf{z}_t)$" + "\n" + r"$\mathcal{L}_\mathrm{total} = \mathcal{L}_\mathrm{action} + \lambda_\mathrm{bal}\mathcal{L}_\mathrm{bal} + \lambda_\mathrm{mar}\mathcal{L}_\mathrm{margin}$" + "\n(Subject to switch discontinuity)", "#E2F0D9", c_stage2_border)
+        _draw_node(ax, 82.5, 11.5, 27, 8.0, r"Direct Action $\mathbf{a}_t = f_{r_t}(\mathbf{z}_t)$" + "\n" + r"$\mathcal{L}_\mathrm{total} = \mathcal{L}_\mathrm{action} + \lambda_\mathrm{bal}\mathcal{L}_\mathrm{bal} + \lambda_\mathrm{mar}\mathcal{L}_\mathrm{margin}$" + "\n(Subject to switch discontinuity)", "#E2F0D9", c_stage2_border)
 
         fig.tight_layout(pad=0.2)
     return save(fig, "figures/main/F1_overview")

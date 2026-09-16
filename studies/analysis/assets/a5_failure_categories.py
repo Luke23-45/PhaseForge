@@ -22,14 +22,42 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     methods = [m for m in registry.matrix_method_names() if m != "precision_residual_oracle"]
     method_labels = [registry.display_name(m) for m in methods]
-
     tasks = list(registry.tasks())
+
+    # Dynamically discover all termination categories present across all evaluated episodes
+    present_categories = Counter()
+    for key, eps in dataset.episodes.items():
+        if key[0] in tasks and key[1] in methods:
+            for ep in eps:
+                if not ep.valid:
+                    present_categories["invalid"] += 1
+                elif ep.success:
+                    present_categories["success"] += 1
+                else:
+                    reason = ep.termination_reason or "other"
+                    present_categories[reason] += 1
+
+    # Order present categories: success first, then specific failure categories (suppress zero-count)
+    ordered_cats = ["success"] + [c for c in sorted(present_categories.keys()) if c != "success" and present_categories[c] > 0]
+    cat_colors = {
+        "success": OKABE_ITO["green"],
+        "task_timeout": OKABE_ITO["vermillion"],
+        "invalid": OKABE_ITO["grey"],
+        "other": OKABE_ITO["purple"],
+    }
+    cat_display = {
+        "success": "Success",
+        "task_timeout": "Task Timeout",
+        "invalid": "Invalid Attempt",
+        "other": "Other Failure",
+    }
+
     with paper_style():
-        fig, axes = plt.subplots(1, len(tasks), figsize=(8.5, 3.4))
+        fig, axes = plt.subplots(1, len(tasks), figsize=(8.8, 3.4), sharey=False)
 
         for col, task in enumerate(tasks):
             ax = axes[col]
-            share_success, share_timeout, share_invalid = [], [], []
+            shares = {cat: [] for cat in ordered_cats}
 
             for method in methods:
                 cats: Counter[str] = Counter()
@@ -46,28 +74,20 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                             cats["success"] += 1
                         else:
                             reason = ep.termination_reason or "other"
-                            cats[reason if reason != "success" else "success"] += 1
+                            cats[reason] += 1
 
                 if total == 0:
-                    share_success.append(0.0)
-                    share_timeout.append(0.0)
-                    share_invalid.append(0.0)
-                    continue
-
-                share_success.append(cats.get("success", 0) / total)
-                share_timeout.append(cats.get("task_timeout", 0) / total)
-                other_cnt = sum(v for k, v in cats.items() if k not in ("success", "task_timeout"))
-                share_invalid.append((cats.get("invalid", 0) + other_cnt) / total)
+                    for cat in ordered_cats:
+                        shares[cat].append(0.0)
+                else:
+                    for cat in ordered_cats:
+                        shares[cat].append(cats.get(cat, 0) / total)
 
             stacked_bars(
                 ax,
                 method_labels if col == 0 else ["" for _ in method_labels],
-                {
-                    "success": share_success,
-                    "task_timeout": share_timeout,
-                    "other/invalid": share_invalid,
-                },
-                colors=CATEGORY_COLORS,
+                shares,
+                colors={c: cat_colors.get(c, OKABE_ITO["grey"]) for c in ordered_cats},
             )
             ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
             ax.set_xticks([0.0, 0.5, 1.0])
@@ -75,21 +95,20 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             ax.set_yticks(range(len(method_labels)))
             if col == 0:
                 ax.set_yticklabels(method_labels, fontsize=8.0)
-            else:
-                ax.set_yticklabels([])
             if col == 2:
                 ax.set_xlabel("Episode Outcome Share", fontsize=8.5)
 
-        # Single top legend
-        handles, labels = axes[0].get_legend_handles_labels()
+        # Single top legend for active categories only
+        legend_labels = [cat_display.get(c, c.replace("_", " ").title()) for c in ordered_cats]
+        handles, _ = axes[0].get_legend_handles_labels()
         fig.legend(
             handles,
-            ["Success", "Task Timeout", "Other / Invalid"],
+            legend_labels,
             loc="upper center",
             bbox_to_anchor=(0.5, 0.99),
-            ncol=3,
+            ncol=len(ordered_cats),
             frameon=False,
-            fontsize=8,
+            fontsize=8.0,
         )
-        fig.subplots_adjust(top=0.86, bottom=0.14, left=0.25, right=0.97, wspace=0.15)
+        fig.subplots_adjust(top=0.86, bottom=0.14, left=0.22, right=0.97, wspace=0.12)
     return save(fig, "figures/appendix/A5_failure_categories")

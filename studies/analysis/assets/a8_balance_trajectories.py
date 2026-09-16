@@ -61,6 +61,16 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                 if row == 0:
                     ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
 
-        axes[0][0].legend(frameon=False, fontsize=7.5, loc="lower right")
-        fig.tight_layout()
+        # Top legend to avoid occluding trajectory curves
+        handles, labels = axes[0][0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=4,
+            frameon=False,
+            fontsize=8.0,
+        )
+        fig.subplots_adjust(top=0.88, bottom=0.12, left=0.14, right=0.96, hspace=0.25, wspace=0.18)
     return save(fig, "figures/appendix/A8_balance")
