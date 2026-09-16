@@ -13,10 +13,12 @@ from studies.analysis.render.figures import ecdf, save
 
 SOLVABLE_TASKS = ("Lift", "Can", "Square")
 METHODS_TO_COMPARE = (
-    ("phaseforge", "-", 2.0),
+    ("precision_residual_phaseforge", "-", 2.0),
     ("bc", "--", 1.6),
-    ("warmstart_moe", ":", 1.6),
-    ("plain_encoder_phase_bootstrap", "-.", 1.6),
+    ("final_aligned_softmax_top1", ":", 1.6),
+    ("precision_residual_plain_encoder", "-.", 1.6),
+    ("precision_residual_phase_random_router", (0, (3, 1, 1, 1)), 1.6),
+    ("precision_residual_scratch_moe", (0, (1, 1)), 1.6),
 )
 
 

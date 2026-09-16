@@ -16,10 +16,14 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
     import numpy as np
 
     tasks = registry.tasks()
-    methods = [
-        m for m in ("phaseforge", "bc", "warmstart_moe", "plain_encoder_phase_bootstrap")
-        if m in registry.matrix_method_names()
-    ]
+    target_methods = (
+        "precision_residual_phaseforge",
+        "bc",
+        "final_aligned_softmax_top1",
+        "precision_residual_plain_encoder",
+        "precision_residual_phase_random_router",
+    )
+    methods = [m for m in target_methods if m in registry.matrix_method_names()]
     with paper_style():
         fig, axes = plt.subplots(
             1, len(tasks), figsize=(7.2, 2.5), squeeze=True, sharey=True

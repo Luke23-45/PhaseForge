@@ -82,15 +82,15 @@ def generate(dataset: AnalysisDataset | None = None) -> list[Path]:
         _draw_arrow(ax, (31.5, 25), (33.5, 25), lw=1.8, color="#555555")
 
         # --- Bootstrap Components ---
-        # Centroid Extraction
-        _draw_node(ax, 48.5, 36, 24, 7.0, r"1. Latent Clustering" + "\n" + r"$\mathbf{c}_k = \frac{1}{|D_k|} \sum_{i \in D_k} f_\theta(\mathbf{s}_i)$", "#FFFFFF", c_boot_border)
+        # Topological Changepoint & Clustering
+        _draw_node(ax, 48.5, 36, 24, 7.0, r"1. Topological Changepoints" + "\n" + r"PELT / Manifold clustering $\to \mathcal{D}_k$", "#FFFFFF", c_boot_border)
 
-        # Router Init
-        _draw_node(ax, 48.5, 24, 24, 6.0, r"2. Prototype Router Init" + "\n" + r"$\mathbf{W}_R = [\mathbf{c}_1, \dots, \mathbf{c}_K]^\top$", "#FFF2DE", OKABE_ITO["vermillion"])
+        # Prototype Router Init
+        _draw_node(ax, 48.5, 24, 24, 6.0, r"2. Prototype Router Init" + "\n" + r"$\mathbf{c}_k = \frac{1}{|\mathcal{D}_k|} \sum_{i \in \mathcal{D}_k} f_\theta(\mathbf{s}_i)$", "#FFF2DE", OKABE_ITO["vermillion"])
         _draw_arrow(ax, (48.5, 32.2), (48.5, 27.2))
 
-        # Expert Warm-Start
-        _draw_node(ax, 48.5, 11.5, 24, 7.5, r"3. Partial Warm-Start (R50)" + "\n" + r"$\mathbf{W}_{E_k} = \mathbf{W}_\mathrm{action} \odot \mathbf{m}_k$" + "\n(50% parameter drop rate)", "#FFF2DE", OKABE_ITO["purple"])
+        # Direct Expert Setup
+        _draw_node(ax, 48.5, 11.5, 24, 7.5, r"3. Direct Expert Allocation" + "\n" + r"Residual Experts ($\beta = 0.0$)" + "\n" + r"Independent heads $f_{E_1}, \dots, f_{E_K}$", "#FFF2DE", OKABE_ITO["purple"])
         _draw_arrow(ax, (48.5, 20.8), (48.5, 15.5))
 
         # --- Transition Arrow Boot -> 2 ---
@@ -98,22 +98,22 @@ def generate(dataset: AnalysisDataset | None = None) -> list[Path]:
 
         # --- Stage 2 Components ---
         # State & Encoder
-        _draw_node(ax, 82.5, 37.5, 24, 5.5, r"State $\mathbf{s}_t \rightarrow$ Encoder $f_\theta(\mathbf{s}_t)$" + "\n(Frozen / Fine-tuned)", "#E2F0D9", c_stage2_border)
+        _draw_node(ax, 82.5, 37.5, 24, 5.5, r"State $\mathbf{s}_t \rightarrow$ Encoder $\mathbf{z}_t = f_\theta(\mathbf{s}_t)$" + "\n(Frozen representation)", "#E2F0D9", c_stage2_border)
 
         # Router
-        _draw_node(ax, 74.0, 26.0, 13, 6.5, "Centroid Router\nTop-2 Gating $(w_k)$", "#FFFFFF", OKABE_ITO["vermillion"])
+        _draw_node(ax, 74.0, 26.0, 13, 6.5, r"Hard Router" + "\n" + r"$r_t = \arg\min_k \|\mathbf{z}_t - \mathbf{c}_k\|_2$", "#FFFFFF", OKABE_ITO["vermillion"])
         _draw_arrow(ax, (78.0, 34.5), (74.0, 29.5))
 
         # Experts
-        _draw_node(ax, 90.5, 26.0, 14, 6.5, r"Specialized Experts" + "\n" + r"$E_1, \dots, E_K$ (R50)", "#FFFFFF", OKABE_ITO["purple"])
+        _draw_node(ax, 90.5, 26.0, 14, 6.5, r"Specialized Experts" + "\n" + r"Direct Action $f_{r_t}(\mathbf{z}_t)$", "#FFFFFF", OKABE_ITO["purple"])
         _draw_arrow(ax, (87.0, 34.5), (90.5, 29.5))
 
-        # Gating flow
+        # Routing selection flow
         _draw_arrow(ax, (74.0, 22.5), (82.5, 17.5))
         _draw_arrow(ax, (90.5, 22.5), (82.5, 17.5))
 
-        # Mixture Action Output
-        _draw_node(ax, 82.5, 11.5, 26, 8.0, r"Mixture Policy Action Output" + "\n" + r"$\mathbf{a}_t = \sum_{k \in \mathrm{Top\text{-}2}} w_k(\mathbf{z}_t) E_k(\mathbf{z}_t)$" + "\n" + r"$\mathcal{L}_\mathrm{total} = \mathcal{L}_\mathrm{action} + \lambda_\mathrm{bal} \mathcal{L}_\mathrm{balance}$", "#E2F0D9", c_stage2_border)
+        # Commanded Action Output
+        _draw_node(ax, 82.5, 11.5, 26, 8.0, r"Direct Action Output $\mathbf{a}_t = f_{r_t}(\mathbf{z}_t)$" + "\n" + r"$\mathcal{L}_\mathrm{total} = \mathcal{L}_\mathrm{action} + \lambda_\mathrm{bal}\mathcal{L}_\mathrm{bal} + \lambda_\mathrm{mar}\mathcal{L}_\mathrm{margin}$" + "\n(Subject to switch discontinuity)", "#E2F0D9", c_stage2_border)
 
         fig.tight_layout(pad=0.2)
     return save(fig, "figures/main/F1_overview")

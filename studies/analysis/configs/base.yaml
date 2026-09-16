@@ -7,7 +7,7 @@ namespaces:
     manifest: experiments/final_causal_matrix.json
   ablation:
     root: final_experiments_results/abalation_final/teamspace/studios/this_studio/PhaseForge/outputs_router_ablation_can_square
-    manifest: experiments/router_initialization_ablation.json
+    manifest: experiments/router_initialization_ablation_can_square.json
 
 output:
   paper_root: studies/analysis/outputs      # figures/ and tables/ are created inside — per request, output to studies/analysis/outputs

@@ -19,9 +19,11 @@ from studies.analysis.stats.paired import pair_episodes
 
 PRIMARY_COMPARATORS = (
     "bc",
-    "warmstart_moe",
-    "phase_pretrain_random_router",
-    "plain_encoder_phase_bootstrap",
+    "final_aligned_softmax_top1",
+    "precision_residual_plain_encoder",
+    "precision_residual_phase_random_router",
+    "precision_residual_scratch_moe",
+    "final_aligned_static_rule",
 )
 
 
@@ -49,11 +51,13 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     # Fallback: seed-mean paired deltas + Holm over the primary family.
     entries: list[tuple[str, str, list[float]]] = []
+    pf_name = "precision_residual_phaseforge"
     for comparator in PRIMARY_COMPARATORS:
         for task in registry.tasks():
             deltas = []
             for seed in registry.seeds("final"):
-                key_a, key_b = (task, "phaseforge", seed), (task, comparator, seed)
+                key_a = (task, pf_name, seed) if (task, pf_name, seed) in dataset.episodes else (task, "phaseforge", seed)
+                key_b = (task, comparator, seed)
                 if key_a not in dataset.episodes or key_b not in dataset.episodes:
                     continue
                 bank_a = dataset.evals[key_a].reset_bank

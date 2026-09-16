@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from studies.analysis.common import registry
-from studies.analysis.common.style import OKABE_ITO, paper_style
+from studies.analysis.common.style import OKABE_ITO, method_color, paper_style
 from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import plot_seed_trajectories, save
 
@@ -24,22 +24,32 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
         for col, task in enumerate(tasks):
             for row, (field, ylabel) in enumerate(FIELDS):
                 ax = axes[row][col]
-                per_seed = []
-                for seed in registry.seeds("final"):
-                    key = (task, "phaseforge", seed, 2)
-                    if key in dataset.curves:
-                        series = dataset.curves[key].series(field)
-                        if series:
-                            per_seed.append(series)
-                if per_seed:
-                    plot_seed_trajectories(
-                        ax,
-                        per_seed,
-                        OKABE_ITO["vermillion"],
-                        label="PhaseForge (mean ± range)",
-                        xlabel="Stage-2 Epoch" if row == len(FIELDS) - 1 else "",
-                        show_ribbon=True,
-                    )
+                moe_methods = [
+                    ("precision_residual_phaseforge", "PhaseForge"),
+                    ("final_aligned_softmax_top1", "Softmax Top-1"),
+                    ("precision_residual_phase_random_router", "Phase-Random"),
+                    ("precision_residual_scratch_moe", "Scratch MoE"),
+                ]
+                for method_id, display in moe_methods:
+                    color = method_color(method_id)
+                    per_seed = []
+                    for seed in registry.seeds("final"):
+                        for m_cand in (method_id, "phaseforge" if method_id == "precision_residual_phaseforge" else method_id):
+                            key = (task, m_cand, seed, 2)
+                            if key in dataset.curves:
+                                series = dataset.curves[key].series(field)
+                                if series:
+                                    per_seed.append(series)
+                                break
+                    if per_seed:
+                        plot_seed_trajectories(
+                            ax,
+                            per_seed,
+                            color,
+                            label=display if (row == 0 and col == 0) else None,
+                            xlabel="Stage-2 Epoch" if row == len(FIELDS) - 1 else "",
+                            show_ribbon=True,
+                        )
 
                 ax.axhline(1.0, color="#888888", linestyle="--", linewidth=0.8, label="Ideal (1.0)")
                 ax.set_ylim(0.82, 1.02)

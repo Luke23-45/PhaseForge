@@ -14,12 +14,12 @@ PANELS = (
     ("train_loss_balance", "Expert Balance Loss"),
 )
 METHODS_TO_PLOT = (
-    "phaseforge",
+    "precision_residual_phaseforge",
     "bc",
-    "bc_large",
-    "scratch_moe",
-    "warmstart_moe",
-    "plain_encoder_phase_bootstrap",
+    "final_aligned_softmax_top1",
+    "precision_residual_phase_random_router",
+    "precision_residual_plain_encoder",
+    "precision_residual_scratch_moe",
 )
 
 

@@ -1,10 +1,8 @@
 {
   "version": 1,
-  "created_at": "2026-09-15T20:09:09.177629+00:00",
+  "created_at": "2026-09-16T12:05:33.256667+00:00",
   "argv": [
     "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\studies\\analysis\\scripts\\generate.py",
-    "--asset",
-    "T3",
     "--allow-partial"
   ],
   "coverage": {
@@ -12,17 +10,17 @@
     "missing_evals": [
       [
         "Lift",
-        "router_init_random",
+        "representation_bc",
         42
       ],
       [
         "Lift",
-        "router_init_random",
+        "representation_bc",
         43
       ],
       [
         "Lift",
-        "router_init_random",
+        "representation_bc",
         44
       ],
       [
@@ -72,17 +70,17 @@
       ],
       [
         "Lift",
-        "representation_bc",
+        "router_init_random",
         42
       ],
       [
         "Lift",
-        "representation_bc",
+        "router_init_random",
         43
       ],
       [
         "Lift",
-        "representation_bc",
+        "router_init_random",
         44
       ]
     ],
@@ -180,6 +178,66 @@
     ]
   },
   "assets": {
+    "F1": {
+      "outputs": [
+        "figures\\main\\F1_overview.pdf",
+        "figures\\main\\F1_overview.png"
+      ],
+      "sha256": {
+        "figures\\main\\F1_overview.pdf": "7565798ca0fbe7fe61ea365dcdf01f181f007c7907d2140cf5bc53ddc58854a1",
+        "figures\\main\\F1_overview.png": "72503e070814c10c08eca9693c36ff708753c84f19628b3b6b224724a27fa758"
+      }
+    },
+    "F2": {
+      "outputs": [
+        "figures\\main\\F2_paired_deltas.pdf",
+        "figures\\main\\F2_paired_deltas.png"
+      ],
+      "sha256": {
+        "figures\\main\\F2_paired_deltas.pdf": "3f537ea5637f2bebc76bebd9da00223873d8a8d47146077fa69169414781a73e",
+        "figures\\main\\F2_paired_deltas.png": "31240f57094816ff59d5c4e81b9de4868091cf46c2741600bd666fb3a54e7d40"
+      }
+    },
+    "F3": {
+      "outputs": [
+        "figures\\main\\F3_specialization.pdf",
+        "figures\\main\\F3_specialization.png"
+      ],
+      "sha256": {
+        "figures\\main\\F3_specialization.pdf": "71f8e2b35aefea84e1b081805013a2eb414c680fbe4b8feec8344d14aff6338e",
+        "figures\\main\\F3_specialization.png": "ba82766377a619c8f0d3a24abe009086163b696d37e82b3c32fea1113bc29978"
+      }
+    },
+    "F4": {
+      "outputs": [
+        "figures\\main\\F4_action_discontinuity.pdf",
+        "figures\\main\\F4_action_discontinuity.png"
+      ],
+      "sha256": {
+        "figures\\main\\F4_action_discontinuity.pdf": "4b74dda547ffe128d5e96a5c6e911dc9627afc9c765d6ba96f04d58728f33941",
+        "figures\\main\\F4_action_discontinuity.png": "788fddbfc71f96210401a59b5200c3aedad5160e964c2876e51a7f87de78e90f"
+      }
+    },
+    "T1": {
+      "outputs": [
+        "tables\\T1_success_matrix.tex",
+        "tables\\T1_success_matrix.md"
+      ],
+      "sha256": {
+        "tables\\T1_success_matrix.tex": "ee216dfe2f28dd353118095a3d6bada09ca772fb5f2f6736e3b873cc32a6155e",
+        "tables\\T1_success_matrix.md": "f5d33d894b614f4f7421fa206e6a41c3d37c27ee9ff15e1c004542914788137e"
+      }
+    },
+    "T2": {
+      "outputs": [
+        "tables\\T2_causal_controls.tex",
+        "tables\\T2_causal_controls.md"
+      ],
+      "sha256": {
+        "tables\\T2_causal_controls.tex": "e471a747dc569268d3ed80169c5c3ada69848992e516a65075857f3e7ffaab1b",
+        "tables\\T2_causal_controls.md": "d39d66cd8b118be2293ca5200405040c49f383f0c9e0fb8f25fd399d6a38f216"
+      }
+    },
     "T3": {
       "outputs": [
         "tables\\T3_capacity.tex",
@@ -188,6 +246,156 @@
       "sha256": {
         "tables\\T3_capacity.tex": "ebedb5906ac2c251240e60f7fc214e6c4702a3945f376e65639a266d7fd36f3f",
         "tables\\T3_capacity.md": "f94aaa2d0ba0c4b22ab9d3b76f780215fd3e0085ac3d210bfc4117fe31e4ec63"
+      }
+    },
+    "A1": {
+      "outputs": [
+        "tables\\A1_per_seed_raws.tex",
+        "tables\\A1_per_seed_raws.md"
+      ],
+      "sha256": {
+        "tables\\A1_per_seed_raws.tex": "6c341c833aef9e181917db0c6dd16974bd9a5ed1a115503846cefa5d23b20c2e",
+        "tables\\A1_per_seed_raws.md": "74e0b02a7f258704f9a8e231ac6d3f1fad5a4dbae807fac966ca6c8da42e734c"
+      }
+    },
+    "A2": {
+      "outputs": [
+        "tables\\A2_offline_mse.tex",
+        "tables\\A2_offline_mse.md"
+      ],
+      "sha256": {
+        "tables\\A2_offline_mse.tex": "eab5251ede29c08a38f3c87ae14c11105c2530cfd66fb086660aba4c90d06ea0",
+        "tables\\A2_offline_mse.md": "ae945545e3cae73827f758d2029a16576d5c533fd29d4d015ac41ddb610d8e26"
+      }
+    },
+    "A3": {
+      "outputs": [
+        "figures\\appendix\\A3_training_curves.pdf",
+        "figures\\appendix\\A3_training_curves.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A3_training_curves.pdf": "1c6d2282d6aa3d1344ab7187ba08ff19e275bcc52b5e96aadda7494074c63b3d",
+        "figures\\appendix\\A3_training_curves.png": "d1516950496f8ca5b5069b9ec0ccbea16715aada3501b3ab51184cc9ab136507"
+      }
+    },
+    "A4": {
+      "outputs": [
+        "tables\\A4_ablation_full.tex",
+        "tables\\A4_ablation_full.md"
+      ],
+      "sha256": {
+        "tables\\A4_ablation_full.tex": "58a891b108733c3b60d87dbf7a917d6e6c44dedaa9e103bf7be330f4146f3b8c",
+        "tables\\A4_ablation_full.md": "702fc70645046d32d2452af09ebab0546ae2478f6a0a74774fcc2467c4ff86b5"
+      }
+    },
+    "A5": {
+      "outputs": [
+        "figures\\appendix\\A5_failure_categories.pdf",
+        "figures\\appendix\\A5_failure_categories.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A5_failure_categories.pdf": "3c543733a48d929598e07f720588f41210041c4bd32822c676a652726176deba",
+        "figures\\appendix\\A5_failure_categories.png": "8d4b5d9e7f8c6b3e7a81cb44a3662fc66d0ba7ba41b4c106eb72bdcc9b50695a"
+      }
+    },
+    "A6": {
+      "outputs": [
+        "figures\\appendix\\A6_steps_ecdf.pdf",
+        "figures\\appendix\\A6_steps_ecdf.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A6_steps_ecdf.pdf": "783b31fffa9a4b491d307b114e0d73d4b55757c92d2ad2ac1de0f2b358f81e31",
+        "figures\\appendix\\A6_steps_ecdf.png": "9c59a1564ebb4c37615c62d48dd9fcce43d6e1f119597de67be15b2ec03cb7e0"
+      }
+    },
+    "A7": {
+      "outputs": [
+        "tables\\A7_t0_alignment.tex",
+        "tables\\A7_t0_alignment.md"
+      ],
+      "sha256": {
+        "tables\\A7_t0_alignment.tex": "7c5949e19ca2c10ab45ce034781bf69a4a5b2d04cff90563a95d3e6300209837",
+        "tables\\A7_t0_alignment.md": "cef882ef2fc6e391c6627504a0ae49d8ede9f6d8a7830e3127d05d941fd7c7dc"
+      }
+    },
+    "A8": {
+      "outputs": [
+        "figures\\appendix\\A8_balance.pdf",
+        "figures\\appendix\\A8_balance.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A8_balance.pdf": "a7a4ed8a779af9df6dcca15622ec8dbc5bcc19d4e27b8105007720fa4cefa201",
+        "figures\\appendix\\A8_balance.png": "0c137eb868ee1d9ba7b640c798fa9dc340d476a313ac54b24fdb2e64b59f4627"
+      }
+    },
+    "A9": {
+      "outputs": [
+        "tables\\A9_compute_cost.tex",
+        "tables\\A9_compute_cost.md"
+      ],
+      "sha256": {
+        "tables\\A9_compute_cost.tex": "e888bbce2d9777c448c7d171c6406757facaa3025be1e4ab0c86f091fa696be5",
+        "tables\\A9_compute_cost.md": "f099098f4f6fe563daf6f134d919e79b8465e41e3e24924c0d00c4f1592951cc"
+      }
+    },
+    "A10": {
+      "outputs": [
+        "tables\\A10_provenance.tex",
+        "tables\\A10_provenance.md"
+      ],
+      "sha256": {
+        "tables\\A10_provenance.tex": "4a5f7b0c3bf02b4cc7efc6cdf81d46967e16c5b806aca3e71ad041ed718a6d0e",
+        "tables\\A10_provenance.md": "7fb407996687fc36abe6cb0dfd166e3b4affde44a82f7ed2a9fb1e8e7c38826c"
+      }
+    },
+    "A11": {
+      "outputs": [
+        "figures\\appendix\\A11_router_family.pdf",
+        "figures\\appendix\\A11_router_family.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A11_router_family.pdf": "3adb2f8a58ed89d75349cc03f00de87f795d4b67b28fee94ca2391f129746a82",
+        "figures\\appendix\\A11_router_family.png": "22c8cbbeb27b544f4126c1a5cb04265ed8463084f4ef946745b45dbbf51d21b5"
+      }
+    },
+    "A12": {
+      "outputs": [
+        "tables\\A12_hyperparameters.tex",
+        "tables\\A12_hyperparameters.md"
+      ],
+      "sha256": {
+        "tables\\A12_hyperparameters.tex": "df817436e7548cf68259336b86cee9e75874915d3efb7f4dc3b09b440c3c956b",
+        "tables\\A12_hyperparameters.md": "b8fab7b5bc41f9388abec609e4dd203221cb26b314e1cc2f2abdf6a477b09d61"
+      }
+    },
+    "A13": {
+      "outputs": [
+        "tables\\A13_dataset_stats.tex",
+        "tables\\A13_dataset_stats.md"
+      ],
+      "sha256": {
+        "tables\\A13_dataset_stats.tex": "964fd0e1a18a73453134e27ea1c2996ba66ec3864ff89fdcfcd8256ddb97fec8",
+        "tables\\A13_dataset_stats.md": "8d672d0a98895c84884b2d7ddd5f3ea55b79db5921dd42977508081fec27da17"
+      }
+    },
+    "A14": {
+      "outputs": [
+        "figures\\appendix\\A14_phase_depth.pdf",
+        "figures\\appendix\\A14_phase_depth.png"
+      ],
+      "sha256": {
+        "figures\\appendix\\A14_phase_depth.pdf": "43fbe07b7260007e6037bc548a2dd3fd6a24dbc62646d08900208fa8d2780806",
+        "figures\\appendix\\A14_phase_depth.png": "4d077b32d61fe0a858bd3f6fa35e0c8a2f2090094e8d5135a842619bfc2d571b"
+      }
+    },
+    "A15": {
+      "outputs": [
+        "tables\\A15_paired_tests.tex",
+        "tables\\A15_paired_tests.md"
+      ],
+      "sha256": {
+        "tables\\A15_paired_tests.tex": "0a5e90aaf957e9f8ae979cc83b4a8aef1f9dfc693c2e8b123c301ed8100f9477",
+        "tables\\A15_paired_tests.md": "402be88f1dc3d2e75002c05ec0df211a956f8f410567d473a2b6f1339b3727b6"
       }
     }
   }

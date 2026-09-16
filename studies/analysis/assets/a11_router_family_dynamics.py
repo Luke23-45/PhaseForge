@@ -1,4 +1,4 @@
-"""A11 — router-init family dynamics on Lift (NMI / entropy / switch rate / collapse)."""
+"""A11 — router-init family dynamics on Can and Square (NMI / entropy / switch rate / collapse)."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import plot_seed_trajectories, save
 
 FAMILY = (
-    ("phaseforge", "PhaseForge (Centroid)"),
-    ("pf_spherical_kmeans", "Spherical K-Means"),
-    ("pf_kmeans", "Euclidean K-Means"),
-    ("pf_phase_head", "Phase Head"),
-    ("pf_random_random", "Random Router (H1)"),
+    ("router_init_topology", "Topology Init (PF)"),
+    ("router_init_phase", "Phase-Rule Init"),
+    ("router_init_random", "Random Init"),
+    ("routing_softmax_top1", "Softmax Top-1"),
+    ("representation_bc", "BC Latent"),
 )
 FIELDS = (
     ("nmi", "Phase–Expert NMI"),
@@ -22,6 +22,7 @@ FIELDS = (
     ("switch_rate", "Switch Rate"),
     ("top1_collapse", "Top-1 Collapse"),
 )
+TASKS = ("Can", "Square")
 
 
 def generate(dataset: AnalysisDataset) -> list[Path]:
@@ -29,38 +30,45 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     with paper_style():
         fig, axes = plt.subplots(
-            len(FIELDS), 1, figsize=(5.4, 6.8), squeeze=True, sharex=True
+            len(FIELDS), len(TASKS), figsize=(7.2, 7.0), squeeze=False, sharex=True
         )
-        for row, (field, ylabel) in enumerate(FIELDS):
-            ax = axes[row]
-            for name, display in FAMILY:
-                per_seed = []
-                for seed in sorted(set(list(registry.seeds("ablation")) + list(registry.seeds("final")))):
-                    curve = dataset.curves.get((None, name, seed, 2)) or dataset.curves.get(("Lift", name, seed, 2))
-                    if curve is not None:
-                        series = curve.series(field)
-                        if series:
-                            per_seed.append(series)
-                if not per_seed:
-                    continue
-                plot_seed_trajectories(
-                    ax,
-                    per_seed,
-                    method_color(name),
-                    label=display if row == 0 else None,
-                    show_ribbon=True,
-                )
-            ax.set_ylabel(ylabel, fontsize=8.5)
-            ax.grid(True, linestyle=":", alpha=0.3)
-            if row == len(FIELDS) - 1:
-                ax.set_xlabel("Stage-2 Epoch", fontsize=8.5)
+        for col, task in enumerate(TASKS):
+            for row, (field, ylabel) in enumerate(FIELDS):
+                ax = axes[row][col]
+                for name, display in FAMILY:
+                    per_seed = []
+                    for seed in registry.seeds("ablation"):
+                        curve = dataset.curves.get((task, name, seed, 2))
+                        if curve is not None:
+                            series = curve.series(field)
+                            if series:
+                                per_seed.append(series)
+                    if not per_seed:
+                        continue
+                    plot_seed_trajectories(
+                        ax,
+                        per_seed,
+                        method_color(name),
+                        label=display if (row == 0 and col == 0) else None,
+                        show_ribbon=True,
+                    )
+                if col == 0:
+                    ax.set_ylabel(ylabel, fontsize=8.5)
+                ax.grid(True, linestyle=":", alpha=0.3)
+                if row == len(FIELDS) - 1:
+                    ax.set_xlabel("Stage-2 Epoch", fontsize=8.5)
+                if row == 0:
+                    ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
 
-        axes[0].legend(
+        handles, labels = axes[0][0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
             loc="upper center",
-            bbox_to_anchor=(0.5, 1.32),
-            ncol=3,
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=5,
             frameon=False,
-            fontsize=7.5,
+            fontsize=8.0,
         )
-        fig.subplots_adjust(top=0.90, bottom=0.08, left=0.15, right=0.96, hspace=0.22)
+        fig.subplots_adjust(top=0.92, bottom=0.08, left=0.12, right=0.96, hspace=0.22, wspace=0.20)
     return save(fig, "figures/appendix/A11_router_family")

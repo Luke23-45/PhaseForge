@@ -62,8 +62,9 @@ _ROWS = (
 
 
 def _resolved_config(dataset: AnalysisDataset, method: str) -> dict | None:
+    cands = (method, "precision_residual_phaseforge") if method == "phaseforge" else (method,)
     for (task, name, seed, stage), run in dataset.train_runs.items():
-        if name == method:
+        if name in cands:
             path = run.path / "resolved_config.yaml"
             if path.is_file():
                 import yaml
@@ -76,7 +77,7 @@ def _resolved_config(dataset: AnalysisDataset, method: str) -> dict | None:
 
 def generate(dataset: AnalysisDataset) -> list[Path]:
     rows = []
-    methods = ["phaseforge"] + [m for m in registry.matrix_method_names() if m != "phaseforge"]
+    methods = list(registry.matrix_method_names())
     configs: dict[str, dict] = {}
     for method in methods:
         configs[method] = _resolved_config(dataset, method)

@@ -18,12 +18,12 @@ from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import heatmap, save
 
 ROWS = (
-    ("phaseforge", "PhaseForge (Centroid)"),
-    ("pf_spherical_kmeans", "Spherical K-Means"),
-    ("pf_kmeans", "Euclidean K-Means"),
-    ("pf_phase_head", "Phase Head Directions"),
-    ("pf_random_random", "Random Router (H1)"),
-    ("pf_centroid_random", "Centroid + Rand Exp"),
+    ("router_init_topology", "Topology Init (PF)"),
+    ("routing_softmax_top1", "Softmax Top-1"),
+    ("router_init_phase", "Phase-Rule Init"),
+    ("router_init_random", "Random Init"),
+    ("representation_bc", "BC Latent"),
+    ("precision_residual_factorial_floor", "Factorial Floor"),
 )
 
 
@@ -31,17 +31,18 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
 
     rows, matrices, nmis, accs = [], [], [], []
-    first_seed = registry.seeds("final")[0]
+    seeds = registry.seeds("ablation")
+    first_seed = seeds[0] if seeds else 42
 
     for name, display in ROWS:
-        key = (None if name.startswith("pf_") else "Lift", name, first_seed, 2)
+        key = ("Can", name, first_seed, 2)
         init = dataset.init_routing.get(key)
         if init is None or not init.t0_top1_expert_frequencies:
             continue
         rows.append(display)
         matrices.append(np.asarray(init.t0_top1_expert_frequencies, dtype=float))
         nmis.append(float(init.t0_nmi) if init.t0_nmi is not None else 0.0)
-        accs.append(float(init.t0_phase_head_accuracy) if init.t0_phase_head_accuracy is not None else 0.0)
+        accs.append(float(init.t0_phase_head_accuracy) if init.t0_phase_head_accuracy is not None else (float(init.t0_routing_entropy) if init.t0_routing_entropy is not None else 0.0))
 
     if not matrices:
         raise ValueError("No init_routing records found for the router-init family")

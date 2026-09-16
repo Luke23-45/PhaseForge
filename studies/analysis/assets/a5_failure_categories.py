@@ -20,10 +20,10 @@ CATEGORY_COLORS = {
 def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
 
-    tasks = registry.tasks()
-    methods = list(registry.matrix_method_names())
+    methods = [m for m in registry.matrix_method_names() if m != "precision_residual_oracle"]
     method_labels = [registry.display_name(m) for m in methods]
 
+    tasks = list(registry.tasks())
     with paper_style():
         fig, axes = plt.subplots(1, len(tasks), figsize=(8.5, 3.4))
 
@@ -72,6 +72,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
             ax.set_xticks([0.0, 0.5, 1.0])
             ax.set_xticklabels(["0%", "50%", "100%"], fontsize=7.5)
+            ax.set_yticks(range(len(method_labels)))
             if col == 0:
                 ax.set_yticklabels(method_labels, fontsize=8.0)
             else:
