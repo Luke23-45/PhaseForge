@@ -1,181 +1,13 @@
 {
   "version": 1,
-  "created_at": "2026-09-16T12:05:33.256667+00:00",
+  "created_at": "2026-09-16T13:58:04.756935+00:00",
   "argv": [
-    "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\studies\\analysis\\scripts\\generate.py",
-    "--allow-partial"
+    "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\studies\\analysis\\scripts\\generate.py"
   ],
   "coverage": {
-    "present_evals": 198,
-    "missing_evals": [
-      [
-        "Lift",
-        "representation_bc",
-        42
-      ],
-      [
-        "Lift",
-        "representation_bc",
-        43
-      ],
-      [
-        "Lift",
-        "representation_bc",
-        44
-      ],
-      [
-        "Lift",
-        "router_init_topology",
-        42
-      ],
-      [
-        "Lift",
-        "router_init_topology",
-        43
-      ],
-      [
-        "Lift",
-        "router_init_topology",
-        44
-      ],
-      [
-        "Lift",
-        "routing_softmax_top1",
-        42
-      ],
-      [
-        "Lift",
-        "routing_softmax_top1",
-        43
-      ],
-      [
-        "Lift",
-        "routing_softmax_top1",
-        44
-      ],
-      [
-        "Lift",
-        "router_init_phase",
-        42
-      ],
-      [
-        "Lift",
-        "router_init_phase",
-        43
-      ],
-      [
-        "Lift",
-        "router_init_phase",
-        44
-      ],
-      [
-        "Lift",
-        "router_init_random",
-        42
-      ],
-      [
-        "Lift",
-        "router_init_random",
-        43
-      ],
-      [
-        "Lift",
-        "router_init_random",
-        44
-      ]
-    ],
-    "missing_stage_runs": [
-      [
-        "Lift",
-        "representation_bc",
-        42,
-        2
-      ],
-      [
-        "Lift",
-        "representation_bc",
-        43,
-        2
-      ],
-      [
-        "Lift",
-        "representation_bc",
-        44,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_phase",
-        42,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_phase",
-        43,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_phase",
-        44,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_random",
-        42,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_random",
-        43,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_random",
-        44,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_topology",
-        42,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_topology",
-        43,
-        2
-      ],
-      [
-        "Lift",
-        "router_init_topology",
-        44,
-        2
-      ],
-      [
-        "Lift",
-        "routing_softmax_top1",
-        42,
-        2
-      ],
-      [
-        "Lift",
-        "routing_softmax_top1",
-        43,
-        2
-      ],
-      [
-        "Lift",
-        "routing_softmax_top1",
-        44,
-        2
-      ]
-    ]
+    "present_evals": 192,
+    "missing_evals": [],
+    "missing_stage_runs": []
   },
   "assets": {
     "F1": {
@@ -184,8 +16,8 @@
         "figures\\main\\F1_overview.png"
       ],
       "sha256": {
-        "figures\\main\\F1_overview.pdf": "7565798ca0fbe7fe61ea365dcdf01f181f007c7907d2140cf5bc53ddc58854a1",
-        "figures\\main\\F1_overview.png": "72503e070814c10c08eca9693c36ff708753c84f19628b3b6b224724a27fa758"
+        "figures\\main\\F1_overview.pdf": "100f775c4ae21725f777bb71c0fd8339b0deb594e6b83b2608aba1fcea0f1713",
+        "figures\\main\\F1_overview.png": "19b2d3ad7894d4487cb17e5ff9c1c1e7bacbe47b17f382923ce59dc8c785d13a"
       }
     },
     "F2": {
@@ -194,7 +26,7 @@
         "figures\\main\\F2_paired_deltas.png"
       ],
       "sha256": {
-        "figures\\main\\F2_paired_deltas.pdf": "3f537ea5637f2bebc76bebd9da00223873d8a8d47146077fa69169414781a73e",
+        "figures\\main\\F2_paired_deltas.pdf": "ff52ee84e9dbab28a46db83d71adf469816cbe77900af08271ce7e80747dad5a",
         "figures\\main\\F2_paired_deltas.png": "31240f57094816ff59d5c4e81b9de4868091cf46c2741600bd666fb3a54e7d40"
       }
     },
@@ -204,7 +36,7 @@
         "figures\\main\\F3_specialization.png"
       ],
       "sha256": {
-        "figures\\main\\F3_specialization.pdf": "71f8e2b35aefea84e1b081805013a2eb414c680fbe4b8feec8344d14aff6338e",
+        "figures\\main\\F3_specialization.pdf": "a208cb885e23b5d39f8d1a899525685b07cbb8fd06e31f01773894538afbced0",
         "figures\\main\\F3_specialization.png": "ba82766377a619c8f0d3a24abe009086163b696d37e82b3c32fea1113bc29978"
       }
     },
@@ -214,7 +46,7 @@
         "figures\\main\\F4_action_discontinuity.png"
       ],
       "sha256": {
-        "figures\\main\\F4_action_discontinuity.pdf": "4b74dda547ffe128d5e96a5c6e911dc9627afc9c765d6ba96f04d58728f33941",
+        "figures\\main\\F4_action_discontinuity.pdf": "2a736e1661d8fd24bfb8887a1f8fd81e27916e06cd92c2b13166989950032073",
         "figures\\main\\F4_action_discontinuity.png": "788fddbfc71f96210401a59b5200c3aedad5160e964c2876e51a7f87de78e90f"
       }
     },
@@ -274,8 +106,8 @@
         "figures\\appendix\\A3_training_curves.png"
       ],
       "sha256": {
-        "figures\\appendix\\A3_training_curves.pdf": "1c6d2282d6aa3d1344ab7187ba08ff19e275bcc52b5e96aadda7494074c63b3d",
-        "figures\\appendix\\A3_training_curves.png": "d1516950496f8ca5b5069b9ec0ccbea16715aada3501b3ab51184cc9ab136507"
+        "figures\\appendix\\A3_training_curves.pdf": "c3bc1c052ca059779a19dd60fafc188247ac0b2b051c564086232385e3746108",
+        "figures\\appendix\\A3_training_curves.png": "a94fc32d81ff79640239aaa505732c37b56bd83d21e8b7f1e3aa4c328de5e0eb"
       }
     },
     "A4": {
@@ -284,8 +116,8 @@
         "tables\\A4_ablation_full.md"
       ],
       "sha256": {
-        "tables\\A4_ablation_full.tex": "58a891b108733c3b60d87dbf7a917d6e6c44dedaa9e103bf7be330f4146f3b8c",
-        "tables\\A4_ablation_full.md": "702fc70645046d32d2452af09ebab0546ae2478f6a0a74774fcc2467c4ff86b5"
+        "tables\\A4_ablation_full.tex": "c04f582afb412e0609bdf66df2b68b2e5825a6197a156f927f93d42914b5e025",
+        "tables\\A4_ablation_full.md": "d5f2b20c7317abceea7cb5491a53537e5b88fb18ab5fae1cd865ed4a3ff2fef9"
       }
     },
     "A5": {
@@ -294,8 +126,8 @@
         "figures\\appendix\\A5_failure_categories.png"
       ],
       "sha256": {
-        "figures\\appendix\\A5_failure_categories.pdf": "3c543733a48d929598e07f720588f41210041c4bd32822c676a652726176deba",
-        "figures\\appendix\\A5_failure_categories.png": "8d4b5d9e7f8c6b3e7a81cb44a3662fc66d0ba7ba41b4c106eb72bdcc9b50695a"
+        "figures\\appendix\\A5_failure_categories.pdf": "ca371a71babd795a94880ad52b7c5010cb7c226a2e3f1174d84fe475ad4f1005",
+        "figures\\appendix\\A5_failure_categories.png": "5bf8039fecc4621297c2526283fba720ce7c1f262b18326bf2bc221798a3a738"
       }
     },
     "A6": {
@@ -304,8 +136,8 @@
         "figures\\appendix\\A6_steps_ecdf.png"
       ],
       "sha256": {
-        "figures\\appendix\\A6_steps_ecdf.pdf": "783b31fffa9a4b491d307b114e0d73d4b55757c92d2ad2ac1de0f2b358f81e31",
-        "figures\\appendix\\A6_steps_ecdf.png": "9c59a1564ebb4c37615c62d48dd9fcce43d6e1f119597de67be15b2ec03cb7e0"
+        "figures\\appendix\\A6_steps_ecdf.pdf": "f7ab96153dc2959b832a6de0d043f0729bece854840f1a9ca28b392b52cab160",
+        "figures\\appendix\\A6_steps_ecdf.png": "7b86e44cd757df2da2e67414ba247e133f6fed8ddf5ee2c7e5950081ca69cce4"
       }
     },
     "A7": {
@@ -314,8 +146,8 @@
         "tables\\A7_t0_alignment.md"
       ],
       "sha256": {
-        "tables\\A7_t0_alignment.tex": "7c5949e19ca2c10ab45ce034781bf69a4a5b2d04cff90563a95d3e6300209837",
-        "tables\\A7_t0_alignment.md": "cef882ef2fc6e391c6627504a0ae49d8ede9f6d8a7830e3127d05d941fd7c7dc"
+        "tables\\A7_t0_alignment.tex": "76c34bfd86f0eb57ddc39717126146a21b71ffffe9477dae08a5e92fa882059e",
+        "tables\\A7_t0_alignment.md": "a26a0e4a0d3ce1695f4bf123f8d9c0215586d328fe8714b363446bf0434a299a"
       }
     },
     "A8": {
@@ -324,8 +156,8 @@
         "figures\\appendix\\A8_balance.png"
       ],
       "sha256": {
-        "figures\\appendix\\A8_balance.pdf": "a7a4ed8a779af9df6dcca15622ec8dbc5bcc19d4e27b8105007720fa4cefa201",
-        "figures\\appendix\\A8_balance.png": "0c137eb868ee1d9ba7b640c798fa9dc340d476a313ac54b24fdb2e64b59f4627"
+        "figures\\appendix\\A8_balance.pdf": "e77d384420be068655df55618b3bba8e04e3fcd558c2d273c0f57fc8d1c2d416",
+        "figures\\appendix\\A8_balance.png": "54da45ece741aa34fb8a0a00c42ae9708f361e5449876499fc996fdb69c738ff"
       }
     },
     "A9": {
@@ -354,8 +186,8 @@
         "figures\\appendix\\A11_router_family.png"
       ],
       "sha256": {
-        "figures\\appendix\\A11_router_family.pdf": "3adb2f8a58ed89d75349cc03f00de87f795d4b67b28fee94ca2391f129746a82",
-        "figures\\appendix\\A11_router_family.png": "22c8cbbeb27b544f4126c1a5cb04265ed8463084f4ef946745b45dbbf51d21b5"
+        "figures\\appendix\\A11_router_family.pdf": "fd2a6cf0b8719572da286debd6358f12f8a139387e4d55174178102c36268623",
+        "figures\\appendix\\A11_router_family.png": "b7b564987d288b0b83312fa310ff1ec2e9ba58cef9058233ce0d7bd8817f2e1e"
       }
     },
     "A12": {
@@ -364,8 +196,8 @@
         "tables\\A12_hyperparameters.md"
       ],
       "sha256": {
-        "tables\\A12_hyperparameters.tex": "df817436e7548cf68259336b86cee9e75874915d3efb7f4dc3b09b440c3c956b",
-        "tables\\A12_hyperparameters.md": "b8fab7b5bc41f9388abec609e4dd203221cb26b314e1cc2f2abdf6a477b09d61"
+        "tables\\A12_hyperparameters.tex": "98bceeb24a90f7f7b7dc8f5a27511cf1a499d02f05a7074bc04eb7bba1bfaf08",
+        "tables\\A12_hyperparameters.md": "11bc5af8a578aabc360afe249cc881ee25a2c0ed9c8413ae04ba85dad3a6ee9a"
       }
     },
     "A13": {
@@ -384,8 +216,8 @@
         "figures\\appendix\\A14_phase_depth.png"
       ],
       "sha256": {
-        "figures\\appendix\\A14_phase_depth.pdf": "43fbe07b7260007e6037bc548a2dd3fd6a24dbc62646d08900208fa8d2780806",
-        "figures\\appendix\\A14_phase_depth.png": "4d077b32d61fe0a858bd3f6fa35e0c8a2f2090094e8d5135a842619bfc2d571b"
+        "figures\\appendix\\A14_phase_depth.pdf": "b30bb87907c0f9af60b084568e8bcf69c0bb5cfbc07dad2aa4a81bbf0cc383a9",
+        "figures\\appendix\\A14_phase_depth.png": "1965dfff10cd39b9d4a83c676a67348254a0901cadcde9fd189a44b1d7d6966a"
       }
     },
     "A15": {
@@ -394,8 +226,8 @@
         "tables\\A15_paired_tests.md"
       ],
       "sha256": {
-        "tables\\A15_paired_tests.tex": "0a5e90aaf957e9f8ae979cc83b4a8aef1f9dfc693c2e8b123c301ed8100f9477",
-        "tables\\A15_paired_tests.md": "402be88f1dc3d2e75002c05ec0df211a956f8f410567d473a2b6f1339b3727b6"
+        "tables\\A15_paired_tests.tex": "f082da9344451312cabe16cd13e0aed9ca2a8e49618aec5dc8a13cf28dda0edb",
+        "tables\\A15_paired_tests.md": "420e352859e3ce5017c951ad28f3826daf20a9b9a61c10478af301ff271cac93"
       }
     }
   }
