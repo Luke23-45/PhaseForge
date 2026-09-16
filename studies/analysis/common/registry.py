@@ -14,51 +14,38 @@ from studies.analysis.common.config import namespace_manifest
 
 #: Paper-facing display names (figures_tables_plan.md style contract).
 DISPLAY_NAMES: dict[str, str] = {
+    "precision_residual_phaseforge": "PhaseForge",
     "phaseforge": "PhaseForge",
     "bc": "BC",
-    "bc_large": "BC-Large",
-    "bc_robot_only": "BC Robot-Only",
-    "scratch_moe": "Scratch MoE",
-    "warmstart_moe": "Warm-Start MoE",
-    "phase_pretrain_random_router": "PP Random-Router",
-    "plain_encoder_phase_bootstrap": "PE Phase-Bootstrap",
-    "teacher_forced": "Teacher-Forced",
-    # Router Init Family (Group A)
-    "pf_spherical_kmeans": "Spherical K-Means",
-    "pf_kmeans": "Euclidean K-Means",
-    "pf_phase_head": "Phase-Head Directions",
-    "pf_random_random": "Random Router (H1)",
-    "pf_centroid_random": "Centroid + Rand Exp",
-    # Drop-rate Sweep (Group B)
-    "pf_drop00": "Drop 0% (Full Warm)",
-    "pf_drop25": "Drop 25%",
-    "pf_drop50": "Drop 50% (PhaseForge)",
-    "pf_drop75": "Drop 75%",
-    "pf_drop100": "Drop 100% (Scratch Exp)",
-    "pf_full_warm": "Full Warm-Start",
-    "pf_one_warm_plus_random": "One-Warm + 5-Rand",
-    # Phase Quality & Supervision (Group C)
-    "pf_corrupt_25": "25% Phase Corruption",
-    "pf_corrupt_50": "50% Phase Corruption",
-    "pf_shuffle_control": "100% Phase Shuffle",
-    # Expert Capacity & Encoder (Groups D & E)
-    "pf_k3": "K=3 Experts",
-    "pf_k12": "K=12 Experts",
-    "pf_spherical": "Spherical Latent Space",
-    "pf_ft": "Fine-Tuned Encoder",
+    "final_aligned_bc": "BC",
+    "final_aligned_softmax_top1": "Softmax Top-1",
+    "precision_residual_phase_random_router": "Phase-Random",
+    "precision_residual_plain_encoder": "Plain Encoder",
+    "precision_residual_scratch_moe": "Scratch MoE",
+    "final_aligned_static_rule": "Static Rule",
+    "precision_residual_factorial_floor": "Factorial Floor",
+    "precision_residual_teacher_forced": "Teacher-Forced",
+    "precision_residual_oracle": "Oracle (Offline)",
+    # Router Initialization Ablation (Can & Square)
+    "router_init_topology": "Topology Init (PF)",
+    "router_init_phase": "Phase-Rule Init",
+    "router_init_random": "Random Init",
+    "representation_bc": "BC Latent",
+    "routing_softmax_top1": "Softmax Top-1",
 }
 
-#: T1/T2 row order: proposed method first, then floors, controls, diagnostics.
+#: T1/T2 row order: proposed method first, then controls and diagnostics.
 MATRIX_ORDER: tuple[str, ...] = (
-    "phaseforge",
+    "precision_residual_phaseforge",
     "bc",
-    "bc_large",
-    "bc_robot_only",
-    "scratch_moe",
-    "warmstart_moe",
-    "phase_pretrain_random_router",
-    "plain_encoder_phase_bootstrap",
-    "teacher_forced",
+    "final_aligned_softmax_top1",
+    "precision_residual_phase_random_router",
+    "precision_residual_plain_encoder",
+    "precision_residual_scratch_moe",
+    "final_aligned_static_rule",
+    "precision_residual_factorial_floor",
+    "precision_residual_teacher_forced",
+    "precision_residual_oracle",
 )
 
 TASK_ORDER: tuple[str, ...] = ("Lift", "Can", "Square", "ToolHang", "Transport")

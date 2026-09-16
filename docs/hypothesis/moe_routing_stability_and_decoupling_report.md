@@ -1,268 +1,261 @@
-# Research Report: MoE Routing Organization and Closed-Loop Task Success
+# Topology-Initialized Routing in a Memoryless Mixture-of-Experts Policy
 
-**To:** Research Director / Principal Investigator (Professor)  
-**From:** PhaseForge Project Team & Antigravity Research Group  
-**Date:** September 16, 2026
-**Subject:** Scientific re-evaluation of PhaseForge routing structure and task performance in continuous robot manipulation
-**Authority Reference:** `outputs_router_ablation_can_square` (Revision `f83d096`), valid PhaseForge final runs (Revision `e948b73`), and Square repair audit (Revision `76685b9`)
+## Abstract
 
----
+This study examines whether topology-derived prototype initialization improves
+the organization of routing in a memoryless, direct-action mixture-of-experts
+(MoE) policy for robot manipulation. The policy encodes the observed state,
+routes the latent representation to an expert using prototype distances, and
+produces the action directly without recurrence or task-state feedback. The
+central hypothesis is that topology-derived prototypes can organize experts
+around phase-relevant regions of the demonstration manifold, producing more
+phase-aligned and temporally coherent routing.
 
-## Executive Summary & Scientific Repositioning
+The evidence supports the structural part of the hypothesis. In a matched
+Can/Square initialization ablation, topology-derived prototypes produced
+higher phase-expert alignment and lower measured routing-switch rates than
+random and phase-derived initialization. The performance consequence was
+task-dependent: topology initialization achieved the strongest pooled Can
+result among the hard-routing initialization arms, but it did not improve
+Square success and was below the softmax and plain-encoder controls. The
+results therefore support a conditional routing-organization hypothesis, not
+a claim of universal performance superiority. Quantitatively, topology
+initialization achieved 76.0% Can success and 26.7% Square success in the
+focused ablation; the corresponding phase-initialized results were 68.7% and
+31.3%, while the softmax control achieved 73.3% and 35.3%.
 
-Following a review of the locked 5-task benchmark matrix (150 evaluation runs),
-the focused Can/Square router-initialization ablation (30 Stage 2 runs), and
-the subsequent Square repair runs, this report provides the final evidence
-assessment of PhaseForge.
+## 1. Research question
 
-### The Honest Scientific Reality
-If PhaseForge is positioned as an algorithmic contribution claiming a
-**universally superior robotic manipulation policy**, the current evidence
-does not support that claim:
-1. On the 5-task benchmark, two tasks (`ToolHang`, `Transport`) remain at
-   **0.00%** across the reported memoryless models, one task (`Lift`) is
-   saturated at **100.0%**, and on `Square` (peg insertion), plain unsegmented
-   Behavioral Cloning outperforms PhaseForge (**50.0% vs. 40.7%**).
-2. In the controlled ablation, standard learned Softmax gating outperforms hard prototype routing pooled across Can and Square (**54.3% vs. 51.3%**), winning on every seed of Square.
-3. Random prototype initialization is close to topological initialization on
-   Can (73.3% vs. 76.0%) and higher on Square (28.0% vs. 26.7%). No
-   significance test is claimed for these aggregate differences.
+Mixture-of-Experts models divide a policy into specialized experts and use a
+router to select or combine them. This modular structure is attractive when a
+task contains distinct behavioral regimes, but routing quality has two separate
+dimensions: the organization of the expert partition and the quality of the
+closed-loop policy produced by that partition. These dimensions should not be
+treated as interchangeable.
 
-### The True Research Contribution
-However, the mixed success results do not eliminate the possibility of a
-useful structural contribution.
+Prior MoE research has identified routing fluctuation and training instability
+as important design concerns. StableMoE, for example, separates the learning
+of a routing strategy from later routing decisions to reduce routing
+fluctuation; Switch Transformers likewise identify training stability and
+expert utilization as practical concerns in sparse MoE systems ([Dai et al.,
+2022](https://aclanthology.org/2022.acl-long.489/); [Fedus et al.,
+2022](https://www.jmlr.org/papers/volume23/21-0998.html)). Those results motivate
+the present question but do not establish that a routing strategy developed for
+language models will improve robotic control.
 
-In the broader machine-learning MoE literature, routing stability is an
-important design concern. Within the focused ablation, topology initialization
-is associated with higher phase-expert NMI (from `0.07` to `0.67` on Can and
-from `0.09` to `0.51` on Square) and lower measured switch rates (from `0.11`
-to `0.04` on Can and from `0.10` to `0.07` on Square) than the random and
-phase-initialized arms. These are structural routing observations, not proof
-that the method solves routing instability.
+The research question is:
 
-The results support a more limited decoupling observation: better routing
-organization did not guarantee higher closed-loop success in this benchmark.
-The trace audit also observes larger commanded-action changes at expert
-switches. Those changes are a plausible mechanism, but the available traces
-do not contain force, contact, or actual end-effector velocity fields, so a
-specific physical failure mechanism cannot be identified from these data.
+> Does topology-derived prototype initialization produce a more phase-aligned
+> and temporally coherent router in a memoryless direct-action MoE, and does
+> that structural organization translate consistently into closed-loop task
+> success?
 
-This report outlines the evidence and the limits of a possible paper on the
-mechanics and limitations of structured MoE routing in robot manipulation.
+## 2. Method and hypothesis
 
----
+Let $x_t$ denote the observed robot state and let $z_t = E(x_t)$ be the state
+encoder output. Given prototype vectors $c_1,\ldots,c_K$, the hard router
+selects
 
-## 1. Disentangling "Stability" in MoE Architectures
+$$
+r_t = \arg\min_k \lVert z_t-c_k \rVert_2^2,
+$$
 
-To establish scientific precision, we must distinguish between four separate definitions of "stability" across the MoE and control literature:
+and the selected expert produces the direct action
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                         FOUR DIMENSIONS OF MoE STABILITY                        │
-├──────────────────────────────────────┬───────────────────────────────────────────┤
-│ 1. Training-Routing Stability        │ Does the router assign identical inputs to│
-│    (StableMoE, ACL 2022)             │ the same expert throughout training?      │
-├──────────────────────────────────────┼───────────────────────────────────────────┤
-│ 2. Expert-Utilization Stability      │ Does the router avoid dead capacity and   │
-│    (Switch Transformers, JMLR 2022)  │ complete expert collapse?                 │
-├──────────────────────────────────────┼───────────────────────────────────────────┤
-│ 3. Temporal Routing Coherence        │ Do adjacent timesteps in a physical       │
-│    (Continuous Control MoE)          │ rollout avoid rapid, noisy chattering?    │
-├──────────────────────────────────────┼───────────────────────────────────────────┤
-│ 4. Closed-Loop Control Stability     │ Does the physical system converge to the  │
-│    (Nonlinear / Switched Systems)    │ goal state under environmental dynamics?  │
-└──────────────────────────────────────┴───────────────────────────────────────────┘
-```
+$$
+u_t = f_{r_t}(z_t).
+$$
 
-### Empirical Assessment of PhaseForge Against These Dimensions:
-- **Dimension 1 (Training Stability):** Partially observed. Centroid initialization from topological change-points (`phase_topo`) changes the initial prototype geometry, but the available results do not isolate or measure all early-training fluctuations.
-- **Dimension 2 (Utilization Stability):** Limited evidence only. No top-1 collapse was observed in the focused matrix, but a zero collapse rate alone does not establish healthy utilization or general utilization stability.
-- **Dimension 3 (Temporal Routing Coherence):** Observed conditionally. The topology arm has higher NMI and lower measured switch rates than the random and phase-initialized arms in the focused ablation. The softmax control also has strong routing diagnostics, so topology is not shown to be uniquely most stable.
-- **Dimension 4 (Closed-Loop Control Stability):** Not established. Higher measured routing organization did not guarantee higher task success in this benchmark.
+The evaluated configuration uses `beta=0` residual experts, so the deployed
+policy is memoryless and does not use a feedback-controller state. The
+topology condition initializes the prototypes from topology-derived phase
+segments. The comparison conditions use random or phase-derived prototype
+initialization under the same matched training contract. A softmax router and a
+plain-encoder policy provide additional controls.
 
-**The Reframed Thesis:**  
-> *"Topological prototype initialization can produce more phase-aligned and lower-switch routing in a memoryless hard-routing MoE. In the tested benchmark, this routing organization did not guarantee higher closed-loop success. Commanded-action changes at expert transitions are a plausible contributor, but the available traces do not establish that they induce the physical failure mechanism."*
+The hypothesis is:
 
----
+> Topology-derived initialization encourages phase-aligned expert
+> specialization and lower routing variability in a memoryless hard-routing
+> MoE. Its effect on task success is conditional on whether the learned
+> topology aligns with the action regimes required by the task.
 
-## 2. Complete Empirical Evidence
+This hypothesis makes two distinct predictions. The first concerns routing
+organization and is evaluated with phase-expert NMI and routing-switch rate.
+The second concerns closed-loop performance and is evaluated with rollout
+success. The second prediction does not follow automatically from the first.
 
-### 2.1 The Full 5-Task Benchmark Matrix
+## 3. Experimental protocol
 
-The full matrix evaluated 10 method identities across 5 Robosuite tasks (50 paired evaluation episodes × 3 seeds = 150 episodes per cell, 500-step horizon for Lift/Can/Square/ToolHang, 700 for Transport).
+The final benchmark contains five robosuite manipulation tasks, three training
+seeds, and 50 rollout episodes per task-seed cell. Lift, Can, Square, and
+ToolHang use a 500-step horizon; Transport uses a 700-step horizon. The
+focused initialization ablation evaluates Can and Square with matched reset
+banks within each task. All focused arms use `beta=0` and
+the same margin-disabled Stage 2 objective; the objective is held fixed so
+that the comparison isolates initialization and routing-package effects.
 
-| Task | BC Floor | Plain Encoder Control | Softmax Top-1 Control | Phase-Random Router | **PhaseForge (Proposed)** | Characteristic Phenomenon |
-| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Lift** | 150/150 (100%) | 150/150 (100%) | 150/150 (100%) | 150/150 (100%) | **150/150 (100%)** | Saturated Ceiling (No signal) |
-| **Can** | 94/150 (62.7%) | 54/150 (36.0%) | 103/150 (68.7%) | 93/150 (62.0%) | **117/150 (78.0%)** | Structured Routing Win (+15.3% vs BC) |
-| **Square** | 51/150 (34.0%) | **75/150 (50.0%)** | 58/150 (38.7%) | 58/150 (38.7%) | **61/150 (40.7%)** | Plain BC Beats Structured MoE (-9.3%) |
-| **ToolHang** | 0/150 (0.0%) | 0/150 (0.0%) | 0/150 (0.0%) | 0/150 (0.0%) | **0/150 (0.0%)** | Markovian Memoryless Floor |
-| **Transport** | 0/150 (0.0%) | 1/150 (0.7%) | 0/150 (0.0%) | 0/150 (0.0%) | **1/150 (0.7%)** | Markovian Memoryless Floor |
+The complete PhaseForge protocol is evaluated separately with its specified
+margin objective. Consequently, the focused initialization numbers are used
+to answer the initialization question, while the complete-method numbers are
+used to characterize the final PhaseForge configuration. They are not treated
+as interchangeable causal comparisons.
 
-### 2.2 The Focused Router-Initialization Ablation (`outputs_router_ablation_can_square`)
+## 4. Results
 
-To isolate the causal effect of prototype initialization without objective-level confounds, the Stage 2 margin loss was disabled across all arms:
+### 4.1 Final five-task benchmark
 
-| Method Token | Model Description | Can Success (s42 / s43 / s44) | Square Success (s42 / s43 / s44) | Pooled Success |
-| :--- | :--- | :---: | :---: | :---: |
-| `router_init_random` | Random Prototype Initialization | 68% / 70% / **82%** (73.3%) | 14% / **40%** / 30% (28.0%) | 50.7% (152/300) |
-| `router_init_phase` | Rule-Based Centroid Initialization | 68% / 74% / 64% (68.7%) | 24% / 36% / 34% (31.3%) | 50.0% (150/300) |
-| `router_init_topology` | **Topological Prototype Initialization** | 66% / **82%** / 80% (**76.0%**) | 22% / 28% / 30% (**26.7%**) | 51.3% (154/300) |
-| `representation_bc` | Plain BC Latent Representation | 68% / 74% / 60% (67.3%) | **42%** / 26% / 28% (32.0%) | 49.7% (149/300) |
-| `routing_softmax_top1` | Learned Softmax Gating Control | 66% / 74% / 80% (73.3%) | 32% / 38% / **36%** (**35.3%**) | **54.3%** (163/300) |
+The final benchmark results are pooled over three seeds and 50 episodes per
+seed:
 
-### 2.3 Routing Diagnostics: The Evidence of Structural Organization
+| Task | BC | Plain encoder | Softmax top-1 | Phase-random router | PhaseForge |
+|---|---:|---:|---:|---:|---:|
+| Lift | 150/150 (100.0%) | 150/150 (100.0%) | 150/150 (100.0%) | 150/150 (100.0%) | 150/150 (100.0%) |
+| Can | 94/150 (62.7%) | 54/150 (36.0%) | 103/150 (68.7%) | 93/150 (62.0%) | 117/150 (78.0%) |
+| Square | 51/150 (34.0%) | 75/150 (50.0%) | 58/150 (38.7%) | 58/150 (38.7%) | 61/150 (40.7%) |
+| ToolHang | 0/150 (0.0%) | 0/150 (0.0%) | 0/150 (0.0%) | 0/150 (0.0%) | 0/150 (0.0%) |
+| Transport | 0/150 (0.0%) | 1/150 (0.7%) | 0/150 (0.0%) | 0/150 (0.0%) | 1/150 (0.7%) |
 
-Despite the mixed task success rates, the internal routing metrics show that
-topological initialization substantially changes the measured latent
-partition:
+The benchmark demonstrates task dependence. PhaseForge performs best among
+the listed methods on Can, while plain behavioral cloning performs best on
+Square. Lift is saturated, and ToolHang and Transport provide little positive
+signal for this memoryless policy family.
 
-| Method | Can Phase-Expert NMI | Square Phase-Expert NMI | Can Switch Rate | Square Switch Rate | Top-1 Collapse Rate |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| `router_init_random` | 0.07 | 0.09 | 0.11 | 0.10 | **0.0%** |
-| `router_init_phase` | 0.08 | 0.09 | 0.11 | 0.10 | **0.0%** |
-| `router_init_topology` | **0.67** | **0.51** | **0.04** | **0.07** | **0.0%** |
-| `representation_bc` | 0.41 | 0.47 | 0.06 | 0.06 | **0.0%** |
-| `routing_softmax_top1` | 0.72 | 0.61 | 0.04 | 0.05 | **0.0%** |
+### 4.2 Focused initialization ablation
 
-**Empirical Takeaway:** Within this focused ablation, topology initialization is
-associated with substantially higher phase alignment and lower measured switch
-rates than the random and phase-initialized arms. Yet, on Square, it achieves
-lower success (26.7%) than random initialization (28.0%) and plain
-unsegmented BC (50.0%). The routing metrics therefore do not predict task
-success by themselves.
+The focused ablation uses the same `beta=0` direct-action configuration across
+the initialization arms:
 
----
+| Method | Can pooled | Can mean ± SD | Square pooled | Square mean ± SD | Can + Square |
+|---|---:|---:|---:|---:|---:|
+| Random initialization | 110/150 (73.3%) | 73.3 ± 7.6% | 42/150 (28.0%) | 28.0 ± 13.1% | 152/300 (50.7%) |
+| Phase initialization | 103/150 (68.7%) | 68.7 ± 5.0% | 47/150 (31.3%) | 31.3 ± 6.4% | 150/300 (50.0%) |
+| Topology initialization | 114/150 (76.0%) | 76.0 ± 8.7% | 40/150 (26.7%) | 26.7 ± 4.2% | 154/300 (51.3%) |
+| Representation-BC control | 101/150 (67.3%) | 67.3 ± 7.0% | 48/150 (32.0%) | 32.0 ± 8.7% | 149/300 (49.7%) |
+| Softmax top-1 control | 110/150 (73.3%) | 73.3 ± 7.0% | 53/150 (35.3%) | 35.3 ± 3.1% | 163/300 (54.3%) |
 
-### 2.4 Protocol audit of the Square repair runs
+The mean and standard deviation are computed across the three training seeds;
+the standard deviations are reported in percentage points.
 
-The later runs in `debug_run/new_runs` must not be treated as a replication of
-the original PhaseForge anchor. The valid original PhaseForge Square protocol
-used `train.margin.enabled=true` with `train.margin.lambda_margin=0.05`. The
-`square_regression_repairs.json` manifest disabled that objective for the
-anchor, top-2, beta, and phase-CE arms. The repair anchor therefore changed a
-training objective in addition to serving as a control.
+Topology initialization has the strongest pooled Can result among the three
+initialization arms. On Square, it is below phase initialization, the
+representation-BC control, and the softmax control. The matched-seed results
+show the same task dependence rather than a consistent cross-task advantage.
 
-The original `debug_run/phaseforge_square` PhaseForge results were `23/50`,
-`16/50`, and `24/50` for seeds 42, 43, and 44, respectively (pooled
-`63/150 = 42.0%`). The later valid v10 final matrix independently reports
-`23/50`, `15/50`, and `23/50` (pooled `61/150 = 40.7%`). On seed 42,
-the repair results were 10/50 for the anchor, 11/50 with phase CE enabled,
-17/50 for top-2, and 17/50 for beta 0.1. None exceeded the valid original
-PhaseForge result of 23/50 on that reset bank.
+### 4.3 Routing organization
 
-The original seed-42 Stage 2 summary also reported phase-expert NMI `0.927`
-and routing switch rate `0.0259`; the repair anchor reported NMI `0.485` and
-switch rate `0.0680`. This is evidence that the repair protocol did not
-preserve the original routing behavior. It is not an isolated test of the
-repair mechanisms. No additional cloud runs of the current repair manifest
-are recommended.
+The training diagnostics support a structural effect. NMI denotes normalized
+mutual information between the phase labels and selected experts; switch rate
+denotes the fraction of adjacent evaluated timesteps assigned to different
+experts:
 
-## 3. Commanded-action discontinuity at expert switches
+| Method | Can phase-expert NMI | Square phase-expert NMI | Can switch rate | Square switch rate |
+|---|---:|---:|---:|---:|
+| Random initialization | 0.07 | 0.09 | 0.11 | 0.10 |
+| Phase initialization | 0.08 | 0.09 | 0.11 | 0.10 |
+| Topology initialization | 0.67 | 0.51 | 0.04 | 0.07 |
+| Representation-BC control | 0.41 | 0.47 | 0.06 | 0.06 |
+| Softmax top-1 control | 0.72 | 0.61 | 0.04 | 0.05 |
 
-Why can a more organized router still fail on precision contact tasks?
+Topology initialization changes the organization of the latent expert
+partition. It is associated with higher phase-expert alignment and fewer
+measured routing switches than the random and phase-initialized arms. The
+softmax control also exhibits strong routing diagnostics, so topology
+initialization is not shown to be uniquely optimal on these measures.
 
-To answer this, we performed a step-by-step physical audit of the recorded rollout traces (`trace.jsonl`), measuring the instantaneous L2 norm of the commanded action difference:
-$$\Delta a_t = \|a_t - a_{t-1}\|_2$$
+## 5. Interpretation
 
-We separated timesteps into **non-switch steps** ($e_t = e_{t-1}$) and **switch steps** ($e_t \neq e_{t-1}$):
+The results support the following claim:
 
-| Method | Task | Overall Switch Rate | Mean Jump at Switch ($\overline{\Delta a}_{\text{switch}}$) | Mean Jump at Non-Switch ($\overline{\Delta a}_{\text{nonswitch}}$) | **Action Discontinuity Ratio** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **PhaseForge (Topology Top-1)** | Can | 3.85% | **0.2322** | 0.0406 | **5.71×** |
-| **PhaseForge (Topology Top-1)** | Square | 3.70% | **0.1503** | 0.0225 | **6.68×** |
-| **Phase-Random Router** | Can | 4.68% | 0.2062 | 0.0418 | 4.94× |
-| **Phase-Random Router** | Square | 3.79% | 0.1364 | 0.0237 | 5.76× |
-| **Softmax Top-1 Control** | Can | 3.12% | 0.3072 | 0.0459 | 6.69× |
-| **Softmax Top-1 Control** | Square | 2.43% | 0.2147 | 0.0236 | **9.09×** |
+> Topology-derived prototype initialization can organize a memoryless MoE
+> around phase-relevant structure, producing more phase-aligned and lower-switch
+> routing than unstructured initialization under the matched ablation
+> protocol.
 
-```
-                       ACTION DISCONTINUITY AT SWITCHES
-    Action Jump
-      Norm
-       ▲
-  0.25 ┼                           ┌───────────┐ (0.2322: 5.7x Jump)
-       │                           │  SWITCH   │
-  0.20 ┼                           │   STEP    │
-       │                           │           │
-  0.15 ┼                           │           │
-       │                           │           │
-  0.10 ┼                           │           │
-       │   ┌───────────┐           │           │
-  0.05 ┼───│ NON-SWITCH│───────────│           │────────────────────────
-       │   │  (0.0406) │           │           │
-  0.00 ┴───┴───────────┴───────────┴───────────┴───────────────────────►
-                                                              Timestep
-```
+The results do not support the stronger claim that this organization guarantees
+better task success. The Square results provide the clearest counterexample:
+the topology arm has more structured routing than the random and phase arms,
+but lower rollout success than several controls. This is not a contradiction
+of the structural result. It shows that routing organization and closed-loop
+control quality are distinct properties.
 
-### What the discontinuity does and does not establish:
-1. **The vector-field discontinuity:** In a memoryless hard-routing MoE, different experts can produce different actions at a router boundary. The measured action jump is therefore a valid commanded-output observation.
-2. **The causal limit:** The traces do not contain force, contact, or actual end-effector velocity fields. In addition, the softmax control has a larger reported jump ratio yet higher Square success. Thus the measured jump is not sufficient evidence for contact jamming or for a unique Square failure mechanism.
-3. **The defensible interpretation:** Plain BC may benefit from having no discrete expert boundary, but the present results cannot determine whether its Square advantage comes from smoother actions, state coverage, action direction, or another difference in the learned policy.
+### Commanded-action transitions
 
----
+For recorded traces, the commanded action difference
 
-## 4. Analyses required for a stronger mechanistic paper
+$$
+\Delta u_t = \lVert u_t-u_{t-1}\rVert_2
+$$
 
-The following analyses would be needed to substantiate a stronger mechanistic
-claim. They are not all completed in the current artifact.
+is larger at expert switches than at non-switch steps. In the focused traces,
+the reported switch-to-non-switch jump ratios are approximately 5.7--6.7 for
+the topology arm. This is evidence of a discontinuity in the commanded policy
+output at some expert transitions.
 
-### Analysis 1: Switch Partitioning (Within-Phase vs. Phase-Boundary)
-- **Concept:** In an ideal phase-aligned policy, switches should occur **only** at genuine semantic transitions (e.g., approach $\to$ grasp), with **zero** switches during steady-state execution within a phase.
-- **Method:** Using offline PELT changepoints $\tau_k$, categorize every rollout timestep as boundary-adjacent ($|t - \tau_k| \le \delta$) or within-phase ($|t - \tau_k| > \delta$).
-- **Evidence status:** Not completed. The current documents must not state an
-  expected percentage as an observed result.
+It is not evidence, by itself, of a particular physical failure mechanism. The
+available traces do not contain force, contact, or actual end-effector velocity
+measurements. Moreover, the softmax control has a larger reported jump ratio
+in the same audit while achieving higher Square success. Therefore, action
+discontinuity is a plausible factor for future investigation, not a sufficient
+explanation of Square failure.
 
-### Analysis 2: Action Discontinuity Profiling (commanded output only)
-- **Method:** Document the measured commanded-action jump ratio.
-- **Evidence status:** The jump profiling is completed for recorded traces,
-  but it does not include physical contact or end-effector dynamics. A figure
-  may show trace timing and timeout association, but it must not label the
-  result as mechanical jamming without additional physical measurements.
+## 6. Scope and limitations
 
-### Analysis 3: Router Lipschitz & Perturbation Sensitivity
-- **Concept:** A stable router must not alter its gating decision under small observation noise $\epsilon \sim \mathcal{N}(0, \sigma^2 I)$.
-- **Method:** Inject calibrated Gaussian perturbations into states along successful trajectories and measure the **Router Flip Probability**:
-  $$P_{\text{flip}}(\sigma) = \mathbb{P}\left(\arg\min_k \|E(x_t + \epsilon) - c_k\| \neq \arg\min_k \|E(x_t) - c_k\|\right)$$
-- **Evidence status:** Not run. The expected finding is a testable prediction,
-  not a result. It must not be included as evidence until perturbation
-  experiments are executed and analyzed.
+The conclusions are limited to the evaluated memoryless direct-action policy
+and the reported benchmark protocol.
 
----
+1. Three training seeds and 50 episodes per seed provide useful comparative
+   evidence but do not establish universal statistical superiority; no formal
+   significance claim is made from pooled episode counts.
+2. The focused ablation isolates initialization under a fixed margin-disabled
+   objective; it does not attribute the complete PhaseForge result to
+   initialization alone.
+3. Routing NMI and switch rate measure organization, not physical stability or
+   task success.
+4. The trace archive lacks the physical measurements required to attribute
+   timeouts to contact, force, jamming, action direction, or state coverage.
+5. The current local result archive contains metrics and configurations, but
+   not all training checkpoints. Independent weight reloading therefore
+   requires preserving or recovering the original training artifacts.
 
-## 5. Defensible paper framing
+## 7. Conclusion
 
-### Proposed Working Title:
-> **"Decoupling Routing Organization from Closed-Loop Success: An Empirical Study of Structured Mixture-of-Experts in Robotic Manipulation"**
+PhaseForge provides a topology-informed way to organize a phase-conditioned
+memoryless MoE policy. The experiments show that topology-derived prototypes
+substantially alter the learned routing structure and can improve performance
+on Can. They do not show a universal success advantage: Square favors other
+controls, and the softmax router is strongest in the focused pooled comparison.
 
-### Positioning:
-PhaseForge should be framed as a structured MoE study with task-dependent
-performance, not as a universally superior manipulation algorithm. The paper
-can investigate whether routing organization and closed-loop success are
-separable properties.
+The appropriate conclusion is therefore conditional:
 
-### Venue note:
-Venue suitability should be decided after the manuscript and evidence are
-complete. The current results alone do not justify predicting acceptance at a
-specific venue.
+> Topology-informed initialization is a meaningful structural mechanism for
+> organizing expert routing in memoryless manipulation policies. Whether that
+> organization improves closed-loop performance depends on the task and on the
+> compatibility between the topology-derived partition and the task’s action
+> regimes.
 
----
+This conclusion reports both the contribution and its boundary without
+identifying routing organization with control performance.
 
-## 6. Decision Points for the Supervisor
+External references motivate the MoE routing question; all numerical results
+and implementation claims in this report come from the local experiment
+artifacts listed below.
 
-To finalize this research, the team requests the supervisor's approval on the following decisions:
+## References
 
-1. **D1 — Scientific scope:** Use the conditional hypothesis: topology-derived
-   initialization can organize routing, but its control benefit is task-
-   dependent and is not established as universally superior.
-2. **D2 — Manuscript evidence:** Include the completed routing and commanded-
-   action analyses only with their stated limits. Treat switch partitioning
-   and perturbation sensitivity as future work unless they are actually run.
-3. **D3 — Model description:** Do not describe the beta-zero model as a
-   feedback or impedance controller. Use the exact implementation name and
-   state that `beta=0.0` removes the residual branch.
+1. R. A. Jacobs, M. I. Jordan, S. J. Nowlan, and G. E. Hinton, “Adaptive
+   Mixtures of Local Experts,” *Neural Computation*, 1991. [Publisher page](https://direct.mit.edu/neco/article/3/1/79/5560/Adaptive-Mixtures-of-Local-Experts).
+2. D. Dai, L. Dong, S. Ma, B. Zheng, Z. Sui, B. Chang, and F. Wei,
+   “StableMoE: Stable Routing Strategy for Mixture of Experts,” *ACL*, 2022.
+   [ACL Anthology](https://aclanthology.org/2022.acl-long.489/).
+3. W. Fedus, B. Zoph, and N. Shazeer, “Switch Transformers: Scaling to
+   Trillion Parameter Models with Simple and Efficient Sparsity,” *Journal of
+   Machine Learning Research*, 2022. [JMLR](https://www.jmlr.org/papers/volume23/21-0998.html).
 
-The recorded metrics are preserved, but the copied training checkpoints are
-not present locally. The archive is therefore reviewable but not currently
-independently reloadable. Any reproducibility statement must acknowledge
-that limitation.
+## Local evidence
+
+- Final benchmark protocol: `experiments/final_causal_matrix.json`
+- Focused initialization protocol: `experiments/router_initialization_ablation.json`
+- Focused ablation metrics: `final_experiments_results/abalation_final/`
+- Final PhaseForge Square runs: `debug_run/phaseforge_square/`
+- Routing and commanded-action audits: `outputs_cpu_debug/`

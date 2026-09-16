@@ -48,6 +48,20 @@ class EvalResult:
 
 def load_eval_result(run_dir: Path) -> EvalResult:
     data: dict[str, Any] = cio.read_json(run_dir / "eval_results.json")
+    sr = data.get("eval/rollout/success_rate")
+    if sr is None:
+        return EvalResult(
+            path=run_dir,
+            success_rate=0.0,
+            successes=0,
+            valid_episodes=0,
+            wilson_low=0.0,
+            wilson_high=0.0,
+            action_mse=data.get("eval/action_mse"),
+            horizon=data.get("eval/rollout/horizon"),
+            reset_bank=data.get("eval/rollout/reset_bank"),
+        )
+
     missing = [k for k in _REQUIRED if k not in data]
     if missing:
         raise ValueError(f"{run_dir / 'eval_results.json'}: missing required keys {missing}")

@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         for spec in specs:
             kind = "schematic (manual)" if spec.kind == "schematic" else spec.kind
             logger.info("  %-4s %-9s %-6s %s", spec.id, kind, spec.priority, spec.title)
-        return 0 if report.ok else 2
+        return 0 if (report.ok or args.allow_partial) else 2
 
     outputs: dict[str, list[str]] = {}
     failures: list[str] = []

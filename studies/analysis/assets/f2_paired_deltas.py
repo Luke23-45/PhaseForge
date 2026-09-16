@@ -17,15 +17,15 @@ from studies.analysis.stats.paired import pair_episodes
 
 COMPARISONS = (
     "bc",
-    "warmstart_moe",
-    "phase_pretrain_random_router",
-    "plain_encoder_phase_bootstrap",
+    "final_aligned_softmax_top1",
+    "precision_residual_phase_random_router",
+    "precision_residual_plain_encoder",
 )
 PANEL_TITLES = {
     "bc": "vs. BC",
-    "warmstart_moe": "vs. Warm-Start",
-    "phase_pretrain_random_router": "vs. Rand-Router (H1)",
-    "plain_encoder_phase_bootstrap": "vs. Phase-Boot (H2)",
+    "final_aligned_softmax_top1": "vs. Softmax Top-1",
+    "precision_residual_phase_random_router": "vs. Phase-Random",
+    "precision_residual_plain_encoder": "vs. Plain Encoder",
 }
 
 
@@ -33,6 +33,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
 
     tasks = list(reversed(registry.tasks()))  # Lift at top
+    pf_name = "precision_residual_phaseforge" if (tasks[0], "precision_residual_phaseforge", 42) in dataset.evals else "phaseforge"
     with paper_style():
         fig, axes = plt.subplots(1, 4, figsize=(7.0, 2.5), squeeze=True, sharey=True, sharex=True)
         for col_idx, (ax, comparator) in enumerate(zip(axes, COMPARISONS)):
@@ -40,7 +41,7 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             for task in tasks:
                 seed_deltas = []
                 for seed in registry.seeds("final"):
-                    key_a = (task, "phaseforge", seed)
+                    key_a = (task, pf_name, seed)
                     key_b = (task, comparator, seed)
                     if key_a not in dataset.episodes or key_b not in dataset.episodes:
                         continue

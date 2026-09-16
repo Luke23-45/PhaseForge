@@ -69,51 +69,83 @@ def _task_from_tag(tag: str | None) -> str | None:
 
 
 def _resolve_task(namespace: str, method: str, tag: str | None) -> str | None:
-    """Task of a run, resolved through the manifest (name, tag) identity.
-
-    Parsing the tag prefix alone mis-keys task-less manifests whose rows carry
-    variant tags (e.g. lift_ablation's bc_robot_only with tag 'robot_only'):
-    the tag is not a task there. The manifest is authoritative; the prefix
-    fallback only covers stray runs no manifest row claims.
-    """
+    """Task of a run, resolved through the manifest (name, tag) identity."""
     from studies.analysis.common import registry
 
     for m in registry.methods(namespace):
         if m.name == method and (m.tag or None) == (tag or None):
             return m.task
+    if tag:
+        clean_tag = tag.split("__", 1)[0]
+        if clean_tag in ("Lift", "Can", "Square", "ToolHang", "Transport"):
+            return clean_tag
     return _task_from_tag(tag)
+
+
+def _find_runner_roots(root: Path) -> list[Path]:
+    """Return all directories that act as output runner roots (contain 'eval' or model dirs)."""
+    p_root = cio.to_long_path(root)
+    if not p_root.is_dir():
+        return []
+    roots: list[Path] = []
+    import os
+    for dirpath, dirnames, _ in os.walk(str(p_root)):
+        if "eval" in dirnames:
+            dp = Path(dirpath)
+            roots.append(dp)
+    return roots if roots else [p_root]
 
 
 def scan_namespace(namespace: str, root: Path) -> tuple[list[TrainRun], list[EvalRun]]:
     """Discover every completed run under one output namespace."""
-    if not root.is_dir():
+    p_root = cio.to_long_path(root)
+    if not p_root.is_dir():
         raise ValueError(f"Namespace root {root} does not exist (namespace {namespace!r})")
 
-    train_runs: list[TrainRun] = []
-    eval_runs: list[EvalRun] = []
-    for run_dir in sorted(p for p in root.iterdir() if p.is_dir() and p.name != "eval"):
-        _scan_train_tree(namespace, run_dir, train_runs)
-    eval_root = root / "eval"
-    if eval_root.is_dir():
-        for model_dir in sorted(p for p in eval_root.iterdir() if p.is_dir()):
-            _scan_eval_tree(namespace, model_dir, eval_runs)
+    runner_roots = _find_runner_roots(p_root)
+    raw_train: list[TrainRun] = []
+    raw_eval: list[EvalRun] = []
+    for r_root in runner_roots:
+        for run_dir in sorted(p for p in r_root.iterdir() if p.is_dir() and p.name not in ("eval", "_ledger", "_results", "_runner")):
+            _scan_train_tree(namespace, run_dir, raw_train)
+        eval_root = r_root / "eval"
+        if eval_root.is_dir():
+            for model_dir in sorted(p for p in eval_root.iterdir() if p.is_dir()):
+                _scan_eval_tree(namespace, model_dir, raw_eval)
+
+    # Deduplicate newest-wins for runs sharing the same cell key
+    train_by_key: dict[tuple, TrainRun] = {}
+    for r in raw_train:
+        if r.key not in train_by_key or r.path.name > train_by_key[r.key].path.name:
+            train_by_key[r.key] = r
+
+    eval_by_key: dict[tuple, EvalRun] = {}
+    for r in raw_eval:
+        if r.key not in eval_by_key or r.path.name > eval_by_key[r.key].path.name:
+            eval_by_key[r.key] = r
+
+    train_runs = list(train_by_key.values())
+    eval_runs = list(eval_by_key.values())
     return train_runs, eval_runs
 
 
 def _meta_or_skip(run_dir: Path) -> dict | None:
     """Return run_meta for a completed run, else None (incomplete runs are skipped)."""
-    if not run_dir.is_dir() or not (run_dir.parent / f"{run_dir.name}.completed").exists():
+    p_run = cio.to_long_path(run_dir)
+    comp = p_run.parent / f"{p_run.name}.completed"
+    if not p_run.is_dir() or not comp.exists():
         return None
     try:
-        meta = cio.read_json(run_dir / "run_meta.json")
+        meta = cio.read_json(p_run / "run_meta.json")
     except ValueError:
         return None
     return meta if isinstance(meta, dict) else None
 
 
 def _scan_train_tree(namespace: str, model_dir: Path, out: list[TrainRun]) -> None:
-    model_name = model_dir.name
-    for stage_dir in sorted(model_dir.glob("stage*")):
+    p_model = cio.to_long_path(model_dir)
+    model_name = p_model.name
+    for stage_dir in sorted(p_model.glob("stage*")):
         m = re.fullmatch(r"stage(\d+)", stage_dir.name)
         if m is None or not stage_dir.is_dir():
             continue
@@ -124,12 +156,13 @@ def _scan_train_tree(namespace: str, model_dir: Path, out: list[TrainRun]) -> No
                 if meta is None:
                     continue
                 tag = meta.get("tag")
+                method_name = str(meta.get("method") or meta.get("method_name") or model_name)
                 out.append(
                     TrainRun(
                         namespace=namespace,
                         model_name=str(meta.get("model_name", model_name)),
-                        task=_resolve_task(namespace, str(meta.get("method", "")), tag),
-                        method=str(meta.get("method", "")),
+                        task=_resolve_task(namespace, method_name, tag),
+                        method=method_name,
                         seed=int(meta["seed"]) if "seed" in meta else -1,
                         stage=stage if "stage" in meta else int(meta.get("stage", stage)),
                         path=run_dir,
@@ -141,19 +174,21 @@ def _scan_train_tree(namespace: str, model_dir: Path, out: list[TrainRun]) -> No
 
 
 def _scan_eval_tree(namespace: str, model_dir: Path, out: list[EvalRun]) -> None:
-    model_name = model_dir.name
-    for seed_dir in sorted(p for p in model_dir.iterdir() if p.is_dir()):
+    p_model = cio.to_long_path(model_dir)
+    model_name = p_model.name
+    for seed_dir in sorted(p for p in p_model.iterdir() if p.is_dir()):
         for run_dir in sorted(p for p in seed_dir.iterdir() if p.is_dir()):
             meta = _meta_or_skip(run_dir)
             if meta is None:
                 continue
             tag = meta.get("tag")
+            method_name = str(meta.get("method") or meta.get("method_name") or model_name)
             out.append(
                 EvalRun(
                     namespace=namespace,
                     model_name=str(meta.get("model_name", model_name)),
-                    task=_resolve_task(namespace, str(meta.get("method", "")), tag),
-                    method=str(meta.get("method", "")),
+                    task=_resolve_task(namespace, method_name, tag),
+                    method=method_name,
                     seed=int(meta["seed"]) if "seed" in meta else -1,
                     path=run_dir,
                     git_commit=meta.get("git_commit"),

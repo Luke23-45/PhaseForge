@@ -36,38 +36,24 @@ OKABE_ITO = {
 # Fixed method -> color mapping: PhaseForge carries the accent; controls are
 # muted; the BC family shares cool neutrals; ablation groups have distinct palettes.
 METHOD_COLORS: dict[str, str] = {
+    "precision_residual_phaseforge": OKABE_ITO["vermillion"],
     "phaseforge": OKABE_ITO["vermillion"],
-    "bc": OKABE_ITO["blue"],
-    "bc_large": OKABE_ITO["sky"],
-    "bc_robot_only": OKABE_ITO["grey"],
-    "scratch_moe": OKABE_ITO["green"],
-    "warmstart_moe": OKABE_ITO["orange"],
-    "phase_pretrain_random_router": OKABE_ITO["dark_yellow"],
-    "plain_encoder_phase_bootstrap": OKABE_ITO["black"],
-    "teacher_forced": OKABE_ITO["grey"],
-    # Router initialization family (Group A)
-    "pf_spherical_kmeans": OKABE_ITO["sky"],
-    "pf_kmeans": OKABE_ITO["blue"],
-    "pf_phase_head": OKABE_ITO["green"],
-    "pf_random_random": OKABE_ITO["orange"],
-    "pf_centroid_random": OKABE_ITO["purple"],
-    "pf_spherical": OKABE_ITO["vermillion"],
-    "pf_ft": OKABE_ITO["green"],
-    # Capacity scaling (Group D)
-    "pf_k3": OKABE_ITO["sky"],
-    "pf_k12": OKABE_ITO["purple"],
-    # Phase noise / corruption (Group C)
-    "pf_corrupt_25": OKABE_ITO["orange"],
-    "pf_corrupt_50": OKABE_ITO["dark_yellow"],
-    "pf_shuffle_control": OKABE_ITO["grey"],
-    # Expert init suite (Group B)
-    "pf_one_warm_plus_random": OKABE_ITO["purple"],
-    "pf_full_warm": OKABE_ITO["orange"],
-    "pf_drop00": OKABE_ITO["sky"],
-    "pf_drop25": OKABE_ITO["blue"],
-    "pf_drop50": OKABE_ITO["vermillion"],
-    "pf_drop75": OKABE_ITO["orange"],
-    "pf_drop100": OKABE_ITO["grey"],
+    "bc": OKABE_ITO["orange"],
+    "final_aligned_bc": OKABE_ITO["orange"],
+    "final_aligned_softmax_top1": OKABE_ITO["sky"],
+    "precision_residual_phase_random_router": OKABE_ITO["green"],
+    "precision_residual_plain_encoder": OKABE_ITO["blue"],
+    "precision_residual_scratch_moe": OKABE_ITO["purple"],
+    "final_aligned_static_rule": OKABE_ITO["dark_yellow"],
+    "precision_residual_factorial_floor": OKABE_ITO["grey"],
+    "precision_residual_teacher_forced": OKABE_ITO["black"],
+    "precision_residual_oracle": OKABE_ITO["grey"],
+    # Router initialization ablation (Can & Square)
+    "router_init_topology": OKABE_ITO["vermillion"],
+    "router_init_phase": OKABE_ITO["purple"],
+    "router_init_random": OKABE_ITO["green"],
+    "representation_bc": OKABE_ITO["orange"],
+    "routing_softmax_top1": OKABE_ITO["sky"],
 }
 ABLATION_COLOR = OKABE_ITO["grey"]
 SEED_POINT_COLOR = OKABE_ITO["black"]
@@ -80,17 +66,24 @@ def method_color(name: str) -> str:
 
 
 METHOD_MARKERS: dict[str, str] = {
+    "precision_residual_phaseforge": "o",
     "phaseforge": "o",
     "bc": "s",
-    "bc_large": "D",
-    "scratch_moe": "v",
-    "warmstart_moe": "P",
-    "phase_pretrain_random_router": "X",
-    "plain_encoder_phase_bootstrap": "p",
-    "pf_spherical_kmeans": "s",
-    "pf_kmeans": "^",
-    "pf_phase_head": "D",
-    "pf_random_random": "x",
+    "final_aligned_bc": "s",
+    "final_aligned_softmax_top1": "^",
+    "precision_residual_phase_random_router": "v",
+    "precision_residual_plain_encoder": "D",
+    "precision_residual_scratch_moe": "P",
+    "final_aligned_static_rule": "X",
+    "precision_residual_factorial_floor": "p",
+    "precision_residual_teacher_forced": "*",
+    "precision_residual_oracle": "+",
+    # Ablation
+    "router_init_topology": "o",
+    "router_init_phase": "s",
+    "router_init_random": "v",
+    "representation_bc": "D",
+    "routing_softmax_top1": "^",
 }
 
 

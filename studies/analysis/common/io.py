@@ -10,9 +10,18 @@ from pathlib import Path
 from typing import Any
 
 
+def to_long_path(path: Path | str) -> Path:
+    s = str(path)
+    if os.name == "nt" and not s.startswith("\\\\?\\"):
+        abs_p = os.path.abspath(s)
+        return Path("\\\\?\\" + abs_p)
+    return Path(path)
+
+
 def read_json(path: Path) -> Any:
+    p = to_long_path(path)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"Cannot read JSON {path}: {exc}") from exc
 
@@ -35,8 +44,9 @@ def atomic_write_text(path: Path, text: str) -> None:
 
 
 def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
+    p = to_long_path(path)
     try:
-        with path.open(encoding="utf-8") as f:
+        with p.open(encoding="utf-8") as f:
             for lineno, line in enumerate(f, start=1):
                 line = line.strip()
                 if not line:
@@ -55,6 +65,7 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
 def sha256_file(path: Path) -> str:
     import hashlib
 
+    p = to_long_path(path)
     h = hashlib.sha256()
-    h.update(path.read_bytes())
+    h.update(p.read_bytes())
     return h.hexdigest()

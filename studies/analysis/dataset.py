@@ -108,10 +108,10 @@ class AnalysisDataset:
                     report.missing_evals.append((task, method, seed))
         for task, method in registry.expected_cells("ablation"):
             for seed in registry.seeds("ablation"):
-                if (None, method, seed) in self.evals:
+                if (task, method, seed) in self.evals or (None, method, seed) in self.evals:
                     report.present_evals += 1
                 else:
-                    report.missing_evals.append((None, method, seed))
+                    report.missing_evals.append((task, method, seed))
         report.missing_stage_runs = sorted(
             (key for key in self._expected_stage_runs() if key not in self.train_runs),
             key=lambda k: (k[0] is not None, k[0] or "", k[1], k[2], k[3]),

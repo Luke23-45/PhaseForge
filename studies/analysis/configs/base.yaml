@@ -3,11 +3,11 @@
 
 namespaces:
   final:
-    root: outputs_final
-    manifest: experiments/five_task.json
+    root: final_experiments_results/final_experiments_results
+    manifest: experiments/final_causal_matrix.json
   ablation:
-    root: outputs_ablation
-    manifest: experiments/lift_ablation.json
+    root: final_experiments_results/abalation_final/teamspace/studios/this_studio/PhaseForge/outputs_router_ablation_can_square
+    manifest: experiments/router_initialization_ablation.json
 
 output:
   paper_root: studies/analysis/outputs      # figures/ and tables/ are created inside — per request, output to studies/analysis/outputs

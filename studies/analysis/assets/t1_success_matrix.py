@@ -34,15 +34,19 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                 per_seed_rates.append(ev.success_rate)
             if not per_seed_rates:
                 continue
+            first_ev = dataset.evals.get((task, method, registry.seeds("final")[0]))
+            if first_ev is None or first_ev.valid_episodes == 0:
+                cells.append("--")
+                continue
             p, lo, hi = seed_mean_and_wilson(
                 per_seed_successes,
-                dataset.evals[(task, method, registry.seeds("final")[0])].valid_episodes,
+                first_ev.valid_episodes,
             )
             all_rates.extend(per_seed_rates)
             cells.append(f"{p:.2f} [{lo:.2f}, {hi:.2f}]")
         macro = f"{mean(all_rates):.2f} ± {sample_std(all_rates):.2f}" if all_rates else "--"
         display = registry.display_name(method)
-        if method == "phaseforge":
+        if method in ("precision_residual_phaseforge", "phaseforge"):
             display = r"\textbf{PhaseForge}"
         rows.append([display] + cells + [macro])
 

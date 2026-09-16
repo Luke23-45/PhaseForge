@@ -15,23 +15,23 @@ from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import plot_seed_trajectories, save
 
 METHODS = (
-    "phaseforge",
-    "phase_pretrain_random_router",
-    "plain_encoder_phase_bootstrap",
-    "scratch_moe",
+    "precision_residual_phaseforge",
+    "final_aligned_softmax_top1",
+    "precision_residual_phase_random_router",
+    "precision_residual_plain_encoder",
 )
 FIELDS = (
-    ("nmi", "phase–expert NMI", (0.08, 0.52)),
-    ("routing_entropy", "routing entropy", (0.72, 1.00)),
-    ("switch_rate", "switch rate", (0.035, 0.125)),
+    ("nmi", "Phase–Expert NMI", (0.0, 0.85)),
+    ("switch_rate", "Routing Switch Rate", (0.0, 0.16)),
+    ("routing_entropy", "Routing Entropy", (0.0, 2.2)),
 )
 
 
 def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
 
-    tasks = [t for t in ("Lift", "Can") if t in registry.tasks()]
-    method_names = [m for m in METHODS if m in registry.matrix_method_names()]
+    tasks = [t for t in ("Can", "Square") if t in registry.tasks()]
+    method_names = [m for m in METHODS if m in registry.matrix_method_names() or any(m == em.name for em in registry.methods("final"))]
     with paper_style():
         fig, axes = plt.subplots(
             len(FIELDS),
