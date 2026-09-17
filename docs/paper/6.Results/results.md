@@ -9,7 +9,7 @@ Table 1 reports rollout success rates across all deployable methods. Three task-
 
 **Lift is saturated.** All methods except Scratch MoE and Factorial Floor reach 100% success. Lift provides no discriminative signal for distinguishing modular architectures.
 
-**Can separates methods.** PhaseForge achieves 78% [71, 84], compared with 63% [55, 70] for BC, 69% [61, 76] for Softmax Top-1, and 62% [54, 69] for Phase-Random. The paired difference against BC is $\Delta = +0.153$, though the per-seed standard deviation is 0.192 — BC seed 42 succeeds at 78% while seed 44 drops to 42% — and the Holm-adjusted sign test does not reject the null ($p = 1.0$; Table A15). PhaseForge also outperforms Static Rule ($\Delta = +0.253$, std 0.031) and Factorial Floor ($\Delta = +0.420$, std 0.159) by wider margins.
+**Can separates methods.** PhaseForge achieves 78% [71, 84], compared with 63% [55, 70] for BC, 69% [61, 76] for Softmax Top-1, and 62% [54, 69] for Phase-Random. The paired difference against BC is $\Delta = +0.153$, though the per-seed standard deviation is 0.192 — BC seed 42 succeeds at 78% while seed 44 drops to 42% — and the Holm-adjusted sign test does not reject the null ($p = 1.0$; Table A15). The widest margins are against Static Rule ($\Delta = +0.253$, std 0.031) and Plain Encoder ($\Delta = +0.420$, std 0.159).
 
 **Square does not follow the same ranking.** Plain Encoder leads at 50% [42, 58], followed by PhaseForge at 41% [33, 49] and Softmax Top-1 and Phase-Random at 39% each. The paired difference between PhaseForge and Plain Encoder is *negative*: $\Delta = -0.093$ (std 0.058). A method that omits phase structuring entirely outperforms the proposed method on this task.
 
