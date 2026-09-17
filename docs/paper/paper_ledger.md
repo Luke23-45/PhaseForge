@@ -9,14 +9,14 @@
 
 | #  | Section                        | Folder Name                  | Status | Priority |
 |----|--------------------------------|------------------------------|--------|----------|
-| 1  | Abstract                       | `abatract`*                  | ⬜     | HIGH     |
-| 2  | Introduction                   | `1.introduction`             | ⬜     | HIGH     |
-| 3  | Related Work                   | `2.Related_Work`             | ⬜     | MEDIUM   |
-| 4  | Method                         | `3.method`                   | ⬜     | HIGH     |
-| 5  | Experimental Setup             | `4.experimental_setup`       | ⬜     | MEDIUM   |
-| 6  | Results                        | `6.Results`                  | ⬜     | HIGH     |
-| 7  | Discussion & Limitations       | `7.discussion_limitations`   | ⬜     | MEDIUM   |
-| 8  | Conclusion                     | `8.conclusion`               | ⬜     | LOW      |
+| 1  | Abstract                       | `abatract`*                  | 🟡     | HIGH     |
+| 2  | Introduction                   | `1.introduction`             | 🟡     | HIGH     |
+| 3  | Related Work                   | `2.Related_Work`             | 🟡     | MEDIUM   |
+| 4  | Method                         | `3.method`                   | 🟡     | HIGH     |
+| 5  | Experimental Setup             | `4.experimental_setup`       | 🟡     | MEDIUM   |
+| 6  | Results                        | `6.Results`                  | 🟡     | HIGH     |
+| 7  | Discussion & Limitations       | `7.discussion_limitations`   | 🟡     | MEDIUM   |
+| 8  | Conclusion                     | `8.conclusion`               | 🟡     | LOW      |
 
 ---
 
@@ -33,17 +33,18 @@
 
 ```text
 Phase 1 – Core Content
-  [ ] 3.method
-  [ ] 4.experimental_setup
-  [ ] 6.Results
+  [/] 3.method              ← first draft complete (method.md)
+  [/] 4.experimental_setup  ← first draft complete (experimental_setup.md)
+  [/] 6.Results              ← first draft complete (results.md)
 
 Phase 2 – Context & Analysis
-  [ ] 2.Related_Work
-  [ ] 7.discussion_limitations
+  [/] 2.Related_Work        ← first draft complete (related_work.md)
+  [/] 7.discussion_limitations ← first draft complete (discussion.md)
 
 Phase 3 – Framing
-  [ ] 1.introduction
-  [ ] 8.conclusion
+  [/] 1.introduction          ← first draft complete (introduction.md)
+  [/] 8.conclusion            ← first draft complete (conclusion.md)
 
 Phase 4 – Final
-  [ ] abatract  ← write LAST (summarizes everything)
+  [/] abatract               ← first draft complete (abstract.md)
+```
