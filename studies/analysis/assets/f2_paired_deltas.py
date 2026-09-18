@@ -1,18 +1,21 @@
 """F2 — per-task paired success deltas (PhaseForge vs key baselines/controls).
 
-1x4 horizontal strip forest plot; rows are tasks; point is the paired seed-mean delta
-on identical reset cases; intervals span min-max seed deltas with distinct caps;
-individual seed deltas are vertically jittered (n=3) to prevent overplotting.
+2x2 grid of forest plots (one panel per comparator); rows are tasks.
+The solid point is the paired seed-mean delta on identical reset cases;
+the horizontal bar spans the min-max seed deltas and the open seed
+markers double as end-caps; individual seed deltas are exactly on the
+line (no jitter) for clean visualization.
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from studies.analysis.common import registry
 from studies.analysis.common.style import method_color, paper_style
 from studies.analysis.dataset import AnalysisDataset
-from studies.analysis.render.figures import forest, save
+from studies.analysis.render.figures import save
 from studies.analysis.stats.paired import pair_episodes
 
 COMPARISONS = (
@@ -21,6 +24,7 @@ COMPARISONS = (
     "precision_residual_phase_random_router",
     "precision_residual_plain_encoder",
 )
+
 PANEL_TITLES = {
     "bc": "vs. BC",
     "final_aligned_softmax_top1": "vs. Softmax Top-1",
@@ -28,92 +32,116 @@ PANEL_TITLES = {
     "precision_residual_plain_encoder": "vs. Plain Encoder",
 }
 
+MEAN_AREA, SEED_AREA = 15.0, 45.0
+RANGE_LW, SEED_EDGE_LW = 2.5, 1.2
+INK = "#444444"
+LEFT, RIGHT, TOP, BOTTOM = 0.15, 0.96, 0.86, 0.15
+HSPACE, WSPACE = 0.32, 0.12
+X_CENTER = (LEFT + RIGHT) / 2.0
+
+
+def _diameter(area: float) -> float:
+    return 2.0 * math.sqrt(area / math.pi)
+
+
+def _resolve_phaseforge_name(dataset: AnalysisDataset) -> str:
+    full = "precision_residual_phaseforge"
+    return full if any(k[1] == full for k in dataset.evals) else "phaseforge"
+
+
+def _collect_deltas(dataset, tasks, seeds, pf_name, comparator):
+    out = {}
+    for task in tasks:
+        deltas = []
+        for seed in seeds:
+            key_a = (task, pf_name, seed)
+            key_b = (task, comparator, seed)
+            if key_a not in dataset.episodes or key_b not in dataset.episodes:
+                continue
+            bank_a = dataset.evals[key_a].reset_bank
+            bank_b = dataset.evals[key_b].reset_bank
+            if bank_a != bank_b:
+                continue  # pairing invalid across different banks
+            deltas.append(
+                pair_episodes(task, seed,
+                              dataset.episodes[key_a], dataset.episodes[key_b],
+                              bank_a=bank_a, bank_b=bank_b).delta)
+        if deltas:
+            out[task] = deltas
+    return out
+
 
 def generate(dataset: AnalysisDataset) -> list[Path]:
     import matplotlib.pyplot as plt
     import numpy as np
+    from matplotlib.lines import Line2D
 
-    tasks = list(reversed(registry.tasks()))  # Lift at top
-    pf_name = "precision_residual_phaseforge" if (tasks[0], "precision_residual_phaseforge", 42) in dataset.evals else "phaseforge"
+    tasks = list(reversed(registry.tasks()))   # y index ascends -> Lift on top
+    seeds = tuple(registry.seeds("final"))
+    pf_name = _resolve_phaseforge_name(dataset)
+
+    stats = {c: _collect_deltas(dataset, tasks, seeds, pf_name, c) for c in COMPARISONS}
+
+    extreme = 0.0
+    for per_task in stats.values():
+        for d in per_task.values():
+            extreme = max(extreme, abs(min(d)), abs(max(d)))
+    x_lim = max(0.30, math.ceil((extreme + 0.08) / 0.05) * 0.05)
+    x_ticks = [t for t in (-0.4, -0.2, 0.0, 0.2, 0.4) if abs(t) <= x_lim - 0.05]
+
+    y_positions = {task: i for i, task in enumerate(tasks)}
+
     with paper_style():
-        fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.6), sharey=True, sharex=True)
-        comparator_grid = [
-            [("bc", axes[0, 0]), ("final_aligned_softmax_top1", axes[0, 1])],
-            [("precision_residual_phase_random_router", axes[1, 0]), ("precision_residual_plain_encoder", axes[1, 1])],
-        ]
+        fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.0), sharex=True, sharey=True)
 
-        for r_idx, row in enumerate(comparator_grid):
-            for c_idx, (comparator, ax) in enumerate(row):
-                labels, means, lows, highs, seed_points = [], [], [], [], []
-                for task in tasks:
-                    seed_deltas = []
-                    for seed in registry.seeds("final"):
-                        key_a = (task, pf_name, seed)
-                        key_b = (task, comparator, seed)
-                        if key_a not in dataset.episodes or key_b not in dataset.episodes:
-                            continue
-                        bank_a = dataset.evals[key_a].reset_bank
-                        bank_b = dataset.evals[key_b].reset_bank
-                        if bank_a != bank_b:
-                            continue  # pairing invalid across different banks
-                        outcome = pair_episodes(
-                            task,
-                            seed,
-                            dataset.episodes[key_a],
-                            dataset.episodes[key_b],
-                            bank_a=bank_a,
-                            bank_b=bank_b,
-                        )
-                        seed_deltas.append(outcome.delta)
-                    if not seed_deltas:
-                        continue
-                    labels.append(task)
-                    mean_delta = float(np.mean(seed_deltas))
-                    means.append(mean_delta)
-                    lows.append(min(seed_deltas))
-                    highs.append(max(seed_deltas))
-                    seed_points.append(seed_deltas)
+        for idx, comparator in enumerate(COMPARISONS):
+            ax = axes[idx // 2, idx % 2]
+            color = method_color(comparator)
 
-                color = method_color(comparator)
-                forest(
-                    ax,
-                    labels,
-                    means,
-                    lows,
-                    highs,
-                    colors=[color] * len(labels),
-                    seed_points=seed_points,
-                    xlabel="",
-                    show_zero=True,
-                    capsize=3.0,
-                )
-                ax.set_title(PANEL_TITLES[comparator], fontsize=9.5, fontweight="bold", pad=5)
-                ax.set_xlim(-0.52, 0.52)
-                ax.set_xticks([-0.4, -0.2, 0.0, 0.2, 0.4])
-                ax.grid(axis="x", linestyle=":", alpha=0.35)
+            ax.axvline(0, color="#888888", linestyle="--", linewidth=1.0, zorder=1)
+            ax.set_axisbelow(True)
 
-        # Single clean centered xlabel at bottom
-        fig.text(
-            0.55, 0.025,
-            r"Paired Difference: PhaseForge − Comparator $\Delta$ (Observed Seed Range)",
-            ha="center", fontsize=8.5, fontweight="bold"
-        )
+            for task, deltas in stats[comparator].items():
+                y = y_positions[task]
+                mean_delta = float(np.mean(deltas))
+                ax.hlines(y, min(deltas), max(deltas), colors=color,
+                          linewidth=RANGE_LW, zorder=2)
+                ax.scatter(deltas, [y] * len(deltas), marker="o", s=SEED_AREA,
+                           facecolors="white", edgecolors=color,
+                           linewidth=SEED_EDGE_LW, zorder=3)
+                ax.scatter([mean_delta], [y], marker="o", s=MEAN_AREA,
+                           color=color, zorder=4)
 
-        # Unified legend for mark semantics
-        from matplotlib.lines import Line2D
+            ax.set_title(PANEL_TITLES[comparator], fontsize=9.5, fontweight="bold", pad=6)
+            ax.set_xlim(-x_lim, x_lim)
+            ax.set_xticks(x_ticks)
+            ax.yaxis.grid(True, linestyle=":", color="#d0d0d0", alpha=0.9)
+            ax.xaxis.grid(True, linestyle=":", color="#d0d0d0", alpha=0.5)
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+
+        axes[0, 0].set_yticks(list(y_positions.values()))
+        axes[0, 0].set_yticklabels(list(y_positions.keys()))
+
+        fig.text(X_CENTER, 0.03,
+                 r"Paired Difference: PhaseForge − Comparator $\Delta$ (Observed Seed Range)",
+                 ha="center", fontsize=8.5, fontweight="bold")
+
         legend_elements = [
-            Line2D([0], [0], marker="o", color="w", markerfacecolor="#444444", markersize=6, label="Seed mean paired Δ"),
-            Line2D([0], [0], marker="o", color="w", markerfacecolor="none", markeredgecolor="#444444", markersize=5, label="Individual seed paired Δ (n=3)"),
-            Line2D([0], [0], color="#444444", lw=1.8, label="Observed seed range [min, max]"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor=INK,
+                   markersize=_diameter(MEAN_AREA), label="Seed mean paired Δ"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="white",
+                   markeredgecolor=INK, markeredgewidth=SEED_EDGE_LW,
+                   markersize=_diameter(SEED_AREA),
+                   label=f"Individual seed paired Δ (n={len(seeds)})"),
+            Line2D([0], [0], color=INK, lw=RANGE_LW,
+                   label="Observed seed range [min, max]"),
         ]
-        fig.legend(
-            handles=legend_elements,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.99),
-            ncol=3,
-            frameon=False,
-            fontsize=8.0,
-        )
+        fig.legend(handles=legend_elements, loc="upper center",
+                   bbox_to_anchor=(X_CENTER, 0.99), ncol=3, frameon=False,
+                   fontsize=8.0, handletextpad=0.4, columnspacing=1.5)
 
-        fig.subplots_adjust(top=0.88, bottom=0.12, left=0.14, right=0.96, hspace=0.36, wspace=0.18)
+        fig.subplots_adjust(top=TOP, bottom=BOTTOM, left=LEFT, right=RIGHT,
+                            hspace=HSPACE, wspace=WSPACE)
+
     return save(fig, "figures/main/F2_paired_deltas")

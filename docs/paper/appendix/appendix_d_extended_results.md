@@ -1,35 +1,12 @@
 # Appendix D — Extended Experimental Results
 
-This appendix reports the complete, untruncated empirical data tables generated across all experimental sweeps, including the full five-task benchmark, per-seed raw rollouts, the matched Can/Square router-initialization ablation, and paired statistical significance tests.
+This appendix reports the complete, unaggregated empirical data tables generated across all experimental sweeps, including the per-seed raw rollouts across all ten methods, the matched Can/Square router-initialization ablation breakdown, and paired statistical significance tests.
 
 ---
 
-## D.1 Full Five-Task and Per-Seed Rollout Success
+## D.1 Per-Seed Raw Rollout Success Rates (Table A1)
 
-### Five-Task Benchmark Rollout Success (Table T1)
-
-Table T1 reports closed-loop rollout success rates across all five Robomimic manipulation tasks. Brackets denote 95% Wilson score confidence intervals over the pooled rollout episodes ($N = 150$ per cell across 3 seeds).
-
-| Method | Lift | Can | Square | ToolHang | Transport |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **PhaseForge (Proposed)** | **1.00** [0.98, 1.00] | **0.78** [0.71, 0.84] | **0.41** [0.33, 0.49] | **0.00** [0.00, 0.02] | **0.01** [0.00, 0.04] |
-| **Monolithic BC** | 1.00 [0.98, 1.00] | 0.63 [0.55, 0.70] | 0.34 [0.27, 0.42] | 0.00 [0.00, 0.02] | 0.00 [0.00, 0.02] |
-| **Softmax Top-1** | 1.00 [0.98, 1.00] | 0.69 [0.61, 0.76] | 0.39 [0.31, 0.47] | 0.00 [0.00, 0.02] | 0.00 [0.00, 0.02] |
-| **Phase-Random** | 1.00 [0.98, 1.00] | 0.62 [0.54, 0.69] | 0.39 [0.31, 0.47] | 0.00 [0.00, 0.02] | 0.00 [0.00, 0.02] |
-| **Plain Encoder** | 1.00 [0.98, 1.00] | 0.36 [0.29, 0.44] | 0.50 [0.42, 0.58] | 0.00 [0.00, 0.02] | 0.01 [0.00, 0.04] |
-| **Scratch MoE** | 0.93 [0.88, 0.96] | 0.67 [0.59, 0.74] | 0.31 [0.24, 0.39] | 0.00 [0.00, 0.02] | 0.01 [0.00, 0.04] |
-| **Static Rule** | 1.00 [0.98, 1.00] | 0.53 [0.45, 0.60] | 0.12 [0.08, 0.18] | 0.00 [0.00, 0.02] | 0.00 [0.00, 0.02] |
-| **Factorial Floor** | 0.97 [0.92, 0.99] | 0.38 [0.31, 0.46] | 0.31 [0.24, 0.39] | 0.00 [0.00, 0.02] | 0.01 [0.00, 0.05] |
-| *Teacher-Forced (Diagnostic)* | 0.41 [0.33, 0.49] | 0.01 [0.00, 0.04] | 0.02 [0.01, 0.06] | 0.00 [0.00, 0.02] | 0.00 [0.00, 0.02] |
-
-*Observations:*
-- **Saturation and Floors:** Lift is saturated at 100% across all standard methods. ToolHang is completely unsolved (0% success across all methods), and Transport yields at most 0–2 successful episodes out of 150 trials across all methods. Neither task provides discriminative evidence.
-- **Can:** PhaseForge records 78% observed success, leading BC (63%), Softmax (69%), and Phase-Random (62%).
-- **Square:** Plain Encoder records the highest observed success rate at 50%, followed by PhaseForge at 41%, and Softmax / Phase-Random at 39%.
-
-### Per-Seed Raw Rollout Success Rates (Table A1)
-
-Table A1 documents the exact per-seed trial counts and success fractions across all three seeds (`seed 42`, `seed 43`, `seed 44`) for all 10 evaluated methods (50 rollout episodes per seed):
+Table A1 documents the exact per-seed rollout episode counts and success fractions across all three independently trained seeds (`seed 42`, `seed 43`, `seed 44`) for all 10 evaluated methods (50 rollout episodes per seed, $N = 150$ total trials per cell). The benchmark results summarized in main-paper Table 1 are derived directly from these per-seed evaluations:
 
 | Task | Method | Seed 42 | Seed 43 | Seed 44 | Mean Success |
 | :--- | :--- | :---: | :---: | :---: | :---: |
@@ -86,23 +63,9 @@ Table A1 documents the exact per-seed trial counts and success fractions across 
 
 ---
 
-## D.2 Matched Can/Square Router-Initialization Ablation
+## D.2 Matched Can/Square Ablation Breakdown (Table A4)
 
-### Core Ablation Summary (Table T2)
-
-Table T2 reports the primary router-initialization ablation on Can and Square. All arms operate under identical Stage-2 objectives with margin loss disabled ($\lambda_m = 0$), identical architectures, and identical optimizers:
-
-| Initialization Arm | Can Success (Pooled) | Square Success (Pooled) | Validation NMI (Can / Sq) | Switch Rate (Can / Sq) | Expert Collapse Rate |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Regime-Derived Init (Proposed)** | **76.0%** (114/150) | **26.7%** (40/150) | **0.67 / 0.51** | **0.04 / 0.07** | **0.0%** |
-| **Rule-Based Centroid Init** | 68.7% (103/150) | 31.3% (47/150) | 0.08 / 0.09 | 0.11 / 0.10 | 0.0% |
-| **Random Prototype Init** | 73.3% (110/150) | 28.0% (42/150) | 0.07 / 0.09 | 0.11 / 0.10 | 0.0% |
-| *Plain Encoder (Diagnostic)* | 67.3% (101/150) | 32.0% (48/150) | 0.40 / 0.47 | 0.06 / 0.06 | 0.0% |
-| *Softmax Top-1 (Diagnostic)* | 73.3% (110/150) | 35.3% (53/150) | 0.72 / 0.61 | 0.04 / 0.05 | 0.0% |
-
-### Full Ablation Suite Per-Seed Breakdown (Table A4)
-
-Table A4 provides the unaggregated per-seed success rates and validation metrics across the ablation suite:
+Table A4 provides the unaggregated per-seed success rates, validation NMI, routing-switch rates, and expert collapse rates across the matched Can/Square ablation suite (where margin loss is disabled, $\lambda_m = 0$):
 
 | Task | Condition | Role | Mean SR | Per-Seed Success (42, 43, 44) | Final NMI | Switch Rate | Collapse Rate |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -117,11 +80,17 @@ Table A4 provides the unaggregated per-seed success rates and validation metrics
 | Square | Plain Encoder | Representation diagnostic | 0.320 | 0.42, 0.26, 0.28 | 0.466 | 0.064 | 0.00 |
 | Square | Softmax Top-1 | Architectural diagnostic | 0.353 | 0.32, 0.38, 0.36 | 0.613 | 0.054 | 0.00 |
 
+### Definition of Validation Collapse Metric
+
+The expert collapse rate reported in Table A4 corresponds strictly to the recorded validation routing metric `val/expert_collapse_rate`. This metric evaluates the fraction of available experts ($E = 6$) that receive fewer than $1 / (2E) = 1/12 \approx 8.3\%$ of total routing assignments across the 20 held-out validation demonstration trajectories.
+
+Across all evaluated ablation conditions and seeds, the recorded validation collapse rate is exactly $0.00$, indicating that all six experts receive substantial routing assignments on the validation distribution. This finding is a empirical property of the validation trajectories under the trained models, and should not be construed as a general guarantee that expert starvation cannot occur on out-of-distribution inputs.
+
 ---
 
 ## D.3 Paired Differences and Statistical-Test Results (Table A15)
 
-Table A15 reports paired within-seed success differences ($\Delta = \text{Success}_{\mathrm{PhaseForge}} - \text{Success}_{\mathrm{Baseline}}$) evaluated across identical reset states. Significance is evaluated using exact two-sided sign tests with step-down Holm-Bonferroni correction over the pre-declared primary comparison family:
+Table A15 reports paired within-seed success differences ($\Delta = \text{Success}_{\mathrm{PhaseForge}} - \text{Success}_{\mathrm{Baseline}}$) evaluated across identical reset states. Multiplicity-adjusted hypothesis testing is conducted using exact two-sided sign tests with step-down Holm-Bonferroni correction:
 
 | Task | Condition A | Condition B | Mean $\Delta$ | $\Delta$ Std (Seeds) | $p$ (Exact Sign) | $p$ (Holm-Adjusted) |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: |
@@ -156,4 +125,4 @@ Table A15 reports paired within-seed success differences ($\Delta = \text{Succes
 | **ToolHang** | PhaseForge | Static Rule | +0.000 | 0.000 | 1.000 | **1.000** |
 | **Transport** | PhaseForge | Static Rule | +0.007 | 0.012 | 1.000 | **1.000** |
 
-*Statistical Note:* With three independently trained seeds, all paired comparisons yield Holm-adjusted $p$-values of $1.000$. None of the observed performance differences establish statistical significance at the population level; all reported differences must be interpreted as descriptive properties of the observed training runs.
+*Statistical Note:* Across three independently trained seeds, all paired comparisons yield Holm-adjusted $p$-values of $1.000$. None of the observed performance differences achieve statistical significance at the population level; all reported differences must be interpreted as descriptive properties of the observed training runs.

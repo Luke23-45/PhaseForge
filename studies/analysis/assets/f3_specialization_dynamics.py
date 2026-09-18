@@ -1,8 +1,7 @@
 """F3 — Stage-2 specialization dynamics: NMI, routing entropy, switch rate.
 
-PhaseForge vs the H1/H2 controls and the scratch floor on Lift and Can;
-bold line is seed mean with shaded seed-range ribbon; diamond marker at epoch 0
-shows the bootstrap instant (t0 from init_routing.json); single unified top legend.
+Dynamic data-driven limits with 6% offset padding and physical boundary clamping.
+Shared y-scales across tasks ensure faithful comparison without wasted whitespace.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from pathlib import Path
 from studies.analysis.common import registry
 from studies.analysis.common.style import method_color, paper_style
 from studies.analysis.dataset import AnalysisDataset
-from studies.analysis.render.figures import plot_seed_trajectories, save
+from studies.analysis.render.figures import save
 
 METHODS = (
     "precision_residual_phaseforge",
@@ -20,10 +19,11 @@ METHODS = (
     "precision_residual_phase_random_router",
     "precision_residual_plain_encoder",
 )
+
 FIELDS = (
-    ("nmi", "Phase–Expert NMI", (0.0, 1.05)),
-    ("switch_rate", "Routing Switch Rate", (0.0, 0.15)),
-    ("routing_entropy", "Normalized Routing Entropy ($H / \\ln K$)", (0.0, 1.05)),
+    ("nmi", "Phase–Expert NMI"),
+    ("switch_rate", "Routing Switch Rate"),
+    ("routing_entropy", "Normalized Routing\nEntropy ($H / \\ln K$)"),
 )
 
 
@@ -34,16 +34,61 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
 
     tasks = [t for t in ("Can", "Square") if t in registry.tasks()]
     method_names = [m for m in METHODS if m in registry.matrix_method_names() or any(m == em.name for em in registry.methods("final"))]
+
     with paper_style():
+        # Share y across columns (tasks) for each metric row
         fig, axes = plt.subplots(
             len(FIELDS),
             len(tasks),
             figsize=(7.2, 6.2),
             squeeze=False,
             sharex="col",
+            sharey="row",
         )
+
+        # 1. Pre-calculate global min and max per field across BOTH tasks and ALL methods
+        field_bounds = {}
+        for field, _ in FIELDS:
+            all_vals = []
+            for task in tasks:
+                for method in method_names:
+                    for seed in registry.seeds("final"):
+                        key = (task, method, seed, 2)
+                        # Collect trajectory points
+                        if key in dataset.curves:
+                            series = dataset.curves[key].series(field)
+                            if series:
+                                all_vals.extend([pt[1] for pt in series if not np.isnan(pt[1])])
+                        # Collect t=0 initialization markers
+                        init = dataset.init_routing.get(key)
+                        if init is not None:
+                            val = None
+                            if field == "nmi" and init.t0_nmi is not None:
+                                val = float(init.t0_nmi)
+                            elif field == "routing_entropy" and init.t0_normalized_routing_entropy is not None:
+                                val = float(init.t0_normalized_routing_entropy)
+                            if val is not None and not np.isnan(val):
+                                all_vals.append(val)
+
+            if all_vals:
+                v_min, v_max = float(np.min(all_vals)), float(np.max(all_vals))
+                span = v_max - v_min
+                pad = 0.06 * span  # 6% breathing room
+
+                y_low = v_min - pad
+                y_high = v_max + pad
+
+                # Physical boundary clamping
+                if field == "switch_rate":
+                    y_low = max(0.0, y_low)  # Switch rate cannot be negative
+                if field in ("nmi", "routing_entropy"):
+                    y_high = min(1.02, y_high)  # Normalized ceiling at 1.0
+
+                field_bounds[field] = (y_low, y_high)
+
+        # 2. Render plots
         for col, task in enumerate(tasks):
-            for row, (field, ylabel, ylim) in enumerate(FIELDS):
+            for row, (field, ylabel) in enumerate(FIELDS):
                 ax = axes[row][col]
                 for method in method_names:
                     color = method_color(method)
@@ -55,7 +100,6 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                             series = dataset.curves[key].series(field)
                             if series:
                                 per_seed_series.append(series)
-                        # Extract seed-specific t=0 marker
                         init = dataset.init_routing.get(key)
                         if init is not None:
                             val = None
@@ -69,13 +113,13 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                     if not per_seed_series:
                         continue
 
-                    # 1. Plot individual seed trajectories as thin, semi-transparent lines
+                    # Individual seed trajectories (thin dashed lines)
                     for s_data in per_seed_series:
                         xs = [pt[0] for pt in s_data]
                         ys = [pt[1] for pt in s_data]
                         ax.plot(xs, ys, color=color, alpha=0.35, linewidth=0.9, linestyle="--")
 
-                    # 2. Resample and plot arithmetic seed mean as a heavier line
+                    # Seed mean (heavy line)
                     grid = common_grid(per_seed_series)
                     if grid:
                         resampled = [resample(s, grid) for s in per_seed_series]
@@ -85,21 +129,37 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                                 label=registry.display_name(method) if (row == 0 and col == 0) else None,
                                 zorder=4)
 
-                    # 3. Plot each validated t=0 value as a seed-level marker
+                    # t=0 seed markers (diamonds)
                     for t0_val in t0_markers:
                         ax.scatter([0], [t0_val], facecolors="none", edgecolors=color,
                                    marker="D", s=22, linewidth=1.0, zorder=5)
 
-                ax.set_ylim(ylim)
-                ax.grid(True, linestyle=":", alpha=0.35)
-                if col == 0:
-                    ax.set_ylabel(ylabel, fontsize=8.5)
-                if row == len(FIELDS) - 1:
-                    ax.set_xlabel("Stage-2 Epoch", fontsize=8.5)
-                if row == 0:
-                    ax.set_title(task, fontsize=10, fontweight="bold", pad=8)
+                # Set dynamically computed limits
+                if field in field_bounds:
+                    ax.set_ylim(field_bounds[field])
 
-        # Build clean two-row top legend: methods on top, mark semantics below
+                # Apple-inspired minimalism
+                ax.grid(axis="y", linestyle="-", color="#E5E5EA", linewidth=0.7, alpha=0.8)
+                ax.grid(axis="x", visible=False)
+
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+                ax.spines["left"].set_color("#8E8E93")
+                ax.spines["left"].set_linewidth(0.8)
+                ax.spines["bottom"].set_color("#8E8E93")
+                ax.spines["bottom"].set_linewidth(0.8)
+
+                ax.tick_params(axis="both", colors="#3A3A3C", labelsize=8, length=3)
+
+                if col == 0:
+                    ax.set_ylabel(ylabel, fontsize=8.0, fontweight="500", color="#1C1C1E", multialignment="center")
+                if row == len(FIELDS) - 1:
+                    ax.set_xlabel("Stage-2 Epoch", fontsize=8.5, fontweight="500", color="#1C1C1E")
+                    ax.set_xticks([0, 50, 100, 150, 200])
+                if row == 0:
+                    ax.set_title(task, fontsize=10.5, fontweight="bold", pad=8, color="#000000")
+
+        # Two-tier legend
         from matplotlib.lines import Line2D
         h_methods, l_methods = axes[0][0].get_legend_handles_labels()
         h_marks = [
@@ -127,5 +187,6 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             fontsize=7.5,
         )
         fig.add_artist(leg1)
-        fig.subplots_adjust(top=0.86, bottom=0.08, left=0.13, right=0.96, hspace=0.28, wspace=0.18)
+        fig.subplots_adjust(top=0.86, bottom=0.08, left=0.15, right=0.96, hspace=0.28, wspace=0.18)
+
     return save(fig, "figures/main/F3_specialization")

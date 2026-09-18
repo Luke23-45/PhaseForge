@@ -4,25 +4,25 @@ Demonstrates the physical mechanism underlying the decoupling of routing organiz
 and closed-loop success:
 Panel A: Two-task small-multiple layout of per-timestep action jumps ||Δa_t||_2 at
          expert switches vs. non-switch steps across ablation arms (Can and Square).
-         Box-and-whisker summaries (median, IQR, 5th-95th percentile whiskers) with
-         overlaid per-seed means (n=3) and sample counts.
+         Box-and-whisker summaries (median, IQR box, 5th-95th percentile whiskers)
+         with overlaid per-seed means and switch-step sample counts.
 Panel B: Expert switch rate across ablation arms (including BC as zero-switch reference)
-         showing seed-level points, descriptive mean, and observed range.
+         showing seed-level rings, descriptive mean (bullseye), and observed range.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Rectangle
 
 from studies.analysis.common import io as cio
 from studies.analysis.common import registry
-from studies.analysis.common.config import namespace_root
-from studies.analysis.common.style import OKABE_ITO, method_color, paper_style
+from studies.analysis.common.style import OKABE_ITO, paper_style
 from studies.analysis.dataset import AnalysisDataset
 from studies.analysis.render.figures import save
 
@@ -34,6 +34,26 @@ METHODS_MOE = (
 )
 METHODS_ALL = METHODS_MOE + ("representation_bc",)
 TASKS = ("Can", "Square")
+
+INK = "#444444"          # neutral ink for per-seed rings (matches legend handle)
+GREY = "#666666"         # annotation ink
+SW_COLOR = OKABE_ITO["vermillion"]
+NON_COLOR = OKABE_ITO["sky"]
+TASK_COLORS = {"Can": "#333333", "Square": "#CC79A7"}
+TASK_MARKERS = {"Can": "o", "Square": "s"}
+TASK_OFFSETS = {"Can": -0.14, "Square": 0.14}
+
+BOX_HALF = 0.128         # half box width  (width*0.4 with width=0.32)
+CAP_HALF = 0.064         # half whisker-cap width
+PAIR_OFFSET = 0.16       # ± width/2 for sw / non boxes
+RING_A, RING_LW = 30.0, 1.0      # Panel B seed rings (larger ...)
+MEAN_A, MEAN_LW = 14.0, 0.5      # ... than the solid mean -> visible bullseye
+A_RING_A, A_RING_LW = 22.0, 1.1  # Panel A seed-mean rings (neutral ink)
+
+# Text-size budget for Panel A (axis ≈114 pt wide, ≈31 pt per group slot):
+#   count annotation "N=9999" at 6.2 pt  ≈ 22 pt  -> ≥9 pt gap between neighbours
+#   tick names are rotated 35°           -> ≈18 pt perpendicular separation
+COUNT_FS, NOTE_FS, TICK_FS = 6.2, 6.0, 6.8
 
 
 def _extract_trace_metrics(dataset: AnalysisDataset):
@@ -52,10 +72,9 @@ def _extract_trace_metrics(dataset: AnalysisDataset):
         for task in TASKS
     }
 
-    seeds = registry.seeds("ablation")
     for task in TASKS:
         for m in METHODS_ALL:
-            for s in seeds:
+            for s in registry.seeds("ablation"):
                 key = (task, m, s)
                 if key not in dataset.eval_runs:
                     continue
@@ -73,7 +92,7 @@ def _extract_trace_metrics(dataset: AnalysisDataset):
                     ep = rec.get("episode_id")
                     exp = rec.get("selected_expert")
                     act = rec.get("final_action")
-                    if not act:
+                    if act is None or len(act) == 0:
                         continue
                     act = np.array(act, dtype=float)
 
@@ -107,141 +126,181 @@ def _extract_trace_metrics(dataset: AnalysisDataset):
     return data
 
 
+def _box_stats(jumps):
+    """IQR box + 5-95 whiskers; None when empty."""
+    if not jumps:
+        return None
+    q1, med, q3 = np.percentile(jumps, [25, 50, 75])
+    w_lo, w_hi = np.percentile(jumps, [5, 95])
+    return float(q1), float(med), float(q3), float(w_lo), float(w_hi)
+
+
 def generate(dataset: AnalysisDataset) -> list[Path]:
     trace_data = _extract_trace_metrics(dataset)
+    n_seeds = len(registry.seeds("ablation"))
+    short = {m: registry.display_name(m).replace(" Init", "").replace(" (PF)", "")
+             for m in METHODS_ALL}
+
+    # ---- pre-compute every glyph so limits are data-driven (no clipping) ----
+    stats = {}
+    y_max = 0.0
+    for task in TASKS:
+        for m in METHODS_MOE:
+            sw = _box_stats(trace_data[task][m]["sw_jumps"])
+            non = _box_stats(trace_data[task][m]["non_jumps"])
+            stats[(task, m)] = (sw, non)
+            for st in (sw, non):
+                if st:
+                    y_max = max(y_max, st[4])
+            for v in trace_data[task][m]["seed_sw_means"] + trace_data[task][m]["seed_non_means"]:
+                y_max = max(y_max, v)
+    # +20% headroom so N=... row (axes y=0.985) clears 5-95% whiskers (≈0.88)
+    y_top = max(0.26, np.ceil((y_max * 1.20) / 0.05) * 0.05)
+
+    x_max = 0.0
+    for task in TASKS:
+        for m in METHODS_ALL:
+            rates = trace_data[task][m]["seed_sw_rates"]
+            if rates:
+                x_max = max(x_max, max(rates))
+    x_hi = np.ceil((x_max + 0.008) / 0.005) * 0.005
 
     with paper_style():
-        # 3 subplots: Panel A1 (Can Jumps), Panel A2 (Square Jumps), Panel B (Switch Rates)
         fig = plt.figure(figsize=(7.2, 4.2))
-        gs = fig.add_gridspec(1, 3, width_ratios=[1.08, 1.08, 1.25], wspace=0.46)
-
+        # Give Panels A1/A2 ~15% more physical width to relax 31pt→~36pt slot
+        # without touching data scale — pure typographic budget, not x-axis rescaling.
+        gs = fig.add_gridspec(1, 3, width_ratios=[1.24, 1.24, 1.08], wspace=0.44)
         ax_can = fig.add_subplot(gs[0])
         ax_sq = fig.add_subplot(gs[1], sharey=ax_can)
         ax_b = fig.add_subplot(gs[2])
 
-        whisker_rule = (5, 95)  # 5th and 95th percentiles
-
-        # --- PANEL A: Small-multiple boxplots (Can and Square) ---
-        for ax, task in [(ax_can, "Can"), (ax_sq, "Square")]:
-            n_methods = len(METHODS_MOE)
-            positions = np.arange(n_methods)
-            width = 0.32
+        # ---------------- PANEL A: small-multiple box plots ----------------
+        for ax, task, title in (
+            (ax_can, "Can", "Panel A1: Can Jumps"),
+            (ax_sq, "Square", "Panel A2: Square Jumps"),
+        ):
+            positions = np.arange(len(METHODS_MOE))
 
             for i, m in enumerate(METHODS_MOE):
-                sw_j = trace_data[task][m]["sw_jumps"]
-                non_j = trace_data[task][m]["non_jumps"]
-                sw_means = trace_data[task][m]["seed_sw_means"]
-                non_means = trace_data[task][m]["seed_non_means"]
+                sw, non = stats[(task, m)]
+                groups = ((sw, positions[i] + PAIR_OFFSET, SW_COLOR),
+                          (non, positions[i] - PAIR_OFFSET, NON_COLOR))
+                means = (trace_data[task][m]["seed_sw_means"],
+                         trace_data[task][m]["seed_non_means"])
 
-                pos_sw = positions[i] + width / 2
-                pos_non = positions[i] - width / 2
+                for (st, pos, color), mu in zip(groups, means):
+                    if st is None:
+                        continue
+                    q1, med, q3, w_lo, w_hi = st
+                    # true closed box: RGBA face (alpha 0.30) + solid edge
+                    ax.add_patch(Rectangle(
+                        (pos - BOX_HALF, q1), 2 * BOX_HALF, max(q3 - q1, 1e-6),
+                        facecolor=to_rgba(color, 0.30), edgecolor=color,
+                        linewidth=1.0, zorder=2))
+                    ax.plot([pos - BOX_HALF, pos + BOX_HALF], [med, med],
+                            color=color, lw=1.6, zorder=3)
+                    ax.plot([pos, pos], [q1, w_lo], color=color, lw=1.0, zorder=2)
+                    ax.plot([pos, pos], [q3, w_hi], color=color, lw=1.0, zorder=2)
+                    ax.plot([pos - CAP_HALF, pos + CAP_HALF], [w_lo, w_lo],
+                            color=color, lw=1.0, zorder=2)
+                    ax.plot([pos - CAP_HALF, pos + CAP_HALF], [w_hi, w_hi],
+                            color=color, lw=1.0, zorder=2)
 
-                # Compute custom percentiles for clean whiskers
-                if sw_j:
-                    q1, med, q3 = np.percentile(sw_j, [25, 50, 75])
-                    w_lo, w_hi = np.percentile(sw_j, whisker_rule)
-                    # Draw box
-                    ax.fill_between([pos_sw - width*0.4, pos_sw + width*0.4], [q1, q1], [q3, q3],
-                                    facecolor=OKABE_ITO["vermillion"], alpha=0.3, edgecolor=OKABE_ITO["vermillion"], lw=1.0)
-                    ax.plot([pos_sw - width*0.4, pos_sw + width*0.4], [med, med], color=OKABE_ITO["vermillion"], lw=1.6)
-                    # Whiskers
-                    ax.plot([pos_sw, pos_sw], [q1, w_lo], color=OKABE_ITO["vermillion"], lw=1.0)
-                    ax.plot([pos_sw, pos_sw], [q3, w_hi], color=OKABE_ITO["vermillion"], lw=1.0)
-                    ax.plot([pos_sw - width*0.2, pos_sw + width*0.2], [w_lo, w_lo], color=OKABE_ITO["vermillion"], lw=1.0)
-                    ax.plot([pos_sw - width*0.2, pos_sw + width*0.2], [w_hi, w_hi], color=OKABE_ITO["vermillion"], lw=1.0)
+                # per-seed means: neutral ink rings (exact match to legend handle)
+                for pos, mu in ((positions[i] + PAIR_OFFSET, means[0]),
+                                (positions[i] - PAIR_OFFSET, means[1])):
+                    if mu:
+                        ax.scatter([pos] * len(mu), mu, facecolors="none",
+                                   edgecolors=INK, s=A_RING_A, linewidths=A_RING_LW,
+                                   zorder=5)
 
-                    # Overlay per-seed means
-                    for sm in sw_means:
-                        ax.scatter([pos_sw], [sm], facecolors="none", edgecolors=OKABE_ITO["vermillion"],
-                                   s=24, linewidths=1.2, zorder=5)
-
-                if non_j:
-                    q1, med, q3 = np.percentile(non_j, [25, 50, 75])
-                    w_lo, w_hi = np.percentile(non_j, whisker_rule)
-                    # Draw box
-                    ax.fill_between([pos_non - width*0.4, pos_non + width*0.4], [q1, q1], [q3, q3],
-                                    facecolor=OKABE_ITO["sky"], alpha=0.3, edgecolor=OKABE_ITO["sky"], lw=1.0)
-                    ax.plot([pos_non - width*0.4, pos_non + width*0.4], [med, med], color=OKABE_ITO["sky"], lw=1.6)
-                    # Whiskers
-                    ax.plot([pos_non, pos_non], [q1, w_lo], color=OKABE_ITO["sky"], lw=1.0)
-                    ax.plot([pos_non, pos_non], [q3, w_hi], color=OKABE_ITO["sky"], lw=1.0)
-                    ax.plot([pos_non - width*0.2, pos_non + width*0.2], [w_lo, w_lo], color=OKABE_ITO["sky"], lw=1.0)
-                    ax.plot([pos_non - width*0.2, pos_non + width*0.2], [w_hi, w_hi], color=OKABE_ITO["sky"], lw=1.0)
-
-                    # Overlay per-seed means
-                    for nm in non_means:
-                        ax.scatter([pos_non], [nm], facecolors="none", edgecolors=OKABE_ITO["sky"],
-                                   s=24, linewidths=1.2, zorder=5)
-
-            # Clean x-tick labels with sample counts attached
-            xtick_labels = []
-            for m in METHODS_MOE:
-                short = registry.display_name(m).replace(" Init", "").replace(" (PF)", "")
+                # sample count: SHORT string ("N=1948", ~22 pt) so the four
+                # group-centred annotations cannot collide (slot ≈31 pt).
                 n_sw = len(trace_data[task][m]["sw_jumps"])
-                xtick_labels.append(f"{short}\n($N={n_sw}$)")
+                ax.text(positions[i], 0.985, f"N={n_sw}", fontsize=COUNT_FS,
+                        color=GREY, ha="center", va="top",
+                        transform=ax.get_xaxis_transform(), zorder=6)
+
+            # one compact key for the count row, top-right, clear of every
+            # whisker cap on the right half and of the count row above it
+            ax.text(0.99, 0.93, "N = switch steps", fontsize=NOTE_FS, color=GREY,
+                    ha="right", va="top", transform=ax.transAxes, zorder=6)
 
             ax.set_xticks(positions)
-            ax.set_xticklabels(xtick_labels, rotation=0, ha="center", fontsize=7.2)
-            ax.set_title(f"Panel A1: {task} Jumps" if task == "Can" else f"Panel A2: {task} Jumps",
-                         fontsize=9.0, fontweight="bold", pad=6)
+            ax.set_xticklabels([short[m] for m in METHODS_MOE], rotation=35,
+                               ha="right", rotation_mode="anchor", fontsize=TICK_FS)
+            # Give N=... row (y=0.985 in axes coords, x=positions[0]=0) breathing room
+            # from the y-axis spine — without this the first count straddles the spine.
+            ax.set_xlim(-0.62, 3.62)
+            ax.set_title(title, fontsize=9.0, fontweight="bold", pad=6)
             ax.grid(axis="y", linestyle=":", alpha=0.35)
+            ax.set_axisbelow(True)
 
-        ax_can.set_ylim(0.0, 0.72)
+        ax_can.set_ylim(0.0, y_top)
         ax_can.set_ylabel(r"Commanded Action Jump $\|\Delta \mathbf{a}_t\|_2$", fontsize=8.5)
         ax_sq.tick_params(labelleft=False)
 
-        # --- PANEL B: Expert Switch Rate ---
-        b_methods = METHODS_ALL
-        y_pos = np.arange(len(b_methods))
-        task_offsets = {"Can": -0.14, "Square": 0.14}
-        task_colors = {"Can": OKABE_ITO["vermillion"], "Square": OKABE_ITO["blue"]}
-
+        # ---------------- PANEL B: expert switch rate ----------------
+        y_pos = np.arange(len(METHODS_ALL))
         for task in TASKS:
-            for i, m in enumerate(b_methods):
+            c = TASK_COLORS[task]
+            mkr = TASK_MARKERS[task]
+            for i, m in enumerate(METHODS_ALL):
                 rates = trace_data[task][m]["seed_sw_rates"]
                 if not rates:
                     continue
-                y = y_pos[i] + task_offsets[task]
-                mean_r = float(np.mean(rates))
-                min_r = min(rates)
-                max_r = max(rates)
-                c = task_colors[task]
+                y = y_pos[i] + TASK_OFFSETS[task]
+                mean_r, min_r, max_r = float(np.mean(rates)), min(rates), max(rates)
+                if max_r > min_r:
+                    ax_b.plot([min_r, max_r], [y, y], color=c, lw=1.5, zorder=3)
+                ax_b.scatter([mean_r], [y], color=c, s=MEAN_A, zorder=4,
+                             edgecolor="white", linewidth=MEAN_LW, marker=mkr)
+                ax_b.scatter(rates, [y] * len(rates), facecolors="none", edgecolors=c,
+                             s=RING_A, linewidths=RING_LW, zorder=5, marker=mkr)
 
-                # Range bar
-                ax_b.plot([min_r, max_r], [y, y], color=c, lw=1.5, zorder=3)
-                # Seed mean
-                ax_b.scatter([mean_r], [y], color=c, s=32, zorder=4, edgecolor="white", linewidth=0.6)
-                # Seed points
-                for r in rates:
-                    ax_b.scatter([r], [y], facecolors="none", edgecolors=c, s=16, linewidths=0.9, zorder=5)
-
+        ax_b.axvline(0.0, color="#888888", linestyle="--", linewidth=0.8, zorder=1)
         ax_b.set_yticks(y_pos)
-        ax_b.set_yticklabels([registry.display_name(m).replace(" (PF)", "") for m in b_methods], fontsize=8.0)
+        # Wrap longest label to avoid left overflow — keeps "Softmax Top-1" inside wspace
+        b_labels = []
+        for m in METHODS_ALL:
+            lab = short[m]
+            if lab == "Softmax Top-1":
+                lab = "Softmax\nTop-1"
+            b_labels.append(lab)
+        ax_b.set_yticklabels(b_labels, fontsize=7.5, va="center")
         ax_b.invert_yaxis()
+        ax_b.set_ylim(len(METHODS_ALL) - 0.45, -0.45)
+        ax_b.set_xlim(-0.006, x_hi)
         ax_b.set_xlabel("Routing Switch Rate", fontsize=8.5)
         ax_b.set_title("Panel B: Switch Rate", fontsize=9.0, fontweight="bold", pad=6)
-        ax_b.set_xlim(-0.005, 0.075)
         ax_b.grid(axis="x", linestyle=":", alpha=0.35)
+        ax_b.set_axisbelow(True)
 
-        # Build clean legends
-        leg_elements_a = [
-            Patch(facecolor=OKABE_ITO["vermillion"], alpha=0.3, edgecolor=OKABE_ITO["vermillion"], label="Switch Step Jump (IQR, 5-95%)"),
-            Patch(facecolor=OKABE_ITO["sky"], alpha=0.3, edgecolor=OKABE_ITO["sky"], label="Non-Switch Step Jump (IQR, 5-95%)"),
-            Line2D([0], [0], marker="o", color="w", markerfacecolor="none", markeredgecolor="#555555", markersize=5, label="Seed mean jump (n=3)"),
+        # ---------------- legend (matplotlib fills columns first!) --------
+        # order [sw, Can, non, Square, ring] with ncol=3 ->
+        #   row 1: switch box | non-switch box | seed ring   (Panel A semantics)
+        #   row 2: Can mean+range+seeds | Square mean+range+seeds (Panel B semantics)
+        # Can/Square now use charcoal vs reddish-purple + circle vs square
+        # so they cannot be mistaken for Panel A's vermillion/sky switch encoding.
+        legend_handles = [
+            Patch(facecolor=to_rgba(SW_COLOR, 0.30), edgecolor=SW_COLOR, linewidth=1.0,
+                  label="Switch Step Jump (IQR, 5-95%)"),
+            Line2D([0], [0], marker=TASK_MARKERS["Can"], color=TASK_COLORS["Can"], lw=1.5,
+                   markerfacecolor=TASK_COLORS["Can"], markeredgecolor=TASK_COLORS["Can"], markersize=4.5,
+                   label="Can (mean + range; ○ seed, n=3)"),
+            Patch(facecolor=to_rgba(NON_COLOR, 0.30), edgecolor=NON_COLOR, linewidth=1.0,
+                  label="Non-Switch Step Jump (IQR, 5-95%)"),
+            Line2D([0], [0], marker=TASK_MARKERS["Square"], color=TASK_COLORS["Square"], lw=1.5,
+                   markerfacecolor=TASK_COLORS["Square"], markeredgecolor=TASK_COLORS["Square"], markersize=4.5,
+                   label="Square (mean + range; ○/□ seed, n=3)"),
+            Line2D([0], [0], marker="o", color="w", markerfacecolor="none",
+                   markeredgecolor=INK, markeredgewidth=A_RING_LW, markersize=5.0,
+                   label=f"Seed mean jump (Panel A, n={n_seeds})"),
         ]
-        leg_elements_b = [
-            Line2D([0], [0], marker="o", color=task_colors["Can"], lw=1.5, markersize=5, label="Can (mean + range)"),
-            Line2D([0], [0], marker="o", color=task_colors["Square"], lw=1.5, markersize=5, label="Square (mean + range)"),
-        ]
+        fig.legend(handles=legend_handles, loc="upper center",
+                   bbox_to_anchor=(0.5, 0.995), ncol=3, frameon=False,
+                   fontsize=7.2, handletextpad=0.5, columnspacing=1.6)
 
-        fig.legend(
-            handles=leg_elements_a + leg_elements_b,
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.995),
-            ncol=3,
-            frameon=False,
-            fontsize=7.5,
-        )
+        fig.subplots_adjust(top=0.86, bottom=0.20, left=0.09, right=0.97)
 
-        fig.subplots_adjust(top=0.86, bottom=0.15, left=0.09, right=0.97, wspace=0.46)
     return save(fig, "figures/main/F4_action_discontinuity")

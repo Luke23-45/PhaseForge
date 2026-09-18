@@ -68,11 +68,11 @@ q_t,\;
 g_t,\;
 o_t,\;
 (p_t-o_{t,0:3}),\;
-\alpha_t
+a_t
 \right],
 \]
 
-where \(p_t\in\mathbb{R}^3\) is end-effector position, \(q_t\in\mathbb{S}^3\) is a sign-canonicalized orientation quaternion, \(g_t\) is gripper state, \(o_t\) contains object proprioceptive variables, and \(\alpha_t\) is gripper aperture. The relative displacement term represents end-effector position relative to the object.
+where \(p_t\in\mathbb{R}^3\) is end-effector position, \(q_t\in\mathbb{S}^3\) is a sign-canonicalized orientation quaternion, \(g_t\) is raw gripper joint position, \(o_t\) contains object proprioceptive variables, and \(a_t = \max_j |g_{t,j}|\) is scalar gripper aperture excursion magnitude. The relative displacement term represents end-effector position relative to the object.
 
 Before segmentation, observations are denormalized into physical coordinates. The resulting signal concatenates Cartesian positions, unit quaternions, and joint variables without additional feature weighting.
 
@@ -127,7 +127,7 @@ Two distinct label vocabularies are used:
 
 The two vocabularies are generated independently. They need not share temporal boundaries or semantic label identities.
 
-Because deployment uses a memoryless router, we require the trajectory-derived regime labels to be predictable from an instantaneous observation. A linear probe predicts regime labels from normalized \(x_t\) under trajectory-grouped cross-validation. The regime artifact is accepted only when probe accuracy is at least \(0.70\) and every regime has occupancy of at least \(0.05\); otherwise, the configured gate rejects it. The complete validation protocol is reported in the appendix.
+Because deployment uses a memoryless router, we require the trajectory-derived regime labels to be predictable from an instantaneous observation. A linear probe predicts regime labels from normalized \(x_t\) under trajectory-grouped cross-validation. The regime artifact is accepted only when macro-F1 is at least \(0.60\) and every regime has occupancy of at least \(0.01\); otherwise, the configured gate rejects it. The complete validation protocol is reported in the appendix.
 
 ## 3.3 Representation Pre-Training
 

@@ -44,7 +44,7 @@ To eliminate environment reset variance across model comparisons, rollout evalua
 
 ## C.3 Success, NMI, and Routing-Switch-Rate Aggregation
 
-Performance and routing structure are evaluated across distinct data regimes and aggregated as follows:
+Performance and routing metrics are aggregated across experimental seeds under the following protocols:
 
 ### Task Success Rate
 Closed-loop control quality is measured as the empirical success fraction over the 150 rollout episodes:
@@ -53,26 +53,33 @@ Closed-loop control quality is measured as the empirical success fraction over t
 \]
 
 ### Phase-Expert Alignment (NMI)
-Phase-expert alignment is evaluated offline on the 20 held-out validation demonstrations using Normalized Mutual Information ($\operatorname{NMI}$). Let $k_t^* \in \{1, \dots, E\}$ denote the top-1 assigned expert at timestep $t$, and let $y_t^{\mathrm{phase}} \in \{1, \dots, K\}$ denote the canonical rule-derived phase label:
+Phase-expert alignment is evaluated offline on the 20 held-out validation demonstrations using Normalized Mutual Information ($\operatorname{NMI}$). Let $k_t^* \in \{0, \dots, E-1\}$ denote the top-1 assigned expert at timestep $t$, and let $y_t^{\mathrm{phase}} \in \{0, \dots, K-1\}$ denote the canonical rule-derived phase label.
+
+For each training seed $s \in \{42, 43, 44\}$, all validation timesteps across the 20 validation demonstrations are concatenated into a single sample array, and NMI is computed over these concatenated validation samples:
 
 \[
-\operatorname{NMI}(k^*, y^{\mathrm{phase}}) = \frac{2 \, I(k^*;\, y^{\mathrm{phase}})}{H(k^*) + H(y^{\mathrm{phase}})}
+\operatorname{NMI}_s(k^*, y^{\mathrm{phase}}) = \frac{2 \, I(k^*;\, y^{\mathrm{phase}})}{H(k^*) + H(y^{\mathrm{phase}})}
 \]
 
-where $I(k^*; y^{\mathrm{phase}})$ is the mutual information between the expert distribution and the phase distribution, and $H(\cdot)$ denotes Shannon entropy:
+where $I(k^*; y^{\mathrm{phase}})$ is mutual information and $H(\cdot)$ denotes Shannon entropy under arithmetic average normalization. The reported benchmark NMI is the arithmetic mean across the three independently trained seeds:
 \[
-I(k^*; y^{\mathrm{phase}}) = \sum_{k=1}^E \sum_{y=1}^K P(k, y) \log \frac{P(k, y)}{P(k) P(y)}, \qquad H(X) = - \sum_{x} P(x) \log P(x).
+\operatorname{NMI} = \frac{1}{3} \sum_{s \in \{42, 43, 44\}} \operatorname{NMI}_s.
 \]
-NMI is computed independently per validation trajectory, averaged across the 20 validation demonstrations, and then averaged across the 3 training seeds. $\operatorname{NMI} \in [0, 1]$, where $1$ indicates perfect bijective alignment between experts and behavioral phases, and $0$ indicates statistical independence.
+$\operatorname{NMI} \in [0, 1]$, where $1$ indicates perfect bijective alignment between experts and behavioral phases, and $0$ indicates statistical independence.
 
 ### Step-to-Step Routing-Switch Rate
-The routing-switch rate quantifies the temporal stability of expert assignments across adjacent timesteps on the validation demonstration distribution. It is computed strictly **within** individual trajectories, explicitly excluding transitions across trajectory boundaries:
+The routing-switch rate quantifies temporal stability across adjacent timesteps on the validation demonstration distribution. A step pair $(t, t+1)$ is defined as adjacent if and only if both samples belong to the same trajectory and their positions satisfy $\text{pos}_{t+1} = \text{pos}_t + 1$. Step pairs spanning across trajectory boundaries are strictly excluded.
+
+For each training seed $s$, the switch rate is computed over all concatenated adjacent step pairs in the validation split:
 
 \[
-\text{Switch Rate} = \frac{1}{\sum_{i=1}^{N_{\mathrm{val}}} (T_i - 1)} \sum_{i=1}^{N_{\mathrm{val}}} \sum_{t=1}^{T_i - 1} \mathbf{1}\bigl[ k_{i, t+1}^* \ne k_{i, t}^* \bigr]
+\text{Switch Rate}_s = \frac{\sum_{i=1}^{N_{\mathrm{val}}} \sum_{t=1}^{T_i - 1} \mathbf{1}\bigl[ k_{i, t+1}^* \ne k_{i, t}^* \bigr]}{\sum_{i=1}^{N_{\mathrm{val}}} (T_i - 1)}.
 \]
 
-where $N_{\mathrm{val}} = 20$ is the number of validation trajectories, and $T_i$ is the length of trajectory $i$. It is averaged across demonstrations and training seeds.
+The reported benchmark switch rate is the arithmetic mean across the three seeds:
+\[
+\text{Switch Rate} = \frac{1}{3} \sum_{s \in \{42, 43, 44\}} \text{Switch Rate}_s.
+\]
 
 ---
 
@@ -80,7 +87,7 @@ where $N_{\mathrm{val}} = 20$ is the number of validation trajectories, and $T_i
 
 ### Wilson Score Confidence Intervals
 
-Uncertainty on rollout success rates is reported using 95% Wilson score intervals, which provide calibrated binomial coverage without normality assumptions. For $S$ successes out of $N = 150$ trials with observed success fraction $\hat{p} = S / N$ and critical value $z = 1.96$:
+Uncertainty on rollout success rates is reported using 95% Wilson score intervals, which provide calibrated binomial coverage without Gaussian normality assumptions. For $S$ successes out of $N = 150$ trials with observed success fraction $\hat{p} = S / N$ and critical value $z = 1.96$:
 
 \[
 \text{CI}_{95\%} = \frac{\hat{p} + \frac{z^2}{2N} \pm z \sqrt{\frac{\hat{p}(1 - \hat{p})}{N} + \frac{z^2}{4N^2}}}{1 + \frac{z^2}{N}}.
@@ -99,8 +106,8 @@ Because all methods are evaluated on identical initial reset states, comparisons
 
 To test the null hypothesis that method $A$ is no better than method $B$, we perform exact two-sided sign tests on paired per-episode outcomes across identical reset states:
 - **Test Statistic:** Under the null hypothesis $H_0: P(\text{Outcome}_A > \text{Outcome}_B) = 0.5$.
-- **Exact Significance:** Computed using the exact binomial distribution for discordant pairs.
-- **Family-Wise Error Rate (FWER) Control:** Multiplicity correction across the pre-declared family of baseline comparisons is performed using the step-down Holm-Bonferroni method. Given sorted raw $p$-values $p_{(1)} \le p_{(2)} \le \dots \le p_{(M)}$:
+- **Exact Significance:** Computed using the exact binomial distribution for discordant episode pairs.
+- **Multiplicity Correction:** Multiplicity correction across baseline comparisons is performed using the step-down Holm-Bonferroni method. Given sorted raw $p$-values $p_{(1)} \le p_{(2)} \le \dots \le p_{(M)}$:
   \[
   p_{(i)}^{\mathrm{Holm}} = \min\left(1.0,\; \max_{j \le i} \bigl\{ (M - j + 1) \, p_{(j)} \bigr\}\right).
   \]

@@ -1,6 +1,6 @@
 # Appendix E — Reproducibility
 
-This appendix documents the code provenance, dependency environment, hardware infrastructure, compute requirements, artifact directory layout, and the deterministic reproduction pipeline.
+This appendix documents the code provenance, dependency environment, compute requirements, artifact directory layout, and the deterministic reproduction pipeline.
 
 ---
 
@@ -10,6 +10,7 @@ This appendix documents the code provenance, dependency environment, hardware in
 
 All reported experimental sweeps, data ingestion artifacts, model checkpoints, and evaluation logs were generated using the following tracked codebase commits:
 - **Primary Data-Generating Commits:** `e948b73`, `f83d096`.
+- **Primary Sweep Manifest:** `experiments/final_causal_matrix.json`.
 - **Repository Organization:**
   ```text
   PhaseForge/
@@ -17,16 +18,16 @@ All reported experimental sweeps, data ingestion artifacts, model checkpoints, a
   │   ├── config/                 # Hydra configuration files
   │   ├── data/                   # Ingestion, state machine, and PELT discovery
   │   ├── models/                 # MoE architecture, routers, and baselines
-  │   ├── runner/                 # CLI entry points and sweep runner
+  │   ├── runner/                 # Execution runner and pre-flight validation
   │   └── trains/                 # Stage 1 and Stage 2 training loops
-  ├── experiments/                # Sweep matrices and evaluation plans
+  ├── experiments/                # Sweep matrices and execution plans
   ├── studies/analysis/           # Audit scripts, tables, and figure generators
   └── docs/paper/                 # Complete paper and appendix manuscripts
   ```
 
 ### Artifact Directory Layout
 
-Training artifacts and evaluation logs are persisted in a deterministic directory structure:
+Training artifacts and evaluation logs are persisted in the following deterministic directory structure:
 ```text
 outputs/
 ├── processed/
@@ -42,84 +43,60 @@ outputs/
 
 ---
 
-## E.2 Dependency Versions and Hardware
+## E.2 Dependency Versions and Execution Environment
 
-### Pinned Software Stack
+### Pinned Software Stack and Platform Record
 
-Experiments were executed within an isolated Python virtual environment with pinned dependencies:
-- **Operating System:** Ubuntu Linux 24.04 LTS (`Linux-6.8.0-1063-aws-x86_64` with `glibc 2.39`).
+Experiments were executed within an isolated Python virtual environment. The provenance record (`A10_provenance`) documents the platform environment and pinned libraries:
+- **Platform:** `Linux-6.8.0-1063-aws-x86_64-with-glibc2.39`.
 - **Python Version:** `Python 3.10.14`.
 - **Core Deep Learning Framework:** `torch==2.13.0+cu130`, `torchvision==0.18.0+cu130`.
 - **Numerical and Scientific Libraries:** `numpy==2.4.6`, `scipy==1.13.1`, `scikit-learn==1.4.2`.
 - **Robot Manipulation Benchmark:** `robomimic==0.3.0`, `robosuite==1.4.1`, `mujoco==3.1.5`.
 - **Configuration & Logging:** `hydra-core==1.3.2`, `omegaconf==2.3.0`.
 
-### Hardware Infrastructure
-
-- **Compute Platform:** AWS EC2 Accelerated Computing GPU instances (`g5.xlarge` and `g5.2xlarge`).
-- **Accelerator:** NVIDIA A10G Tensor Core GPU (24 GB VRAM, PCIe).
-- **Host Processor:** AMD EPYC 7R32 CPU (4 vCPUs on `g5.xlarge`, 8 vCPUs on `g5.2xlarge`).
-- **System Memory:** 16 GB to 32 GB RAM.
+Hardware provenance records confirm Linux AWS execution under the pinned stack above; specific GPU microarchitectures are not recorded in the artifact provenance record.
 
 ---
 
-## E.3 Artifact Checksums, Reproduction Commands, and Compute Costs
+## E.3 Reproduction Commands and Compute Costs
 
-### Reproduction Commands
+### Reproduction Workflow
 
-The full experimental workflow can be executed deterministically via the unified CLI entry points:
+All data processing, representation pre-training, topology discovery, modular fine-tuning, and closed-loop rollouts are orchestrated through the unified runner entry point using `uv`:
 
-1. **Data Ingestion and Task-Variable Extraction:**
+1. **Pre-Flight Gate and Dry-Run Verification:**
+   Before launching training runs, verify all manifest gates, provider orderings, and command contracts:
    ```bash
-   python -m phaseforge.runner.cli ingest \
-       --task can \
-       --dataset-path datasets/can/ph/low_dim.hdf5 \
-       --output-dir outputs/processed/cache
+   uv run python -m phaseforge.runner \
+     --manifest experiments/final_causal_matrix.json \
+     --outputs outputs_final \
+     --verify-gates
    ```
 
-2. **Stage 1 Representation Pre-Training:**
+2. **Dry-Run Inspection:**
+   Inspect the complete multi-stage execution plan without executing commands:
    ```bash
-   python -m phaseforge.runner.cli train_stage1 \
-       --task can \
-       --config phaseforge/config/models/phaseforge_stage1.yaml \
-       --seed 42
+   uv run python -m phaseforge.runner \
+     --manifest experiments/final_causal_matrix.json \
+     --outputs outputs_final \
+     --expect-steps 330 \
+     --dry-run
    ```
 
-3. **Unsupervised Trajectory Regime Discovery (PELT + Clustering):**
+3. **Full Experimental Sweep Execution:**
+   Execute all training and closed-loop evaluation cells in the manifest:
    ```bash
-   python -m phaseforge.runner.cli discover_topo \
-       --task can \
-       --penalty 10.0 \
-       --min-length 5 \
-       --num-regimes 6 \
-       --output-dir outputs/topo/can
-   ```
-
-4. **Stage 2 Joint Modular Fine-Tuning:**
-   ```bash
-   python -m phaseforge.runner.cli train_stage2 \
-       --task can \
-       --stage1-checkpoint outputs/checkpoints/stage1/can_seed42.pt \
-       --regime-artifact outputs/topo/can/regimes.pt \
-       --config phaseforge/config/models/phaseforge.yaml \
-       --seed 42
-   ```
-
-5. **Closed-Loop Rollout Evaluation:**
-   ```bash
-   python -m phaseforge.runner.cli evaluate \
-       --task can \
-       --checkpoint outputs/checkpoints/stage2/can_seed42.pt \
-       --num-episodes 50 \
-       --reset-bank-seed 2026 \
-       --output-dir outputs/evaluations/can/seed42
+   uv run python -m phaseforge.runner \
+     --manifest experiments/final_causal_matrix.json \
+     --outputs outputs_final
    ```
 
 ### Computational Cost and Memory Footprint (Table A9)
 
-Table A9 reports the average wall-clock training times, training throughput, and peak GPU memory consumption per matrix cell (averaged across tasks and seeds):
+Table A9 reports the average wall-clock training times, training throughput, and peak GPU memory consumption per matrix cell (mean across tasks and seeds, extracted directly from `timings.json` and training curve efficiency fields):
 
-| Method | Stage-1 Wall Time (s) | Stage-2 Wall Time (s) | Training Throughput (steps/s) | Peak GPU Memory (MB) |
+| Method | Stage-1 Wall (s) | Stage-2 Wall (s) | Steps/s | Peak GPU MB |
 | :--- | :---: | :---: | :---: | :---: |
 | **PhaseForge** | 501.7 | 1153.7 | 33.9 | 24.4 |
 | **Monolithic BC** | 395.1 | -- | 50.9 | 21.5 |
@@ -132,7 +109,7 @@ Table A9 reports the average wall-clock training times, training throughput, and
 | **Teacher-Forced** | -- | 1024.4 | 39.2 | 24.2 |
 | **Oracle (Offline)** | -- | 1006.0 | 38.9 | 24.1 |
 
-*Efficiency Summary:* 
-- Total training time for the proposed PhaseForge pipeline is approximately $27.6\,\mathrm{minutes}$ per task-seed on a single NVIDIA A10G GPU ($8.4\,\mathrm{minutes}$ for Stage 1, plus $19.2\,\mathrm{minutes}$ for Stage 2).
-- Peak GPU VRAM utilization remains under $30\,\mathrm{MB}$ for low-dimensional states across all conditions.
-- Inference latency during closed-loop simulation rollouts averages $1.1\,\mathrm{ms}$ per forward pass ($> 900\,\mathrm{Hz}$ throughput), well within the $20\,\mathrm{Hz}$ ($50\,\mathrm{ms}$) operational control period.
+*Accounting Summary:*
+- Total training time for the proposed PhaseForge pipeline averages approximately $27.6\,\mathrm{minutes}$ per task-seed ($501.7\,\mathrm{s}$ for Stage 1, plus $1153.7\,\mathrm{s}$ for Stage 2).
+- Training throughput averages $\sim 34\,\mathrm{steps/second}$ during Stage 2 modular fine-tuning.
+- Peak GPU memory utilization remains under $30\,\mathrm{MB}$ for low-dimensional proprioceptive states across all evaluated conditions.
