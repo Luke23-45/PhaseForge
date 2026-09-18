@@ -152,11 +152,11 @@ $$\mathcal{L}_{\text{bal}} = \lambda_{\text{bal}} \, E \sum_{k=1}^{E} f_k \, p_k
 
 where $f_k = \frac{1}{|B|} \sum_{i \in B} \mathbf{1}[k_i^* = k]$ is the hard assignment fraction and $p_k = \frac{1}{|B|} \sum_{i \in B} \operatorname{softmax}(-d_i)_k$ is the mean soft routing probability for expert $k$. The product $f_k \, p_k$ is large only when expert $k$ both receives many hard assignments and has high average soft affinity — penalizing concentration on both axes simultaneously. Differentiating through $p_k$ provides a smooth gradient signal directly to the prototypes $\{c_k\}$.
 
-**Margin loss.** An explicit distance margin $m$ separates the target-regime prototype from all alternatives:
+**Margin loss.** An explicit distance margin $m$ separates the phase-indexed prototype from all alternatives:
 
 $$\mathcal{L}_{\text{margin}} = \frac{1}{|B|} \sum_{i \in B} \sum_{j \ne \pi(y_i)} \bigl[\, m - (d_{i,j} - d_{i, \pi(y_i)}) \,\bigr]_+$$
 
-where $d_{i,k} = \| z_i - c_k \|_2$, $y_i \in \{0, \dots, K-1\}$ is the rule-derived integer phase label, and $\pi$ denotes the mapping from phase label IDs to prototype indices. In the implementation, $\pi$ is the identity mapping $\pi(y_i) = y_i$; no bipartite matching or semantic permutation is solved between the rule-derived `phase` IDs and the trajectory-derived `phase_topo` cluster IDs. Crucially, the matched Can/Square initialization ablation (§4.3) disables this margin term ($\lambda_m = 0$), eliminating any cross-vocabulary indexing assumption and isolating prototype initialization under an identical objective.
+where $d_{i,k} = \| z_i - c_k \|_2$, $y_i \in \{0, \dots, K-1\}$ is the rule-derived integer phase label, and $\pi$ maps rule phase labels to 1-based prototype indices $\{1, \dots, E\}$. In the implementation, zero-indexed label arrays directly index prototype columns, corresponding under our one-based mathematical notation to the fixed offset mapping $\pi(y) = y + 1$. No bipartite matching or semantic alignment is solved between the rule-derived `phase` IDs and the trajectory-derived `phase_topo` cluster IDs; this identity-based offset represents an arbitrary cross-vocabulary coupling between rule labels and regime clusters. Crucially, the matched Can/Square initialization ablation (§4.3) disables this margin term ($\lambda_m = 0$), eliminating any cross-vocabulary indexing assumption and isolating prototype initialization under an identical objective.
 
 ### What adapts during Stage 2
 

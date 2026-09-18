@@ -32,7 +32,7 @@ In summary, this work provides three contributions:
 
 2. **Controlled evaluation of routing organization.** Empirical evidence, measured on validation demonstrations, that trajectory-derived prototype initialization increases routing alignment with rule-derived phase labels (NMI) and is associated with lower routing-switch rates relative to matched random and rule-based prototype controls under identical training conditions.
 
-3. **Empirical dissociation from closed-loop success.** A matched initialization ablation across Can and Square isolating prototype initialization within the stated configuration, showing that more structured, phase-aligned routing partitions on validation demonstrations do not consistently translate to higher closed-loop rollout success, showing an empirical dissociation between offline partition organization and closed-loop control quality in the evaluated setting.
+3. **Empirical dissociation from closed-loop success.** A matched initialization ablation across Can and Square isolating prototype initialization within the stated configuration, showing that more structured, phase-aligned routing partitions on validation demonstrations do not consistently translate to higher closed-loop rollout success, providing evidence of an empirical dissociation between offline partition organization and closed-loop control quality in the evaluated setting.
 
 ---
 
@@ -64,7 +64,7 @@ Prototype-based classification — where predictions are made by proximity to le
 
 ## 2.4 The gap this paper addresses
 
-The three lines above converge on a specific intersection. Mixture-of-experts policies provide modular architectures whose routing can, in principle, reflect the phase structure of a task. Trajectory segmentation methods can discover that phase structure from demonstrations. Initialization is known to affect neural network optimization and expert specialization in MoE models. However, regarding the specific question of whether demonstration-derived kinematic regime structure changes the organization of an MoE routing partition when used as an initialization prior, and whether that change predicts task performance, we are not aware of a direct evaluation in the setting studied here.
+The three lines above converge on a specific intersection. Mixture-of-experts policies provide modular architectures whose routing can, in principle, reflect the phase structure of a task. Trajectory segmentation methods can discover that phase structure from demonstrations. Initialization is known to affect neural network optimization and expert specialization in MoE models. However, regarding the specific question of whether demonstration-derived kinematic regime structure changes the organization of an MoE routing partition when used as an initialization prior, and whether that change predicts task performance, to our knowledge, this question has not been directly evaluated in the robot-manipulation setting studied here.
 
 This paper provides that test, with a controlled comparison that separates the structural effect (routing organization) from the performance effect (closed-loop success) under matched training conditions.
 
@@ -224,11 +224,11 @@ $$\mathcal{L}_{\text{bal}} = \lambda_{\text{bal}} \, E \sum_{k=1}^{E} f_k \, p_k
 
 where $f_k = \frac{1}{|B|} \sum_{i \in B} \mathbf{1}[k_i^* = k]$ is the hard assignment fraction and $p_k = \frac{1}{|B|} \sum_{i \in B} \operatorname{softmax}(-d_i)_k$ is the mean soft routing probability for expert $k$. The product $f_k \, p_k$ is large only when expert $k$ both receives many hard assignments and has high average soft affinity — penalizing concentration on both axes simultaneously. Differentiating through $p_k$ provides a smooth gradient signal directly to the prototypes $\{c_k\}$.
 
-**Margin loss.** An explicit distance margin $m$ separates the target-regime prototype from all alternatives:
+**Margin loss.** An explicit distance margin $m$ separates the phase-indexed prototype from all alternatives:
 
 $$\mathcal{L}_{\text{margin}} = \frac{1}{|B|} \sum_{i \in B} \sum_{j \ne \pi(y_i)} \bigl[\, m - (d_{i,j} - d_{i, \pi(y_i)}) \,\bigr]_+$$
 
-where $d_{i,k} = \| z_i - c_k \|_2$, $y_i \in \{0, \dots, K-1\}$ is the rule-derived integer phase label, and $\pi$ denotes the mapping from phase label IDs to prototype indices. In the implementation, $\pi$ is the identity mapping $\pi(y_i) = y_i$; no bipartite matching or semantic permutation is solved between the rule-derived `phase` IDs and the trajectory-derived `phase_topo` cluster IDs. Crucially, the matched Can/Square initialization ablation (§4.3) disables this margin term ($\lambda_m = 0$), eliminating any cross-vocabulary indexing assumption and isolating prototype initialization under an identical objective.
+where $d_{i,k} = \| z_i - c_k \|_2$, $y_i \in \{0, \dots, K-1\}$ is the rule-derived integer phase label, and $\pi$ maps rule phase labels to 1-based prototype indices $\{1, \dots, E\}$. In the implementation, zero-indexed label arrays directly index prototype columns, corresponding under our one-based mathematical notation to the fixed offset mapping $\pi(y) = y + 1$. No bipartite matching or semantic alignment is solved between the rule-derived `phase` IDs and the trajectory-derived `phase_topo` cluster IDs; this identity-based offset represents an arbitrary cross-vocabulary coupling between rule labels and regime clusters. Crucially, the matched Can/Square initialization ablation (§4.3) disables this margin term ($\lambda_m = 0$), eliminating any cross-vocabulary indexing assumption and isolating prototype initialization under an identical objective.
 
 ### What adapts during Stage 2
 
@@ -418,6 +418,8 @@ The comparison establishes that a non-prototype learned gate can produce high ph
 **Statistical power.** All comparisons are based on three training seeds. The paired sign tests produce no significant results after Holm correction ($p = 1.0$ throughout Table A15). The observed differences in success rate — including the 15-percentage-point advantage on Can in the sweep — are not resolved by the available seed-level sample. The results describe the observed runs, not a population-level effect.
 
 **Prior phase supervision in representation.** The Stage 1 representation is pre-trained using rule-derived `phase` classification and supervised contrastive objectives. The matched initialization ablation therefore isolates the specific contribution of prototype initialization on top of a latent space that is already structured by external phase heuristics. Our study does not establish whether trajectory-derived regime initialization alone can induce routing organization without this prior phase supervision.
+
+**Cross-vocabulary margin coupling in benchmark sweep.** The full five-task benchmark sweep (§5.1) evaluates PhaseForge with an active Stage 2 margin loss ($\lambda_m > 0$) that couples rule-derived phase labels directly to prototype indices via the fixed, non-semantic identity mapping $\pi(y) = y + 1$. Because rule phases and trajectory-derived regimes have distinct vocabularies without semantic alignment, this term introduces an arbitrary cross-vocabulary regularizer into the complete pipeline. The five-task sweep results should therefore be interpreted as contextual evidence for the combined system rather than isolated evidence for prototype initialization. Crucially, the matched Can/Square ablation (§5.2) disables this margin loss entirely ($\lambda_m = 0$), eliminating any cross-vocabulary indexing assumption and ensuring that the central initialization claim remains unconfounded.
 
 **Fixed expert count.** The regime and expert counts are fixed a priori at $K = E = 6$ across all tasks. The pipeline does not adaptively determine the optimal number of experts, which may under-parameterize long-horizon assembly tasks (e.g., ToolHang) or over-partition simpler reaching motions.
 
