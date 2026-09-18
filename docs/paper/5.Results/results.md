@@ -15,7 +15,7 @@ Table 1 reports rollout success rates across all deployable methods. Three task-
 
 **ToolHang and Transport are unsolved.** Every method, including PhaseForge, scores 0% on ToolHang. Transport yields 0–2 successful episodes across 150 trials, depending on the method. These tasks lie beyond the capability frontier of the memoryless policies tested here and provide no evidence for or against the initialization hypothesis.
 
-The five-task sweep thus reveals a task-dependent pattern: PhaseForge's advantage concentrates on Can, where it leads all comparators, while Square — a contact-rich task with tighter tolerances — does not favor the topology-initialized partition. Macro-averages (PhaseForge 0.44 ± 0.42 vs. BC 0.39 ± 0.41) are dominated by Lift saturation and the ToolHang/Transport floor, and should not be read as evidence of a broad advantage.
+The five-task sweep thus reveals a task-dependent pattern: PhaseForge's advantage concentrates on Can, where it leads all comparators in the observed three-seed runs, while Square — a contact-rich task with tighter tolerances — does not favor the regime-initialized partition. Macro-averages (PhaseForge 0.44 ± 0.42 vs. BC 0.39 ± 0.41) are dominated by Lift saturation and the ToolHang/Transport floor, and should not be read as evidence of a broad advantage.
 
 
 ## 5.2 Controlled Initialization Ablation
@@ -24,7 +24,7 @@ The focused Can/Square ablation holds the representation, training objective, an
 
 ### Initialization geometry shapes routing organization
 
-Topological prototype placement produces the highest phase-expert NMI among the three matched prototype-initialization conditions: 0.67 on Can and 0.51 on Square, compared with 0.07–0.09 for both random and rule-based initialization. The corresponding switch rates are 0.04 and 0.07 for topology, versus 0.10–0.11 for the unstructured conditions. In the recorded runs, topology-derived initialization was associated with a phase-coherent, temporally stable partition after training, whereas random and rule-based starts were not.
+On held-out validation demonstrations, trajectory-derived regime prototype placement produces the highest phase-expert NMI among the three matched prototype-initialization conditions: 0.67 on Can and 0.51 on Square, compared with 0.07–0.09 for both random and rule-based initialization. The corresponding routing-switch rates on the same validation demonstrations are 0.04 and 0.07 for the regime-initialized condition, versus 0.10–0.11 for the unstructured conditions. In the observed runs, regime-derived initialization was associated with a phase-coherent, temporally stable partition after training, whereas random and rule-based starts were not.
 
 The rule-based condition is informative. Phase-rule initialization places prototypes at centroids formed by grouping the same Stage 1 latent representations with heuristic kinematic labels, yet the resulting NMI (0.08–0.09) is similar to random placement in the observed runs. The result suggests that a non-random label source alone is insufficient; the relationship between the initialization labels and the learned representation may matter.
 
@@ -32,15 +32,15 @@ The initialization provides a structured starting point, not a frozen partition.
 
 ### Routing organization does not determine task success
 
-On Can, topology initialization (76%) leads the prototype-based arms, with random (73%) and softmax (73%) close behind and rule-based (69%) and BC latent (67%) lower. The ranking is loosely consistent with routing coherence: the more phase-aligned conditions tend to succeed more often.
+On Can, regime initialization (76%) leads the prototype-based arms in closed-loop rollout success, with random (73%) and softmax (73%) close behind and rule-based (69%) and BC latent (67%) lower. The ranking is loosely consistent with routing coherence: the more phase-aligned conditions tend to succeed more often.
 
-On Square, this correspondence breaks. Topology initialization has the highest NMI among prototype methods (0.51) but the *lowest* success rate (27%). The learned softmax condition achieves the highest success (35%) and the highest NMI (0.61). BC latent, with mean NMI 0.46, reaches 32%. The most phase-aligned prototype partition is the least successful controller on this task.
+On Square, this correspondence breaks. Regime initialization has the highest NMI among prototype methods (0.51 on validation demonstrations) but the *lowest* rollout success rate (27%). The learned softmax condition achieves the highest success (35%) and the highest NMI (0.61). BC latent, with mean NMI 0.46, reaches 32%. The most phase-aligned prototype partition is the least successful controller on this task.
 
-The separation is the central observation of the ablation: initialization geometry reliably controls routing organization, but routing organization is not sufficient to predict closed-loop performance. A more structured partition can coincide with higher success (Can) or lower success (Square) depending on the task.
+The dissociation is the central observation of the ablation: initialization geometry reliably shapes routing organization on held-out validation demonstrations, but routing organization measured offline is not sufficient to predict closed-loop performance. A more structured partition can coincide with higher success (Can) or lower success (Square) depending on the task.
 
 ### The softmax control
 
-The learned softmax condition achieves the highest NMI across both tasks (0.72 Can, 0.61 Square) and the highest success on Square (35%); on Can, its 73% success ties the random prototype condition but remains below topology initialization at 76%. It does so without a prototype-initialization prior. Its routing is organized end-to-end through gradient descent on the gating network. This condition demonstrates that phase-aligned routing can emerge without topological seeding, and that the gating mechanism itself — not only the initialization — contributes to routing organization.
+The learned softmax condition achieves the highest NMI across both tasks (0.72 Can, 0.61 Square, measured on validation demonstrations) and the highest rollout success on Square (35%); on Can, its 73% success ties the random prototype condition but remains below regime initialization at 76%. It does so without a regime-initialization prior. Its routing is organized end-to-end through gradient descent on the gating network. This condition demonstrates that phase-aligned routing can emerge without regime-derived seeding, and that the gating mechanism itself — not only the initialization — contributes to routing organization.
 
 ### Teacher-Forced diagnostic
 

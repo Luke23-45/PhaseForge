@@ -1,6 +1,6 @@
 # 3. Method
 
-A manipulation trajectory typically traverses several kinematically distinct regimes — approaching, grasping, transporting, placing — each of which requires a different local mapping from state to action. Rather than learning a single monolithic policy that must internally partition its capacity among these regimes, we structure the policy as a mixture of experts whose routing partition is seeded from the geometric organization of the demonstration data itself.
+A manipulation trajectory typically traverses several kinematically distinct regimes — approaching, grasping, transporting, placing — each of which requires a different local mapping from state to action. Rather than learning a single monolithic policy that must internally partition its capacity among these regimes, we structure the policy as a mixture of experts whose routing partition is seeded from the kinematic regime structure of the demonstration data itself.
 
 This section defines the four components of the approach: the modular policy architecture (§3.1), the offline procedure that discovers behavioral regimes from demonstration trajectories (§3.2), the phase-aware representation pre-training that shapes the latent space (§3.3), and the prototype initialization and joint fine-tuning that anchors the routing partition to the discovered structure (§3.4).
 
@@ -19,7 +19,7 @@ The resulting representation $z_t \in \mathbb{S}^{d-1}$ is shared by the router 
 
 ### Prototype router
 
-The routing function maintains $E$ trainable prototype vectors $\{c_k\}_{k=1}^E$. In the topology-derived and rule-based centroid conditions, the prototypes are initialized as normalized latent centroids; the random control uses the router's standard small random initialization. The router selects the expert whose prototype is nearest to the current representation:
+The routing function maintains $E$ trainable prototype vectors $\{c_k\}_{k=1}^E$. In the regime-derived and rule-based centroid conditions, the prototypes are initialized as normalized latent centroids; the random control uses the router's standard small random initialization. The router selects the expert whose prototype is nearest to the current representation:
 
 $$k_t^* = \arg\min_{k \in \{1, \ldots, E\}} \| z_t - c_k \|_2$$
 
@@ -42,9 +42,11 @@ In the reported configuration, the optional residual coefficient is fixed at $\b
 The policy is therefore piecewise-defined across the Voronoi cells: within each cell, the action is a smooth function of the representation, but a discontinuity can occur at cell boundaries where the active expert changes.
 
 
-## 3.2 Trajectory Topology Discovery
+## 3.2 Trajectory Regime Discovery
 
-The routing partition described above is parameterized by the prototype locations $\{c_k\}$. In standard mixture-of-experts training, these would be initialized randomly and learned end-to-end. The central methodological choice in this work is instead to derive the initial prototype placement from the geometric structure of the demonstration trajectories. This subsection describes the offline pipeline that extracts that structure.
+The routing partition described above is parameterized by the prototype locations $\{c_k\}$. In standard mixture-of-experts training, these would be initialized randomly and learned end-to-end. The central methodological choice in this work is instead to derive the initial prototype placement from the kinematic regime structure of the demonstration trajectories. This subsection describes the offline pipeline that extracts that structure.
+
+The number of regimes $K$ is fixed at $K = 6$ across all tasks. The method does not discover the number of experts; it segments and clusters into a predetermined count. The number of experts $E$ is set equal to $K$, so $K = E = 6$ throughout.
 
 ### Task-variable signal
 
@@ -72,13 +74,23 @@ Individual trajectory segments are summarized by their first and second moments:
 
 $$\phi_j = \bigl[ \operatorname{mean}(s_{\tau_j : \tau_{j+1}}), \;\; \operatorname{var}(s_{\tau_j : \tau_{j+1}}) \bigr]$$
 
-These summary vectors are pooled across all training demonstrations and partitioned into $K$ discrete behavioral regimes via centroid-based clustering. Each timestep inherits the regime label of its enclosing segment, producing a per-timestep assignment $r_t \in \{1, \ldots, K\}$.
+These summary vectors are pooled across all training demonstrations and partitioned into $K = 6$ discrete behavioral regimes via centroid-based clustering. Each timestep inherits the regime label of its enclosing segment, producing a per-timestep assignment $r_t \in \{1, \ldots, K\}$.
 
 The result is a decomposition of the demonstration data into regimes that are intended to represent kinematically coherent intervals. Labels such as approach, contact, transport, and placement are interpretations of the resulting clusters, not supervision supplied to the discovery procedure.
 
+### Label vocabularies
+
+The pipeline produces two distinct per-timestep label artifacts, which are not identical:
+
+- **`phase` (rule-derived labels).** Hand-engineered, task-specific heuristic boundaries based on physical thresholds — gripper aperture, end-effector height relative to the object, and contact state. These are deterministic and identical for a given trajectory.
+
+- **`phase_topo` (regime-derived labels).** Unsupervised labels produced by the change-point segmentation and clustering procedure described above. These depend on the PELT penalty $\beta$, the clustering seed, and the training-split segment pool.
+
+The two label sets have different temporal boundaries for the same trajectory and assign different integer labels to the same timestep. In the proposed configuration, `phase_topo` labels determine prototype initialization (§3.4), while `phase` labels supervise Stage 1 classification and contrastive losses (§3.3) and the Stage 2 margin loss (§3.4).
+
 ### Observability verification
 
-The regime labels are derived from trajectory-level segmentation, which has access to temporal context. For these labels to be usable as a routing prior in a memoryless policy, they must be recoverable from instantaneous state alone. We verify this by training a linear classifier to predict the regime label from a single normalized observation $x_t$, evaluated under trajectory-grouped cross-validation. The topology artifact is accepted for routing only if the probe exceeds a minimum classification threshold and each regime meets a minimum occupancy requirement; otherwise, the configured fail-closed gate rejects the artifact.
+The regime labels are derived from trajectory-level segmentation, which has access to temporal context. For these labels to be usable as a routing prior in a memoryless policy, they must be recoverable from instantaneous state alone. We verify this by training a linear classifier to predict the regime label from a single normalized observation $x_t$, evaluated under trajectory-grouped cross-validation. The regime artifact is accepted for routing only if the probe exceeds a minimum classification threshold and each regime meets a minimum occupancy requirement; otherwise, the configured fail-closed gate rejects the artifact.
 
 
 ## 3.3 Representation Pre-Training (Stage 1)
@@ -95,7 +107,7 @@ $$\mathcal{L}_{\text{act}} = \frac{1}{|B|\, A} \sum_{i \in B} \sum_{d=1}^{A} \bi
 
 $$\mathcal{L}_{\text{phase}} = - \frac{1}{|B|} \sum_{i \in B} \log \frac{\exp(\ell_{i, y_i})}{\sum_{q=1}^{K} \exp(\ell_{i, q})}$$
 
-where $y_i \in \{1, \ldots, K\}$ is the phase label used by the representation-training configuration. In the proposed configuration, this is the canonical "phase" field. The topology-discovered "phase_topo" labels are used to initialize topology-derived prototypes and are not the targets of the Stage 1 classification or supervised-contrastive losses.
+where $y_i \in \{1, \ldots, K\}$ is the phase label used by the representation-training configuration. In the proposed configuration, this is the canonical rule-derived `phase` field. The regime-discovered `phase_topo` labels are used to initialize routing prototypes (§3.4) and are not the targets of the Stage 1 classification or supervised-contrastive losses.
 
 **Supervised contrastive loss.** To impose metric structure on $\mathbb{S}^{d-1}$, a supervised contrastive objective pulls representations with the same phase label toward each other while pushing apart representations from different phases:
 
@@ -112,11 +124,11 @@ After Stage 1, the auxiliary heads are detached, and the modular architecture �
 
 ### Prototype initialization
 
-For each topology-discovered regime $k$, the routing prototype $c_k$ is placed at the $L_2$-normalized centroid of the Stage 1 representations assigned to that regime:
+For each discovered regime $k$, the routing prototype $c_k$ is placed at the $L_2$-normalized centroid of the Stage 1 representations assigned to that regime:
 
 $$\tilde{c}_k = \frac{1}{N_k} \sum_{i:\, r_i = k} z_i, \qquad c_k = \frac{\tilde{c}_k}{\| \tilde{c}_k \|_2}$$
 
-where $z_i$ are the Stage 1 latent vectors and $N_k$ is the number of samples in regime $k$. In the proposed configuration, membership is determined by the topology-discovered "phase_topo" labels, whereas Stage 1 is trained with the canonical "phase" labels. Thus, topology initialization uses the learned latent geometry but does not imply that the representation was trained on the same topology labels. The centroid construction supplies a structured initial partition; it does not freeze that partition.
+where $z_i$ are the Stage 1 latent vectors and $N_k$ is the number of samples in regime $k$. In the proposed configuration, membership is determined by the regime-discovered `phase_topo` labels, whereas Stage 1 is trained with the rule-derived `phase` labels. Regime initialization therefore uses the learned latent geometry but does not imply that the representation was trained on the same regime labels. The centroid construction supplies a structured initial partition; it does not freeze that partition.
 
 ### Expert initialization
 
@@ -140,8 +152,8 @@ where $f_k = \frac{1}{|B|} \sum_{i \in B} \mathbf{1}[k_i^* = k]$ is the hard ass
 
 $$\mathcal{L}_{\text{margin}} = \frac{1}{|B|} \sum_{i \in B} \sum_{j \ne y_i} \bigl[\, m - (d_{i,j} - d_{i, y_i}) \,\bigr]_+$$
 
-where $d_{i,k} = \| z_i - c_k \|_2$ and $y_i$ is the phase label used as the margin target. In the final proposed configuration this is the canonical "phase" label; the matched Can/Square initialization ablation disables this term. The term encourages each representation to lie closer to its target prototype by at least margin $m$ than to any other prototype, sharpening the nearest-prototype boundaries without prescribing which expert ultimately captures which region.
+where $d_{i,k} = \| z_i - c_k \|_2$ and $y_i$ is the phase label used as the margin target. In the final proposed configuration this is the rule-derived `phase` label; the matched Can/Square initialization ablation disables this term. The term encourages each representation to lie closer to its target prototype by at least margin $m$ than to any other prototype, sharpening the nearest-prototype boundaries without prescribing which expert ultimately captures which region.
 
 ### What adapts during Stage 2
 
-The encoder, prototypes, and experts remain trainable: the encoder adapts at a reduced learning rate, while prototypes and experts optimize at the base rate. The auxiliary Stage 1 heads are detached before Stage 2. The initial topology-derived partition therefore provides a structured starting point — not a frozen constraint — and the final partition reflects the combined influence of the initialization geometry and task-driven gradient updates.
+The encoder, prototypes, and experts remain trainable: the encoder adapts at a reduced learning rate, while prototypes and experts optimize at the base rate. The auxiliary Stage 1 heads are detached before Stage 2. The initial regime-derived partition therefore provides a structured starting point — not a frozen constraint — and the final partition reflects the combined influence of the initialization geometry and task-driven gradient updates.

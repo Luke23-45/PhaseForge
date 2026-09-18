@@ -1,6 +1,6 @@
 # 2. Related Work
 
-This paper sits at the intersection of three lines of work: mixture-of-experts policies for behavioral decomposition, trajectory segmentation as a source of behavioral structure, and the role of initialization in shaping learned modular architectures. We organize the discussion around how each line bears on the specific question this paper addresses — whether the geometry of demonstrations can be used to initialize expert routing, and whether the resulting organization predicts closed-loop performance.
+This paper sits at the intersection of three lines of work: mixture-of-experts policies for behavioral decomposition, trajectory segmentation as a source of behavioral structure, and the role of initialization in shaping learned modular architectures. We organize the discussion around how each line bears on the specific question this paper addresses — whether the kinematic regime structure of demonstrations can be used to initialize expert routing, and whether the resulting organization predicts closed-loop performance.
 
 
 ## 2.1 Mixture-of-experts in policy learning
@@ -26,6 +26,6 @@ Prototype-based classification — where predictions are made by proximity to le
 
 ## 2.4 The gap this paper addresses
 
-The three lines above converge on a specific intersection. Mixture-of-experts policies provide modular architectures whose routing can, in principle, reflect the phase structure of a task. Trajectory segmentation methods can discover that phase structure from demonstrations. Initialization is known to affect neural network optimization and expert specialization in MoE models. To the best of our knowledge, the specific question of whether demonstration-derived trajectory structure changes the organization of an MoE routing partition when used as an initialization prior, and whether that change predicts task performance, has not been directly evaluated in the setting studied here. This statement is contingent on the scope of the cited literature rather than a claim that no related study exists.
+The three lines above converge on a specific intersection. Mixture-of-experts policies provide modular architectures whose routing can, in principle, reflect the phase structure of a task. Trajectory segmentation methods can discover that phase structure from demonstrations. Initialization is known to affect neural network optimization and expert specialization in MoE models. To the best of our knowledge, the specific question of whether demonstration-derived kinematic regime structure changes the organization of an MoE routing partition when used as an initialization prior, and whether that change predicts task performance, has not been directly evaluated in the setting studied here. This statement is contingent on the scope of the cited literature rather than a claim that no related study exists.
 
 This paper provides that test, with a controlled comparison that separates the structural effect (routing organization) from the performance effect (closed-loop success) under matched training conditions.

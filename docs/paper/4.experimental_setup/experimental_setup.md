@@ -1,6 +1,6 @@
 # 4. Experimental Setup
 
-The central experimental question — whether the geometry of demonstration trajectories can shape expert specialization, and whether that organization translates into closed-loop control — requires comparisons that isolate specific factors of the modular architecture. This section describes the evaluation testbed, the controls used to isolate those factors, and the measurements that separate routing organization from task performance.
+The central experimental question — whether the kinematic regime structure of demonstration trajectories can shape expert specialization, and whether that organization translates into closed-loop control — requires comparisons that isolate specific factors of the modular architecture. This section describes the evaluation testbed, the controls used to isolate those factors, and the measurements that separate routing organization from task performance.
 
 
 ## 4.1 Tasks and Data
@@ -17,6 +17,8 @@ We evaluate on five manipulation tasks from the Robomimic benchmark, using the P
 
 Each task provides 200 human demonstrations (180 train, 20 validation). The observation $x_t \in \mathbb{R}^D$ is a low-dimensional structured state vector — end-effector pose, gripper state, and object coordinates — normalized by z-score statistics from the training split. All policies are deterministic and memoryless: the action at time $t$ depends only on $x_t$.
 
+The regime count is fixed at $K = E = 6$ across all five tasks. The method does not adapt the number of experts per task.
+
 The five tasks span a range of contact complexity and kinematic diversity. Can and Square are used for the focused ablation (§4.3) because both exhibit clear sequential phase structure — approach, grasp, transport, insertion — while differing in the precision required at contact: Can involves a clearance-tolerant pick-and-place, whereas Square demands tight peg alignment.
 
 
@@ -25,29 +27,31 @@ The five tasks span a range of contact complexity and kinematic diversity. Can a
 The comparison suite is organized by the factor each condition is intended to probe, while making explicit which implementation details differ. The modular conditions use six experts, but the representation, router, expert initialization, and auxiliary objectives are not identical across the full suite. Three quantities are manipulated independently within matched subsets:
 
 **Representation.** Whether the encoder receives phase-contrastive pre-training (§3.3) or is trained on action prediction alone.
-- *Plain Encoder*: action-only pre-training, topology-derived prototypes. Isolates the contribution of regime-structured representation to downstream expert specialization.
+- *Plain Encoder*: action-only pre-training, regime-derived prototypes. Isolates the contribution of regime-structured representation to downstream expert specialization.
 
-**Prototype initialization.** Whether the initial Voronoi partition is placed using topology, phase rules, or random assignment.
+**Prototype initialization.** Whether the initial Voronoi partition is placed using trajectory-derived regime centroids, phase-rule centroids, or random assignment.
 - *Phase-Random*: full phase-aware representation, but randomly initialized prototype parameters. Within the matched prototype subset, this isolates the geometric placement of the starting partition from the representation quality.
 
 **Expert seeding.** Whether expert weights start from the pre-trained action head or from random initialization.
-- *Scratch MoE*: topology-derived prototypes and structured representation, but random expert weights. Isolates the role of pre-trained action competence in each expert.
+- *Scratch MoE*: regime-derived prototypes and structured representation, but random expert weights. Isolates the role of pre-trained action competence in each expert.
 
-**Two-factor corner.** *Factorial Floor*: unstructured representation combined with random prototypes, testing whether the absence of both representation structuring and topology-derived initialization is recoverable through end-to-end training.
+**Two-factor corner.** *Factorial Floor*: unstructured representation combined with random prototypes, testing whether the absence of both representation structuring and regime-derived initialization is recoverable through end-to-end training.
 
 **External baselines.**
 - *Monolithic BC*: a single feedforward policy with a matched encoder trunk (three hidden layers, same width), trained on mean squared error. Provides the performance floor of an unpartitioned policy.
 - *Learned Softmax Top-1*: replaces prototype routing with a learned gating network, executing the argmax expert. Tests whether the prototype-based partition mechanism itself is a relevant factor.
-- *Static Rule*: hard-coded kinematic thresholds determine expert assignment. Tests whether human-specified phase rules outperform learned or topology-derived partitions.
+- *Static Rule*: hard-coded kinematic thresholds determine expert assignment. Tests whether human-specified phase rules outperform learned or regime-derived partitions.
 
 **Privileged diagnostic.** *Teacher-Forced*: uses the configured ground-truth regime labels to dispatch experts during Stage 2 training, while rollout evaluation dispatches using the frozen phase-head prediction. Because the training route is label-dependent and differs from the evaluation route, this condition is excluded from comparative rankings and reported separately.
+
+The five-task sweep (§4.2) characterizes broad policy capability as contextual evidence. The matched Can/Square prototype ablation (§4.3) provides the causal evidence isolating the effect of prototype initialization.
 
 
 ## 4.3 Focused Router-Initialization Ablation
 
-The five-task sweep (§4.2) characterizes broad policy capability, but the comparison is not fully matched: different methods may use different learning rates, epoch counts, auxiliary-loss configurations, representations, or routing mechanisms. To isolate the causal effect of prototype initialization, we therefore compare three matched prototype arms on Can and Square. These arms use the same phase-aware Stage 1 representation, expert initialization, Stage 2 optimizer, and Stage 2 objective with margin loss disabled ($\lambda_m = 0$):
+The five-task sweep characterizes broad policy capability, but the comparison is not fully matched: different methods may use different learning rates, epoch counts, auxiliary-loss configurations, representations, or routing mechanisms. To isolate the causal effect of prototype initialization, we therefore compare three matched prototype arms on Can and Square. These arms use the same phase-aware Stage 1 representation, expert initialization, Stage 2 optimizer, and Stage 2 objective with margin loss disabled ($\lambda_m = 0$):
 
-1. *Topological prototype placement* (the proposed initialization)
+1. *Trajectory-derived regime prototype placement* (the proposed initialization)
 2. *Rule-based centroid placement* (from heuristic kinematic phase labels)
 3. *Randomly initialized prototypes*
 
@@ -61,20 +65,20 @@ Differences among the first three conditions can be attributed to prototype init
 
 ## 4.4 Evaluation and Metrics
 
-Each policy is evaluated by closed-loop rollout from a frozen set of initial simulator states, fixed across all methods and seeds. Performance and routing organization are measured separately.
+Each policy is evaluated by closed-loop rollout from a frozen set of initial simulator states, fixed across all methods and seeds. Performance and routing organization are measured separately, and the two measurement domains use different data sources.
 
-**Task success** is the fraction of evaluation episodes in which the environment's native success predicate is satisfied before timeout. To assess the paired effect of each method relative to BC, we compute within-seed success differences on identical initial conditions.
+**Task success** is the fraction of evaluation episodes in which the environment's native success predicate is satisfied before timeout. Success is measured via closed-loop rollouts (50 episodes $\times$ 3 seeds = 150 episodes per cell). To assess the paired effect of each method relative to BC, we compute within-seed success differences on identical initial conditions.
 
 **Phase-expert alignment** is quantified by normalized mutual information (NMI) between the top-1 expert assignment $k_t^*$ and the behavioral regime label $r_t$:
 
 $$\operatorname{NMI}(k^*, r) = \frac{2\, I(k^*;\, r)}{H(k^*) + H(r)}$$
 
-High NMI indicates that individual experts specialize in distinct behavioral regimes; low NMI indicates that the routing partition does not correspond to the phase structure in the demonstrations.
+High NMI indicates that individual experts specialize in distinct behavioral regimes; low NMI indicates that the routing partition does not correspond to the phase structure in the demonstrations. NMI is measured on the 20 held-out validation demonstrations, not during closed-loop rollouts.
 
-**Routing stability** is the step-to-step switch rate — the fraction of adjacent timestep pairs at which the active expert changes. Frequent switching indicates that the policy oscillates between Voronoi cells, producing rapid alternation in the active action function.
+**Routing stability** is the step-to-step switch rate — the fraction of adjacent timestep pairs at which the active expert changes. Like NMI, it is measured on the held-out validation demonstrations, not during rollouts. The reported switch rates therefore describe the router's behavior on the validation data distribution, not on the rollout state distribution.
 
 **Action continuity** can be computed from full rollout traces as the Euclidean norm of consecutive action differences $\|a_t - a_{t-1}\|_2$, separated for timesteps where the expert switches and where it does not. It is a secondary diagnostic for action variation arising from the modular transition mechanism; it is not used to rank task success or support the present quantitative claims.
 
-These quantities are deliberately distinct. Phase-expert alignment and switch rate characterize the routing organization; task success characterizes closed-loop control; action continuity is an optional diagnostic of the kinematic consequences of expert transitions. The central analysis depends on not treating one as a proxy for another (F1, F3).
+These quantities are deliberately distinct. Phase-expert alignment and switch rate characterize the routing organization on held-out validation demonstrations; task success characterizes closed-loop control on rollout episodes; action continuity is an optional diagnostic of the kinematic consequences of expert transitions. The central analysis depends on not treating one as a proxy for another (F1, F3).
 
-Evaluation details — episode counts, frozen reset-bank provenance, statistical intervals, and multiplicity corrections — are reported alongside the results and tabulated in the appendix (Tables A1, A10, A15).
+Evaluation details — episode counts, frozen reset-bank provenance, statistical intervals, and multiplicity corrections — are reported alongside the results and tabulated in the appendix (Tables A1, A15).
