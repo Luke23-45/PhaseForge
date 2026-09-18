@@ -1,163 +1,245 @@
 # 3. Method
 
-A manipulation trajectory typically traverses several kinematically distinct regimes — approaching, grasping, transporting, placing — each of which requires a different local mapping from state to action. Rather than learning a single monolithic policy that must internally partition its capacity among these regimes, we structure the policy as a mixture of experts whose routing partition is seeded from the kinematic regime structure of the demonstration data itself.
-
-This section defines the four components of the approach: the modular policy architecture (§3.1), the offline procedure that discovers behavioral regimes from demonstration trajectories (§3.2), the phase-aware representation pre-training that shapes the latent space (§3.3), and the prototype initialization and joint fine-tuning that anchors the routing partition to the discovered structure (§3.4).
-
+We study a deterministic, memoryless mixture-of-experts (MoE) policy. A trajectory-derived regime-discovery procedure initializes the routing partition, after which the encoder, routing prototypes, and experts are jointly fine-tuned.
 
 ## 3.1 Policy Architecture
 
-At each timestep $t$, the environment presents a state $x_t \in \mathbb{R}^D$ and the policy returns a bounded action $a_t \in [-1, 1]^A$. The policy is deterministic and memoryless: the action depends only on the current observation $x_t$, with no recurrent state or trajectory history.
+At time \(t\), the policy maps an observation \(x_t \in \mathbb{R}^{D}\) to a bounded action \(a_t \in [-1,1]^A\). It has no recurrent state or access to trajectory history.
 
-### Shared encoder
+A feedforward encoder maps the normalized observation to a unit-length latent representation:
 
-A feedforward encoder $f_\phi$ maps the normalized observation into a $d$-dimensional latent vector, followed by projection onto the unit hypersphere:
+\[
+z_t = \frac{f_\phi(x_t)}{\|f_\phi(x_t)\|_2},
+\qquad z_t \in \mathbb{S}^{d-1}.
+\]
 
-$$z_t = \frac{f_\phi(x_t)}{\| f_\phi(x_t) \|_2}$$
+The router maintains \(E\) trainable prototypes \(\{c_k\}_{k=1}^{E}\) and selects the nearest prototype:
 
-The resulting representation $z_t \in \mathbb{S}^{d-1}$ is shared by the router and all experts. Projecting onto the unit sphere ensures that distances between representations reflect directional relationships rather than activation magnitude, and provides a natural domain on which to define prototype-based routing.
+\[
+k_t^* = \arg\min_{k \in \{1,\ldots,E\}} \|z_t-c_k\|_2.
+\]
 
-### Prototype router
+When both \(z_t\) and \(c_k\) are unit-normalized, this rule is equivalent to maximum cosine similarity:
 
-The routing function maintains $E$ trainable prototype vectors $\{c_k\}_{k=1}^E$. In the regime-derived and rule-based centroid conditions, the prototypes are initialized as normalized latent centroids; the random control uses the router's standard small random initialization. The router selects the expert whose prototype is nearest to the current representation:
+\[
+\|z_t-c_k\|_2^2 = 2 - 2z_t^\top c_k.
+\]
 
-$$k_t^* = \arg\min_{k \in \{1, \ldots, E\}} \| z_t - c_k \|_2$$
+This equivalence applies to normalized centroid initialization. During Stage 2, prototypes remain trainable and are not constrained to stay on the unit sphere.
 
-For a normalized centroid initialization, both $z_t$ and $c_k$ lie on the unit sphere, so the distance rule is equivalent at that point to selecting the prototype with maximum cosine similarity: $\| z_t - c_k \|_2^2 = 2 - 2\, z_t^\top c_k$. The prototypes remain trainable and are not constrained to remain normalized during Stage 2; after fine-tuning, routing is defined by the stated Euclidean-distance rule.
+For a fixed encoder, the prototypes define a Voronoi partition of latent space:
 
-Hard top-1 selection partitions the normalized latent representation space into a nearest-prototype Voronoi partition:
+\[
+\mathcal{V}_k =
+\left\{
+z \in \mathbb{S}^{d-1} :
+\|z-c_k\|_2 \leq \|z-c_j\|_2
+\quad \forall j \neq k
+\right\}.
+\]
 
-$$\mathcal{V}_k = \bigl\{ z \in \mathbb{S}^{d-1} : \| z - c_k \|_2 \le \| z - c_j \|_2 \;\; \forall\, j \ne k \bigr\}$$
+Each cell is assigned to one expert. The encoder and prototypes both change during fine-tuning, so the induced partition of observation space can change throughout training.
 
-in which each cell $\mathcal{V}_k$ maps exclusively to expert $k$. The partition is determined by prototype placement: moving a prototype reshapes the cell boundaries and thereby changes which states each expert is responsible for. Because prototypes are trainable and need not remain normalized, the post-training cells should not be interpreted as a Voronoi tessellation whose sites all lie on the unit sphere.
+Each expert \(e_k:\mathbb{S}^{d-1}\rightarrow(-1,1)^A\) is a feedforward network with a \(\tanh\) output layer. At rollout, only the selected expert produces the action:
 
-**Optimization of hard dispatch.** The top-1 selection operator $k_t^* = \arg\min_k \|z_t - c_k\|_2$ is piecewise constant and non-differentiable. Consequently, the action reconstruction loss $\mathcal{L}_{\text{act}}$ does not backpropagate gradients into the router prototypes $\{c_k\}$ or through the discrete routing assignment (no straight-through estimator is used). Instead, the prototypes $\{c_k\}$ are optimized exclusively via the auxiliary objectives in Stage 2: specifically, the soft load-balancing loss $\mathcal{L}_{\text{bal}}$ (which computes differentiable softmax probabilities over negative distances) and, when active, the margin loss $\mathcal{L}_{\text{margin}}$ (which differentiates directly through pairwise distance differences). When margin loss is disabled ($\lambda_m = 0$), the soft balance loss serves as the sole gradient channel for updating prototype locations.
+\[
+a_t = e_{k_t^*}(z_t).
+\]
 
-### Expert networks and action execution
-
-Each expert $e_k : \mathbb{S}^{d-1} \to (-1, 1)^A$ is an independent feedforward network with a $\tanh$ output nonlinearity. At execution time, only the selected expert produces the action:
-
-$$a_t = e_{k_t^*}(z_t)$$
-
-In the reported configuration, the optional residual coefficient is fixed at $\beta=0$, so the residual feedback branch is inactive and each expert reduces to its direct-action base network.
-
-The policy is therefore piecewise-defined across the Voronoi cells: within each cell, the action is a smooth function of the representation, but a discontinuity can occur at cell boundaries where the active expert changes.
-
+The residual-feedback coefficient is fixed at \(\beta=0\) in the reported configuration. The evaluated policy is therefore a direct-action MoE rather than a feedback-residual controller. Hard routing can produce action discontinuities when the active expert changes.
 
 ## 3.2 Trajectory Regime Discovery
 
-The routing partition described above is parameterized by the prototype locations $\{c_k\}$. In standard mixture-of-experts training, these would be initialized randomly and learned end-to-end. The central methodological choice in this work is instead to derive the initial prototype placement from the kinematic regime structure of the demonstration trajectories. This subsection describes the offline pipeline that extracts that structure.
+The number of trajectory regimes and experts is fixed before training:
 
-The number of regimes $K$ is fixed at $K = 6$ across all tasks. The method does not discover the number of experts; it segments and clusters into a predetermined count. The number of experts $E$ is set equal to $K$, so $K = E = 6$ throughout.
+\[
+K=E=6.
+\]
 
-### Task-variable signal
+The method does not select the number of regimes or experts adaptively.
 
-From each demonstration, we extract a kinematic signal $s_t$ that captures end-effector configuration and its spatial relationship to the manipulated object:
+For each demonstration, we construct a task-variable signal
 
-$$s_t = \bigl[ \, p_t, \;\; q_t, \;\; g_t, \;\; o_t, \;\; (p_t - o_{t,\, 0\!:\!3}), \;\; \alpha_t \, \bigr]$$
+\[
+s_t =
+\left[
+p_t,\;
+q_t,\;
+g_t,\;
+o_t,\;
+(p_t-o_{t,0:3}),\;
+\alpha_t
+\right],
+\]
 
-where $p_t \in \mathbb{R}^3$ is the end-effector position, $q_t \in \mathbb{S}^3$ is the orientation quaternion (sign-canonicalized to non-negative scalar part), $g_t$ denotes the gripper joint state, $o_t$ contains the object's proprioceptive variables, and $\alpha_t$ is a scalar gripper aperture. The relative displacement $(p_t - o_{t,\, 0\!:\!3})$ isolates object-relative motion from workspace-absolute motion.
+where \(p_t\in\mathbb{R}^3\) is end-effector position, \(q_t\in\mathbb{S}^3\) is a sign-canonicalized orientation quaternion, \(g_t\) is gripper state, \(o_t\) contains object proprioceptive variables, and \(\alpha_t\) is gripper aperture. The relative displacement term represents end-effector position relative to the object.
 
-**Signal scaling and physical units.** Prior to segmentation, observations are denormalized back to physical coordinates (meters for end-effector and object Cartesian positions, sign-canonical unit quaternions on $\mathbb{S}^3$ for orientation, and joint positions for the gripper). The concatenated signal $s_t$ is unweighted, so the subsequent cost function operates directly on these mixed physical dimensions.
+Before segmentation, observations are denormalized into physical coordinates. The resulting signal concatenates Cartesian positions, unit quaternions, and joint variables without additional feature weighting.
 
-### Change-point segmentation
+Each trajectory is segmented into intervals with locally homogeneous task-variable statistics. Change-points
 
-Each trajectory is partitioned into contiguous intervals of locally homogeneous task-variable statistics. Change-points $0 = \tau_0 < \tau_1 < \cdots < \tau_M = T$ are obtained by solving an exact dynamic program that minimizes the total within-segment variance under a complexity penalty:
+\[
+0=\tau_0 < \tau_1 < \cdots < \tau_M=T
+\]
 
-$$\min_{\{\tau_j\}_{j=0}^M} \; \sum_{j=0}^{M-1} C(s_{\tau_j : \tau_{j+1}}) \;+\; \lambda_{\mathrm{cp}} \, (M - 1), \qquad \text{subject to} \quad \tau_{j+1} - \tau_j \ge L_{\min}$$
+minimize a penalized within-segment cost:
 
-where the segment cost measures squared deviation from the segment mean:
+\[
+\min_{\{\tau_j\}_{j=0}^{M}}
+\sum_{j=0}^{M-1} C(s_{\tau_j:\tau_{j+1}})
++
+\lambda_{\mathrm{cp}}(M-1),
+\qquad
+\text{subject to }
+\tau_{j+1}-\tau_j \geq L_{\min},
+\]
 
-$$C(s_{i:j}) = \sum_{t=i}^{j-1} \| s_t - \bar{s}_{i:j} \|_2^2$$
+where
 
-The penalty $\lambda_{\mathrm{cp}}$ controls the granularity of the decomposition, and the minimum-duration constraint $L_{\min}$ prevents over-fragmentation at transient sensor fluctuations. The optimization is deterministic and exact.
+\[
+C(s_{i:j}) =
+\sum_{t=i}^{j-1}
+\|s_t-\bar{s}_{i:j}\|_2^2.
+\]
 
-### Regime clustering
+The penalty \(\lambda_{\mathrm{cp}}\) controls segmentation granularity, and \(L_{\min}\) prevents short segments.
 
-Individual trajectory segments are summarized by their first and second moments:
+Each segment is represented by its first and second moments:
 
-$$\phi_j = \bigl[ \operatorname{mean}(s_{\tau_j : \tau_{j+1}}), \;\; \operatorname{var}(s_{\tau_j : \tau_{j+1}}) \bigr]$$
+\[
+\phi_j =
+\left[
+\operatorname{mean}(s_{\tau_j:\tau_{j+1}}),\;
+\operatorname{var}(s_{\tau_j:\tau_{j+1}})
+\right].
+\]
 
-These summary vectors are pooled across all training demonstrations and partitioned into $K = 6$ discrete behavioral regimes via centroid-based clustering. Each timestep inherits the regime label of its enclosing segment, producing a per-timestep assignment $r_t \in \{1, \ldots, K\}$.
+Segment summaries from the training demonstrations are clustered into \(K=6\) groups. Each timestep inherits its enclosing segment’s cluster assignment, yielding a regime label \(r_t\in\{1,\ldots,K\}\). The clusters describe statistically distinct kinematic regimes; names such as approach, contact, transport, and placement are post hoc descriptions rather than supervision used by the discovery procedure.
 
-The result is a decomposition of the demonstration data into regimes that are intended to represent kinematically coherent intervals. Labels such as approach, contact, transport, and placement are interpretations of the resulting clusters, not supervision supplied to the discovery procedure.
+### Label contract
 
-### Label vocabularies
+Two distinct label vocabularies are used:
 
-The pipeline produces two distinct per-timestep label artifacts, which are not identical:
+| Label vocabulary | Source | Use |
+|---|---|---|
+| Rule-derived phase labels | Task-specific kinematic heuristics | Stage 1 phase classification, supervised contrastive learning, full-pipeline margin loss, and NMI evaluation |
+| Trajectory-derived regime labels | Change-point segmentation and segment clustering | Grouping Stage-1 latents for prototype initialization |
 
-- **`phase` (rule-derived labels).** Hand-engineered, task-specific heuristic boundaries based on physical thresholds — gripper aperture, end-effector height relative to the object, and contact state. These are deterministic and identical for a given trajectory.
+The two vocabularies are generated independently. They need not share temporal boundaries or semantic label identities.
 
-- **`phase_topo` (regime-derived labels).** Unsupervised labels produced by the change-point segmentation and clustering procedure described above. These depend on the segmentation penalty $\lambda_{\mathrm{cp}}$, the clustering seed, and the training-split segment pool.
+Because deployment uses a memoryless router, we require the trajectory-derived regime labels to be predictable from an instantaneous observation. A linear probe predicts regime labels from normalized \(x_t\) under trajectory-grouped cross-validation. The regime artifact is accepted only when probe accuracy is at least \(0.70\) and every regime has occupancy of at least \(0.05\); otherwise, the configured gate rejects it. The complete validation protocol is reported in the appendix.
 
-The two label sets have different temporal boundaries for the same trajectory and assign different integer labels to the same timestep. In the proposed configuration, `phase_topo` labels determine prototype initialization (§3.4), while `phase` labels supervise Stage 1 classification and contrastive losses (§3.3) and the Stage 2 margin loss (§3.4).
+## 3.3 Representation Pre-Training
 
-### Observability verification
+Before the MoE is instantiated, the encoder is trained with an action-prediction head and a rule-phase classification head. The Stage-1 objective is
 
-The regime labels are derived from trajectory-level segmentation, which has access to temporal context. For these labels to be usable as a routing prior in a memoryless policy, they must be recoverable from instantaneous state alone. We verify this by training a linear classifier to predict the regime label from a single normalized observation $x_t$, evaluated under trajectory-grouped cross-validation. The regime artifact is accepted for routing only if the probe exceeds a minimum classification threshold (accuracy $\ge 0.70$) and each regime meets a minimum occupancy requirement ($\ge 0.05$); otherwise, the configured fail-closed gate rejects the artifact. Specific validation thresholds and split protocols are listed in Appendix Table A1.
+\[
+\mathcal{L}_1 =
+\mathcal{L}_{\mathrm{act}}
++
+\lambda_{\mathrm{phase}}\mathcal{L}_{\mathrm{phase}}
++
+\lambda_{\mathrm{sc}}\mathcal{L}_{\mathrm{SupCon}}.
+\]
 
+The action head predicts the demonstration action and is trained by mean squared error:
 
-## 3.3 Representation Pre-Training (Stage 1)
+\[
+\mathcal{L}_{\mathrm{act}}
+=
+\frac{1}{|B|A}
+\sum_{i\in B}
+\sum_{d=1}^{A}
+\left(a_{i,d}^{\mathrm{gen}}-a_{i,d}^{*}\right)^2.
+\]
 
-Before the modular architecture is instantiated, the encoder $f_\phi$ is pre-trained to produce a representation that is simultaneously informative about the demonstrated actions and organized with respect to the canonical behavioral phase labels. This stage trains the encoder together with two auxiliary heads — an action prediction head and a phase-classification head — under a composite objective:
+Let \(y_i\in\{1,\ldots,K\}\) denote the one-based mathematical representation of the rule-derived phase label. A linear head predicts logits \(\ell_i\) and is trained with cross-entropy:
 
-$$\mathcal{L}_1 = \mathcal{L}_{\text{act}} + \lambda_{\text{phase}} \, \mathcal{L}_{\text{phase}} + \lambda_{\text{sc}} \, \mathcal{L}_{\text{SupCon}}$$
+\[
+\mathcal{L}_{\mathrm{phase}}
+=
+-\frac{1}{|B|}
+\sum_{i\in B}
+\log
+\frac{\exp(\ell_{i,y_i})}
+{\sum_{q=1}^{K}\exp(\ell_{i,q})}.
+\]
 
-**Action loss.** The action head predicts a deterministic action $a_i^{\text{gen}}$ from the latent representation and is trained by mean squared error against the demonstration target $a_i^*$:
+The supervised contrastive term pulls together latent representations with the same rule-derived phase label and separates representations with different labels. Thus, Stage 1 makes the latent space action-predictive while organizing it according to rule-derived phases.
 
-$$\mathcal{L}_{\text{act}} = \frac{1}{|B|\, A} \sum_{i \in B} \sum_{d=1}^{A} \bigl( a_{i,d}^{\text{gen}} - a_{i,d}^* \bigr)^2$$
+Trajectory-derived regime labels are not targets of the Stage-1 classification or contrastive objectives.
 
-**Phase classification loss.** A linear classifier maps $z_i$ to logits over the $K$ phase classes and is trained with cross-entropy:
+## 3.4 Prototype Initialization and Joint Fine-Tuning
 
-$$\mathcal{L}_{\text{phase}} = - \frac{1}{|B|} \sum_{i \in B} \log \frac{\exp(\ell_{i, y_i})}{\sum_{q=1}^{K} \exp(\ell_{i, q})}$$
+After Stage 1, the auxiliary heads are detached. The router and experts are instantiated, and the encoder, prototypes, and experts are jointly optimized.
 
-where $y_i \in \{1, \ldots, K\}$ is the phase label used by the representation-training configuration. In the proposed configuration, this is the canonical rule-derived `phase` field. The regime-discovered `phase_topo` labels are used to initialize routing prototypes (§3.4) and are not the targets of the Stage 1 classification or supervised-contrastive losses.
+For trajectory-derived initialization, prototype \(c_k\) is the normalized centroid of Stage-1 latent representations assigned to regime \(k\):
 
-**Supervised contrastive loss.** To impose metric structure on $\mathbb{S}^{d-1}$, a supervised contrastive objective pulls representations with the same phase label toward each other while pushing apart representations from different phases:
+\[
+\tilde{c}_k =
+\frac{1}{N_k}
+\sum_{i:r_i=k} z_i,
+\qquad
+c_k =
+\frac{\tilde{c}_k}{\|\tilde{c}_k\|_2}.
+\]
 
-$$\mathcal{L}_{\text{SupCon}} = \frac{1}{|I|} \sum_{i \in I} \frac{-1}{|P(i)|} \sum_{p \in P(i)} \log \frac{\exp(z_i^\top z_p \,/\, \tau)}{\sum_{a \ne i} \exp(z_i^\top z_a \,/\, \tau)}$$
+Rule-based initialization uses the same construction with rule-derived phase labels in place of \(r_i\). The random control uses the router’s standard small random initialization. These conditions differ only in the labels or distribution used to set the initial prototype locations.
 
-Here, $P(i) = \{p \in B \setminus \{i\} : y_p = y_i\}$ is the set of batch elements sharing the phase label of anchor $i$, and $I = \{i : |P(i)| > 0\}$ excludes singletons. The temperature $\tau$ controls the sharpness of the similarity distribution.
+Each expert is initialized from the Stage-1 action head. To break symmetry, a fixed subset of hidden-layer parameters is independently reinitialized for each expert; the remaining parameters retain their Stage-1 values.
 
-The combined objective is intended to map observations with the same canonical phase label into neighboring regions of $\mathbb{S}^{d-1}$, while maintaining enough action-predictive information to seed the downstream experts.
+Stage 2 optimizes
 
+\[
+\mathcal{L}_2 =
+\mathcal{L}_{\mathrm{act}}
++
+\mathcal{L}_{\mathrm{bal}}
++
+\lambda_m\mathcal{L}_{\mathrm{margin}}.
+\]
 
-## 3.4 Prototype Initialization and Joint Fine-Tuning (Stage 2)
+The action loss has the same form as in Stage 1, but uses the action produced by the selected expert \(e_{k_i^*}(z_i)\).
 
-After Stage 1, the auxiliary heads are detached, and the modular architecture — router and experts — is instantiated for joint training. The central step is the initialization of the routing prototypes from the latent geometry established in Stage 1.
+The balance term discourages concentration on a small subset of experts:
 
-### Prototype initialization
+\[
+\mathcal{L}_{\mathrm{bal}}
+=
+\lambda_{\mathrm{bal}}E
+\sum_{k=1}^{E} f_kp_k,
+\]
 
-For each discovered regime $k$, the routing prototype $c_k$ is placed at the $L_2$-normalized centroid of the Stage 1 representations assigned to that regime:
+where
 
-$$\tilde{c}_k = \frac{1}{N_k} \sum_{i:\, r_i = k} z_i, \qquad c_k = \frac{\tilde{c}_k}{\| \tilde{c}_k \|_2}$$
+\[
+f_k =
+\frac{1}{|B|}
+\sum_{i\in B}\mathbf{1}[k_i^*=k],
+\qquad
+p_k =
+\frac{1}{|B|}
+\sum_{i\in B}
+\operatorname{softmax}(-d_i)_k,
+\]
 
-where $z_i$ are the Stage 1 latent vectors and $N_k$ is the number of samples in regime $k$. In the proposed configuration, membership is determined by the regime-discovered `phase_topo` labels, whereas Stage 1 is trained with the rule-derived `phase` labels. Regime initialization therefore uses the learned latent geometry grouped by trajectory-derived regime labels; it does not imply that the representation was trained on those same regime labels. The centroid construction supplies a structured initial partition; it does not freeze that partition.
+and \(d_{i,k}=\|z_i-c_k\|_2\). The hard-assignment fraction \(f_k\) measures expert usage, while \(p_k\) is a differentiable soft affinity. Gradients through \(p_k\) update prototype locations.
 
-### Expert initialization
+The full configuration also includes a margin loss:
 
-Each expert network is seeded from the Stage 1 action head. To break symmetry between experts while preserving baseline action-prediction competence, a fixed proportion of hidden-layer weights ($0.20$ of weights in the final two layers) is re-initialized independently per expert. The remaining weights retain their pre-trained values.
+\[
+\mathcal{L}_{\mathrm{margin}}
+=
+\frac{1}{|B|}
+\sum_{i\in B}
+\sum_{j\neq\pi(y_i)}
+\left[
+m-\left(d_{i,j}-d_{i,\pi(y_i)}\right)
+\right]_+.
+\]
 
-### Joint fine-tuning objective
+Here, \(\pi(y_i)=y_i\) in one-based mathematical notation. Implementation arrays use zero-based indices, with the corresponding offset applied before indexing prototype columns. The mapping is fixed by label index; no semantic matching is learned between rule-derived phase labels and trajectory-derived regime-cluster labels.
 
-The encoder, prototypes, and expert parameters are optimized jointly under:
+The matched Can/Square initialization ablation sets \(\lambda_m=0\) for every arm. It therefore compares prototype initialization without the margin-based coupling between the two label vocabularies.
 
-$$\mathcal{L}_2 = \mathcal{L}_{\text{act}} + \mathcal{L}_{\text{bal}} + \lambda_m \, \mathcal{L}_{\text{margin}}$$
-
-**Action loss.** Identical in form to Stage 1, but now evaluated on the output of the selected expert $e_{k_i^*}(z_i)$ rather than the monolithic action head.
-
-**Balance loss.** A soft load-balancing penalty prevents degenerate partitions in which a subset of experts captures the entire data distribution:
-
-$$\mathcal{L}_{\text{bal}} = \lambda_{\text{bal}} \, E \sum_{k=1}^{E} f_k \, p_k$$
-
-where $f_k = \frac{1}{|B|} \sum_{i \in B} \mathbf{1}[k_i^* = k]$ is the hard assignment fraction and $p_k = \frac{1}{|B|} \sum_{i \in B} \operatorname{softmax}(-d_i)_k$ is the mean soft routing probability for expert $k$. The product $f_k \, p_k$ is large only when expert $k$ both receives many hard assignments and has high average soft affinity — penalizing concentration on both axes simultaneously. Differentiating through $p_k$ provides a smooth gradient signal directly to the prototypes $\{c_k\}$.
-
-**Margin loss.** An explicit distance margin $m$ separates the phase-indexed prototype from all alternatives:
-
-$$\mathcal{L}_{\text{margin}} = \frac{1}{|B|} \sum_{i \in B} \sum_{j \ne \pi(y_i)} \bigl[\, m - (d_{i,j} - d_{i, \pi(y_i)}) \,\bigr]_+$$
-
-where $d_{i,k} = \| z_i - c_k \|_2$, $y_i \in \{0, \dots, K-1\}$ is the rule-derived integer phase label, and $\pi$ maps rule phase labels to 1-based prototype indices $\{1, \dots, E\}$. In the implementation, zero-indexed label arrays directly index prototype columns, corresponding under our one-based mathematical notation to the fixed offset mapping $\pi(y) = y + 1$. No bipartite matching or semantic alignment is solved between the rule-derived `phase` IDs and the trajectory-derived `phase_topo` cluster IDs; this identity-based offset represents an arbitrary cross-vocabulary coupling between rule labels and regime clusters. Crucially, the matched Can/Square initialization ablation (§4.3) disables this margin term ($\lambda_m = 0$), eliminating any cross-vocabulary indexing assumption and isolating prototype initialization under an identical objective.
-
-### What adapts during Stage 2
-
-The encoder, prototypes, and experts remain trainable: the encoder adapts at a reduced learning rate, while prototypes and experts optimize at the base rate. The auxiliary Stage 1 heads are detached before Stage 2. The initial regime-derived partition therefore provides a structured starting point — not a frozen constraint — and the final partition reflects the combined influence of the initialization geometry and task-driven gradient updates.
+The hard routing decision is non-differentiable. No straight-through estimator is used. The action loss updates the selected expert and encoder within the current routing assignment, but does not directly update prototype locations through the discrete \(\arg\min\) operation. Prototype updates arise from the differentiable balance term and, when enabled, the margin loss. The encoder, prototypes, and experts remain trainable throughout Stage 2, so initialization defines a starting partition rather than a fixed expert assignment.
