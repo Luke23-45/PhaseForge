@@ -1,9 +1,0 @@
-# Abstract
-
-Mixture-of-experts policies provide a natural way to represent heterogeneous behavior by assigning different regions of the policy space to different expert networks. In manipulation, however, the resulting partition is learned together with the policy, leaving the relationship between the structure present in demonstrations and the organization of the experts largely implicit. We investigate whether this structure can instead be introduced through the initialization of the expert partition.
-
-Our approach derives prototype locations from the topology of demonstration trajectories and uses these prototypes to initialize a hard-routing mixture-of-experts policy. The resulting experts are trained jointly, allowing the initial partition to change during optimization. We compare topology-based initialization with random and phase-based initialization under a matched training procedure, and separately examine the resulting routing structure and closed-loop behavior.
-
-Topology-based initialization produces substantially more phase-aligned routing than random or phase-based initialization in the focused Can/Square ablation, with normalized mutual information of 0.67 and 0.51 and measured routing-switch rates of 0.04 and 0.07 for Can and Square, respectively. This structural effect does not translate uniformly into task success. The topology-initialized policy achieves 76.0% success on Can and 26.7% on Square, compared with 68.7% and 31.3% for phase initialization and 73.3% and 35.3% for the softmax control.
-
-The results show that the geometry used to initialize an expert partition can substantially shape the organization of a learned modular policy, while that organization is not by itself sufficient to determine closed-loop performance. This separates the role of an initialization prior in structuring expert specialization from its downstream effect on control.

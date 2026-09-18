@@ -22,13 +22,13 @@ The five tasks span a range of contact complexity and kinematic diversity. Can a
 
 ## 4.2 Comparative Controls
 
-The comparison suite is organized by the factor each condition isolates, not by the implementation details that differ. All modular conditions share the same six-expert architecture and the same Stage 2 training objective; what varies is the representation, the prototype placement, or the expert initialization. Three quantities are manipulated independently:
+The comparison suite is organized by the factor each condition is intended to probe, while making explicit which implementation details differ. The modular conditions use six experts, but the representation, router, expert initialization, and auxiliary objectives are not identical across the full suite. Three quantities are manipulated independently within matched subsets:
 
 **Representation.** Whether the encoder receives phase-contrastive pre-training (§3.3) or is trained on action prediction alone.
 - *Plain Encoder*: action-only pre-training, topology-derived prototypes. Isolates the contribution of regime-structured representation to downstream expert specialization.
 
 **Prototype initialization.** Whether the initial Voronoi partition is placed using topology, phase rules, or random assignment.
-- *Phase-Random*: full phase-aware representation, but prototypes placed uniformly on $\mathbb{S}^{d-1}$. Isolates the geometric placement of the starting partition from the representation quality.
+- *Phase-Random*: full phase-aware representation, but randomly initialized prototype parameters. Within the matched prototype subset, this isolates the geometric placement of the starting partition from the representation quality.
 
 **Expert seeding.** Whether expert weights start from the pre-trained action head or from random initialization.
 - *Scratch MoE*: topology-derived prototypes and structured representation, but random expert weights. Isolates the role of pre-trained action competence in each expert.
@@ -40,20 +40,23 @@ The comparison suite is organized by the factor each condition isolates, not by 
 - *Learned Softmax Top-1*: replaces prototype routing with a learned gating network, executing the argmax expert. Tests whether the prototype-based partition mechanism itself is a relevant factor.
 - *Static Rule*: hard-coded kinematic thresholds determine expert assignment. Tests whether human-specified phase rules outperform learned or topology-derived partitions.
 
-**Privileged diagnostic.** *Teacher-Forced*: routes using ground-truth phase labels at test time. Because these labels require temporal context unavailable to an autonomous agent, this condition is non-deployable. It is excluded from all comparative rankings and reported separately.
+**Privileged diagnostic.** *Teacher-Forced*: uses the configured ground-truth regime labels to dispatch experts during Stage 2 training, while rollout evaluation dispatches using the frozen phase-head prediction. Because the training route is label-dependent and differs from the evaluation route, this condition is excluded from comparative rankings and reported separately.
 
 
 ## 4.3 Focused Router-Initialization Ablation
 
-The five-task sweep (§4.2) characterizes broad policy capability, but the comparison is not fully matched: different methods may use different learning rates, epoch counts, or auxiliary-loss configurations. To isolate the causal effect of the initialization prior alone, we run a controlled ablation on Can and Square with five conditions that share identical pre-trained representations, identical Stage 2 optimizers, and no margin loss ($\lambda_m = 0$):
+The five-task sweep (§4.2) characterizes broad policy capability, but the comparison is not fully matched: different methods may use different learning rates, epoch counts, auxiliary-loss configurations, representations, or routing mechanisms. To isolate the causal effect of prototype initialization, we therefore compare three matched prototype arms on Can and Square. These arms use the same phase-aware Stage 1 representation, expert initialization, Stage 2 optimizer, and Stage 2 objective with margin loss disabled ($\lambda_m = 0$):
 
 1. *Topological prototype placement* (the proposed initialization)
 2. *Rule-based centroid placement* (from heuristic kinematic phase labels)
-3. *Random placement on $\mathbb{S}^{d-1}$*
-4. *Prototypes from a plain BC encoder* (unstructured representation)
-5. *Learned softmax top-1 gating* (no prototypes; gating weights optimized end-to-end)
+3. *Randomly initialized prototypes*
 
-Any difference in routing structure or task success across these five conditions is attributable to the starting partition geometry, not to representation quality or objective-function design.
+Two additional controls are included for context but are not part of this matched initialization comparison:
+
+4. *Prototypes from a plain BC encoder* (changes the representation)
+5. *Learned softmax top-1 gating* (changes the routing mechanism and has no prototypes)
+
+Differences among the first three conditions can be attributed to prototype initialization under the stated matched configuration. Comparisons involving the plain-BC and softmax controls also reflect their intentionally different representation or routing mechanism and are interpreted as diagnostic, not as isolated initialization effects.
 
 
 ## 4.4 Evaluation and Metrics
@@ -70,8 +73,8 @@ High NMI indicates that individual experts specialize in distinct behavioral reg
 
 **Routing stability** is the step-to-step switch rate — the fraction of adjacent timestep pairs at which the active expert changes. Frequent switching indicates that the policy oscillates between Voronoi cells, producing rapid alternation in the active action function.
 
-**Action continuity** is the Euclidean norm of consecutive action differences $\|a_t - a_{t-1}\|_2$, reported separately for timesteps where the expert switches and where it does not. This separates action variation arising from the modular transition mechanism from variation within a single expert's smooth output.
+**Action continuity** can be computed from full rollout traces as the Euclidean norm of consecutive action differences $\|a_t - a_{t-1}\|_2$, separated for timesteps where the expert switches and where it does not. It is a secondary diagnostic for action variation arising from the modular transition mechanism; it is not used to rank task success or support the present quantitative claims.
 
-These four quantities are deliberately distinct. Phase-expert alignment and switch rate characterize the routing organization; task success characterizes closed-loop control; action continuity characterizes the kinematic consequences of expert transitions. The central analysis depends on not treating one as a proxy for another (F1, F3).
+These quantities are deliberately distinct. Phase-expert alignment and switch rate characterize the routing organization; task success characterizes closed-loop control; action continuity is an optional diagnostic of the kinematic consequences of expert transitions. The central analysis depends on not treating one as a proxy for another (F1, F3).
 
 Evaluation details — episode counts, frozen reset-bank provenance, statistical intervals, and multiplicity corrections — are reported alongside the results and tabulated in the appendix (Tables A1, A10, A15).

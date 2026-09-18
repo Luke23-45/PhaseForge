@@ -4,7 +4,7 @@ A manipulation policy may encounter substantially different control regimes over
 
 The effectiveness of this decomposition depends not only on the capacity of the experts, but also on how the behavioral space is partitioned among them. A useful partition can isolate locally coherent action regimes, whereas an arbitrary partition may leave individual experts responsible for incompatible portions of the trajectory. In standard end-to-end training, this partition emerges jointly with the representation, router, and expert parameters. The demonstrations therefore contain structure that may be relevant to specialization, but the policy is not explicitly initialized to exploit it.
 
-Demonstration trajectories provide one source of such structure. Rather than viewing the demonstrations solely as state-action pairs, we consider their organization as a geometric object and use that structure to initialize the locations of routing prototypes. The resulting prior does not prescribe the final specialization of the experts; it determines only the starting partition from which optimization proceeds.
+Demonstration trajectories provide one source of such structure. Rather than viewing the demonstrations solely as state-action pairs, we consider their organization as a geometric object and use that structure to initialize the locations of routing prototypes. The resulting prior does not prescribe the final specialization of the experts; it sets the starting partition from which optimization proceeds.
 
 This raises a more specific question: **to what extent does the geometry of the demonstrations influence the organization of a learned expert partition, and does a more structured partition necessarily produce a better controller?**
 
