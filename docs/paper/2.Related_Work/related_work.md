@@ -26,6 +26,6 @@ Prototype-based methods provide the routing mechanism used here. Prototypical ne
 
 ## 2.4 Position of This Work
 
-The relevant gap is not whether trajectory segmentation, phase supervision, or MoE routing can each support robot learning; prior work establishes each independently. The question studied here is whether trajectory-derived regime structure can initialize a prototype-routing partition in a way that changes its learned organization after fine-tuning.
+The relevant gap is not whether trajectory segmentation, phase supervision, or MoE routing can each support robot learning; prior work establishes each independently. The question studied here is whether trajectory-derived regime structure can initialize a prototype-routing partition in a way that changes its learned organization after fine-tuning. To our knowledge, this question has not been directly evaluated in the robot-manipulation setting studied here.
 
 We examine this question through a matched comparison of trajectory-derived, rule-based, and random prototype initialization on Can and Square. Routing alignment and switch rate are measured on validation demonstrations, while success is measured in closed-loop rollouts. This design separates the structural effect of initialization on routing organization from its effect on task performance.

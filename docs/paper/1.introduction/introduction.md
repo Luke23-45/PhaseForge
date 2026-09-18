@@ -14,6 +14,6 @@ We make three contributions:
 
 1. **Trajectory-derived regime initialization.** We use change-point segmentation and clustering to derive trajectory regimes, then initialize MoE routing prototypes from regime-conditioned latent centroids.
 
-2. **Matched evaluation of routing organization.** We isolate prototype initialization under identical prototype-routing conditions and separate offline routing metrics from closed-loop success.
+2. **Matched evaluation of routing organization.** Under identical prototype-routing conditions, we show that trajectory-derived regime initialization produces higher alignment with rule-derived phase labels (NMI) and lower routing-switch rates on validation demonstrations relative to matched random and rule-based controls.
 
 3. **Routing--control dissociation.** On Can and Square, we find that higher offline routing organization does not consistently coincide with higher closed-loop success.
