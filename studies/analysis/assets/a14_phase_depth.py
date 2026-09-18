@@ -66,10 +66,13 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                     edgecolor="white",
                     linewidth=0.4,
                 )
-            ax.axvline(float(max_depth), color="#888888", linestyle="--", linewidth=0.8, alpha=0.6)
+            ax.set_ylim(0.0, 1.08)
+            ax.set_yticks([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
             ax.set_xticks(range(max_depth + 1))
             ax.set_xticklabels([f"P{d}" for d in range(max_depth + 1)], fontsize=7.0)
-            ax.set_title(task, fontsize=9.0, fontweight="bold", pad=5)
+            ax.set_title(task, fontsize=9.5, fontweight="bold", pad=7)
             ax.grid(axis="y", linestyle=":", alpha=0.3)
             if col == 0:
                 ax.set_ylabel("Share of Episodes", fontsize=8.5)
@@ -87,5 +90,5 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             frameon=False,
             fontsize=7.5,
         )
-        fig.subplots_adjust(top=0.82, bottom=0.18, left=0.08, right=0.98, wspace=0.18)
+        fig.subplots_adjust(top=0.80, bottom=0.18, left=0.08, right=0.98, wspace=0.16)
     return save(fig, "figures/appendix/A14_phase_depth")

@@ -264,7 +264,7 @@ def stacked_bars(
             label=cat,
             height=0.65,
             edgecolor="white",
-            linewidth=0.5,
+            linewidth=0.9,
         )
         left += data[row]
     ax.set_yticks(y_positions)

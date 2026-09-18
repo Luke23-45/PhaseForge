@@ -37,6 +37,8 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                 for method in METHODS_TO_PLOT:
                     if method not in registry.matrix_method_names():
                         continue
+                    if field == "train_loss_balance" and method == "bc":
+                        continue  # BC has no router or balance loss -> log(0) would fail
                     per_seed = []
                     for seed in registry.seeds("final"):
                         key = (task, method, seed, _final_stage(method))
@@ -54,11 +56,22 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                         show_ribbon=True,
                     )
 
-                ax.grid(True, linestyle=":", alpha=0.3)
+                # Log scale to resolve 10× (MSE) and 50× (balance) compression
+                ax.set_yscale("log")
+                ax.grid(True, which="both", linestyle=":", alpha=0.25, color="#CCCCCC")
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
                 if row == 0:
-                    ax.set_title(title, fontsize=9.5, fontweight="bold", pad=6)
+                    ax.set_title(title, fontsize=10, fontweight="bold", pad=8)
                 if col == 0:
-                    ax.set_ylabel(f"{task}\nMSE", fontsize=8.5, fontweight="bold")
+                    ax.set_ylabel(task, fontsize=9.5, fontweight="bold", labelpad=8)
+                    # Left col spans narrow decade (0.02-0.23): force 0.06 not '6×10⁻²'
+                    from matplotlib.ticker import ScalarFormatter
+
+                    fmt = ScalarFormatter()
+                    fmt.set_scientific(False)
+                    ax.yaxis.set_major_formatter(fmt)
+                    ax.yaxis.set_minor_formatter(fmt)
                 if row == len(tasks) - 1:
                     ax.set_xlabel("Epoch", fontsize=8.5)
 

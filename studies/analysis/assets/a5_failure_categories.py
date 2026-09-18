@@ -89,14 +89,26 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
                 shares,
                 colors={c: cat_colors.get(c, OKABE_ITO["grey"]) for c in ordered_cats},
             )
+            # Semantic isolation for privileged Teacher-Forced (last in MATRIX_ORDER)
+            # inverted axis: y=0 top, teacher_forced at bottom -> separator at idx-0.5
+            try:
+                tf_idx = methods.index("precision_residual_teacher_forced")
+                ax.axhline(y=tf_idx - 0.5, color="#888888", linestyle="--", linewidth=0.8, alpha=0.7, zorder=5)
+            except ValueError:
+                pass
             ax.set_title(task, fontsize=9.5, fontweight="bold", pad=6)
             ax.set_xticks([0.0, 0.5, 1.0])
-            ax.set_xticklabels(["0%", "50%", "100%"], fontsize=7.5)
+            ax.set_xticklabels(["0", "50", "100"], fontsize=7.5)
+            # Foolproof inward alignment by index (no string match) — 0 tucked left, 100 tucked right
+            labels = ax.get_xticklabels()
+            if len(labels) >= 3:
+                labels[0].set_horizontalalignment("left")
+                labels[-1].set_horizontalalignment("right")
             ax.set_yticks(range(len(method_labels)))
             if col == 0:
                 ax.set_yticklabels(method_labels, fontsize=8.0)
             if col == 2:
-                ax.set_xlabel("Episode Outcome Share", fontsize=8.5)
+                ax.set_xlabel("Episode Outcome Share (%)", fontsize=8.5)
 
         # Single top legend for active categories only
         legend_labels = [cat_display.get(c, c.replace("_", " ").title()) for c in ordered_cats]
@@ -110,5 +122,6 @@ def generate(dataset: AnalysisDataset) -> list[Path]:
             frameon=False,
             fontsize=8.0,
         )
-        fig.subplots_adjust(top=0.86, bottom=0.14, left=0.22, right=0.97, wspace=0.12)
+        # Inward 0%/100% alignment (ha=left/right) keeps labels inside spines; wspace 0.22 gives clean separation
+        fig.subplots_adjust(top=0.86, bottom=0.14, left=0.22, right=0.97, wspace=0.22)
     return save(fig, "figures/appendix/A5_failure_categories")

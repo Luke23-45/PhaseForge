@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "created_at": "2026-09-18T12:52:47.568779+00:00",
+  "created_at": "2026-09-18T14:21:46.068578+00:00",
   "argv": [
     "C:\\Users\\Hellx\\Documents\\Programming\\python\\Project\\Neryva\\PhaseForge\\studies\\analysis\\scripts\\generate.py",
     "--asset",
-    "T1,F4"
+    "A14"
   ],
   "coverage": {
     "present_evals": 192,
@@ -12,24 +12,14 @@
     "missing_stage_runs": []
   },
   "assets": {
-    "T1": {
+    "A14": {
       "outputs": [
-        "tables\\T1_success_matrix.tex",
-        "tables\\T1_success_matrix.md"
+        "figures\\appendix\\A14_phase_depth.pdf",
+        "figures\\appendix\\A14_phase_depth.png"
       ],
       "sha256": {
-        "tables\\T1_success_matrix.tex": "1326c7dd9bfa75408a0f985ea98d4a1c0db31cfbcc1b8ad682f89498aeb1c5d2",
-        "tables\\T1_success_matrix.md": "2d12ff1540374be6d72bf16f5b9b877e174b5e7b0ec138231266eb2fcb70a687"
-      }
-    },
-    "F4": {
-      "outputs": [
-        "figures\\main\\F4_action_discontinuity.pdf",
-        "figures\\main\\F4_action_discontinuity.png"
-      ],
-      "sha256": {
-        "figures\\main\\F4_action_discontinuity.pdf": "ba59828a8a160879fa95b5ab2c6f4edb93b3d1ce752b48053391344d5330bd6e",
-        "figures\\main\\F4_action_discontinuity.png": "1e4000056aa6521c13faae6940854a9167f642bb275d5f1f81a211a7a1149d1c"
+        "figures\\appendix\\A14_phase_depth.pdf": "ed638f8d06950ab1f8b66b6468d972fd777187d020acdd5c76a26b275f2c4cea",
+        "figures\\appendix\\A14_phase_depth.png": "af9bd9eeb48c5d8654aaab724a93f20002a30d6464be9fcd020eed0d2299c463"
       }
     }
   }
