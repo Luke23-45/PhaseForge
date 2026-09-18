@@ -239,19 +239,18 @@ The hard top-1 assignment $k_t^* = \arg\min_k \|z_t - c_k\|_2$ is non-differenti
 
 The resolved training hyperparameters across all methods (from `resolved_config.yaml` artifacts) are summarized in Table A12:
 
-| Setting | PhaseForge | BC | Softmax Top-1 | Phase-Random | Plain Encoder | Scratch MoE | Static Rule | Factorial Floor | Teacher-Forced |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Encoder hidden / latent** | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 |
-| **Encoder activation / dropout** | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 |
-| **Experts (top-$k$)** | 6 (top-1) | — | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) |
-| **Expert hidden dims** | [256] | — | [256] | [256] | [256] | [256] | [256] | [256] | [256] |
-| **Router init** | centroid (topo) | — | learned gate | random | centroid (topo) | centroid (topo) | rule-based | random | offline labels |
-| **Expert init** | partial warm | — | partial warm | partial warm | partial warm | random Xavier | partial warm | partial warm | partial warm |
-| **Drop rate** | 0.50 | — | 0.50 | 0.50 | 0.50 | — | 0.50 | 0.50 | 0.50 |
-| **Batch size** | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 |
-| **Stage 1 / Stage 2 LR** | 3e-4 / 1e-4 | 3e-4 / — | — / 1e-4 | — / 1e-4 | — / 1e-4 | — / 1e-4 | 3e-4 / 1e-4 | — / 1e-4 | — / 1e-4 |
-| **Stage 1 / Stage 2 Epochs** | 100 / 200 | 100 / — | — / 200 | — / 200 | — / 200 | — / 200 | 100 / 200 | — / 200 | — / 200 |
-| **Early stopping** | False | False | False | False | False | False | False | False | False |
+| Setting | PhaseForge | BC | Softmax Top-1 | Phase-Random | Plain Encoder | Scratch MoE | Static Rule | Factorial Floor | Teacher-Forced | Oracle (Offline) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Encoder hidden / latent** | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 |
+| **Encoder activation / dropout** | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 |
+| **Experts (top-$k$)** | 6 (top-1) | — | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) |
+| **Expert hidden dims** | [256] | — | [256] | [256] | [256] | [256] | [256] | [256] | [256] | [256] |
+| **Router init / expert init** | centroid / partial warm | — | centroid / partial warm | random / partial warm | centroid / partial warm | centroid / random | centroid / partial warm | random / partial warm | random / partial warm | random / partial warm |
+| **Drop rate** | 0.50 | — | 0.50 | 0.50 | 0.50 | — | 0.50 | 0.50 | 0.50 | 0.50 |
+| **Batch size** | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 |
+| **Stage 1 / Stage 2 LR** | 3e-4 / 1e-4 | 3e-4 / — | — / 1e-4 | — / 1e-4 | — / 1e-4 | — / 1e-4 | 3e-4 / 1e-4 | — / 1e-4 | — / 1e-4 | — / 1e-4 |
+| **Stage 1 / Stage 2 Epochs** | 100 / 200 | 100 / — | — / 200 | — / 200 | — / 200 | — / 200 | 100 / 200 | — / 200 | — / 200 | — / 200 |
+| **Early stopping** | False | False | False | False | False | False | False | False | False | False |
 
 ---
 
@@ -616,15 +615,25 @@ outputs/
 
 ## E.2 Dependency Versions and Execution Environment
 
-### Pinned Software Stack and Platform Record
+### Pinned Software Stack and Platform Record (Table A10)
 
-Experiments were executed within an isolated Python virtual environment. The provenance record (`A10_provenance`) documents the platform environment and pinned libraries:
-- **Platform:** `Linux-6.8.0-1063-aws-x86_64-with-glibc2.39`.
-- **Python Version:** `Python 3.10.14`.
-- **Core Deep Learning Framework:** `torch==2.13.0+cu130`, `torchvision==0.18.0+cu130`.
-- **Numerical and Scientific Libraries:** `numpy==2.4.6`, `scipy==1.13.1`, `scikit-learn==1.4.2`.
-- **Robot Manipulation Benchmark:** `robomimic==0.3.0`, `robosuite==1.4.1`, `mujoco==3.1.5`.
-- **Configuration & Logging:** `hydra-core==1.3.2`, `omegaconf==2.3.0`.
+Experiments were executed within an isolated Python virtual environment on AWS Linux instances. The protocol, platform environment, and artifact provenance are recorded in Table A10:
+
+| Item | Value |
+| :--- | :--- |
+| **Seeds (matrix / ablation)** | 42, 43, 44 / 42, 43, 44 |
+| **Reset banks** | `310d9cfd3fa5e843`, `a7d3953c0afcf560`, `c6683cf0dbb23876`, `db5b4c2a5e6519d0`, `e16288589f5f69c2` |
+| **Reset seeds** | 2026 |
+| **Evaluation router modes** | learned |
+| **Training commits** | `e948b73`, `f83d096` |
+| **Dropped-neuron hashes** | 39 recorded (e.g., `final_aligned_softmax_top1@seed42`: `9113226cdcef0f09c1d2bf8a9507d1fcf528e2d5d6b13b695a14f00139d60d54`) |
+| **Pinned stack** | `numpy==2.4.6`, `torch==2.13.0+cu130`, `torchvision==0.18.0+cu130` |
+| **Scientific stack** | `scipy==1.13.1`, `scikit-learn==1.4.2` |
+| **Benchmark stack** | `robomimic==0.3.0`, `robosuite==1.4.1`, `mujoco==3.1.5` |
+| **Config & logging** | `hydra-core==1.3.2`, `omegaconf==2.3.0` |
+| **Platform** | `Linux-6.8.0-1063-aws-x86_64-with-glibc2.39` (`Python 3.10.14`) |
+| **Evaluation to Checkpoint SHA links** | 165 / 180 verified |
+| **Rollout horizon** | 500 steps ($25.0\,\mathrm{s}$ at $20\,\mathrm{Hz}$) |
 
 Hardware provenance records confirm Linux AWS execution under the pinned stack above; specific GPU microarchitectures are not recorded in the artifact provenance record.
 

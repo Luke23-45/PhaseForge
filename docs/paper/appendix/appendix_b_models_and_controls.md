@@ -100,19 +100,18 @@ The hard top-1 assignment $k_t^* = \arg\min_k \|z_t - c_k\|_2$ is non-differenti
 
 The resolved training hyperparameters across all methods (from `resolved_config.yaml` artifacts) are summarized in Table A12:
 
-| Setting | PhaseForge | BC | Softmax Top-1 | Phase-Random | Plain Encoder | Scratch MoE | Static Rule | Factorial Floor | Teacher-Forced |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Encoder hidden / latent** | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 |
-| **Encoder activation / dropout** | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 |
-| **Experts (top-$k$)** | 6 (top-1) | — | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) |
-| **Expert hidden dims** | [256] | — | [256] | [256] | [256] | [256] | [256] | [256] | [256] |
-| **Router init** | centroid (topo) | — | learned gate | random | centroid (topo) | centroid (topo) | rule-based | random | offline labels |
-| **Expert init** | partial warm | — | partial warm | partial warm | partial warm | random Xavier | partial warm | partial warm | partial warm |
-| **Drop rate** | 0.50 | — | 0.50 | 0.50 | 0.50 | — | 0.50 | 0.50 | 0.50 |
-| **Batch size** | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 |
-| **Stage 1 / Stage 2 LR** | 3e-4 / 1e-4 | 3e-4 / — | — / 1e-4 | — / 1e-4 | — / 1e-4 | — / 1e-4 | 3e-4 / 1e-4 | — / 1e-4 | — / 1e-4 |
-| **Stage 1 / Stage 2 Epochs** | 100 / 200 | 100 / — | — / 200 | — / 200 | — / 200 | — / 200 | 100 / 200 | — / 200 | — / 200 |
-| **Early stopping** | False | False | False | False | False | False | False | False | False |
+| Setting | PhaseForge | BC | Softmax Top-1 | Phase-Random | Plain Encoder | Scratch MoE | Static Rule | Factorial Floor | Teacher-Forced | Oracle (Offline) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Encoder hidden / latent** | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 | [256, 256, 256] / 128 |
+| **Encoder activation / dropout** | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 | GELU / 0.10 |
+| **Experts (top-$k$)** | 6 (top-1) | — | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) | 6 (top-1) |
+| **Expert hidden dims** | [256] | — | [256] | [256] | [256] | [256] | [256] | [256] | [256] | [256] |
+| **Router init / expert init** | centroid / partial warm | — | centroid / partial warm | random / partial warm | centroid / partial warm | centroid / random | centroid / partial warm | random / partial warm | random / partial warm | random / partial warm |
+| **Drop rate** | 0.50 | — | 0.50 | 0.50 | 0.50 | — | 0.50 | 0.50 | 0.50 | 0.50 |
+| **Batch size** | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 | 256 |
+| **Stage 1 / Stage 2 LR** | 3e-4 / 1e-4 | 3e-4 / — | — / 1e-4 | — / 1e-4 | — / 1e-4 | — / 1e-4 | 3e-4 / 1e-4 | — / 1e-4 | — / 1e-4 | — / 1e-4 |
+| **Stage 1 / Stage 2 Epochs** | 100 / 200 | 100 / — | — / 200 | — / 200 | — / 200 | — / 200 | 100 / 200 | — / 200 | — / 200 | — / 200 |
+| **Early stopping** | False | False | False | False | False | False | False | False | False | False |
 
 ---
 

@@ -45,15 +45,25 @@ outputs/
 
 ## E.2 Dependency Versions and Execution Environment
 
-### Pinned Software Stack and Platform Record
+### Pinned Software Stack and Platform Record (Table A10)
 
-Experiments were executed within an isolated Python virtual environment. The provenance record (`A10_provenance`) documents the platform environment and pinned libraries:
-- **Platform:** `Linux-6.8.0-1063-aws-x86_64-with-glibc2.39`.
-- **Python Version:** `Python 3.10.14`.
-- **Core Deep Learning Framework:** `torch==2.13.0+cu130`, `torchvision==0.18.0+cu130`.
-- **Numerical and Scientific Libraries:** `numpy==2.4.6`, `scipy==1.13.1`, `scikit-learn==1.4.2`.
-- **Robot Manipulation Benchmark:** `robomimic==0.3.0`, `robosuite==1.4.1`, `mujoco==3.1.5`.
-- **Configuration & Logging:** `hydra-core==1.3.2`, `omegaconf==2.3.0`.
+Experiments were executed within an isolated Python virtual environment on AWS Linux instances. The protocol, platform environment, and artifact provenance are recorded in Table A10:
+
+| Item | Value |
+| :--- | :--- |
+| **Seeds (matrix / ablation)** | 42, 43, 44 / 42, 43, 44 |
+| **Reset banks** | `310d9cfd3fa5e843`, `a7d3953c0afcf560`, `c6683cf0dbb23876`, `db5b4c2a5e6519d0`, `e16288589f5f69c2` |
+| **Reset seeds** | 2026 |
+| **Evaluation router modes** | learned |
+| **Training commits** | `e948b73`, `f83d096` |
+| **Dropped-neuron hashes** | 39 recorded (e.g., `final_aligned_softmax_top1@seed42`: `9113226cdcef0f09c1d2bf8a9507d1fcf528e2d5d6b13b695a14f00139d60d54`) |
+| **Pinned stack** | `numpy==2.4.6`, `torch==2.13.0+cu130`, `torchvision==0.18.0+cu130` |
+| **Scientific stack** | `scipy==1.13.1`, `scikit-learn==1.4.2` |
+| **Benchmark stack** | `robomimic==0.3.0`, `robosuite==1.4.1`, `mujoco==3.1.5` |
+| **Config & logging** | `hydra-core==1.3.2`, `omegaconf==2.3.0` |
+| **Platform** | `Linux-6.8.0-1063-aws-x86_64-with-glibc2.39` (`Python 3.10.14`) |
+| **Evaluation to Checkpoint SHA links** | 165 / 180 verified |
+| **Rollout horizon** | 500 steps ($25.0\,\mathrm{s}$ at $20\,\mathrm{Hz}$) |
 
 Hardware provenance records confirm Linux AWS execution under the pinned stack above; specific GPU microarchitectures are not recorded in the artifact provenance record.
 
