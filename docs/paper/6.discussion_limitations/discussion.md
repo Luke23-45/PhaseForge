@@ -16,7 +16,7 @@ The Square ablation shows that offline routing organization and rollout success 
 
 NMI and rollout success measure different quantities on different state distributions. NMI measures association between expert assignments and rule-derived phase labels on validation demonstrations. Success measures closed-loop behavior from rollout states. The observed reversal on Square shows that offline phase alignment is not sufficient to predict control quality in this setting.
 
-One possible explanation is that trajectory-derived regime boundaries do not isolate the contact-critical transitions required for peg insertion. A short alignment maneuver could remain inside a broader segment selected by trajectory statistics. This explanation is untested: the present study does not measure the alignment between discovered regime boundaries and contact-critical events.
+The Square reversal is best interpreted as a boundary on the offline metrics rather than evidence for an unmeasured failure mechanism. Phase--expert NMI and routing-switch rate characterize assignment structure on held-out demonstrations, whereas rollout success also depends on the actions produced by the selected expert along states visited during execution. Because this study does not intervene on routing while holding expert behavior fixed, it cannot identify the mechanism behind the reversal on Square. It establishes that offline routing organization is not, by itself, a sufficient proxy for closed-loop control quality in the evaluated setting.
 
 ## 6.3 Softmax as an Architectural Diagnostic
 

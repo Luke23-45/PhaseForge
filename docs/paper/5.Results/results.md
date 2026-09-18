@@ -42,6 +42,8 @@ On Square, the ordering reverses. Trajectory-derived initialization records 26.7
 
 The matched ablation therefore yields different success orderings across tasks. The initialization associated with the strongest offline routing alignment has the highest observed matched success on Can and the lowest on Square. Offline routing organization does not consistently predict closed-loop success in the observed runs.
 
+Here, “more structured routing” refers specifically to higher phase--expert NMI and lower routing-switch rate on validation demonstrations; it is not interpreted as a universal measure of router or policy quality.
+
 ### Architectural diagnostics
 
 Learned Softmax Top-1 is not a matched initialization control because it replaces prototype routing with a learned gating network. It reaches NMI values of 0.72 on Can and 0.61 on Square, with rollout success of 73.3% and 35.3%, respectively. This condition shows that high phase-expert alignment can arise without trajectory-derived prototype initialization. It does not isolate the effect of gating or prototype initialization.

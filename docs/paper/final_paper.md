@@ -386,6 +386,8 @@ Higher NMI indicates a stronger association between expert assignments and rule-
 
 **Routing-switch rate.** The switch rate is the fraction of adjacent timestep pairs within a demonstration for which the selected expert changes. It is computed on validation demonstrations, averaged across trajectories and seeds, and excludes transitions between trajectories. It characterizes routing behavior on the validation-demonstration distribution rather than on rollout states.
 
+These are offline structural diagnostics of routing assignments on held-out demonstrations. They do not measure the action quality of the selected expert, recovery behavior, or closed-loop task success.
+
 Task success, NMI, and routing-switch rate measure different quantities on different data sources. Success measures closed-loop control; NMI and switch rate measure offline routing organization. The analysis does not treat either routing metric as a proxy for task success.
 
 The appendix reports reset-bank provenance, seed identifiers, software and dataset versions, static-rule thresholds, hyperparameters, and the full statistical tables.
@@ -436,6 +438,8 @@ On Square, the ordering reverses. Trajectory-derived initialization records 26.7
 
 The matched ablation therefore yields different success orderings across tasks. The initialization associated with the strongest offline routing alignment has the highest observed matched success on Can and the lowest on Square. Offline routing organization does not consistently predict closed-loop success in the observed runs.
 
+Here, “more structured routing” refers specifically to higher phase--expert NMI and lower routing-switch rate on validation demonstrations; it is not interpreted as a universal measure of router or policy quality.
+
 ### Architectural diagnostics
 
 Learned Softmax Top-1 is not a matched initialization control because it replaces prototype routing with a learned gating network. It reaches NMI values of 0.72 on Can and 0.61 on Square, with rollout success of 73.3% and 35.3%, respectively. This condition shows that high phase-expert alignment can arise without trajectory-derived prototype initialization. It does not isolate the effect of gating or prototype initialization.
@@ -464,7 +468,7 @@ The Square ablation shows that offline routing organization and rollout success 
 
 NMI and rollout success measure different quantities on different state distributions. NMI measures association between expert assignments and rule-derived phase labels on validation demonstrations. Success measures closed-loop behavior from rollout states. The observed reversal on Square shows that offline phase alignment is not sufficient to predict control quality in this setting.
 
-One possible explanation is that trajectory-derived regime boundaries do not isolate the contact-critical transitions required for peg insertion. A short alignment maneuver could remain inside a broader segment selected by trajectory statistics. This explanation is untested: the present study does not measure the alignment between discovered regime boundaries and contact-critical events.
+The Square reversal is best interpreted as a boundary on the offline metrics rather than evidence for an unmeasured failure mechanism. Phase--expert NMI and routing-switch rate characterize assignment structure on held-out demonstrations, whereas rollout success also depends on the actions produced by the selected expert along states visited during execution. Because this study does not intervene on routing while holding expert behavior fixed, it cannot identify the mechanism behind the reversal on Square. It establishes that offline routing organization is not, by itself, a sufficient proxy for closed-loop control quality in the evaluated setting.
 
 ## 6.3 Softmax as an Architectural Diagnostic
 

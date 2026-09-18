@@ -75,6 +75,8 @@ Higher NMI indicates a stronger association between expert assignments and rule-
 
 **Routing-switch rate.** The switch rate is the fraction of adjacent timestep pairs within a demonstration for which the selected expert changes. It is computed on validation demonstrations, averaged across trajectories and seeds, and excludes transitions between trajectories. It characterizes routing behavior on the validation-demonstration distribution rather than on rollout states.
 
+These are offline structural diagnostics of routing assignments on held-out demonstrations. They do not measure the action quality of the selected expert, recovery behavior, or closed-loop task success.
+
 Task success, NMI, and routing-switch rate measure different quantities on different data sources. Success measures closed-loop control; NMI and switch rate measure offline routing organization. The analysis does not treat either routing metric as a proxy for task success.
 
 The appendix reports reset-bank provenance, seed identifiers, software and dataset versions, static-rule thresholds, hyperparameters, and the full statistical tables.
