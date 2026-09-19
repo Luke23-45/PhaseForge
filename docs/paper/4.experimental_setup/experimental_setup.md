@@ -4,7 +4,7 @@ We distinguish two experimental roles. The five-task benchmark characterizes the
 
 ## 4.1 Tasks and Data
 
-We evaluate on five Robomimic manipulation tasks using Proficient-Human demonstrations. The environments use simulated Franka Panda robot systems under operational-space control at 20 Hz. Transport uses a bimanual configuration. Actions are bounded to \([-1,1]^A\).
+We evaluate on five Robomimic manipulation tasks using Proficient-Human demonstrations [Mandlekar et al., 2021]. The environments use simulated Franka Panda robot systems under operational-space control at 20 Hz [Zhu et al., 2020; Todorov et al., 2012]. Transport uses a bimanual configuration. Actions are bounded to \([-1,1]^A\).
 
 | Task | \(D\) | \(A\) | Contact character |
 | :--- | :---: | :---: | :--- |
@@ -60,9 +60,9 @@ Plain Encoder and Learned Softmax Top-1 are reported as architectural diagnostic
 
 Each task-method-seed condition is evaluated from a frozen bank of initial simulator states shared across methods. We run 50 rollout episodes per seed over three training seeds, yielding 150 episodes per task-method condition.
 
-**Task success.** Success is the fraction of episodes satisfying the environment’s native success predicate before timeout. Wilson score intervals summarize pooled rollout episodes; they do not quantify variation across independently trained seeds. Where paired comparisons are reported, they use within-seed success differences on identical reset states. Paired sign tests and Holm adjustment are reported with the corresponding results.
+**Task success.** Success is the fraction of episodes satisfying the environment’s native success predicate before timeout. Wilson score intervals [Wilson, 1927] summarize pooled rollout episodes; they do not quantify variation across independently trained seeds. Where paired comparisons are reported, they use within-seed success differences on identical reset states. Paired sign tests and Holm adjustment [Holm, 1979] are reported with the corresponding results.
 
-**Phase-expert alignment.** We measure normalized mutual information between top-1 expert assignments \(k_t^*\) and rule-derived phase labels \(y_t^{\mathrm{phase}}\):
+**Phase-expert alignment.** We measure normalized mutual information [Vinh et al., 2010] between top-1 expert assignments \(k_t^*\) and rule-derived phase labels \(y_t^{\mathrm{phase}}\):
 
 \[
 \operatorname{NMI}(k^*,y^{\mathrm{phase}})

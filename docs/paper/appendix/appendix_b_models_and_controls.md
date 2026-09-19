@@ -38,7 +38,7 @@ All policy models operate under a deterministic, memoryless contract mapping obs
   \[
   a_t = e_{k_t^*}(z_t).
   \]
-- **Expert Symmetry Breaking via Partial Warm-Start:** Each expert is initialized from the Stage-1 ActionHead using Drop-Upcycling partial reinitialization (`partial_reinit_experts_from_action_head`). The ActionHead weights are copied into each expert, and then an independent fraction ($\text{drop\_rate} = 0.50$) of each expert's intermediate hidden neurons are reinitialized using Kaiming uniform initialization with fixed seed. The remaining 50% of the neurons retain their pre-trained ActionHead weights bit-exactly. This breaks functional symmetry across experts while guaranteeing functional initialization from the pre-trained generalist.
+- **Expert Symmetry Breaking via Partial Warm-Start:** Each expert is initialized from the Stage-1 ActionHead using Drop-Upcycling partial reinitialization [Nakamura et al., 2025] (`partial_reinit_experts_from_action_head`). The ActionHead weights are copied into each expert, and then an independent fraction ($\text{drop\_rate} = 0.50$) of each expert's intermediate hidden neurons are reinitialized using Kaiming uniform initialization [He et al., 2015] with fixed seed. The remaining 50% of the neurons retain their pre-trained ActionHead weights bit-exactly. This breaks functional symmetry across experts while guaranteeing functional initialization from the pre-trained generalist.
 
 ---
 
@@ -60,7 +60,7 @@ Stage 1 optimizes the shared encoder $f_\phi$ alongside an action-prediction hea
    \[
    \mathcal{L}_{\mathrm{phase}} = - \frac{1}{|B|} \sum_{i \in B} \log \frac{\exp(\ell_{i, y_i})}{\sum_{q=0}^{K-1} \exp(\ell_{i, q})}.
    \]
-3. **Supervised Contrastive Loss ($\mathcal{L}_{\mathrm{SupCon}}$):** Encourages clustering of timesteps sharing identical phase labels:
+3. **Supervised Contrastive Loss ($\mathcal{L}_{\mathrm{SupCon}}$):** Encourages clustering of timesteps sharing identical phase labels [Khosla et al., 2020]:
    \[
    \mathcal{L}_{\mathrm{SupCon}} = \frac{1}{|I|} \sum_{i \in I} \frac{-1}{|P(i)|} \sum_{p \in P(i)} \log \frac{\exp(z_i^\top z_p \,/\, \tau)}{\sum_{a \ne i} \exp(z_i^\top z_a \,/\, \tau)}
    \]

@@ -165,7 +165,7 @@ Let \(y_i\in\{1,\ldots,K\}\) denote the one-based mathematical representation of
 {\sum_{q=1}^{K}\exp(\ell_{i,q})}.
 \]
 
-The supervised contrastive term pulls together latent representations with the same rule-derived phase label and separates representations with different labels. Thus, Stage 1 makes the latent space action-predictive while organizing it according to rule-derived phases.
+The supervised contrastive term pulls together latent representations with the same rule-derived phase label and separates representations with different labels [Khosla et al., 2020]. Thus, Stage 1 makes the latent space action-predictive while organizing it according to rule-derived phases.
 
 Trajectory-derived regime labels are not targets of the Stage-1 classification or contrastive objectives.
 

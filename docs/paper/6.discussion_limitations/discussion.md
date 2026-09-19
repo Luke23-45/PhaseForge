@@ -24,7 +24,7 @@ The Learned Softmax Top-1 condition reaches high NMI without trajectory-derived 
 
 ## 6.4 Limitations
 
-**Inference and task coverage.** All comparisons use three training seeds. The paired tests do not establish seed-level performance differences after Holm correction. The results describe the observed runs rather than a population-level effect. ToolHang and Transport remain unresolved under the evaluated policy class and training budget, so they provide no discriminative evidence about initialization.
+**Inference and task coverage.** All comparisons use three training seeds. The paired tests do not establish seed-level performance differences after Holm correction. The results describe the observed runs rather than a population-level effect [Henderson et al., 2018; Agarwal et al., 2021]. ToolHang and Transport remain unresolved under the evaluated policy class and training budget, so they provide no discriminative evidence about initialization.
 
 **Supervision and full-pipeline coupling.** The matched ablation evaluates prototype initialization on a representation already shaped by rule-derived phase classification and supervised contrastive learning. It does not establish whether trajectory-derived initialization alone can organize routing without that supervision. The full five-task benchmark additionally includes the fixed index-based margin coupling between rule-derived phase labels and prototype indices defined in §3.4. The benchmark therefore evaluates the combined system, not prototype initialization in isolation. This coupling is absent from the matched ablation because \(\lambda_m=0\).
 

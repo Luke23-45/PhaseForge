@@ -27,11 +27,11 @@
   year={2017}
 }
 
-@article{lepikhin2020gshard,
-  title={Gshard: Scaling giant models with conditional computation and automatic sharding},
-  author={Lepikhin, Dmitry and Lee, HyoukJeong and Xu, Yuanzhong and Chen, Dehao and Firat, Orhan and Huang, Yanping and Krikun, Maxim and Shazeer, Noam and Chen, Zhifeng},
-  journal={arXiv preprint arXiv:2006.16668},
-  year={2020}
+@inproceedings{lepikhin2021gshard,
+  title={GShard: Scaling giant models with conditional computation and automatic sharding},
+  author={Lepikhin, Dmitry and Lee, HyoukJoong and Xu, Yuanzhong and Chen, Dehao and Firat, Orhan and Huang, Yanping and Krikun, Maxim and Shazeer, Noam and Chen, Zhifeng},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2021}
 }
 
 @article{fedus2022switch,
@@ -86,10 +86,11 @@
 }
 
 @inproceedings{shankar2020learning,
-  title={Learning robot skills with temporal variational autoencoders},
-  author={Shankar, Tanmay and Tulsiani, Shubham and Gupta, Abhinav},
+  title={Learning robot skills with temporal variational inference},
+  author={Shankar, Tanmay and Gupta, Abhinav},
   booktitle={International Conference on Machine Learning},
-  pages={8640--8650},
+  pages={8624--8633},
+  volume={119},
   year={2020},
   organization={PMLR}
 }
@@ -114,14 +115,15 @@
   publisher={MIT Press}
 }
 
-@article{paraschos2018probabilistic,
-  title={Probabilistic movement primitives},
+@article{paraschos2018promp,
+  title={Using probabilistic movement primitives in robotics},
   author={Paraschos, Alexandros and Daniel, Christian and Peters, Jan and Neumann, Gerhard},
-  journal={Journal of Machine Learning Research},
-  volume={19},
-  number={1},
-  pages={1--44},
-  year={2018}
+  journal={Autonomous Robots},
+  volume={42},
+  number={3},
+  pages={529--551},
+  year={2018},
+  publisher={Springer}
 }
 
 @article{adams2007bayesian,
@@ -180,31 +182,33 @@
   publisher={SAGE Publications Sage UK: London, England}
 }
 
-@inproceedings{krishnan2017transition,
+@article{krishnan2017b,
   title={Transition state clustering: Unsupervised surgical trajectory segmentation for robot learning},
-  author={Krishnan, Sanjay and Garg, Animesh and Liaw, Richard and Miller, Lauren and Florian, Walter and Goldberg, Ken},
-  booktitle={The International Journal of Robotics Research},
+  author={Krishnan, Sanjay and Garg, Animesh and Patil, Sachin and Lea, Colin and Hager, Gregory and Abbeel, Pieter and Goldberg, Ken},
+  journal={The International Journal of Robotics Research},
   volume={36},
   number={13-14},
   pages={1595--1618},
   year={2017},
-  publisher={SAGE Publications Sage UK: London, England}
+  publisher={SAGE Publications}
 }
 
-@inproceedings{fox2017multi,
-  title={Multi-task hierarchical imitation learning for surgical subtasks},
-  author={Fox, Roy and Krishnan, Sanjay and Stoica, Ion and Goldberg, Ken},
-  booktitle={Conference on Robot Learning},
-  pages={337--342},
+@inproceedings{krishnan2017a,
+  title={DDCO: Discovery of deep continuous options for robot learning from demonstrations},
+  author={Krishnan, Sanjay and Fox, Roy and Stoica, Ion and Goldberg, Ken},
+  booktitle={Conference on Robot Learning (CoRL)},
+  pages={418--437},
+  volume={78},
   year={2017},
   organization={PMLR}
 }
 
 @inproceedings{shiarlis2018taco,
-  title={TACO: Temporal action-conditioned observation models for robot learning from demonstration},
-  author={Shiarlis, Kyriacos and Messias, Joao and Whiteson, Shimon},
+  title={TACO: Learning task decomposition via temporal alignment for control},
+  author={Shiarlis, Kyriacos and Wulfmeier, Markus and Salter, Sasha and Whiteson, Shimon and Posner, Ingmar},
   booktitle={International Conference on Machine Learning},
-  pages={4630--4639},
+  pages={4654--4663},
+  volume={80},
   year={2018},
   organization={PMLR}
 }
@@ -321,8 +325,8 @@
 }
 
 @inproceedings{nakamura2025drop,
-  title={Drop-Upcycling: Training Sparse Mixture-of-Experts from Dense Checkpoints via Partial Dropout Reinitialization},
-  author={Nakamura, Kenta and others},
+  title={Drop-Upcycling: Training sparse mixture of experts with partial re-initialization},
+  author={Nakamura, Taishi and Akiba, Takuya and Fujii, Kazuki and Oda, Yusuke and Yokota, Rio and Suzuki, Jun},
   booktitle={International Conference on Learning Representations (ICLR)},
   year={2025}
 }
@@ -348,5 +352,52 @@
   author={Nguyen, Nam V and Doan, Thong T and Tran, Luong Ngoc and Nguyen, Van-Doan and Pham, Quang},
   journal={Transactions on Machine Learning Research (TMLR)},
   year={2026}
+}
+
+@inproceedings{khosla2020supcon,
+  title={Supervised contrastive learning},
+  author={Khosla, Prannay and Teterwak, Piotr and Wang, Chen and Sarna, Aaron and Tian, Yonglong and Isola, Phillip and Maschinot, Aaron and Liu, Ce and Krishnan, Dilip},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={33},
+  year={2020}
+}
+
+@article{vinh2010nmi,
+  title={Information theoretic measures for clusterings comparison: Variants, properties, normalization and correction for chance},
+  author={Vinh, Nguyen Xuan and Epps, Julien and Bailey, James},
+  journal={Journal of Machine Learning Research},
+  volume={11},
+  pages={2837--2854},
+  year={2010}
+}
+
+@inproceedings{chi2023diffusion,
+  title={Diffusion policy: Visuomotor policy learning via action diffusion},
+  author={Chi, Cheng and Feng, Siyuan and Du, Yilun and Xu, Zhenjia and Cousineau, Eric and Burchfiel, Benjamin and Song, Shuran},
+  booktitle={Proceedings of Robotics: Science and Systems (RSS)},
+  year={2023}
+}
+
+@inproceedings{dai2022stablemoe,
+  title={StableMoE: Stable routing strategy for mixture of experts},
+  author={Dai, Damai and Dong, Li and Ma, Shuming and Zheng, Bo and Sui, Zhifang and Chang, Baobao and Wei, Furu},
+  booktitle={Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages={7085--7095},
+  year={2022}
+}
+
+@inproceedings{henderson2018drl,
+  title={Deep reinforcement learning that matters},
+  author={Henderson, Peter and Islam, Riashat and Bachman, Philip and Pineau, Joelle and Precup, Doina and Meger, David},
+  booktitle={AAAI Conference on Artificial Intelligence},
+  year={2018}
+}
+
+@inproceedings{agarwal2021drl,
+  title={Deep reinforcement learning at the edge of the statistical precipice},
+  author={Agarwal, Rishabh and Schwarzer, Max and Castro, Pablo Samuel and Courville, Aaron and Bellemare, Marc},
+  booktitle={Advances in Neural Information Processing Systems},
+  volume={34},
+  year={2021}
 }
 

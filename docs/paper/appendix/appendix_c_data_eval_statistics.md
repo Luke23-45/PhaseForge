@@ -6,7 +6,7 @@ This appendix details the dataset splits, structured observation schemas, reset-
 
 ## C.1 Dataset Splits and Observation Schemas
 
-All evaluations are conducted on five robot manipulation tasks from the Robomimic benchmark using the Proficient-Human (`ph`) demonstration datasets. The tasks are executed on a simulated 7-DOF Franka Panda arm under operational-space impedance control at a control frequency of $20\,\mathrm{Hz}$.
+All evaluations are conducted on five robot manipulation tasks from the Robomimic benchmark using the Proficient-Human (`ph`) demonstration datasets [Mandlekar et al., 2021]. The tasks are executed on a simulated 7-DOF Franka Panda arm under operational-space impedance control at a control frequency of $20\,\mathrm{Hz}$ [Zhu et al., 2020; Todorov et al., 2012].
 
 ### Demonstration Splits and Leakage Prevention
 
@@ -53,7 +53,7 @@ Closed-loop control quality is measured as the empirical success fraction over t
 \]
 
 ### Phase-Expert Alignment (NMI)
-Phase-expert alignment is evaluated offline on the 20 held-out validation demonstrations using Normalized Mutual Information ($\operatorname{NMI}$). Let $k_t^* \in \{0, \dots, E-1\}$ denote the top-1 assigned expert at timestep $t$, and let $y_t^{\mathrm{phase}} \in \{0, \dots, K-1\}$ denote the canonical rule-derived phase label.
+Phase-expert alignment is evaluated offline on the 20 held-out validation demonstrations using Normalized Mutual Information ($\operatorname{NMI}$) [Vinh et al., 2010]. Let $k_t^* \in \{0, \dots, E-1\}$ denote the top-1 assigned expert at timestep $t$, and let $y_t^{\mathrm{phase}} \in \{0, \dots, K-1\}$ denote the canonical rule-derived phase label.
 
 For each training seed $s \in \{42, 43, 44\}$, all validation timesteps across the 20 validation demonstrations are concatenated into a single sample array, and NMI is computed over these concatenated validation samples:
 
@@ -87,7 +87,7 @@ The reported benchmark switch rate is the arithmetic mean across the three seeds
 
 ### Wilson Score Confidence Intervals
 
-Uncertainty on rollout success rates is reported using 95% Wilson score intervals, which provide calibrated binomial coverage without Gaussian normality assumptions. For $S$ successes out of $N = 150$ trials with observed success fraction $\hat{p} = S / N$ and critical value $z = 1.96$:
+Uncertainty on rollout success rates is reported using 95% Wilson score intervals [Wilson, 1927], which provide calibrated binomial coverage without Gaussian normality assumptions. For $S$ successes out of $N = 150$ trials with observed success fraction $\hat{p} = S / N$ and critical value $z = 1.96$:
 
 \[
 \text{CI}_{95\%} = \frac{\hat{p} + \frac{z^2}{2N} \pm z \sqrt{\frac{\hat{p}(1 - \hat{p})}{N} + \frac{z^2}{4N^2}}}{1 + \frac{z^2}{N}}.
@@ -107,7 +107,7 @@ Because all methods are evaluated on identical initial reset states, comparisons
 To test the null hypothesis that method $A$ is no better than method $B$, we perform exact two-sided sign tests on paired per-episode outcomes across identical reset states:
 - **Test Statistic:** Under the null hypothesis $H_0: P(\text{Outcome}_A > \text{Outcome}_B) = 0.5$.
 - **Exact Significance:** Computed using the exact binomial distribution for discordant episode pairs.
-- **Multiplicity Correction:** Multiplicity correction across baseline comparisons is performed using the step-down Holm-Bonferroni method. Given sorted raw $p$-values $p_{(1)} \le p_{(2)} \le \dots \le p_{(M)}$:
+- **Multiplicity Correction:** Multiplicity correction across baseline comparisons is performed using the step-down Holm-Bonferroni method [Holm, 1979]. Given sorted raw $p$-values $p_{(1)} \le p_{(2)} \le \dots \le p_{(M)}$:
   \[
   p_{(i)}^{\mathrm{Holm}} = \min\left(1.0,\; \max_{j \le i} \bigl\{ (M - j + 1) \, p_{(j)} \bigr\}\right).
   \]

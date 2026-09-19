@@ -5,10 +5,7 @@
   "seeds": [
     42,
     43,
-    44,
-    45,
-    46,
-    47
+    44
   ],
   "defaults": [
     "train.early_stopping.enabled=false"

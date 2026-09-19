@@ -42,7 +42,7 @@ The concatenated signal $s_t$ is unweighted: no artificial dimension-wise scalin
 
 ### Change-Point Detection via Exact PELT
 
-Each demonstration trajectory of length $T$ is partitioned into $M$ contiguous intervals defined by change-points $0 = \tau_0 < \tau_1 < \dots < \tau_M = T$. The change-points are computed by solving an exact dynamic program under the Pruned Exact Linear Time (PELT) formulation:
+Each demonstration trajectory of length $T$ is partitioned into $M$ contiguous intervals defined by change-points $0 = \tau_0 < \tau_1 < \dots < \tau_M = T$. The change-points are computed by solving an exact dynamic program under the Pruned Exact Linear Time (PELT) formulation [Killick et al., 2012]:
 
 \[
 \min_{\{\tau_j\}_{j=0}^M} \;\; \sum_{j=0}^{M-1} C(s_{\tau_j:\tau_{j+1}}) \;+\; \lambda_{\mathrm{cp}}(M-1), \qquad \text{subject to } \tau_{j+1} - \tau_j \ge L_{\min}
