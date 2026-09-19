@@ -3,7 +3,7 @@
 
 namespaces:
   final:
-    root: final_experiments_results/final_experiments_results
+    root: final_experiments_results/_staging_6seed_can_square
     manifest: experiments/final_causal_matrix.json
   ablation:
     root: final_experiments_results/abalation_final/teamspace/studios/this_studio/PhaseForge/outputs_router_ablation_can_square
