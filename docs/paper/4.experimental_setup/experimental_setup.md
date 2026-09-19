@@ -18,7 +18,7 @@ Each task contains 200 demonstrations, split into 180 training and 20 validation
 
 All policies are deterministic and memoryless: the action at time \(t\) depends only on \(x_t\). All modular conditions use a fixed regime and expert count of \(K=E=6\).
 
-We report the complete five-task sweep and focus the matched initialization analysis on Can and Square, the two tasks with outcome variation in the reported full-suite matrix. This focused analysis is not a broad five-task performance estimate. Both tasks require sequential manipulation behavior while imposing different contact demands: Can is a clearance-tolerant pick-and-place task, whereas Square requires precise alignment during insertion.
+We report the complete five-task sweep and focus the matched initialization analysis on Can and Square, the two tasks with outcome variation in the reported full-suite matrix. This focused analysis is not a broad five-task performance estimate.
 
 ## 4.2 Comparative Controls
 

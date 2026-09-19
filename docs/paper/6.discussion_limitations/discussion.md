@@ -4,7 +4,7 @@ The matched ablation supports two observations. Trajectory-derived regime initia
 
 ## 6.1 Initialization and Routing Organization
 
-Among the three matched prototype-initialization arms, trajectory-derived initialization produces higher NMI and lower routing-switch rates than rule-based and random initialization on validation demonstrations. The encoder, prototypes, and experts remain trainable during Stage 2, so this association is present at the final checkpoint after joint adaptation rather than reflecting the initial prototype positions alone.
+Among the three matched prototype-initialization arms, trajectory-derived initialization produces higher NMI and lower routing-switch rates than rule-based and random initialization on validation demonstrations. The encoder, prototypes, and experts remain trainable during Stage 2. The reported difference is therefore a final-checkpoint observation after joint adaptation; without post-initialization and training-trajectory diagnostics, the study does not identify how that difference emerged.
 
 The experiment does not identify an optimization mechanism. It does not establish a particular loss-landscape basin, nor does it show why the rule-based initialization produces NMI values similar to random initialization. The rule-based result only shows that non-random prototype placement is not sufficient to produce high phase-expert alignment in the observed runs.
 
@@ -14,9 +14,9 @@ Hard routing further bounds the interpretation. The action loss updates the sele
 
 The Square ablation shows that offline routing organization and rollout success need not rank methods in the same order. Among the matched prototype arms, trajectory-derived initialization has the highest NMI on validation demonstrations and the lowest rollout success on Square. On Can, the same initialization has the highest observed NMI and success among the matched prototype arms.
 
-NMI and rollout success measure different quantities on different state distributions. NMI measures association between expert assignments and rule-derived phase labels on validation demonstrations. Success measures closed-loop behavior from rollout states. The observed reversal on Square shows that offline phase alignment is not sufficient to predict control quality in this setting.
+NMI and rollout success measure different quantities on different state distributions. NMI measures association between expert assignments and rule-derived phase labels on validation demonstrations. Success measures closed-loop behavior from rollout states. The observed ordering on Square shows that offline phase alignment is not sufficient to predict control quality in this setting.
 
-The Square reversal is best interpreted as a boundary on the offline metrics rather than evidence for an unmeasured failure mechanism. Phase--expert NMI and routing-switch rate characterize assignment structure on held-out demonstrations, whereas rollout success also depends on the actions produced by the selected expert along states visited during execution. Because this study does not intervene on routing while holding expert behavior fixed, it cannot identify the mechanism behind the reversal on Square. It establishes that offline routing organization is not, by itself, a sufficient proxy for closed-loop control quality in the evaluated setting.
+The observed Square ordering is best interpreted as a boundary on the offline metrics rather than evidence for an unmeasured failure mechanism. Phase--expert NMI and routing-switch rate characterize assignment structure on held-out demonstrations, whereas rollout success also depends on the actions produced by the selected expert along states visited during execution. Because this study does not intervene on routing while holding expert behavior fixed, it cannot identify the mechanism behind the observed Square ordering. With three training seeds, the study cannot determine whether the observed offline routing differences translate into closed-loop control gains.
 
 ## 6.3 Softmax as an Architectural Diagnostic
 
