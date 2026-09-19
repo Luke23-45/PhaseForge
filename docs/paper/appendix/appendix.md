@@ -82,7 +82,7 @@ Every timestep $t$ in a demonstration inherits the discrete cluster label of its
 
 ---
 
-## A.3 Rule-Derived versus Trajectory-Derived Label Contract
+## A.3 Rule-Derived and Trajectory-Derived Label Contract
 
 The PhaseForge framework maintains two completely distinct label vocabularies. The two vocabularies are generated through independent pipelines and fulfill strictly separated functions:
 

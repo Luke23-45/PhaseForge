@@ -1,21 +1,25 @@
 Abstract
 Mixture-of-experts (MoE) policies can represent the distinct control regimes within a manipulation task, but their routing partitions are usually learned without using the kinematic structure present in demonstrations. We test whether trajectory-derived kinematic regimes can serve as an initialization prior: demonstrations are segmented and clustered, and regime-conditioned centroids of a Stage-1 latent representation initialize hard-routing prototypes before joint fine-tuning.
-Under a matched prototype-routing ablation, we compare trajectory-derived initialization with random and rule-based prototype initialization. We measure routing alignment with rule-derived phase labels and routing-switch rates on validation demonstrations, separately from closed-loop rollout success; a learned softmax gate serves as an architectural diagnostic. Across Can and Square, trajectory-derived initialization yields mean NMI of 0.51–0.67 versus 0.07–0.09 for matched controls, and mean switch rates of 0.04–0.07 versus 0.10–0.11. The success pattern differs: regime initialization records the highest observed success among matched prototype arms on Can (76.0% versus 68.7–73.3%) but the lowest on Square (26.7% versus 28.0–31.3%); the Softmax diagnostic reaches 35.3% on Square.
-Trajectory-derived initialization therefore shapes offline routing organization, but that organization alone does not predict closed-loop performance in the evaluated memoryless MoE setting.
+
+Under a matched prototype-routing ablation, we compare trajectory-derived initialization with random and rule-based prototype initialization. We measure routing alignment with rule-derived phase labels and routing-switch rates on validation demonstrations, separately from closed-loop rollout success; a learned softmax gate serves as an architectural diagnostic.
+
+Trajectory-derived initialization yields higher final NMI (0.67 on Can; 0.51 on Square) than random and rule-based initialization (0.07–0.09), with lower switch rates (0.04–0.07 versus 0.10–0.11). Its rollout success is 76.0% on Can, compared with 73.3% and 68.7% for random and rule-based initialization, and 26.7% on Square, compared with 28.0% and 31.3%. These comparisons use three independently trained seeds and are not statistically resolved after Holm adjustment. Thus, under matched conditions, trajectory-derived initialization changes final offline routing organization, but the study cannot determine whether those differences translate into closed-loop performance gains.
 
 ---
 
-# How Does Trajectory Regime Initialization Shape MoE Routing? An Empirical Study of Policy Specialization
+# Trajectory-Regime Initialization for Prototype-Routed Manipulation Policies: A Matched Study of Routing Organization and Closed-Loop Outcomes
 
 # 1. Introduction
 
-Manipulation tasks often combine approach, contact, transport, and terminal-placement behaviors that require different local state-to-action mappings. Mixture-of-experts (MoE) policies accommodate this heterogeneity by assigning observations to specialized experts, but their performance depends on how the routing function partitions the behavioral space. Standard end-to-end training learns this partition jointly with the representation and experts, without explicitly using demonstration structure to set its initial geometry.
+Manipulation tasks often combine approach, contact, transport, and terminal-placement behaviors that require different local state-to-action mappings. Mixture-of-experts (MoE) policies accommodate this heterogeneity by assigning observations to specialized experts, but their performance depends on how the routing function partitions the behavioral space.
 
-We investigate whether trajectory-derived kinematic regimes can provide such an initialization prior. We segment demonstrations, cluster the resulting regimes, and initialize routing prototypes from the corresponding Stage-1 latent centroids before joint fine-tuning. This poses two questions: does regime initialization change routing organization, and does a more organized partition predict closed-loop performance?
+Recent robotic MoE methods incorporate structure from demonstrations through supervised phase routing, routing regularization toward learned skill representations, or semantic skill routing [Mazza et al., 2026; Rodriguez et al., 2026; Deng et al., 2026]. We study a narrower intervention: whether trajectory-derived kinematic regimes can initialize the prototype geometry of a hard-routing manipulation policy and influence its final routing organization after joint fine-tuning.
+
+The regimes are used to construct initial prototype locations from a Stage-1 latent representation. Stage 1 is trained with action prediction and rule-derived phase supervision; trajectory-derived regimes are not themselves the source of that supervision.
 
 To isolate initialization, we compare trajectory-derived, rule-based, and random prototype placement under matched prototype-routing conditions. We measure phase-expert alignment and routing-switch rates on validation demonstrations, and closed-loop rollout success separately.
 
-Trajectory-derived initialization produces more phase-aligned, lower-switch routing on the validation distribution in the observed runs. Its relationship to task success differs by task: it leads the matched prototype arms on Can but trails them on Square. Thus, routing organization and closed-loop control quality are empirically dissociated in the evaluated setting.
+Trajectory-derived initialization produces more phase-aligned, lower-switch routing on the validation distribution in the observed runs. Across three training seeds, closed-loop success comparisons between regime and matched control initializations are not statistically resolved.
 
 We make three contributions:
 
@@ -23,7 +27,7 @@ We make three contributions:
 
 2. **Matched evaluation of routing organization.** Under identical prototype-routing conditions, we show that trajectory-derived regime initialization produces higher alignment with rule-derived phase labels (NMI) and lower routing-switch rates on validation demonstrations relative to matched random and rule-based controls.
 
-3. **Routing--control dissociation.** On Can and Square, we find that higher offline routing organization does not consistently coincide with higher closed-loop success.
+3. **Bounded outcome analysis.** In the matched Can/Square ablation, trajectory-derived initialization yields higher final offline routing organization than the matched initialization controls, while the associated closed-loop comparisons across three training seeds are not statistically resolved.
 
 ---
 
@@ -33,11 +37,13 @@ This work connects mixture-of-experts routing, trajectory segmentation in robot 
 
 ## 2.1 Mixture-of-experts in policy learning
 
-Mixture-of-experts architectures divide computation among specialized subnetworks and use a gating function to select or weight expert outputs [Jacobs et al., 1991; Jordan and Jacobs, 1994]. In large-scale models, sparse routing enables increased capacity without evaluating every expert for every input [Shazeer et al., 2017; Lepikhin et al., 2021; Fedus et al., 2022]. This literature also studies expert utilization, load balancing, and collapse, all of which affect whether experts develop distinct roles [Zoph et al., 2022; Zhou et al., 2022]. Recent work on mixture-of-experts models in other domains has likewise distinguished router-level organization from end-task performance, indicating that allocation or routing metrics alone need not determine downstream quality [Roller et al., 2021; Qiu et al., 2025; Nguyen et al., 2026]. Although the architectures, objectives, and data differ from robot manipulation, this evidence motivates evaluating routing structure and closed-loop control as separate outcomes.
+Mixture-of-experts architectures divide computation among specialized subnetworks and use a gating function to select or weight expert outputs [Jacobs et al., 1991; Jordan and Jacobs, 1994]. In large-scale models, sparse routing enables increased capacity without evaluating every expert for every input [Shazeer et al., 2017; Lepikhin et al., 2021; Fedus et al., 2022]. This literature also studies expert utilization, load balancing, and collapse, all of which affect whether experts develop distinct roles [Zoph et al., 2022; Zhou et al., 2022]. Recent work on mixture-of-experts models in other domains has likewise distinguished router-level organization from end-task performance, indicating that allocation or routing metrics alone need not determine downstream quality [Roller et al., 2021; Clark et al., 2022; Zoph et al., 2022]. Although the architectures, objectives, and data differ from robot manipulation, this evidence motivates evaluating routing structure and closed-loop control as separate outcomes.
 
-In robot learning, modular decompositions address a different problem: a task may require distinct local control laws across approach, contact, transport, and placement. Generative formulations have been used for multimodal action prediction [Zhao et al., 2023; Chi et al., 2023], while hierarchical and option-based methods divide behavior into skills or temporally extended decisions [Bacon et al., 2017; Krishnan et al., 2017a; Kipf et al., 2019; Shankar et al., 2020; Zhang et al., 2019]. These approaches differ in architecture and supervision, but each must determine how observations or trajectory segments are assigned to specialized computation.
+Recent robotic MoE systems use explicit structure to organize expert routing. MoE-ACT uses supervised structure for phase-structured surgical manipulation [Mazza et al., 2026]. LAR-MoE regularizes routing toward a learned skill representation obtained from demonstrations [Rodriguez et al., 2026]. SMoDP uses VLM-derived semantic skill information to route a diffusion policy [Deng et al., 2026]. These approaches differ in policy architecture, supervision, and routing objective from the setting studied here.
 
-Most such assignments are learned jointly with the policy. This paper instead studies the initial geometry of a hard prototype router: whether initializing its partition from demonstration-derived regimes changes the routing structure that remains after joint fine-tuning.
+We examine whether kinematic regimes extracted from demonstration trajectories can initialize the prototype geometry of a memoryless hard-routing policy. In the focused matched ablation, the Stage-2 margin loss is disabled for every primary prototype-initialization arm; the arms therefore differ in prototype initialization rather than in continued phase- or regime-alignment supervision. The full five-task configuration is reported separately and retains its stated rule-phase-indexed margin objective.
+
+Cluster-informed expert initialization has also appeared in adjacent MoE work. PADD initializes experts from clusters of teacher neurons within an LLM distillation pipeline [Peng et al., 2026]. This differs from our setting, which derives clusters from manipulation trajectories and initializes routing prototypes rather than expert weights.
 
 ## 2.2 Trajectory segmentation and behavioral phases
 
@@ -49,7 +55,7 @@ Our use of segmentation is narrower. Trajectory-derived regime labels group Stag
 
 ## 2.3 Initialization, prototypes, and routing geometry
 
-Initialization affects optimization by determining the parameter region from which learning begins [Glorot and Bengio, 2010; He et al., 2015; Mishkin and Matas, 2016]. Analyses of neural-network geometry further show that training trajectories can depend on the initial parameterization [Li et al., 2018; Fort et al., 2019]. In an MoE, early routing assignments influence which expert parameters receive updates [Dai et al., 2022]. Initial router geometry can therefore influence later specialization without fixing the final partition [Nguyen et al., 2026].
+Initialization affects optimization by determining the parameter region from which learning begins [Glorot and Bengio, 2010; He et al., 2015; Mishkin and Matas, 2016]. Analyses of neural-network geometry further show that training trajectories can depend on the initial parameterization [Li et al., 2018; Fort et al., 2019]. In an MoE, early routing assignments influence which expert parameters receive updates [Dai et al., 2022]. Initial router geometry can therefore influence later specialization without fixing the final partition.
 
 Prototype-based methods provide the routing mechanism used here. Prototypical networks and related metric-learning methods represent classes or groups by vectors in an embedding space and assign examples according to proximity [Vinyals et al., 2016; Snell et al., 2017; Sung et al., 2018]. Nearest-prototype assignment induces a Voronoi partition: each prototype defines the region routed to its associated expert. This paper adapts that geometry to hard expert dispatch in a control policy. Rather than learning prototype locations from an arbitrary initial state, it initializes them from latent centroids grouped by trajectory-derived regimes and then allows the encoder, prototypes, and experts to adapt jointly.
 
@@ -185,10 +191,12 @@ Two distinct label vocabularies are used:
 
 | Label vocabulary | Source | Use |
 |---|---|---|
-| Rule-derived phase labels | Task-specific kinematic heuristics | Stage 1 phase classification, supervised contrastive learning, full-pipeline margin loss, and NMI evaluation |
-| Trajectory-derived regime labels | Change-point segmentation and segment clustering | Grouping Stage-1 latents for prototype initialization |
+| Rule-derived phase labels (`phase`) | Task-specific kinematic heuristics | Stage 1 phase classification, supervised contrastive learning, full-pipeline margin loss, and NMI evaluation |
+| Trajectory-derived regime labels (`phase_topo`) | Change-point segmentation and segment clustering | Grouping Stage-1 latents for prototype initialization |
 
-The two vocabularies are generated independently. They need not share temporal boundaries or semantic label identities.
+Trajectory-derived regime labels (`phase_topo`) are computed from demonstration kinematics without manual phase annotation and are used to group Stage-1 latent representations for prototype initialization. Rule-derived phase labels (`phase`) supervise the Stage-1 phase-classification and supervised-contrastive objectives and define the reference vocabulary for NMI evaluation. Thus, regime discovery is annotation-free, but the representation used to construct prototypes is not phase-unsupervised.
+
+The causal interpretation of prototype initialization is restricted to the focused matched ablation, where the Stage-2 margin coefficient is zero for every primary arm. The full five-task configuration retains its stated phase-indexed margin objective; its results are not interchangeable with those of the matched ablation.
 
 Because deployment uses a memoryless router, we require the trajectory-derived regime labels to be predictable from an instantaneous observation. A linear probe predicts regime labels from normalized \(x_t\) under trajectory-grouped cross-validation. The regime artifact is accepted only when macro-F1 is at least \(0.60\) and every regime has occupancy of at least \(0.01\); otherwise, the configured gate rejects it. The complete validation protocol is reported in the appendix.
 
@@ -228,7 +236,7 @@ Let \(y_i\in\{1,\ldots,K\}\) denote the one-based mathematical representation of
 {\sum_{q=1}^{K}\exp(\ell_{i,q})}.
 \]
 
-The supervised contrastive term pulls together latent representations with the same rule-derived phase label and separates representations with different labels. Thus, Stage 1 makes the latent space action-predictive while organizing it according to rule-derived phases.
+The supervised contrastive term pulls together latent representations with the same rule-derived phase label and separates representations with different labels [Khosla et al., 2020]. Thus, Stage 1 makes the latent space action-predictive while organizing it according to rule-derived phases.
 
 Trajectory-derived regime labels are not targets of the Stage-1 classification or contrastive objectives.
 
@@ -315,7 +323,7 @@ We distinguish two experimental roles. The five-task benchmark characterizes the
 
 ## 4.1 Tasks and Data
 
-We evaluate on five Robomimic manipulation tasks using Proficient-Human demonstrations. The environments use simulated Franka Panda robot systems under operational-space control at 20 Hz. Transport uses a bimanual configuration. Actions are bounded to \([-1,1]^A\).
+We evaluate on five Robomimic manipulation tasks using Proficient-Human demonstrations [Mandlekar et al., 2021]. The environments use simulated Franka Panda robot systems under operational-space control at 20 Hz [Zhu et al., 2020; Todorov et al., 2012]. Transport uses a bimanual configuration. Actions are bounded to \([-1,1]^A\).
 
 | Task | \(D\) | \(A\) | Contact character |
 | :--- | :---: | :---: | :--- |
@@ -329,7 +337,7 @@ Each task contains 200 demonstrations, split into 180 training and 20 validation
 
 All policies are deterministic and memoryless: the action at time \(t\) depends only on \(x_t\). All modular conditions use a fixed regime and expert count of \(K=E=6\).
 
-Can and Square form the focused initialization ablation because both require sequential manipulation behavior while imposing different contact demands. Can is a clearance-tolerant pick-and-place task; Square requires precise alignment during insertion.
+We report the complete five-task sweep and focus the matched initialization analysis on Can and Square, the two tasks with outcome variation in the reported full-suite matrix. This focused analysis is not a broad five-task performance estimate. Both tasks require sequential manipulation behavior while imposing different contact demands: Can is a clearance-tolerant pick-and-place task, whereas Square requires precise alignment during insertion.
 
 ## 4.2 Comparative Controls
 
@@ -371,9 +379,9 @@ Plain Encoder and Learned Softmax Top-1 are reported as architectural diagnostic
 
 Each task-method-seed condition is evaluated from a frozen bank of initial simulator states shared across methods. We run 50 rollout episodes per seed over three training seeds, yielding 150 episodes per task-method condition.
 
-**Task success.** Success is the fraction of episodes satisfying the environment’s native success predicate before timeout. Wilson score intervals summarize pooled rollout episodes; they do not quantify variation across independently trained seeds. Where paired comparisons are reported, they use within-seed success differences on identical reset states. Paired sign tests and Holm adjustment are reported with the corresponding results.
+**Task success.** Success is the fraction of episodes satisfying the environment’s native success predicate before timeout. Wilson score intervals [Wilson, 1927] summarize pooled rollout episodes; they do not quantify variation across independently trained seeds. Where paired comparisons are reported, they use within-seed success differences on identical reset states. Paired sign tests and Holm adjustment [Holm, 1979] are reported with the corresponding results.
 
-**Phase-expert alignment.** We measure normalized mutual information between top-1 expert assignments \(k_t^*\) and rule-derived phase labels \(y_t^{\mathrm{phase}}\):
+**Phase-expert alignment.** We measure normalized mutual information [Vinh et al., 2010] between top-1 expert assignments \(k_t^*\) and rule-derived phase labels \(y_t^{\mathrm{phase}}\):
 
 \[
 \operatorname{NMI}(k^*,y^{\mathrm{phase}})
@@ -386,7 +394,9 @@ Higher NMI indicates a stronger association between expert assignments and rule-
 
 **Routing-switch rate.** The switch rate is the fraction of adjacent timestep pairs within a demonstration for which the selected expert changes. It is computed on validation demonstrations, averaged across trajectories and seeds, and excludes transitions between trajectories. It characterizes routing behavior on the validation-demonstration distribution rather than on rollout states.
 
-These are offline structural diagnostics of routing assignments on held-out demonstrations. They do not measure the action quality of the selected expert, recovery behavior, or closed-loop task success.
+Phase–expert NMI measures association between top-1 expert assignments and rule-derived phase labels on held-out validation demonstrations. Routing-switch rate measures changes in top-1 expert assignment between adjacent timesteps within those demonstrations. These are offline routing diagnostics; they do not measure action quality, recovery behavior, or closed-loop task success.
+
+Because Stage 1 uses rule-derived phase supervision, and both rule phases and trajectory-derived regimes are functions of demonstration kinematics, NMI should be interpreted as alignment with this study’s rule-based kinematic phase vocabulary. It is not an annotation-free or universal measure of semantic specialization.
 
 Task success, NMI, and routing-switch rate measure different quantities on different data sources. Success measures closed-loop control; NMI and switch rate measure offline routing organization. The analysis does not treat either routing metric as a proxy for task success.
 
@@ -410,7 +420,7 @@ Square has a different ranking. Plain Encoder records 50% success \([42,58]\), f
 
 ToolHang remains unsolved: every evaluated method has 0% success. Transport produces 0–2 successful episodes out of 150, depending on the method. These tasks remain unresolved under the evaluated memoryless policies and training budget, so they do not distinguish the initialization conditions.
 
-The five-task benchmark provides contextual evidence of task-dependent behavior. The full regime-initialized configuration records the highest observed success on Can, but this pattern does not extend to Square.
+The full five-task sweep provides contextual coverage rather than a causal estimate of prototype initialization. Several tasks are saturated or near the success floor, and the full configuration differs from the matched ablation through its active margin objective.
 
 ## 5.2 Controlled Initialization Ablation
 
@@ -428,7 +438,7 @@ Routing metrics are computed on validation demonstrations. Trajectory-derived in
 
 Trajectory-derived initialization also has the lowest mean routing-switch rate: 0.04 on Can and 0.07 on Square, compared with 0.10–0.11 for the random and rule-based conditions. These values describe routing assignments on the validation-demonstration distribution, not on rollout states.
 
-Rule-based initialization does not improve NMI over random initialization in the observed runs, despite constructing prototypes from the same Stage-1 latent space. The result does not identify why the two initialization sources differ.
+Rule-based prototype initialization produced final NMI values similar to random initialization under the matched configuration. The endpoint measurements do not identify whether this reflects initial prototype geometry, prototype scale or separation, expert utilization, or subsequent training dynamics.
 
 ### Closed-loop success
 
@@ -436,9 +446,7 @@ On Can, trajectory-derived initialization records the highest observed success a
 
 On Square, the ordering reverses. Trajectory-derived initialization records 26.7% success, compared with 28.0% for random initialization and 31.3% for rule-based initialization.
 
-The matched ablation therefore yields different success orderings across tasks. The initialization associated with the strongest offline routing alignment has the highest observed matched success on Can and the lowest on Square. Offline routing organization does not consistently predict closed-loop success in the observed runs.
-
-Here, “more structured routing” refers specifically to higher phase--expert NMI and lower routing-switch rate on validation demonstrations; it is not interpreted as a universal measure of router or policy quality.
+The matched arms differed substantially in final offline routing diagnostics. The observed rollout orderings on Can and Square are descriptive and do not establish a task-by-initialization interaction. Across three training seeds, the closed-loop comparisons were not statistically resolved after Holm adjustment.
 
 ### Architectural diagnostics
 
@@ -456,7 +464,7 @@ The matched ablation supports two observations. Trajectory-derived regime initia
 
 ## 6.1 Initialization and Routing Organization
 
-Among the three matched prototype-initialization arms, trajectory-derived initialization produces higher NMI and lower routing-switch rates than rule-based and random initialization on validation demonstrations. The encoder, prototypes, and experts remain trainable during Stage 2, so this association persists after joint adaptation rather than reflecting the initial prototype positions alone.
+Among the three matched prototype-initialization arms, trajectory-derived initialization produces higher NMI and lower routing-switch rates than rule-based and random initialization on validation demonstrations. The encoder, prototypes, and experts remain trainable during Stage 2, so this association is present at the final checkpoint after joint adaptation rather than reflecting the initial prototype positions alone.
 
 The experiment does not identify an optimization mechanism. It does not establish a particular loss-landscape basin, nor does it show why the rule-based initialization produces NMI values similar to random initialization. The rule-based result only shows that non-random prototype placement is not sufficient to produce high phase-expert alignment in the observed runs.
 
@@ -479,6 +487,8 @@ The Learned Softmax Top-1 condition reaches high NMI without trajectory-derived 
 **Inference and task coverage.** All comparisons use three training seeds. The paired tests do not establish seed-level performance differences after Holm correction. The results describe the observed runs rather than a population-level effect [Henderson et al., 2018; Agarwal et al., 2021]. ToolHang and Transport remain unresolved under the evaluated policy class and training budget, so they provide no discriminative evidence about initialization.
 
 **Supervision and full-pipeline coupling.** The matched ablation evaluates prototype initialization on a representation already shaped by rule-derived phase classification and supervised contrastive learning. It does not establish whether trajectory-derived initialization alone can organize routing without that supervision. The full five-task benchmark additionally includes the fixed index-based margin coupling between rule-derived phase labels and prototype indices defined in §3.4. The benchmark therefore evaluates the combined system, not prototype initialization in isolation. This coupling is absent from the matched ablation because \(\lambda_m=0\).
+
+**Policy capacity and task coverage.** Absolute completion was limited on Square and near zero on ToolHang and Transport in the reported sweep. The evaluated policy is memoryless and direct-action, with fixed expert count and low-dimensional state observations. The unresolved initialization comparisons may reflect limitations of routing, policy class, expert expressiveness, optimization, or task coverage; this study does not distinguish among these possibilities.
 
 **Architecture scope.** The evaluation fixes \(K=E=6\), uses low-dimensional state observations, and restricts policies to memoryless direct-action control. The study does not determine how the result changes with adaptive expert counts, image observations, action chunking, or history-conditioned policies.
 

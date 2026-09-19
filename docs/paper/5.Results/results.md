@@ -14,7 +14,7 @@ Square has a different ranking. Plain Encoder records 50% success \([42,58]\), f
 
 ToolHang remains unsolved: every evaluated method has 0% success. Transport produces 0–2 successful episodes out of 150, depending on the method. These tasks remain unresolved under the evaluated memoryless policies and training budget, so they do not distinguish the initialization conditions.
 
-The five-task benchmark provides contextual evidence of task-dependent behavior. The full regime-initialized configuration records the highest observed success on Can, but this pattern does not extend to Square.
+The full five-task sweep provides contextual coverage rather than a causal estimate of prototype initialization. Several tasks are saturated or near the success floor, and the full configuration differs from the matched ablation through its active margin objective.
 
 ## 5.2 Controlled Initialization Ablation
 
@@ -32,7 +32,7 @@ Routing metrics are computed on validation demonstrations. Trajectory-derived in
 
 Trajectory-derived initialization also has the lowest mean routing-switch rate: 0.04 on Can and 0.07 on Square, compared with 0.10–0.11 for the random and rule-based conditions. These values describe routing assignments on the validation-demonstration distribution, not on rollout states.
 
-Rule-based initialization does not improve NMI over random initialization in the observed runs, despite constructing prototypes from the same Stage-1 latent space. The result does not identify why the two initialization sources differ.
+Rule-based prototype initialization produced final NMI values similar to random initialization under the matched configuration. The endpoint measurements do not identify whether this reflects initial prototype geometry, prototype scale or separation, expert utilization, or subsequent training dynamics.
 
 ### Closed-loop success
 
@@ -40,9 +40,7 @@ On Can, trajectory-derived initialization records the highest observed success a
 
 On Square, the ordering reverses. Trajectory-derived initialization records 26.7% success, compared with 28.0% for random initialization and 31.3% for rule-based initialization.
 
-The matched ablation therefore yields different success orderings across tasks. The initialization associated with the strongest offline routing alignment has the highest observed matched success on Can and the lowest on Square. Offline routing organization does not consistently predict closed-loop success in the observed runs.
-
-Here, “more structured routing” refers specifically to higher phase--expert NMI and lower routing-switch rate on validation demonstrations; it is not interpreted as a universal measure of router or policy quality.
+The matched arms differed substantially in final offline routing diagnostics. The observed rollout orderings on Can and Square are descriptive and do not establish a task-by-initialization interaction. Across three training seeds, the closed-loop comparisons were not statistically resolved after Holm adjustment.
 
 ### Architectural diagnostics
 

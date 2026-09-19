@@ -1,14 +1,16 @@
-# How Does Trajectory Regime Initialization Shape MoE Routing? An Empirical Study of Policy Specialization
+# Trajectory-Regime Initialization for Prototype-Routed Manipulation Policies: A Matched Study of Routing Organization and Closed-Loop Outcomes
 
 # 1. Introduction
 
-Manipulation tasks often combine approach, contact, transport, and terminal-placement behaviors that require different local state-to-action mappings. Mixture-of-experts (MoE) policies accommodate this heterogeneity by assigning observations to specialized experts, but their performance depends on how the routing function partitions the behavioral space. Standard end-to-end training learns this partition jointly with the representation and experts, without explicitly using demonstration structure to set its initial geometry.
+Manipulation tasks often combine approach, contact, transport, and terminal-placement behaviors that require different local state-to-action mappings. Mixture-of-experts (MoE) policies accommodate this heterogeneity by assigning observations to specialized experts, but their performance depends on how the routing function partitions the behavioral space.
 
-We investigate whether trajectory-derived kinematic regimes can provide such an initialization prior. We segment demonstrations, cluster the resulting regimes, and initialize routing prototypes from the corresponding Stage-1 latent centroids before joint fine-tuning. This poses two questions: does regime initialization change routing organization, and does a more organized partition predict closed-loop performance?
+Recent robotic MoE methods incorporate structure from demonstrations through supervised phase routing, routing regularization toward learned skill representations, or semantic skill routing [Mazza et al., 2026; Rodriguez et al., 2026; Deng et al., 2026]. We study a narrower intervention: whether trajectory-derived kinematic regimes can initialize the prototype geometry of a hard-routing manipulation policy and influence its final routing organization after joint fine-tuning.
+
+The regimes are used to construct initial prototype locations from a Stage-1 latent representation. Stage 1 is trained with action prediction and rule-derived phase supervision; trajectory-derived regimes are not themselves the source of that supervision.
 
 To isolate initialization, we compare trajectory-derived, rule-based, and random prototype placement under matched prototype-routing conditions. We measure phase-expert alignment and routing-switch rates on validation demonstrations, and closed-loop rollout success separately.
 
-Trajectory-derived initialization produces more phase-aligned, lower-switch routing on the validation distribution in the observed runs. Its relationship to task success differs by task: it leads the matched prototype arms on Can but trails them on Square. Thus, routing organization and closed-loop control quality are empirically dissociated in the evaluated setting.
+Trajectory-derived initialization produces more phase-aligned, lower-switch routing on the validation distribution in the observed runs. Across three training seeds, closed-loop success comparisons between regime and matched control initializations are not statistically resolved.
 
 We make three contributions:
 
@@ -16,4 +18,4 @@ We make three contributions:
 
 2. **Matched evaluation of routing organization.** Under identical prototype-routing conditions, we show that trajectory-derived regime initialization produces higher alignment with rule-derived phase labels (NMI) and lower routing-switch rates on validation demonstrations relative to matched random and rule-based controls.
 
-3. **Routing--control dissociation.** On Can and Square, we find that higher offline routing organization does not consistently coincide with higher closed-loop success.
+3. **Bounded outcome analysis.** In the matched Can/Square ablation, trajectory-derived initialization yields higher final offline routing organization than the matched initialization controls, while the associated closed-loop comparisons across three training seeds are not statistically resolved.

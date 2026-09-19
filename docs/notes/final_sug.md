@@ -1,24 +1,95 @@
-## Abstract
+# Status Report: Trajectory-Regime Prototype Initialization for MoE Manipulation Policies (Can/Square)
 
-Mixture-of-experts policies provide a natural way to represent heterogeneous behavior by assigning different regions of the policy space to different expert networks. In manipulation, however, the resulting partition is learned together with the policy, leaving the relationship between the structure present in demonstrations and the organization of the experts largely implicit. We investigate whether this structure can instead be introduced through the initialization of the expert partition.
+Prepared 20 Sep 2026. Sources are this conversation, the 6-seed report from your experiment agent, and the manuscript excerpts you pasted. I have not seen the full manuscript or the raw evaluation files. Each figure below carries one of three labels:
+- **[R]**: recomputed by me from the reported per-seed values.
+- **[A]**: reported by the experiment agent and not independently verified.
+- **[O]**: an open item.
 
-Our approach derives prototype locations from the topology of demonstration trajectories and uses these prototypes to initialize a hard-routing mixture-of-experts policy. The resulting experts are trained jointly, allowing the initial partition to change during optimization. We compare topology-based initialization with random and rule-based phase initialization under a matched prototype-routing procedure, and separately examine the resulting routing structure and closed-loop behavior.
+## 1. Timing correction
 
-Topology-based initialization produces substantially more phase-aligned routing than random or rule-based phase initialization in the focused Can/Square ablation, with normalized mutual information of 0.67 and 0.51 and measured routing-switch rates of 0.04 and 0.07 for Can and Square, respectively. This structural effect does not translate uniformly into task success. The topology-initialized policy achieves 76.0% success on Can and 26.7% on Square, compared with 68.7% and 31.3% for rule-based phase initialization and 73.3% and 35.3% for the softmax control.
+Today is Sep 20, 2026. Earlier I described the abstract deadline as possibly still open, and that was wrong. Under the official ICLR 2027 dates (abstract Sep 18 AOE, i.e. Sep 19 11:59 UTC; full paper Sep 25 AOE), abstract registration has closed. One guidelines page lists earlier dates still, so check OpenReview directly. **[O] Confirm whether your abstract was registered.** If it wasn't, the stated rules give no accommodation, and ICLR main track is closed for this cycle.
 
-The results show that the geometry used to initialize an expert partition can substantially shape the organization of a learned modular policy, while that organization is not by itself sufficient to determine closed-loop performance. This separates the role of an initialization prior in structuring expert specialization from its downstream effect on control.
+## 2. Study scope (agreed)
 
+The study is a bounded empirical analysis of routing initialization, not a state-of-the-art method claim. It examines a memoryless, not vision-based, hard prototype-routed, direct-action MoE policy. Trajectory-derived kinematic regimes come from change-point segmentation and clustering, and the regime-conditioned centroids of a Stage-1 latent initialize the routing prototypes before joint fine-tuning.
 
-## 1. Introduction
+- **Central question:** does initialization change final routing organization, and does that organization predict closed-loop success?
+- **Comparison with other methods:** an empirical baseline such as LAR-MoE is not required, since the study makes no claim to a better method. Prior work must still be cited and distinguished (section 8).
+- **Stage-1 supervision:** Stage 1 uses action prediction plus rule-derived phase supervision (cross-entropy and SupCon). Regime discovery needs no manual annotation, but the representation is not phase-unsupervised.
+- **Matched ablation:** the three primary arms (regime, random, rule-based) share architecture, expert initialization, and Stage-2 objective, with the margin loss off (λ_m=0). The full five-task configuration has an active rule-phase margin loss, so the two configurations aren't interchangeable.
+- **Task selection:** Lift was near saturation, and ToolHang and Transport had near-zero success, so Can and Square were the informative tasks.
+- **[O] Method description:** you described Stage 1 as a "dynamic topological method" for learning phases, while the manuscript excerpts say change-point detection plus clustering. Make sure the paper describes what you actually did.
 
-A manipulation policy may encounter substantially different control regimes over the course of a single task. Approaching an object, establishing contact, transporting it, and completing the final placement can require different local mappings from state to action. Mixture-of-experts models provide a direct mechanism for representing such heterogeneity: rather than forcing a single network to explain the entire behavioral distribution with one set of parameters, they partition the policy among several experts and use a router to determine which expert is active.
+## 3. Protocol
 
-The effectiveness of this decomposition depends not only on the capacity of the experts, but also on how the behavioral space is partitioned among them. A useful partition can isolate locally coherent action regimes, whereas an arbitrary partition may leave individual experts responsible for incompatible portions of the trajectory. In standard end-to-end training, this partition emerges jointly with the representation, router, and expert parameters. The demonstrations therefore contain structure that may be relevant to specialization, but the policy is not explicitly initialized to exploit it.
+- **Seeds:** the original 42–44, extended with 45–47 for every arm (6 total, fixed before the runs), with the same rollout protocol and hyperparameters. The extension covered 10 methods × 2 tasks × 3 seeds **[A]**.
+- **Rollouts:** 50 per seed per condition.
+- **Metrics:** phase–expert NMI against rule-derived labels, and within-trajectory switch rate, both on held-out demonstrations. Success is measured over 50 rollouts per seed.
+- **Statistics:** pooled Wilson intervals, seed-paired differences, and exact sign tests with Holm adjustment.
 
-Demonstration trajectories provide one source of such structure. Rather than viewing the demonstrations solely as state-action pairs, we consider their organization as a geometric object and use that structure to initialize the locations of routing prototypes. The resulting prior does not prescribe the final specialization of the experts; it sets the starting partition from which optimization proceeds.
+## 4. Results
 
-This raises a more specific question: **to what extent does the geometry of the demonstrations influence the organization of a learned expert partition, and does a more structured partition necessarily produce a better controller?**
+**Routing organization.** On seeds 42–44, regime initialization gave final NMI of 0.674 on Can and 0.506 on Square, versus 0.071–0.091 for the matched controls. Its switch rates were 0.040 and 0.068, versus 0.096–0.109. On seeds 45–47, an example run (Can, seed 45) shows NMI 0.847 and switch rate 0.030, versus NMI 0.08–0.15 and switch 0.10–0.14 for the random and plain-encoder arms **[A]**. Preliminary t=0 diagnostics from seeds 45–47 suggest rule-based initialization starts near 0.45 NMI and decays, while regime starts near 0.78 and stays high **[A]**. The agent's blanket range of 0.65–0.85 conflicts with Square's 0.506 on seeds 42–44, so recompute per task, per arm, and per seed before quoting a range.
 
-We examine this question using a prototype-routed mixture-of-experts policy for robot manipulation. Topology-derived prototypes are compared with phase-derived and random initializations under matched training conditions. The analysis deliberately separates two outcomes that are often conflated: the organization of the routing function and the success of the resulting closed-loop policy. Routing is evaluated through phase-expert alignment and temporal switching, while policy quality is evaluated through task success.
+**Success, seeds 42–44 (150 rollouts per arm).** Holm-adjusted p=1.00 for all comparisons.
 
-The central result is a separation between these quantities. Topology-derived initialization produces substantially more structured routing than the unstructured initialization conditions, yet the corresponding advantage in task success depends on the task. The result indicates that the geometry of the demonstrations can act as a meaningful prior over expert specialization, while also showing that a coherent routing structure is not synonymous with a superior control policy.
+| Task | Regime | Random | Rule-based | Softmax |
+|---|---|---|---|---|
+| Can | 76.0% | 73.3% | 68.7% | — |
+| Square | 26.7% | 28.0% | 31.3% | 35.3% |
+
+**Success, six seeds** **[A]**, with paired differences and sign tests checked by me **[R]**:
+
+| Task | Regime per seed (42–47) | Random per seed (42–47) | Regime mean | Random mean |
+|---|---|---|---|---|
+| Can | .66 .82 .80 .76 .64 .66 | .68 .70 .82 .56 .56 .68 | 0.723 | 0.667 |
+| Square | .22 .28 .30 .34 .42 .16 | .14 .40 .30 .32 .36 .30 | 0.287 | 0.303 |
+
+Six-seed means for the other reported arms were:
+
+| Task | plain_encoder | static_rule |
+|---|---|---|
+| Can | 0.560 | 0.533 |
+| Square | 0.413 | 0.097 |
+
+## 5. Statistical read [R]
+
+- **Regime vs random, Can:** mean difference +5.7 points, 95% t-interval [−4, +15], 3/6 wins, sign test p=1.00.
+- **Regime vs random, Square:** −1.7 points, [−11, +8], 3 wins, 2 losses, 1 tie, p=1.00.
+- **Regime vs static_rule:** Can +19 points (5 wins, 1 tie; p=0.22 counting the tie as a loss, or 0.0625 with ties dropped, so state your convention). Square +19 points, 6/6 wins, p=0.031, about 0.125 after Holm across four tests.
+- **Regime vs plain_encoder, Square:** −12.7 points, and plain_encoder wins on 4 of 6 seeds. Regime leads on Can, 72.3% to 56.0%.
+- Six seeds narrow the estimates but can't establish equivalence or exclude effects of about 10–15 points.
+
+## 6. Supported and unsupported claims
+
+**Supported:**
+- Regime initialization produces markedly higher final NMI and lower switch rates than the matched controls.
+- No closed-loop gain was detected against random initialization on either task.
+
+**Not supported, so avoid:**
+- "Dissociation," "task-dependent effect," and "does not imply/doesn't buy performance." Use "not detected."
+- "Persists from initialization," until the t=0 and training-curve diagnostics are verified across all seeds.
+- Any statement that NMI is an annotation-free measure of semantic specialization.
+
+## 7. Open items before any submission
+
+1. **[O] Matched rule-based arm.** Your 3-seed abstract reports the matched rule-based arm at 68.7% on Can and 31.3% on Square. The report's `static_rule` scores 52.7% and 12.0% on the same seeds and comes from the sweep directory, so it appears to be a different, non-matched arm. Confirm the matched arm was run on seeds 45–47. Until then, don't report the "6/6, p=0.031" result as a primary finding.
+2. **[O] Data integrity.** Verify the tables against the `eval_results.json` files, and confirm that seeds 42–44 and 45–47 used the same code, configuration, and reset banks. Explain why "de-duplicated (latest eval per seed)" was needed, and confirm no rerun was chosen based on its result.
+3. **[O] Diagnostics.** Produce NMI at t=0 and through Stage 2, expert utilization, and prototype norms and distances for all arms. State the coverage if older seeds lack logs. Explain the rule-init trend.
+4. **[O] plain_encoder.** Define the arm and explain why it exceeds regime on Square. Fix the primary Holm family in advance, for example regime vs random and regime vs matched rule-based on both tasks.
+
+## 8. Related-work positioning
+
+Cite and distinguish the following; these were verified earlier in the conversation:
+- **Mazza et al.**, arXiv:2601.21971 (supervised phase-structured MoE for surgical imitation; retitled, so cite the version you used, and disambiguate it from the unrelated bimanual MoE-ACT).
+- **LAR-MoE**, Rodriguez et al., arXiv:2603.08476.
+- **SMoDP**, Deng et al., RSS 2026 (2026, not 2025).
+- **PADD**, Peng et al., ICML 2026 (cluster-derived expert initialization in a language-model distillation setting, which is outside robotics).
+
+Not verified: MoE-DP's routing details, and the July 2026 emergent-compositional-skills paper (I saw only an abstract). Don't make a "first to" novelty claim without a documented search.
+
+## 9. Assessment
+
+The honest claim is narrow and defensible: large, consistent routing-organization differences, and no detectable closed-loop gain. As a bounded study it's suitable for a preprint or workshop. For ICLR main track (only if abstract registration succeeded), I'd still expect reviewers to press on two informative tasks, novelty, and metric circularity, and that is my judgment, not a prediction. Proceed to a full submission on Sep 25 only if items 1–3 in section 7 resolve cleanly by Sep 24, the text patches are applied, and every seed is reported. Otherwise post the preprint and target a later venue.
+
+I can export this as a .docx or .md file if you want it to send on.

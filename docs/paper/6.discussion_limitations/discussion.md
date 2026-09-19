@@ -4,7 +4,7 @@ The matched ablation supports two observations. Trajectory-derived regime initia
 
 ## 6.1 Initialization and Routing Organization
 
-Among the three matched prototype-initialization arms, trajectory-derived initialization produces higher NMI and lower routing-switch rates than rule-based and random initialization on validation demonstrations. The encoder, prototypes, and experts remain trainable during Stage 2, so this association persists after joint adaptation rather than reflecting the initial prototype positions alone.
+Among the three matched prototype-initialization arms, trajectory-derived initialization produces higher NMI and lower routing-switch rates than rule-based and random initialization on validation demonstrations. The encoder, prototypes, and experts remain trainable during Stage 2, so this association is present at the final checkpoint after joint adaptation rather than reflecting the initial prototype positions alone.
 
 The experiment does not identify an optimization mechanism. It does not establish a particular loss-landscape basin, nor does it show why the rule-based initialization produces NMI values similar to random initialization. The rule-based result only shows that non-random prototype placement is not sufficient to produce high phase-expert alignment in the observed runs.
 
@@ -27,6 +27,8 @@ The Learned Softmax Top-1 condition reaches high NMI without trajectory-derived 
 **Inference and task coverage.** All comparisons use three training seeds. The paired tests do not establish seed-level performance differences after Holm correction. The results describe the observed runs rather than a population-level effect [Henderson et al., 2018; Agarwal et al., 2021]. ToolHang and Transport remain unresolved under the evaluated policy class and training budget, so they provide no discriminative evidence about initialization.
 
 **Supervision and full-pipeline coupling.** The matched ablation evaluates prototype initialization on a representation already shaped by rule-derived phase classification and supervised contrastive learning. It does not establish whether trajectory-derived initialization alone can organize routing without that supervision. The full five-task benchmark additionally includes the fixed index-based margin coupling between rule-derived phase labels and prototype indices defined in §3.4. The benchmark therefore evaluates the combined system, not prototype initialization in isolation. This coupling is absent from the matched ablation because \(\lambda_m=0\).
+
+**Policy capacity and task coverage.** Absolute completion was limited on Square and near zero on ToolHang and Transport in the reported sweep. The evaluated policy is memoryless and direct-action, with fixed expert count and low-dimensional state observations. The unresolved initialization comparisons may reflect limitations of routing, policy class, expert expressiveness, optimization, or task coverage; this study does not distinguish among these possibilities.
 
 **Architecture scope.** The evaluation fixes \(K=E=6\), uses low-dimensional state observations, and restricts policies to memoryless direct-action control. The study does not determine how the result changes with adaptive expert counts, image observations, action chunking, or history-conditioned policies.
 

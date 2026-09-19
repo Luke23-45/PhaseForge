@@ -18,7 +18,7 @@ Each task contains 200 demonstrations, split into 180 training and 20 validation
 
 All policies are deterministic and memoryless: the action at time \(t\) depends only on \(x_t\). All modular conditions use a fixed regime and expert count of \(K=E=6\).
 
-Can and Square form the focused initialization ablation because both require sequential manipulation behavior while imposing different contact demands. Can is a clearance-tolerant pick-and-place task; Square requires precise alignment during insertion.
+We report the complete five-task sweep and focus the matched initialization analysis on Can and Square, the two tasks with outcome variation in the reported full-suite matrix. This focused analysis is not a broad five-task performance estimate. Both tasks require sequential manipulation behavior while imposing different contact demands: Can is a clearance-tolerant pick-and-place task, whereas Square requires precise alignment during insertion.
 
 ## 4.2 Comparative Controls
 
@@ -75,7 +75,9 @@ Higher NMI indicates a stronger association between expert assignments and rule-
 
 **Routing-switch rate.** The switch rate is the fraction of adjacent timestep pairs within a demonstration for which the selected expert changes. It is computed on validation demonstrations, averaged across trajectories and seeds, and excludes transitions between trajectories. It characterizes routing behavior on the validation-demonstration distribution rather than on rollout states.
 
-These are offline structural diagnostics of routing assignments on held-out demonstrations. They do not measure the action quality of the selected expert, recovery behavior, or closed-loop task success.
+Phase–expert NMI measures association between top-1 expert assignments and rule-derived phase labels on held-out validation demonstrations. Routing-switch rate measures changes in top-1 expert assignment between adjacent timesteps within those demonstrations. These are offline routing diagnostics; they do not measure action quality, recovery behavior, or closed-loop task success.
+
+Because Stage 1 uses rule-derived phase supervision, and both rule phases and trajectory-derived regimes are functions of demonstration kinematics, NMI should be interpreted as alignment with this study’s rule-based kinematic phase vocabulary. It is not an annotation-free or universal measure of semantic specialization.
 
 Task success, NMI, and routing-switch rate measure different quantities on different data sources. Success measures closed-loop control; NMI and switch rate measure offline routing organization. The analysis does not treat either routing metric as a proxy for task success.
 

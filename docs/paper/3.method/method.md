@@ -122,10 +122,12 @@ Two distinct label vocabularies are used:
 
 | Label vocabulary | Source | Use |
 |---|---|---|
-| Rule-derived phase labels | Task-specific kinematic heuristics | Stage 1 phase classification, supervised contrastive learning, full-pipeline margin loss, and NMI evaluation |
-| Trajectory-derived regime labels | Change-point segmentation and segment clustering | Grouping Stage-1 latents for prototype initialization |
+| Rule-derived phase labels (`phase`) | Task-specific kinematic heuristics | Stage 1 phase classification, supervised contrastive learning, full-pipeline margin loss, and NMI evaluation |
+| Trajectory-derived regime labels (`phase_topo`) | Change-point segmentation and segment clustering | Grouping Stage-1 latents for prototype initialization |
 
-The two vocabularies are generated independently. They need not share temporal boundaries or semantic label identities.
+Trajectory-derived regime labels (`phase_topo`) are computed from demonstration kinematics without manual phase annotation and are used to group Stage-1 latent representations for prototype initialization. Rule-derived phase labels (`phase`) supervise the Stage-1 phase-classification and supervised-contrastive objectives and define the reference vocabulary for NMI evaluation. Thus, regime discovery is annotation-free, but the representation used to construct prototypes is not phase-unsupervised.
+
+The causal interpretation of prototype initialization is restricted to the focused matched ablation, where the Stage-2 margin coefficient is zero for every primary arm. The full five-task configuration retains its stated phase-indexed margin objective; its results are not interchangeable with those of the matched ablation.
 
 Because deployment uses a memoryless router, we require the trajectory-derived regime labels to be predictable from an instantaneous observation. A linear probe predicts regime labels from normalized \(x_t\) under trajectory-grouped cross-validation. The regime artifact is accepted only when macro-F1 is at least \(0.60\) and every regime has occupancy of at least \(0.01\); otherwise, the configured gate rejects it. The complete validation protocol is reported in the appendix.
 
