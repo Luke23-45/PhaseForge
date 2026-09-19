@@ -71,9 +71,9 @@ Each task-method-seed condition is evaluated from a frozen bank of initial simul
 {H(k^*)+H(y^{\mathrm{phase}})}.
 \]
 
-Higher NMI indicates a stronger association between expert assignments and rule-derived phase labels. NMI is computed on the 20 validation demonstrations, averaged across trajectories and training seeds. The validation split is not used for checkpoint selection. NMI is not measured on rollout states and is not computed against trajectory-derived regime labels.
+Higher NMI indicates a stronger association between expert assignments and rule-derived phase labels. NMI is computed for each training seed over the concatenated samples from all 20 validation trajectories and is then averaged across seeds. The validation split is not used for checkpoint selection. NMI is not measured on rollout states and is not computed against trajectory-derived regime labels.
 
-**Routing-switch rate.** The switch rate is the fraction of adjacent timestep pairs within a demonstration for which the selected expert changes. It is computed on validation demonstrations, averaged across trajectories and seeds, and excludes transitions between trajectories. It characterizes routing behavior on the validation-demonstration distribution rather than on rollout states.
+**Routing-switch rate.** For each training seed, routing-switch rate is the fraction of valid adjacent timestep pairs across all 20 validation trajectories for which the selected expert changes; transitions between trajectories are excluded. The per-seed rates are then averaged across seeds. It characterizes routing behavior on the validation-demonstration distribution rather than on rollout states.
 
 Phase–expert NMI measures association between top-1 expert assignments and rule-derived phase labels on held-out validation demonstrations. Routing-switch rate measures changes in top-1 expert assignment between adjacent timesteps within those demonstrations. These are offline routing diagnostics; they do not measure action quality, recovery behavior, or closed-loop task success.
 
