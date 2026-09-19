@@ -68,11 +68,11 @@ q_t,\;
 g_t,\;
 o_t,\;
 (p_t-o_{t,0:3}),\;
-a_t
+\alpha_t
 \right],
 \]
 
-where \(p_t\in\mathbb{R}^3\) is end-effector position, \(q_t\in\mathbb{S}^3\) is a sign-canonicalized orientation quaternion, \(g_t\) is raw gripper joint position, \(o_t\) contains object proprioceptive variables, and \(a_t = \max_j |g_{t,j}|\) is scalar gripper aperture excursion magnitude. The relative displacement term represents end-effector position relative to the object.
+where \(p_t\in\mathbb{R}^3\) is end-effector position, \(q_t\in\mathbb{S}^3\) is a sign-canonicalized orientation quaternion, \(g_t\) is raw gripper joint position, \(o_t\) contains object proprioceptive variables, and \(\alpha_t=\max_j |g_{t,j}|\) is scalar gripper-aperture excursion magnitude. The relative displacement term represents end-effector position relative to the object.
 
 Before segmentation, observations are denormalized into physical coordinates. The resulting signal concatenates Cartesian positions, unit quaternions, and joint variables without additional feature weighting.
 
